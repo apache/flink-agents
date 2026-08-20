@@ -21,7 +21,7 @@ import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
-import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
@@ -58,7 +58,8 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  * <ul>
  *   <li>The {@link PythonEnvironmentManager} that prepares dependencies and the Pemja runtime.
  *   <li>The {@link PythonInterpreter} obtained from that environment.
- *   <li>The {@link PythonActionExecutor} (when the plan contains Python actions or Mem0).
+ *   <li>The {@link PythonActionExecutor} (when the plan contains Python actions, Python-owned
+ *       resources, or Mem0).
  *   <li>The {@link PythonRunnerContextImpl} consumed by Python actions.
  *   <li>The Java/Python resource adapters that bridge resource lookups across languages.
  *   <li>The Java wrapper around Python Mem0 long-term memory (when configured).
@@ -96,15 +97,17 @@ class PythonBridgeManager implements AutoCloseable {
     /**
      * Initializes the Python runtime if the agent plan needs it.
      *
-     * <p>Scans the agent plan for any {@link PythonFunction} action or {@link
-     * PythonResourceProvider}. If neither is present, this method is a no-op and {@link
+     * <p>Scans the agent plan for any {@link PythonFunction} action or Python-owned resource
+     * provider. If neither is present and Mem0 is not configured, this method is a no-op and {@link
      * #isInitialized()} stays {@code false}. Otherwise it builds the {@link
      * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, refreshes the shared
      * import state for the current dependency generation, constructs the shared {@link
      * PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
-     * initializes the Python action executor and the Python resource adapter (each only when the
-     * corresponding component is present in the plan). The generation guard runs immediately after
-     * interpreter construction and before any user module import.
+     * initializes the Python resource adapter (when Python-owned resources or Mem0 are present) and
+     * the Python action executor (when Python actions, Python-owned resources, or Mem0 are present,
+     * since the executor is also the bridge that materializes Python-owned resources). The
+     * generation guard runs immediately after interpreter construction and before any user module
+     * import.
      *
      * @param agentPlan the agent plan describing actions and resources.
      * @param resourceCache the resource cache visible to both languages.
@@ -140,11 +143,7 @@ class PythonBridgeManager implements AutoCloseable {
                         .anyMatch(
                                 resourceProviderMap ->
                                         resourceProviderMap.values().stream()
-                                                .anyMatch(
-                                                        resourceProvider ->
-                                                                resourceProvider
-                                                                        instanceof
-                                                                        PythonResourceProvider));
+                                                .anyMatch(ResourceProvider::isPythonOwned));
 
         boolean mem0Configured = isMem0Configured(agentPlan);
 
@@ -189,8 +188,9 @@ class PythonBridgeManager implements AutoCloseable {
             if (containPythonResource || mem0Configured) {
                 initPythonResourceAdapter(agentPlan, resourceCache);
             }
-            if (containPythonAction || mem0Configured) {
+            if (containPythonAction || containPythonResource || mem0Configured) {
                 initPythonActionExecutor(agentPlan, jobIdentifier);
+                resourceCache.setPythonActionExecutor(pythonActionExecutor);
             }
             if (mem0Configured) {
                 wireLongTermMemory(agentPlan);
@@ -287,8 +287,8 @@ class PythonBridgeManager implements AutoCloseable {
     }
 
     /**
-     * @return the Python action executor, or {@code null} if the agent plan contains no Python
-     *     actions (or {@link #open} has not yet been called).
+     * @return the Python action executor, or {@code null} if the agent plan contains neither Python
+     *     actions nor Python-owned resources (or {@link #open} has not yet been called).
      */
     @Nullable
     PythonActionExecutor getPythonActionExecutor() {

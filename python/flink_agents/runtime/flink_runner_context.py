@@ -536,6 +536,26 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
 
+    def eager_materialize(self, resource_type: str) -> Dict[str, Resource]:
+        """Materialize every Python-owned resource of ``resource_type``.
+
+        The Python-side counterpart of the Java ``ResourceCache.eagerMaterialize``:
+        resources declared by Python providers are built, cached and closed here,
+        so the Java side asks for them instead of building its own. Returns them
+        keyed by resource name.
+        """
+        from flink_agents.plan.resource_provider import is_python_owned
+
+        type_ = ResourceType(resource_type)
+        materialized = {}
+        providers = self.__agent_plan.resource_providers.get(type_, {})
+        for name, provider in providers.items():
+            if not is_python_owned(provider):
+                # Java-owned resources are materialized by the Java resource cache.
+                continue
+            materialized[name] = self.__resource_cache.get_resource(name, type_)
+        return materialized
+
     def add_task_lifecycle_listener(self, listener: Any) -> None:
         """Register a task lifecycle listener the operator's callbacks fan out to."""
         self.__task_lifecycle_listeners.append(listener)
@@ -1353,6 +1373,13 @@ def close_flink_runner_context(
 ) -> None:
     """Clean up the resources kept by the flink runner context."""
     ctx.close()
+
+
+def eager_materialize(
+    ctx: FlinkRunnerContext, resource_type: str
+) -> Dict[str, Resource]:
+    """Java entry: materialize the Python-owned resources of ``resource_type``."""
+    return ctx.eager_materialize(resource_type)
 
 
 def add_task_lifecycle_listener(ctx: FlinkRunnerContext, listener: Any) -> bool:

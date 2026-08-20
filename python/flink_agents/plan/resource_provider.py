@@ -242,3 +242,14 @@ class JavaSerializableResourceProvider(SerializableResourceProvider):
             "by JavaSerializableResourceProvider in python."
         )
         raise NotImplementedError(err_msg)
+
+
+def is_python_owned(provider: ResourceProvider) -> bool:
+    """Whether the provider materializes a resource owned by the Python runtime.
+
+    The runtime must ask that runtime to build such a resource instead of
+    resolving it on the Java side. Mirrors Java ``ResourceProvider.isPythonOwned``.
+    """
+    return isinstance(
+        provider, PythonResourceProvider | PythonSerializableResourceProvider
+    )
