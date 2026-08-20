@@ -63,6 +63,15 @@ public abstract class ResourceProvider implements java.io.Serializable {
     }
 
     /**
+     * Whether the given provider materializes a resource owned by the Python runtime, so the
+     * runtime must ask that runtime to build it instead of resolving it on the Java side.
+     */
+    public static boolean isPythonOwned(ResourceProvider provider) {
+        return provider instanceof PythonResourceProvider
+                || provider instanceof PythonSerializableResourceProvider;
+    }
+
+    /**
      * Create resource at runtime.
      *
      * @param resourceContext context exposing helper for fetching other resources declared in the
