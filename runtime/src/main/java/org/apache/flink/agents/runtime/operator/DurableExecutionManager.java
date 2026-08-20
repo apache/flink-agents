@@ -47,7 +47,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Predicate;
+import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
@@ -66,10 +66,10 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.Backe
  * <p>Lifecycle: instantiated in the operator constructor. {@link
  * #maybeInitActionStateStore(AgentConfiguration)} runs from BOTH the operator's {@code
  * initializeState()} and {@code open()} — recovery requires the store to be configured before
- * {@link #handleRecovery(OperatorStateBackend, Predicate)} reads from it, and the {@code open()}
+ * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} reads from it, and the {@code open()}
  * call ensures the store is also available on the normal (non-recovery) path. The method creates a
  * default Kafka-backed store when one was not pre-injected, and is idempotent on the second call.
- * {@link #handleRecovery(OperatorStateBackend, Predicate)} runs from the operator's {@code
+ * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} runs from the operator's {@code
  * initializeState()} during recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs
  * from the operator's {@code open()}. {@link #close()} closes the underlying store.
  *
@@ -125,6 +125,17 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                 LOG.info("Using Fluss as backend of action state store.");
                 actionStateStore = new FlussActionStateStore(config);
             }
+        }
+    }
+
+    /**
+     * Sets the maximum parallelism on the underlying action state store so that key-groups are
+     * computed consistently with Flink's key-group assignment when generating action-state record
+     * keys.
+     */
+    void setMaxParallelism(int maxParallelism) {
+        if (actionStateStore != null) {
+            actionStateStore.setMaxParallelism(maxParallelism);
         }
     }
 
@@ -189,16 +200,16 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * <p>UnionListState broadcasts every subtask's recovery marker to all subtasks, so a naive
      * replay would load the full key set into every subtask's cache, where the foreign keys are
      * never pruned and stay resident for the whole attempt (the orphan-state leak). {@code
-     * ownershipFilter} restricts the rebuilt cache to keys owned by the current subtask; it is
+     * ownershipFilter} restricts the rebuilt cache to key-groups owned by the current subtask; it is
      * installed on the store just before {@link #rebuildState(List)}.
      *
      * @param operatorStateBackend the operator state backend used to obtain the recovery-marker
      *     union-list state.
-     * @param ownershipFilter predicate accepting only the business keys owned by the current
+     * @param ownershipFilter predicate accepting only the key-groups owned by the current
      *     subtask; {@code null} retains all keys (e.g. for the in-memory/test backends).
      */
     void handleRecovery(
-            OperatorStateBackend operatorStateBackend, @Nullable Predicate<String> ownershipFilter)
+            OperatorStateBackend operatorStateBackend, @Nullable IntPredicate ownershipFilter)
             throws Exception {
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
@@ -221,7 +232,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             throws Exception {
         return actionStateStore == null
                 ? null
-                : actionStateStore.get(key.toString(), sequenceNum, action, event);
+                : actionStateStore.get(key, sequenceNum, action, event);
     }
 
     void maybeInitActionState(Object key, long sequenceNum, Action action, Event event)

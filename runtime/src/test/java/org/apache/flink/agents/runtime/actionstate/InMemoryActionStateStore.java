@@ -34,8 +34,11 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.genera
  */
 public class InMemoryActionStateStore implements ActionStateStore {
 
+    private static final int DEFAULT_MAX_PARALLELISM = 128;
+
     private final Map<String, Map<String, ActionState>> keyedActionStates;
     private final boolean doCleanup;
+    private int maxParallelism = DEFAULT_MAX_PARALLELISM;
 
     public InMemoryActionStateStore(boolean doCleanup) {
         this.keyedActionStates = new HashMap<>();
@@ -43,11 +46,16 @@ public class InMemoryActionStateStore implements ActionStateStore {
     }
 
     @Override
+    public void setMaxParallelism(int maxParallelism) {
+        this.maxParallelism = maxParallelism;
+    }
+
+    @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws IOException {
         Map<String, ActionState> actionStates =
                 keyedActionStates.getOrDefault(key.toString(), new HashMap<>());
-        actionStates.put(generateKey(key.toString(), seqNum, action, event), state);
+        actionStates.put(generateKey(key, seqNum, action, event, maxParallelism), state);
         keyedActionStates.put(key.toString(), actionStates);
     }
 
@@ -55,7 +63,7 @@ public class InMemoryActionStateStore implements ActionStateStore {
     public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
         return keyedActionStates
                 .getOrDefault(key.toString(), new HashMap<>())
-                .get(generateKey(key.toString(), seqNum, action, event));
+                .get(generateKey(key, seqNum, action, event, maxParallelism));
     }
 
     @Override
