@@ -85,8 +85,8 @@ public interface ActionStateStore extends AutoCloseable {
      * enforce a recovery boundary that protects every supported restore point or clearly document
      * the recovery trade-off of advancing beyond that boundary.
      *
-     * <p>The current durable stores encode raw agent keys using an unescaped {@code _} separator.
-     * Agent keys containing {@code _} therefore cannot be parsed safely during pruning and are
+     * <p>The current durable stores encode raw Flink keys using an unescaped {@code _} separator.
+     * Flink keys containing {@code _} therefore cannot be parsed safely during pruning and are
      * retained in both the in-memory cache and backend storage.
      *
      * @param key the key whose state should be pruned

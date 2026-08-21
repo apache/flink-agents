@@ -33,9 +33,19 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configuration;
+import org.apache.logging.log4j.core.config.LoggerConfig;
+import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -156,6 +166,16 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testGetRetainsUnparseableKey() throws Exception {
+        String flinkKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(flinkKey, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        assertThat(actionStateStore.get(flinkKey, 2L, testAction, testEvent)).isNull();
+        assertThat(actionStates).containsKey(stateKey);
+    }
+
+    @Test
     void testRecoveryMarker() throws Exception {
         // Test getting initial recovery marker
         Object initialMarker = actionStateStore.getRecoveryMarker();
@@ -240,16 +260,16 @@ public class KafkaActionStateStoreTest {
 
     @Test
     void testPruneStateDoesNotPruneOtherKeysWithMatchingPrefix() throws Exception {
-        // Arrange - agent key "a" seq 1 yields state key "a_1_<uuid>_<uuid>", which is a
-        // prefix match for pruning agent key "a_1"
+        // Arrange - Flink key "a" seq 1 yields state key "a_1_<uuid>_<uuid>", which is a
+        // prefix match for pruning Flink key "a_1"
         actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
         actionStates.put(otherKeyState, testActionState);
 
-        // Act - prune a DIFFERENT agent key whose name collides with "a"'s key prefix
+        // Act - prune a DIFFERENT Flink key whose name collides with "a"'s key prefix
         actionStateStore.pruneState("a_1", 10L);
 
-        // Assert - agent key "a"'s state is untouched and no tombstones were sent
+        // Assert - Flink key "a"'s state is untouched and no tombstones were sent
         assertThat(actionStates).containsKey(otherKeyState);
         assertThat(mockProducer.history()).isEmpty();
     }
@@ -286,17 +306,42 @@ public class KafkaActionStateStoreTest {
         String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
 
-        // Act - should not throw despite the async send failure
-        actionStateStore.pruneState(TEST_KEY, 1L);
+        TestAppender appender = new TestAppender("KafkaActionStateStoreTestAppender");
+        appender.start();
+        LoggerContext loggerContext = (LoggerContext) LogManager.getContext(false);
+        Configuration loggerConfiguration = loggerContext.getConfiguration();
+        String loggerName = KafkaActionStateStore.class.getName();
+        LoggerConfig loggerConfig = loggerConfiguration.getLoggerConfig(loggerName);
+        boolean addedLoggerConfig = !loggerConfig.getName().equals(loggerName);
+        if (addedLoggerConfig) {
+            loggerConfig = new LoggerConfig(loggerName, Level.WARN, false);
+            loggerConfiguration.addLogger(loggerName, loggerConfig);
+        }
+        loggerConfig.addAppender(appender, Level.WARN, null);
+        loggerContext.updateLoggers();
 
-        // Assert - in-memory entry is still evicted regardless of tombstone delivery
-        assertThat(failureCallbackInvoked).isTrue();
-        assertThat(actionStates).doesNotContainKey(stateKey);
+        try {
+            // Act - should not throw despite the async send failure
+            actionStateStore.pruneState(TEST_KEY, 1L);
+
+            // Assert - the failure is reported and the in-memory entry is still evicted
+            assertThat(failureCallbackInvoked).isTrue();
+            assertThat(appender.getMessages())
+                    .anyMatch(message -> message.contains("Failed to send tombstone record"));
+            assertThat(actionStates).doesNotContainKey(stateKey);
+        } finally {
+            loggerConfig.removeAppender(appender.getName());
+            if (addedLoggerConfig) {
+                loggerConfiguration.removeLogger(loggerName);
+            }
+            appender.stop();
+            loggerContext.updateLoggers();
+        }
     }
 
     @Test
     void testPruneStateSkipsUnparseableKeys() throws Exception {
-        // Arrange - an agent key that itself contains the "_" separator (e.g. "user_123")
+        // Arrange - a Flink key that itself contains the "_" separator (e.g. "user_123")
         // produces a state key with 5 "_"-separated parts once seqNum and the two UUIDs are
         // appended, which ActionStateUtil.parseKey cannot split into exactly 4 parts
         actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
@@ -432,6 +477,24 @@ public class KafkaActionStateStoreTest {
         // Assert - the tombstoned key is removed, the other key is restored
         assertThat(actionStates).doesNotContainKey(key1);
         assertThat(actionStates.get(key2)).isEqualTo(testActionState);
+    }
+
+    private static class TestAppender extends AbstractAppender {
+
+        private final List<String> messages = Collections.synchronizedList(new ArrayList<>());
+
+        private TestAppender(String name) {
+            super(name, null, PatternLayout.newBuilder().withPattern("%msg").build(), true, null);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            messages.add(event.getMessage().getFormattedMessage());
+        }
+
+        private List<String> getMessages() {
+            return messages;
+        }
     }
 
     /** Contract: the consumer is closed even when closing the producer throws. */

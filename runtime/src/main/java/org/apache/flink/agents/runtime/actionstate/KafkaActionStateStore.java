@@ -181,10 +181,13 @@ public class KafkaActionStateStore implements ActionStateStore {
                                         // the requested seqNum
                                         return stateSeqNum > seqNum;
                                     }
-                                } catch (NumberFormatException e) {
+                                } catch (IllegalArgumentException e) {
                                     LOG.warn(
-                                            "Failed to parse sequence number from state key: {}",
-                                            stateKey);
+                                            "Cannot parse state key: {}. The entry cannot be "
+                                                    + "considered for divergence cleanup and will "
+                                                    + "be retained.",
+                                            entry.getKey(),
+                                            e);
                                 }
                                 return false;
                             });
