@@ -90,12 +90,14 @@ def _mock_anthropic_connection() -> anthropic_chat_model.AnthropicChatModelConne
     )
     conn._client = MagicMock()
     mock_response = MagicMock()
+    mock_response.role = "assistant"
     mock_response.content = [MagicMock()]
     mock_response.content[0].text = "test response"
     mock_response.content[0].type = "text"
     mock_response.usage = MagicMock()
     mock_response.usage.input_tokens = 10
     mock_response.usage.output_tokens = 20
+    mock_response.stop_reason = "end_turn"
     conn._client.messages.create.return_value = mock_response
     return conn
 
