@@ -234,6 +234,11 @@ public class FlussActionStateStore implements ActionStateStore {
         }
 
         ActionState state = actionStates.get(stateKey);
+        if (state == null) {
+            // Fall back to the pre-key-group 4-segment key so durable state written before the
+            // key-group upgrade is still found instead of being re-executed.
+            state = actionStates.get(ActionStateUtil.legacyKeyOf(stateKey));
+        }
         LOG.debug("Lookup action state: key={}, found={}", stateKey, state != null);
         return state;
     }

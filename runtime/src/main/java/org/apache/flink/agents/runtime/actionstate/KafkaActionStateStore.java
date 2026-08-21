@@ -182,6 +182,11 @@ public class KafkaActionStateStore implements ActionStateStore {
         }
 
         ActionState result = actionStates.get(stateKey);
+        if (result == null) {
+            // Fall back to the pre-key-group 4-segment key so durable state written before the
+            // key-group upgrade is still found instead of being re-executed.
+            result = actionStates.get(ActionStateUtil.legacyKeyOf(stateKey));
+        }
         if (result != null) {
             LOG.debug("Found action state: key={}, isCompleted={}", stateKey, result.isCompleted());
         } else {

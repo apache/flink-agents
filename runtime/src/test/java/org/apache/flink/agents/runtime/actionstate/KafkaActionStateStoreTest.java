@@ -380,11 +380,13 @@ public class KafkaActionStateStoreTest {
 
     /**
      * Records whose composite state key does not have the current 5-segment layout — including
-     * records written in the pre-key-group 4-segment format — are dropped deterministically during
-     * rebuild: they cannot be attributed to a key-group and are unreachable for lookups anyway.
+     * records written in the pre-key-group 4-segment format — have UNKNOWN ownership and are
+     * retained in every subtask during rebuild (rather than dropped), even when the ownership
+     * filter would reject other key-groups. This preserves durable state across a key-group
+     * upgrade; such records age out of the recovery tail after the next checkpoint.
      */
     @Test
-    void testRebuildStateDropsLegacyFormatKeys() throws Exception {
+    void testRebuildStateKeepsLegacyFormatKeysAsUnknownOwnership() throws Exception {
         String legacyKey = TEST_KEY + "_1_event-uuid_action-uuid";
         String malformedKey = "malformed-key";
         String stateKeyA =
@@ -405,8 +407,24 @@ public class KafkaActionStateStoreTest {
         actionStateStore.rebuildState(recoveryMarkers);
 
         assertThat(actionStates).containsKey(stateKeyA);
-        assertThat(actionStates).doesNotContainKey(legacyKey);
-        assertThat(actionStates).doesNotContainKey(malformedKey);
+        assertThat(actionStates).containsKey(legacyKey);
+        assertThat(actionStates).containsKey(malformedKey);
+    }
+
+    /**
+     * A record written before the key-group upgrade is stored under the 4-segment key (the current
+     * key without its key-group prefix). {@code get()} must still find it via the legacy fallback
+     * so the durable action is not re-executed after an upgrade.
+     */
+    @Test
+    void testGetFindsLegacyFormatRecordViaFallback() throws Exception {
+        String currentKey =
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
+        String legacyKey = ActionStateUtil.legacyKeyOf(currentKey);
+        actionStates.put(legacyKey, testActionState);
+
+        assertThat(actionStateStore.get(TEST_KEY, 1L, testAction, testEvent))
+                .isEqualTo(testActionState);
     }
 
     /**

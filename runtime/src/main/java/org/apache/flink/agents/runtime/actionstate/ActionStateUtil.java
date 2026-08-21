@@ -146,12 +146,13 @@ public class ActionStateUtil {
      * ownership filter. A {@code null} filter retains every key (the default for in-memory and test
      * backends).
      *
-     * <p>Keys without the expected segment layout — including records written in the pre-key-group
-     * 4-segment format — are dropped deterministically: they cannot be attributed to a key-group,
-     * and retaining them would resurrect the orphan-state leak while staying unreachable for
-     * lookups, which always use the current 5-segment format. A 5-segment key whose key-group
-     * segment fails to parse is retained as a fail-safe: prefer keeping a possibly-valid
-     * current-format key over dropping it on a parse error.
+     * <p>Keys without the expected 5-segment layout — including records written in the
+     * pre-key-group 4-segment format — have UNKNOWN ownership: they cannot be attributed to a
+     * key-group, so they are retained in every subtask rather than dropped. This preserves durable
+     * state across a key-group upgrade at the cost of a bounded, one-time memory amplification for
+     * the legacy recovery tail, which ages out once a new checkpoint marker advances past those
+     * records. Lookups still find such records via {@link #legacyKeyOf}. A 5-segment key whose
+     * key-group segment fails to parse is likewise retained as a fail-safe.
      */
     public static boolean isKeyRetained(@Nullable IntPredicate ownershipFilter, String stateKey) {
         if (ownershipFilter == null) {
@@ -159,12 +160,7 @@ public class ActionStateUtil {
         }
         String[] parts = stateKey.split(KEY_SEPARATOR);
         if (parts.length != KEY_SEGMENT_COUNT) {
-            LOG.warn(
-                    "Dropping action-state record whose key does not have the expected {}-segment"
-                            + " layout (written by an older version?): {}",
-                    KEY_SEGMENT_COUNT,
-                    stateKey);
-            return false;
+            return true;
         }
         try {
             return ownershipFilter.test(Integer.parseInt(parts[KEY_GROUP_SEGMENT]));
@@ -176,6 +172,19 @@ public class ActionStateUtil {
                     e);
             return true;
         }
+    }
+
+    /**
+     * Returns the pre-key-group 4-segment form of a current 5-segment {@code stateKey} by dropping
+     * its leading key-group segment. Used as a lookup fallback so durable state written before the
+     * key-group upgrade — which has no key-group prefix but an otherwise identical
+     * businessKey/seqNum/eventUUID/actionUUID tail — is still found and not re-executed. Returns
+     * the key unchanged when it has no separator.
+     */
+    public static String legacyKeyOf(String stateKey) {
+        Preconditions.checkNotNull(stateKey, "stateKey cannot be null.");
+        int firstSeparator = stateKey.indexOf(KEY_SEPARATOR);
+        return firstSeparator < 0 ? stateKey : stateKey.substring(firstSeparator + 1);
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
