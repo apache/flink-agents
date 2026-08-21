@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -36,7 +37,7 @@ class AsyncExecutorThreadFactoryTest {
                 Executors.newFixedThreadPool(2, new AsyncExecutorThreadFactory());
         try {
             String name = executor.submit(() -> Thread.currentThread().getName()).get();
-            assertThat(name).matches("flink-agents-java-async-\\d+-thread-\\d+");
+            assertThat(name).matches("flink-agents-java-async-pool-\\d+-thread-\\d+");
         } finally {
             executor.shutdownNow();
             executor.awaitTermination(5, TimeUnit.SECONDS);
@@ -62,10 +63,21 @@ class AsyncExecutorThreadFactoryTest {
     }
 
     @Test
-    @DisplayName("Only the name changes: daemon status and priority follow default behavior")
-    void testExecutionBehaviorUnchanged() {
-        Thread thread = new AsyncExecutorThreadFactory().newThread(() -> {});
-        assertThat(thread.isDaemon()).isFalse();
-        assertThat(thread.getPriority()).isEqualTo(Thread.NORM_PRIORITY);
+    @DisplayName(
+            "Daemon status and priority are normalized like the default factory, not inherited")
+    void testDaemonStatusAndPriorityNormalizedNotInherited() throws Exception {
+        // Create workers from a daemon, max-priority thread: a plain new Thread(...) would
+        // inherit both attributes, while the default-factory delegate normalizes them.
+        AtomicReference<Thread> created = new AtomicReference<>();
+        Thread creator =
+                new Thread(() -> created.set(new AsyncExecutorThreadFactory().newThread(() -> {})));
+        creator.setDaemon(true);
+        creator.setPriority(Thread.MAX_PRIORITY);
+        creator.start();
+        creator.join(5000);
+
+        assertThat(created.get()).isNotNull();
+        assertThat(created.get().isDaemon()).isFalse();
+        assertThat(created.get().getPriority()).isEqualTo(Thread.NORM_PRIORITY);
     }
 }

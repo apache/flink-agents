@@ -17,33 +17,31 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * {@link ThreadFactory} for the Flink Agents Java async executor, producing descriptive,
- * collision-resistant thread names of the form {@code
- * flink-agents-java-async-<pool-id>-thread-<worker-id>}.
+ * collision-resistant thread names of the form {@code flink-agents-java-async-pool-N-thread-M}.
  *
  * <p>Default executor names such as {@code pool-N-thread-M} make Flink Agents async workers hard to
  * attribute in TaskManager thread dumps and profiler output, where many unrelated pools coexist.
- * The pool id is process-unique so multiple executor instances in one TaskManager remain
- * distinguishable; only the name changes — thread priority and daemon status follow the default
- * factory behavior.
+ *
+ * <p>Thread creation is delegated to {@link Executors#defaultThreadFactory()}, which normalizes
+ * daemon status and priority regardless of the calling thread (a directly constructed {@code new
+ * Thread(...)} would inherit both from it). This factory only prepends the {@code
+ * flink-agents-java-async-} prefix to the delegate's pool- and worker-numbered name.
  */
 public final class AsyncExecutorThreadFactory implements ThreadFactory {
 
-    private static final AtomicInteger POOL_ID = new AtomicInteger();
+    private static final String NAME_PREFIX = "flink-agents-java-async-";
 
-    private final String namePrefix;
-    private final AtomicInteger workerId = new AtomicInteger();
-
-    public AsyncExecutorThreadFactory() {
-        this.namePrefix = "flink-agents-java-async-" + POOL_ID.incrementAndGet() + "-thread-";
-    }
+    private final ThreadFactory delegate = Executors.defaultThreadFactory();
 
     @Override
     public Thread newThread(Runnable runnable) {
-        return new Thread(runnable, namePrefix + workerId.incrementAndGet());
+        Thread thread = delegate.newThread(runnable);
+        thread.setName(NAME_PREFIX + thread.getName());
+        return thread;
     }
 }
