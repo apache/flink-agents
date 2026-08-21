@@ -22,6 +22,7 @@ import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -80,6 +81,29 @@ class ClasspathSkillRepositoryTest {
         zipDirIntoJarUnderPrefix(resourcesRoot(), jar, "embedded-skills");
         URLClassLoader loader =
                 new URLClassLoader(new URL[] {jar.toUri().toURL()}, /* parent */ null);
+        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        assertEquals(
+                List.of("github", "nano-banana-pro"),
+                repo.getSkills().stream()
+                        .map(AgentSkill::getName)
+                        .sorted()
+                        .collect(Collectors.toList()));
+    }
+
+    @Test
+    void loadFromRelativeJarUrl(@TempDir Path tempDir) throws IOException {
+        // A Flink deployment can add user-code JARs relative to the TaskManager working directory,
+        // so the class loader exposes the jar through a relative file: URL such as
+        // file:../../flink/usrlib/job.jar. new File(URI) rejects that opaque URI; the repository
+        // must still resolve and load the skills. Regression test for GH-966.
+        Path jar = tempDir.resolve("relative-skills.jar");
+        zipDirIntoJarUnderPrefix(resourcesRoot(), jar, "embedded-skills");
+
+        Path relativeJar = Path.of("").toAbsolutePath().relativize(jar);
+        URL relativeUrl =
+                new URL("file:" + relativeJar.toString().replace(File.separatorChar, '/'));
+        URLClassLoader loader = new URLClassLoader(new URL[] {relativeUrl}, /* parent */ null);
+
         ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
         assertEquals(
                 List.of("github", "nano-banana-pro"),
