@@ -385,12 +385,23 @@ def get_long_term_memory(ctx: Any) -> Any:
     return ctx.long_term_memory
 
 
-def to_python_memory_set(name: str) -> MemorySet:
-    """Build a Python ``MemorySet`` from its name. Used by the Java
-    ``Mem0LongTermMemory`` wrapper to forward calls into Python ``Mem0LongTermMemory``,
-    which expects a ``MemorySet`` instance but only reads its ``name`` field.
+def to_python_memory_set(
+    name: str,
+    partition_key: str,
+    observation_id: str = "",
+    observation_suppressed: bool = False,  # noqa: FBT001
+) -> MemorySet:
+    """Build a Python ``MemorySet`` from the fields the Java side holds. Used by the
+    Java ``Mem0LongTermMemory`` wrapper to forward calls into Python
+    ``Mem0LongTermMemory``, which reads the action context off the set rather than
+    off itself, so the context has to travel with each forwarded call.
     """
-    return MemorySet(name=name)
+    return MemorySet(
+        name=name,
+        partition_key=partition_key,
+        observation_id=observation_id,
+        observation_suppressed=observation_suppressed,
+    )
 
 
 def mem0_items_to_java(

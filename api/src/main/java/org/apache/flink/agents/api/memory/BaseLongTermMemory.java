@@ -31,6 +31,11 @@ public interface BaseLongTermMemory extends AutoCloseable {
     /**
      * Gets the memory set by name. If it does not exist, the backend creates it.
      *
+     * <p>The returned set is bound to the calling action, so call this from the action body itself,
+     * not from a callback running on another thread, and obtain one per action rather than holding
+     * one across actions. Operating on a set that carries no binding throws rather than silently
+     * widening the operation to every partition key.
+     *
      * @param name the name of the memory set
      * @return the memory set
      */
@@ -38,6 +43,10 @@ public interface BaseLongTermMemory extends AutoCloseable {
 
     /**
      * Deletes the memory set.
+     *
+     * <p>Unlike the set-scoped operations, this takes a name and applies to the key currently in
+     * scope, so it must be called from the action body rather than from another thread, and can
+     * target a different key than {@link MemorySet#delete} on a same-named set would.
      *
      * @param name the name of the memory set to delete
      * @return true if the memory set was successfully deleted

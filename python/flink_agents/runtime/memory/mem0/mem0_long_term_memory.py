@@ -123,6 +123,23 @@ def _create_flink_agents_config_classes() -> tuple:
     return _FlinkAgentsLlmConfig, _FlinkAgentsEmbedderConfig
 
 
+def _bound_partition_key(memory_set: MemorySet) -> str:
+    """Return the partition key the set is scoped to.
+
+    Mem0 ignores a falsy ``agent_id`` rather than matching on it, so an unbound set
+    would widen every operation to all keys sharing the job id and set name, which
+    for a delete means deleting another key's items. Refuse the operation instead.
+    """
+    if memory_set.partition_key is None:
+        msg = (
+            f"Memory set {memory_set.name!r} is not bound to a partition key. "
+            "Obtain it with get_memory_set inside the action that uses it, rather "
+            "than constructing it directly or reusing one across actions."
+        )
+        raise ValueError(msg)
+    return memory_set.partition_key
+
+
 class Mem0LongTermMemory(InternalBaseLongTermMemory):
     """Long-Term Memory backed by Mem0.
 
@@ -429,17 +446,32 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
     def get_memory_set(self, name: str) -> MemorySet:
         """Get the memory set by name.
 
+        The current partition key and observation context are copied onto the set
+        so that operations submitted to a worker thread stay scoped to the action
+        that obtained it. Must be called on the mailbox thread.
+
         Args:
             name: The name of the memory set.
 
         Returns:
             The memory set.
         """
-        return MemorySet(name=name, ltm=self)
+        return MemorySet(
+            name=name,
+            ltm=self,
+            partition_key=self.key,
+            observation_id=self._observation_id,
+            observation_suppressed=self._observation_suppressed,
+        )
 
     @override
     def delete_memory_set(self, name: str) -> bool:
         """Delete a memory set and all its items.
+
+        Takes a name rather than a ``MemorySet``, so it has no bound context to read
+        and uses the key currently in scope. It is therefore only correct on the
+        mailbox thread, and deleting a whole set can target a different key than
+        ``MemorySet.delete`` on a set of the same name would.
 
         Args:
             name: The name of the memory set.
@@ -485,10 +517,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of IDs of the added memories.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._update_observation_enabled and not self._observation_suppressed
+            self._update_observation_enabled and not memory_set.observation_suppressed
         )
         if isinstance(memory_items, str):
             memory_items = [memory_items]
@@ -550,10 +582,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of memory items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._get_observation_enabled and not self._observation_suppressed
+            self._get_observation_enabled and not memory_set.observation_suppressed
         )
         if ids is not None:
             if isinstance(ids, str):
@@ -605,10 +637,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             memory_set: The memory set to delete from.
             ids: Optional ID or list of IDs. If None, deletes all items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._update_observation_enabled and not self._observation_suppressed
+            self._update_observation_enabled and not memory_set.observation_suppressed
         )
         if ids is None:
             self._mem0_instance.delete_all(
@@ -662,10 +694,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of matching memory items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._search_observation_enabled and not self._observation_suppressed
+            self._search_observation_enabled and not memory_set.observation_suppressed
         )
         result = self._mem0_instance.search(
             query=query,

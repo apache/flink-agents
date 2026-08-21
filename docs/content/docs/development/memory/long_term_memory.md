@@ -179,6 +179,13 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 {{< /tabs >}}
 
+{{< hint warning >}}
+A memory set is scoped to the key of the action that obtained it. Call `get_memory_set` /
+`getMemorySet` inside each action that needs one, rather than caching a set and reusing it
+in a later action. Reusing a set would apply another key's operations to the key it was
+originally obtained for, and operating on a set that carries no scope raises an error.
+{{< /hint >}}
+
 ### Adding Items
 
 {{< tabs "Adding Items" >}}
