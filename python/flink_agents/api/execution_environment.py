@@ -137,7 +137,7 @@ class AgentsExecutionEnvironment(ABC):
         if common_lib.is_dir():
             for jar_file in common_lib.iterdir():
                 if jar_file.is_file() and str(jar_file).endswith(".jar"):
-                    env.add_jars(f"file://{jar_file}")
+                    env.add_jars(jar_file.resolve().as_uri())
         else:
             err_msg = "Flink Agents common JAR not found."
             raise FileNotFoundError(err_msg)
@@ -150,7 +150,7 @@ class AgentsExecutionEnvironment(ABC):
         if version_lib.is_dir():
             for jar_file in version_lib.iterdir():
                 if jar_file.is_file() and str(jar_file).endswith(".jar"):
-                    env.add_jars(f"file://{jar_file}")
+                    env.add_jars(jar_file.resolve().as_uri())
         else:
             err_msg = f"Flink Agents dist JAR for Flink {major_version} not found."
             raise FileNotFoundError(err_msg)

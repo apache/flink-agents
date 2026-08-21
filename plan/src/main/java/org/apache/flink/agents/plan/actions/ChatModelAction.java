@@ -38,6 +38,9 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionReporters;
+import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
@@ -373,19 +376,36 @@ public class ChatModelAction {
                         return chatModel.chat(messages, promptArgs, Map.of());
                     }
                 };
+        Map<String, Object> llmMetadata =
+                chatModel.getModel() == null
+                        ? Map.of()
+                        : Map.of(LLMExecutionMetadataKeys.MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
             try {
-                response =
-                        chatAsync
-                                ? ctx.durableExecuteAsync(callable)
-                                : ctx.durableExecute(callable);
-                recordChatTokenMetrics(chatModel, response, requestMetricGroup);
-                // only generate structured output for final response.
-                if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response = generateStructuredOutput(response, outputSchema);
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+                try {
+                    response =
+                            chatAsync
+                                    ? ctx.durableExecuteAsync(callable)
+                                    : ctx.durableExecute(callable);
+                    Objects.requireNonNull(response, "ChatModel returned a null response.");
+                } catch (Throwable modelError) {
+                    throw reportFailedAndPropagate(
+                            ctx,
+                            ExecutionReporter.EntityTypes.LLM,
+                            model,
+                            llmMetadata,
+                            modelError,
+                            ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 }
-                break;
+                ExecutionReporters.succeeded(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+                recordChatTokenMetrics(chatModel, response, requestMetricGroup);
+                if (outputSchema != null && response.getToolCalls().isEmpty()) {
+                    response = generateStructuredOutputWithReport(ctx, response, outputSchema);
+                }
             } catch (Exception e) {
                 if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
                     LOG.warn(
@@ -408,6 +428,7 @@ public class ChatModelAction {
                         Thread.sleep(currentWaitSec * 1000L);
                         totalWaitTimeSec += currentWaitSec;
                     }
+                    continue;
                 } else {
                     LOG.debug(
                             "Chat request {} failed, the input chat messages are {}.",
@@ -416,6 +437,7 @@ public class ChatModelAction {
                     throw e;
                 }
             }
+            break;
         }
 
         if (actualRetryCount > 0) {
@@ -444,6 +466,25 @@ public class ChatModelAction {
             ctx.sendEvent(
                     new ChatResponseEvent(
                             initialRequestId, response, totalRetryCount, totalRetryWaitSec));
+        }
+    }
+
+    private static ChatMessage generateStructuredOutputWithReport(
+            RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
+        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+        try {
+            ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
+            ExecutionReporters.succeeded(
+                    ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+            return structuredResponse;
+        } catch (Throwable e) {
+            throw reportFailedAndPropagate(
+                    ctx,
+                    ExecutionReporter.EntityTypes.PARSER,
+                    STRUCTURED_OUTPUT,
+                    null,
+                    e,
+                    ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
         }
     }
 
@@ -527,5 +568,32 @@ public class ChatModelAction {
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }
+    }
+
+    /**
+     * Reports a nested execution failure, then always throws the original failure. The Exception
+     * return type exists so callers must {@code throw} the result and cannot fall through.
+     */
+    private static Exception reportFailedAndPropagate(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            @Nullable Map<String, Object> entityMetadata,
+            Throwable error,
+            String problemCategory)
+            throws Exception {
+        if (entityMetadata == null) {
+            ExecutionReporters.failed(ctx, entityType, entityName, error, problemCategory);
+        } else {
+            ExecutionReporters.failed(
+                    ctx, entityType, entityName, entityMetadata, error, problemCategory);
+        }
+        if (error instanceof Error) {
+            throw (Error) error;
+        }
+        if (error instanceof Exception) {
+            throw (Exception) error;
+        }
+        throw new RuntimeException(error);
     }
 }

@@ -188,7 +188,7 @@ agents:
 A few things to notice in the YAML above:
 
 - `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/yaml#class-aliases" >}}) doc.
-- `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events.
+- `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events. An alias replaces only a complete event-type entry; it never rewrites text inside a condition expression or quoted event type.
 - `function:` strings use the `<module-or-class>:<qualname>` format. The right side is the class-qualified method name, so the YAML reuses the same `process_input` / `processInput` static methods the original `ReviewAnalysisAgent` already defines.
 - The prompt is declared inline as a `messages:` list and referenced from the chat-model setup by name.
 

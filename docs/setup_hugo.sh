@@ -18,8 +18,13 @@
 ################################################################################
 
 # setup hugo
-HUGO_REPO=https://github.com/gohugoio/hugo/releases/download/v0.110.0/hugo_extended_0.110.0_Linux-64bit.tar.gz
-HUGO_ARTIFACT=hugo_extended_0.110.0_Linux-64bit.tar.gz
+case "$(uname -m)" in
+	x86_64)  HUGO_ARCH=Linux-64bit ;;
+	aarch64) HUGO_ARCH=linux-arm64 ;;
+	*) echo "No Hugo binary for architecture $(uname -m)" ; exit 1 ;;
+esac
+HUGO_ARTIFACT=hugo_extended_0.110.0_${HUGO_ARCH}.tar.gz
+HUGO_REPO=https://github.com/gohugoio/hugo/releases/download/v0.110.0/${HUGO_ARTIFACT}
 if ! curl --fail -OL $HUGO_REPO ; then
 	echo "Failed to download Hugo binary"
 	exit 1

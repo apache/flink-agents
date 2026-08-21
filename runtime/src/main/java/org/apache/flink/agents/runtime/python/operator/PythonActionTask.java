@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -44,6 +45,22 @@ public class PythonActionTask extends ActionTask {
         checkState(action.getExec() instanceof PythonFunction);
     }
 
+    public PythonActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        super(key, event, action, traceContext);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
+    protected PythonActionTask(
+            Object key,
+            Event event,
+            Action action,
+            String observationId,
+            ExecutionTraceContext traceContext) {
+        super(key, event, action, observationId, traceContext);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
     public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
             throws Exception {
         LOG.debug(
@@ -63,7 +80,8 @@ public class PythonActionTask extends ActionTask {
             // submit an asynchronous task and return whether the action has been completed.
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
             ActionTask tempGeneratedActionTask =
-                    new PythonGeneratorActionTask(key, event, action, getObservationId());
+                    new PythonGeneratorActionTask(
+                            key, event, action, getObservationId(), traceContext);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }

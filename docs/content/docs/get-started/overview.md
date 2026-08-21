@@ -47,3 +47,15 @@ To get started with Apache Flink Agents, you can checkout the following quicksta
 - [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}})
 - [Skills Agent Quickstart]({{< ref "docs/get-started/quickstart/skills_agent" >}})
 - [YAML Agent Quickstart]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
+
+## Preview Status
+
+{{< hint warning >}}
+Apache Flink Agents 0.x releases are preview versions. They may contain known
+or unknown issues, including potential security risks. The APIs and
+configuration are experimental and may change in backward-incompatible ways
+before 1.0. Review the [publicly disclosed known issues](https://github.com/apache/flink-agents/issues)
+and assess these risks before production use. Report suspected undisclosed
+security vulnerabilities privately through the [ASF Security Team](https://www.apache.org/security/)
+instead of creating a public GitHub issue.
+{{< /hint >}}

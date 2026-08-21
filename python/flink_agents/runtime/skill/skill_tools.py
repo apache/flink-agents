@@ -23,13 +23,26 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from flink_agents.runtime.skill.skill_manager import SkillManager
 
 from pydantic import BaseModel, Field
 
+from flink_agents.api.tools import ToolExecutionMetadataProvider
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
+from flink_agents.api.trace import ToolExecutionMetadataKeys
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_SKILL_RESOURCE_PATH = "SKILL.md"
+
+
+def _normalize_skill_resource_path(path: Any, *, missing: bool = False) -> str:
+    """Resolve a skill resource path the same way ``call()`` loads it."""
+    if missing or path is None:
+        return _DEFAULT_SKILL_RESOURCE_PATH
+    return str(path)
 
 
 class LoadSkillArgs(BaseModel):
@@ -47,7 +60,7 @@ class LoadSkillArgs(BaseModel):
     )
 
 
-class LoadSkillTool(Tool):
+class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
     """Tool for loading skill content and resources.
 
     Accesses the SkillManager through the runtime ResourceContext
@@ -73,6 +86,20 @@ class LoadSkillTool(Tool):
         """Return tool type of class."""
         return ToolType.FUNCTION
 
+    def get_tool_execution_metadata(
+        self, parameters: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Describe the requested skill resource for execution tracing."""
+        metadata = {}
+        if "name" in parameters:
+            metadata[ToolExecutionMetadataKeys.SKILL_NAME] = str(parameters["name"])
+        metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] = (
+            _normalize_skill_resource_path(
+                parameters.get("path"), missing="path" not in parameters
+            )
+        )
+        return metadata
+
     def call(self, *args: Any, **kwargs: Any) -> str:
         """Call the tool to load a skill."""
         if args:
@@ -81,7 +108,7 @@ class LoadSkillTool(Tool):
             parsed_args = LoadSkillArgs(**kwargs)
 
         skill_name = parsed_args.name
-        resource_path = parsed_args.path
+        resource_path = _normalize_skill_resource_path(parsed_args.path)
         logger.debug(f"Loading skill resource {resource_path} for {skill_name}.")
 
         manager = self._get_skill_manager()

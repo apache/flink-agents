@@ -27,6 +27,7 @@ from pydantic import AnyUrl
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.tools.tool import ToolMetadata
+from flink_agents.api.trace import ToolExecutionMetadataKeys
 from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
 
 
@@ -140,7 +141,11 @@ def test_mcp_tool_roundtrip_preserves_metadata() -> None:
             "required": ["a", "b"],
         },
     )
-    tool = MCPTool(metadata=metadata, mcp_server=MCPServer(endpoint="http://x"))
+    tool = MCPTool(
+        metadata=metadata,
+        mcp_server=MCPServer(endpoint="http://x"),
+        mcp_server_name="calculator_server",
+    )
 
     dumped = tool.model_dump()
     assert "metadata" in dumped, "serialized form must expose `metadata` key"
@@ -149,3 +154,7 @@ def test_mcp_tool_roundtrip_preserves_metadata() -> None:
     restored = MCPTool.model_validate(dumped)
     assert restored.metadata == metadata
     assert restored.name == "add"
+    assert restored.mcp_server_name == "calculator_server"
+    assert restored.get_tool_execution_metadata({}) == {
+        ToolExecutionMetadataKeys.MCP_SERVER: "calculator_server"
+    }
