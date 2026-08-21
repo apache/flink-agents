@@ -63,9 +63,9 @@ public class ActionStateKeyPartitionerTest {
 
     @Test
     void testValidKeyPartitioning() {
-        String key1 = "1_1_action1_event1";
-        String key2 = "456_1_action2_event2";
-        String key3 = "789_1_action3_event3";
+        String key1 = "0_1_1_action1_event1";
+        String key2 = "5_456_1_action2_event2";
+        String key3 = "9_789_1_action3_event3";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
@@ -81,11 +81,11 @@ public class ActionStateKeyPartitionerTest {
     }
 
     @Test
-    void testSameKeyFirstPartConsistentPartitioning() {
-        // Keys with the same first part should go to the same partition
-        String key1 = "123_1_action1_event1";
-        String key2 = "123_2_action2_event2";
-        String key3 = "123_3_action3_event3";
+    void testSameBusinessKeyConsistentPartitioning() {
+        // Keys sharing the same business key (second segment) go to the same partition
+        String key1 = "5_123_1_action1_event1";
+        String key2 = "5_123_2_action2_event2";
+        String key3 = "5_123_3_action3_event3";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
@@ -155,15 +155,15 @@ public class ActionStateKeyPartitionerTest {
     }
 
     @Test
-    void testEmptyFirstKeyPartThrowException() {
-        String invalidKey = "_1_action_event";
+    void testEmptyBusinessKeyPartThrowException() {
+        String invalidKey = "5__action_event_extra";
         IllegalArgumentException exception =
                 assertThrows(
                         IllegalArgumentException.class,
                         () ->
                                 partitioner.partition(
                                         TEST_TOPIC, invalidKey, null, null, null, cluster));
-        assertEquals("First part of the key cannot be empty", exception.getMessage());
+        assertEquals("Business key part of the key cannot be empty", exception.getMessage());
     }
 
     @Test
@@ -183,7 +183,7 @@ public class ActionStateKeyPartitionerTest {
 
         // Generate keys with different first parts
         for (int i = 0; i < 100; i++) {
-            String key = "" + i + "_1_action_event";
+            String key = "0_" + i + "_1_action_event";
             int partition =
                     partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);
 
@@ -219,7 +219,7 @@ public class ActionStateKeyPartitionerTest {
                         java.util.Collections.emptySet(),
                         java.util.Collections.emptySet());
 
-        String key = "123_1_action1_event1";
+        String key = "5_123_1_action1_event1";
         int partition =
                 partitioner.partition(
                         TEST_TOPIC, key, key.getBytes(), null, null, singlePartitionCluster);
@@ -230,7 +230,7 @@ public class ActionStateKeyPartitionerTest {
     @Test
     void testHashConsistency() {
         // Same key should always produce the same partition
-        String key = "123_1_action1_event1";
+        String key = "5_123_1_action1_event1";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);

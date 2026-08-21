@@ -2045,8 +2045,8 @@ public class ActionExecutionOperatorTest {
      * Regression test: durable-store lookups must use the original typed key, never its string
      * form. The key-group segment embedded in every action-state record key is derived from the
      * typed key's hash, so a stringified lookup computes a different key-group at maxParallelism
-     * greater than 1 and every recovery read misses, silently re-executing completed durable
-     * calls. Harness maxParallelism of 1 masks this (all keys collapse to key-group 0), hence the
+     * greater than 1 and every recovery read misses, silently re-executing completed durable calls.
+     * Harness maxParallelism of 1 masks this (all keys collapse to key-group 0), hence the
      * realistic maxParallelism here.
      */
     @Test
@@ -2096,9 +2096,9 @@ public class ActionExecutionOperatorTest {
      * Regression test for the recovery ownership check: the key-group embedded in a persisted
      * action-state record key is derived from the original typed key, and after rescaling it must
      * be accepted by exactly the subtask that Flink assigns that key to. Under the old scheme —
-     * ownership recomputed by hashing the string form of the business key — the true owner
-     * (subtask of Long(1)'s key-group) would have dropped its own record while a foreign subtask
-     * retained it, re-executing completed actions and leaking orphan state.
+     * ownership recomputed by hashing the string form of the business key — the true owner (subtask
+     * of Long(1)'s key-group) would have dropped its own record while a foreign subtask retained
+     * it, re-executing completed actions and leaking orphan state.
      */
     @Test
     void testOwnershipFilterAcceptsTypedKeyGroupOnlyOnOwnerSubtask() throws Exception {
