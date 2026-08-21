@@ -97,6 +97,20 @@ public interface RunnerContext {
     Resource getResource(String name, ResourceType type) throws Exception;
 
     /**
+     * Checks whether a resource of the given name and type is registered, without creating it.
+     *
+     * <p>Used, for example, to detect whether a requested chat-model name is actually a {@code
+     * MODEL_ROUTER}. Default returns {@code false} for contexts without resource support.
+     *
+     * @param name the resource name
+     * @param type the resource type
+     * @return true if such a resource is registered
+     */
+    default boolean hasResource(String name, ResourceType type) {
+        return false;
+    }
+
+    /**
      * Gets the configuration for Flink Agents.
      *
      * @return the configuration for Flink Agents.

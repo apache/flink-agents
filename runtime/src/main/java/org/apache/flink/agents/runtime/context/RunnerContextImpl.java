@@ -494,6 +494,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public boolean hasResource(String name, ResourceType type) {
+        return resourceCache != null && resourceCache.hasResource(name, type);
+    }
+
+    @Override
     public ReadableConfiguration getConfig() {
         return agentPlan.getConfig();
     }

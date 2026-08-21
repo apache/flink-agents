@@ -119,6 +119,7 @@ public class Agent {
         if (resources.get(type).containsKey(name)) {
             throw new IllegalArgumentException(String.format("%s %s already defined.", type, name));
         }
+        checkNoChatModelRouterNameClash(name, type, resources);
 
         if (instance instanceof SerializableResource) {
             resources.get(type).put(name, instance);
@@ -129,6 +130,29 @@ public class Agent {
                     String.format("Unsupported resource %s", instance.getClass().getName()));
         }
         return this;
+    }
+
+    /**
+     * Chat models and model routers share the chat request namespace ({@code ChatRequestEvent}
+     * names either), so one name must not be registered as both. Checked here, at the registration
+     * call site, so the failure points at the user's own {@code addResource} line; {@code
+     * AgentPlan} re-validates as a backstop.
+     */
+    public static void checkNoChatModelRouterNameClash(
+            String name, ResourceType type, Map<ResourceType, Map<String, Object>> resources) {
+        ResourceType clashing =
+                type == ResourceType.CHAT_MODEL
+                        ? ResourceType.MODEL_ROUTER
+                        : type == ResourceType.MODEL_ROUTER ? ResourceType.CHAT_MODEL : null;
+        if (clashing != null
+                && resources.containsKey(clashing)
+                && resources.get(clashing).containsKey(name)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "'%s' is already registered as %s; chat models and model routers share the"
+                                    + " chat request namespace and must use distinct names.",
+                            name, clashing));
+        }
     }
 
     public enum ErrorHandlingStrategy {

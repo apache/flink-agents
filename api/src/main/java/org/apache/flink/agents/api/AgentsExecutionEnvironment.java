@@ -209,6 +209,7 @@ public abstract class AgentsExecutionEnvironment {
         if (resources.get(type).containsKey(name)) {
             throw new IllegalArgumentException(String.format("%s %s already defined.", type, name));
         }
+        Agent.checkNoChatModelRouterNameClash(name, type, resources);
 
         if (instance instanceof SerializableResource) {
             resources.get(type).put(name, instance);
