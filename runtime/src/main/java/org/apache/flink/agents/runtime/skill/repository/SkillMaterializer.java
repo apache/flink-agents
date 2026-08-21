@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
@@ -254,14 +255,47 @@ public final class SkillMaterializer {
      * @throws IOException on connect / read failures or HTTP error responses.
      */
     public static Path downloadToTempFile(String url, int timeoutMs) throws IOException {
+        return downloadToTempFile(url, timeoutMs, false);
+    }
+
+    /**
+     * Download {@code url}, optionally permitting plain HTTP transport.
+     *
+     * @throws IOException on connect / read failures or HTTP error responses.
+     */
+    public static Path downloadToTempFile(String url, int timeoutMs, boolean allowInsecureHttp)
+            throws IOException {
         URL u = new URL(url);
+        String initialProtocol = u.getProtocol();
+        if (!("https".equalsIgnoreCase(initialProtocol)
+                || (allowInsecureHttp && "http".equalsIgnoreCase(initialProtocol)))) {
+            throw new IOException("Skill URL uses a disallowed transport: " + url);
+        }
         HttpURLConnection conn = (HttpURLConnection) u.openConnection();
         conn.setConnectTimeout(timeoutMs);
         conn.setReadTimeout(timeoutMs);
         conn.setRequestMethod("GET");
+        // HttpURLConnection follows same-protocol redirects but leaves cross-protocol redirects
+        // unfollowed. Any future HTTP client must preserve that restriction.
+        conn.setInstanceFollowRedirects(true);
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
-        try (InputStream in = conn.getInputStream()) {
-            Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+        try {
+            int responseCode = conn.getResponseCode();
+            if (responseCode >= 300 && responseCode < 400) {
+                throw new IOException(
+                        "Skill URL returned an unsupported redirect to: "
+                                + conn.getHeaderField("Location"));
+            }
+            try (InputStream in = conn.getInputStream()) {
+                URL effectiveUrl = conn.getURL();
+                if (!u.toExternalForm().equals(effectiveUrl.toExternalForm())) {
+                    LOG.warn(
+                            "Skill URL redirected from {} to {}",
+                            urlForLogging(u),
+                            urlForLogging(effectiveUrl));
+                }
+                Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             Files.deleteIfExists(tmpZip);
             throw e;
@@ -269,6 +303,23 @@ public final class SkillMaterializer {
             conn.disconnect();
         }
         return tmpZip;
+    }
+
+    private static String urlForLogging(URL url) {
+        try {
+            return new URI(
+                            url.getProtocol(),
+                            null,
+                            url.getHost(),
+                            url.getPort(),
+                            url.getPath(),
+                            null,
+                            null)
+                    .toASCIIString();
+        } catch (URISyntaxException e) {
+            // Keep credentials, query parameters, and fragments out of the fallback too.
+            return url.getProtocol() + "://" + url.getHost();
+        }
     }
 
     private static void deleteRecursively(Path path) {

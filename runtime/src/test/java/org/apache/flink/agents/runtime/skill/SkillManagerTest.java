@@ -29,6 +29,8 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -147,7 +149,10 @@ class SkillManagerTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip));
         try {
             int port = server.getAddress().getPort();
-            Skills config = Skills.fromUrl("http://127.0.0.1:" + port + "/skills.zip");
+            Skills config =
+                    Skills.fromUrlUnsafeWithSha256(
+                            "http://127.0.0.1:" + port + "/skills.zip",
+                            sha256(Files.readAllBytes(zip)));
             SkillManager manager = new SkillManager(config);
             assertEquals(
                     List.of("github", "nano-banana-pro"),
@@ -155,6 +160,18 @@ class SkillManagerTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    void serializedHttpSourceIsRejectedByDefault() {
+        Skills config =
+                new Skills(
+                        List.of(
+                                new SkillSourceSpec(
+                                        "url", Map.of("url", "http://example.com/skills.zip"))));
+        IllegalStateException ex =
+                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+        assertTrue(ex.getCause().getMessage().contains("disabled by default"));
     }
 
     @Test
@@ -223,6 +240,19 @@ class SkillManagerTest {
                         + tag);
     }
 
+    private static String sha256(byte[] bytes) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder hex = new StringBuilder(64);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b & 0xff));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
+        }
+    }
+
     @Test
     void closeReleasesUrlRepoTempDir(@TempDir Path tempDir) throws Exception {
         Path src = Path.of("src/test/resources/skills").toAbsolutePath();
@@ -231,7 +261,7 @@ class SkillManagerTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip));
         try {
             int port = server.getAddress().getPort();
-            Skills config = Skills.fromUrl("http://127.0.0.1:" + port + "/skills.zip");
+            Skills config = Skills.fromUrlUnsafe("http://127.0.0.1:" + port + "/skills.zip");
             SkillManager manager = new SkillManager(config);
             Path dir = manager.getSkillDir("github");
             assertNotNull(dir);
@@ -264,7 +294,9 @@ class SkillManagerTest {
                                             "url",
                                             Map.of(
                                                     "url",
-                                                    "http://127.0.0.1:" + port + "/skills.zip")),
+                                                    "http://127.0.0.1:" + port + "/skills.zip",
+                                                    "allow_insecure_http",
+                                                    "true")),
                                     new SkillSourceSpec(
                                             "classpath", Map.of("resource", "skills"))));
             SkillManager manager = new SkillManager(config);

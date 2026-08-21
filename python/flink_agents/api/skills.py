@@ -23,7 +23,7 @@ Each :class:`Skills` resource carries a single ordered list of
 Use one of the factory methods to construct a :class:`Skills` resource:
 
 * :meth:`Skills.from_local_dir` for local directories or local ``.zip`` files
-* :meth:`Skills.from_url` for http(s) URLs pointing to a ``.zip``
+* :meth:`Skills.from_url` for HTTPS URLs pointing to a ``.zip``
 * :meth:`Skills.from_package` for resources inside installed packages
 
 Example::
@@ -57,7 +57,9 @@ sources; the runtime merges them and de-duplicates identical
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Tuple
+from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import override
@@ -107,21 +109,95 @@ class Skills(SerializableResource):
         a zip, its top-level entries are the skill subdirectories.
         """
         return cls(
-            sources=[
-                SkillSourceSpec(scheme="local", params={"path": p}) for p in paths
-            ]
+            sources=[SkillSourceSpec(scheme="local", params={"path": p}) for p in paths]
         )
 
     @classmethod
     def from_url(cls, *urls: str) -> Skills:
-        """Create a Skills resource from one or more http(s) URLs.
+        """Create a Skills resource from one or more HTTPS URLs.
 
         Each URL must point to a ``.zip`` whose top level is the baseDir
         (i.e. skill subdirectories sit at the top of the zip).
         """
+        for url in urls:
+            cls._require_url(url, allow_insecure_http=False)
         return cls(
             sources=[SkillSourceSpec(scheme="url", params={"url": u}) for u in urls]
         )
+
+    @classmethod
+    def from_url_with_sha256(cls, url: str, sha256: str) -> Skills:
+        """Create an HTTPS URL source pinned to a SHA-256 archive digest."""
+        cls._require_url(url, allow_insecure_http=False)
+        cls._require_sha256(sha256)
+        return cls(
+            sources=[
+                SkillSourceSpec(scheme="url", params={"url": url, "sha256": sha256})
+            ]
+        )
+
+    @classmethod
+    def from_url_unsafe(cls, *urls: str) -> Skills:
+        """Create URL sources that explicitly permit plain HTTP transport.
+
+        This compatibility escape hatch should be used only on trusted networks.
+        Prefer :meth:`from_url` with HTTPS.
+        """
+        for url in urls:
+            cls._require_url(url, allow_insecure_http=True)
+        return cls(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url",
+                    params={"url": url, "allow_insecure_http": "true"},
+                )
+                for url in urls
+            ]
+        )
+
+    @classmethod
+    def from_url_unsafe_with_sha256(cls, url: str, sha256: str) -> Skills:
+        """Create a digest-pinned source that explicitly permits plain HTTP."""
+        cls._require_url(url, allow_insecure_http=True)
+        cls._require_sha256(sha256)
+        return cls(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url",
+                    params={
+                        "url": url,
+                        "sha256": sha256,
+                        "allow_insecure_http": "true",
+                    },
+                )
+            ]
+        )
+
+    @staticmethod
+    def _require_url(url: str, *, allow_insecure_http: bool) -> None:
+        if not isinstance(url, str):
+            msg = "skill URL must be a string"
+            raise TypeError(msg)
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower()
+        if scheme not in {"http", "https"}:
+            msg = f"Only HTTP(S) skill URLs are supported: {url}"
+            raise ValueError(msg)
+        if scheme == "http" and not allow_insecure_http:
+            msg = (
+                "Plain HTTP skill URLs are disabled by default; use HTTPS or "
+                f"explicitly allow insecure HTTP for this source: {url}"
+            )
+            raise ValueError(msg)
+        if not parsed.netloc:
+            msg = f"Skill URL must include a host: {url}"
+            raise ValueError(msg)
+
+    @staticmethod
+    def _require_sha256(sha256: str) -> None:
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
+            raise ValueError(msg)
 
     @classmethod
     def from_package(cls, *pairs: Tuple[str, str]) -> Skills:

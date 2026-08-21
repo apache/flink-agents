@@ -17,6 +17,7 @@
 ################################################################################
 """Unit tests for SkillManager and skill tools."""
 
+import hashlib
 import importlib
 import shutil
 import sys
@@ -202,9 +203,22 @@ def mixed_sources(tmp_path: Path):
 class TestSkillManagerMixedSources:
     def test_url_only_loads_skills(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        digest = hashlib.sha256(_ZipHandler.zip_bytes).hexdigest()
+        config = Skills.from_url_unsafe_with_sha256(url, digest)
         manager = SkillManager(config)
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
+
+    def test_serialized_http_source_is_rejected_by_default(self) -> None:
+        config = Skills(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url", params={"url": "http://example.com/skills.zip"}
+                )
+            ]
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config)
+        assert "disabled by default" in str(exc_info.value.__cause__)
 
     def test_package_only_loads_skills(self, mixed_sources) -> None:
         _dir, _url, pkg, resource = mixed_sources
@@ -221,7 +235,10 @@ class TestSkillManagerMixedSources:
         config = Skills(
             sources=[
                 SkillSourceSpec(scheme="local", params={"path": dir_path}),
-                SkillSourceSpec(scheme="url", params={"url": url}),
+                SkillSourceSpec(
+                    scheme="url",
+                    params={"url": url, "allow_insecure_http": "true"},
+                ),
                 SkillSourceSpec(
                     scheme="package",
                     params={"package": pkg, "resource": resource},
@@ -236,7 +253,7 @@ class TestSkillManagerMixedSources:
 
     def test_close_releases_url_repo_temp_dir(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        config = Skills.from_url_unsafe(url)
         with SkillManager(config) as manager:
             skill_dir = manager.get_skill_dir("github")
             assert skill_dir is not None

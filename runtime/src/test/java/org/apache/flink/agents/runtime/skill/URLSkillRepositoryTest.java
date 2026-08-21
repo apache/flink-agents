@@ -25,8 +25,11 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -85,7 +88,8 @@ class URLSkillRepositoryTest {
         try {
             int port = server.getAddress().getPort();
             URLSkillRepository repo =
-                    new URLSkillRepository("http://127.0.0.1:" + port + "/skills.zip");
+                    new URLSkillRepository(
+                            "http://127.0.0.1:" + port + "/skills.zip", sha256(body), true);
             assertEquals(
                     List.of("github", "nano-banana-pro"),
                     repo.getSkills().stream()
@@ -98,18 +102,60 @@ class URLSkillRepositoryTest {
     }
 
     @Test
+    void plainHttpRejectedByDefault() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("http://example.com/skills.zip"));
+        assertTrue(ex.getMessage().contains("disabled by default"));
+    }
+
+    @Test
+    void sha256MismatchRejectedBeforeExtraction(@TempDir Path tempDir) throws IOException {
+        Path zip = tempDir.resolve("skills.zip");
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry("../evil.txt"));
+            zos.write("pwn".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        HttpServer server = startZipServer(Files.readAllBytes(zip), 200);
+        try {
+            int port = server.getAddress().getPort();
+            String url = "http://127.0.0.1:" + port + "/skills.zip";
+            IllegalArgumentException ex =
+                    assertThrows(
+                            IllegalArgumentException.class,
+                            () -> new URLSkillRepository(url, "0".repeat(64), true));
+            assertTrue(ex.getMessage().contains("SHA-256 mismatch"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void malformedSha256RejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "http://127.0.0.1:1/skills.zip", "invalid", true));
+        assertTrue(ex.getMessage().contains("64 hexadecimal"));
+    }
+
+    @Test
     void nonHttpUrlRejected() {
         IllegalArgumentException ex1 =
                 assertThrows(
                         IllegalArgumentException.class,
                         () -> new URLSkillRepository("file:///tmp/skills.zip"));
-        assertTrue(ex1.getMessage().contains("Only http"));
+        assertTrue(ex1.getMessage().contains("Only HTTP(S)"));
 
         IllegalArgumentException ex2 =
                 assertThrows(
                         IllegalArgumentException.class,
                         () -> new URLSkillRepository("ftp://example.com/skills.zip"));
-        assertTrue(ex2.getMessage().contains("Only http"));
+        assertTrue(ex2.getMessage().contains("Only HTTP(S)"));
     }
 
     @Test
@@ -118,9 +164,22 @@ class URLSkillRepositoryTest {
         try {
             int port = server.getAddress().getPort();
             String url = "http://127.0.0.1:" + port + "/missing.zip";
-            assertThrows(IOException.class, () -> new URLSkillRepository(url));
+            assertThrows(IOException.class, () -> new URLSkillRepository(url, null, true));
         } finally {
             server.stop(0);
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder hex = new StringBuilder(64);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b & 0xff));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
         }
     }
 }

@@ -17,9 +17,11 @@
 #################################################################################
 """Unit tests for URLSkillRepository."""
 
+import hashlib
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -78,22 +80,50 @@ def zip_server(skills_zip_path: Path) -> "tuple[str, type[_ZipHandler]]":
 class TestURLSkillRepository:
     def test_load_from_url(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, _handler = zip_server
-        repo = URLSkillRepository(url)
+        digest = hashlib.sha256(_handler.zip_bytes).hexdigest()
+        repo = URLSkillRepository(url, sha256=digest, allow_insecure_http=True)
 
         skills = repo.get_skills()
         names = {s.name for s in skills}
         assert names == {"github", "nano-banana-pro"}
 
     def test_non_http_url_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Only http"):
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
             URLSkillRepository("file:///tmp/skills.zip")
 
-        with pytest.raises(ValueError, match="Only http"):
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
             URLSkillRepository("ftp://example.com/skills.zip")
+
+    def test_plain_http_rejected_by_default(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, _handler = zip_server
+        with pytest.raises(ValueError, match="disabled by default"):
+            URLSkillRepository(url)
+
+    def test_sha256_mismatch_rejected_before_extraction(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, handler = zip_server
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../evil.txt", "pwn")
+        handler.zip_bytes = archive.getvalue()
+
+        with pytest.raises(ValueError, match="SHA-256 mismatch"):
+            URLSkillRepository(url, sha256="0" * 64, allow_insecure_http=True)
+
+    def test_malformed_sha256_rejected_before_download(self) -> None:
+        with pytest.raises(ValueError, match="64 hexadecimal"):
+            URLSkillRepository(
+                "http://127.0.0.1:1/skills.zip",
+                sha256="invalid",
+                allow_insecure_http=True,
+            )
 
     def test_404_error(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, handler = zip_server
         handler.status = 404
 
         with pytest.raises(HTTPError):
-            URLSkillRepository(url)
+            URLSkillRepository(url, allow_insecure_http=True)

@@ -20,18 +20,49 @@
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import shutil
 import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 if TYPE_CHECKING:
+    from typing import Any
+
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
+logger = logging.getLogger(__name__)
+
+
+class _SameProtocolRedirectHandler(HTTPRedirectHandler):
+    """Reject cross-protocol redirects before requesting their targets."""
+
+    def __init__(
+        self, initial_scheme: str, *, allow_insecure_http: bool = False
+    ) -> None:
+        self._initial_scheme = initial_scheme
+        self._allow_insecure_http = allow_insecure_http
+
+    def redirect_request(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Request | None:
+        _require_allowed_transport(
+            newurl,
+            allow_insecure_http=self._allow_insecure_http,
+            initial_scheme=self._initial_scheme,
+        )
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 class Materialized:
@@ -134,23 +165,36 @@ def extract_zip_safely(zip_path: Path) -> Materialized:
     return materialized
 
 
-def download_to_tempfile(url: str, timeout: int = 90) -> Path:
+def download_to_tempfile(
+    url: str, timeout: int = 90, *, allow_insecure_http: bool = False
+) -> Path:
     """Download ``url`` to a temp file and return its path.
 
     Uses ``urllib.request`` from the standard library. ``timeout`` is the
-    socket-level timeout passed to ``urlopen`` and applies to both the
+    socket-level timeout passed to the opener and applies to both the
     connection and the read phases.
 
     Args:
         url: The URL to download.
         timeout: Socket timeout in seconds.
+        allow_insecure_http: Whether the request may use plain HTTP.
 
     Returns:
         Path to the downloaded temp file (caller is responsible for deletion).
 
     Raises:
+        ValueError: If the request or response uses a disallowed transport, or
+            a redirect changes protocols.
         urllib.error.HTTPError / URLError on HTTP or transport failures.
     """
+    initial_scheme = _require_allowed_transport(
+        url, allow_insecure_http=allow_insecure_http
+    )
+    opener = build_opener(
+        _SameProtocolRedirectHandler(
+            initial_scheme, allow_insecure_http=allow_insecure_http
+        )
+    )
     req = Request(url, method="GET")
     # The .zip suffix is load-bearing: FileSystemSkillRepository uses
     # path.suffix == ".zip" to detect zip input. Do not change it.
@@ -158,9 +202,48 @@ def download_to_tempfile(url: str, timeout: int = 90) -> Path:
     os.close(fd)
     tmp_path = Path(tmp_path_str)
     try:
-        with urlopen(req, timeout=timeout) as resp, tmp_path.open("wb") as out:
+        with opener.open(req, timeout=timeout) as resp, tmp_path.open("wb") as out:
+            final_url = resp.geturl()
+            _require_allowed_transport(
+                final_url,
+                allow_insecure_http=allow_insecure_http,
+                initial_scheme=initial_scheme,
+            )
+            if final_url != url:
+                logger.warning(
+                    "Skill URL redirected from %s to %s",
+                    _url_for_logging(url),
+                    _url_for_logging(final_url),
+                )
             shutil.copyfileobj(resp, out)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
     return tmp_path
+
+
+def _url_for_logging(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    except ValueError:
+        scheme = url.split(":", 1)[0].lower()
+        return f"{scheme}://<redacted>"
+
+
+def _require_allowed_transport(
+    final_url: str,
+    *,
+    allow_insecure_http: bool,
+    initial_scheme: str | None = None,
+) -> str:
+    final_scheme = final_url.split(":", 1)[0].lower()
+    allowed_schemes = {"http", "https"} if allow_insecure_http else {"https"}
+    if final_scheme not in allowed_schemes:
+        msg = f"Skill URL used a disallowed transport: {final_url}"
+        raise ValueError(msg)
+    if initial_scheme is not None and final_scheme != initial_scheme:
+        msg = f"Skill URL returned an unsupported redirect to: {final_url}"
+        raise ValueError(msg)
+    return final_scheme

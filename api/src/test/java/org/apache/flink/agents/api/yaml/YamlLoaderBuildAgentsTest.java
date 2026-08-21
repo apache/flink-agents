@@ -134,6 +134,34 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void rejectsPlainHttpSkillUrlDuringLoading(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("plain_http_skill.yaml");
+        Files.writeString(
+                file,
+                "skills:\n"
+                        + "  - name: invalid\n"
+                        + "    urls: [http://example.com/skills.zip]\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .hasMessageContaining("Plain HTTP skill URLs are disabled by default");
+    }
+
+    @Test
+    void rejectsMalformedSkillDigestDuringLoading(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("malformed_skill_digest.yaml");
+        Files.writeString(
+                file,
+                "skills:\n"
+                        + "  - name: invalid\n"
+                        + "    url_sources:\n"
+                        + "      - url: https://example.com/skills.zip\n"
+                        + "        sha256: invalid\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .hasMessageContaining("sha256 must contain exactly 64 hexadecimal characters");
+    }
+
+    @Test
     void actionDefaultsToPython(@TempDir Path tmp) throws Exception {
         // Action with no `type:` field defaults to Python (host-neutral default — matches the
         // Python loader so the same YAML behaves identically on either side).

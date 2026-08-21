@@ -17,6 +17,8 @@
 #################################################################################
 """Tests for the Skills resource API."""
 
+import pytest
+
 from flink_agents.api.skills import Skills, SkillSourceSpec
 
 
@@ -31,10 +33,43 @@ class TestSkillsFactories:
     def test_from_url_emits_url_scheme(self) -> None:
         s = Skills.from_url("https://example.com/x.zip")
         assert s.sources == [
+            SkillSourceSpec(scheme="url", params={"url": "https://example.com/x.zip"})
+        ]
+
+    def test_from_url_with_sha256_emits_integrity_param(self) -> None:
+        digest = "a" * 64
+        s = Skills.from_url_with_sha256("https://example.com/x.zip", digest)
+        assert s.sources == [
             SkillSourceSpec(
-                scheme="url", params={"url": "https://example.com/x.zip"}
+                scheme="url",
+                params={"url": "https://example.com/x.zip", "sha256": digest},
             )
         ]
+
+    def test_from_url_unsafe_requires_explicit_param(self) -> None:
+        s = Skills.from_url_unsafe("http://example.com/x.zip")
+        assert s.sources[0].params["allow_insecure_http"] == "true"
+
+    def test_from_url_unsafe_with_sha256_emits_both_params(self) -> None:
+        digest = "a" * 64
+        s = Skills.from_url_unsafe_with_sha256("http://example.com/x.zip", digest)
+        assert s.sources[0].params == {
+            "url": "http://example.com/x.zip",
+            "sha256": digest,
+            "allow_insecure_http": "true",
+        }
+
+    def test_from_url_rejects_plain_http_by_default(self) -> None:
+        with pytest.raises(ValueError, match="disabled by default"):
+            Skills.from_url("http://example.com/x.zip")
+
+    def test_from_url_with_sha256_rejects_malformed_digest(self) -> None:
+        with pytest.raises(ValueError, match="64 hexadecimal"):
+            Skills.from_url_with_sha256("https://example.com/x.zip", "invalid")
+
+    def test_from_url_rejects_unsupported_scheme_clearly(self) -> None:
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
+            Skills.from_url("ftp://example.com/x.zip")
 
     def test_from_package_single_pair(self) -> None:
         s = Skills.from_package(("my_pkg", "skills"))
@@ -60,7 +95,12 @@ class TestSkillsFactories:
             sources=[
                 SkillSourceSpec(scheme="local", params={"path": "/a"}),
                 SkillSourceSpec(
-                    scheme="url", params={"url": "https://e.com/x.zip"}
+                    scheme="url",
+                    params={
+                        "url": "http://e.com/x.zip",
+                        "sha256": "a" * 64,
+                        "allow_insecure_http": "true",
+                    },
                 ),
                 SkillSourceSpec(
                     scheme="package",
@@ -69,6 +109,7 @@ class TestSkillsFactories:
             ]
         )
         dumped = s.model_dump()
+        assert dumped["sources"][1]["params"]["allow_insecure_http"] == "true"
         restored = Skills.model_validate(dumped)
         assert restored.sources == s.sources
 

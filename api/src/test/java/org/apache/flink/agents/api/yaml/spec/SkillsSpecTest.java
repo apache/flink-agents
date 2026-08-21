@@ -41,10 +41,20 @@ class SkillsSpecTest {
     void parsesUrlsAndClasspath() throws Exception {
         SkillsSpec spec =
                 M.readValue(
-                        "name: s\nurls: [https://x/skills.zip]\nclasspath: [com/example/s]\n",
+                        "name: s\n"
+                                + "urls: [https://x/unpinned.zip]\n"
+                                + "url_sources:\n"
+                                + "  - url: https://x/skills.zip\n"
+                                + "    sha256: "
+                                + "a".repeat(64)
+                                + "\n"
+                                + "classpath: [com/example/s]\n",
                         SkillsSpec.class);
         assertThat(spec.getPaths()).isEmpty();
-        assertThat(spec.getUrls()).containsExactly("https://x/skills.zip");
+        assertThat(spec.getUrls()).containsExactly("https://x/unpinned.zip");
+        assertThat(spec.getUrlSources()).hasSize(1);
+        assertThat(spec.getUrlSources().get(0).getUrl()).isEqualTo("https://x/skills.zip");
+        assertThat(spec.getUrlSources().get(0).getSha256()).isEqualTo("a".repeat(64));
         assertThat(spec.getClasspath()).containsExactly("com/example/s");
     }
 
@@ -57,6 +67,6 @@ class SkillsSpecTest {
     @Test
     void rejectsAllEmpty() {
         assertThatThrownBy(() -> M.readValue("name: s\n", SkillsSpec.class))
-                .hasMessageContaining("at least one of paths/urls/classpath");
+                .hasMessageContaining("at least one of paths/urls/url_sources/classpath");
     }
 }

@@ -17,6 +17,7 @@
 #################################################################################
 """Unit tests for the _materialize utility module."""
 
+import logging
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -97,9 +98,15 @@ class TestMaterialized:
 class _StaticHandler(BaseHTTPRequestHandler):
     payload: bytes = b""
     status: int = 200
+    redirect_location: str | None = None
 
     def do_GET(self) -> None:
-        self.send_response(type(self).status)
+        is_redirect = self.path.startswith("/redirect") and (
+            type(self).redirect_location is not None
+        )
+        self.send_response(302 if is_redirect else type(self).status)
+        if is_redirect:
+            self.send_header("Location", type(self).redirect_location)
         self.send_header("Content-Length", str(len(type(self).payload)))
         self.end_headers()
         self.wfile.write(type(self).payload)
@@ -112,6 +119,7 @@ class _StaticHandler(BaseHTTPRequestHandler):
 def static_server() -> "tuple[str, type[_StaticHandler]]":
     _StaticHandler.payload = b""
     _StaticHandler.status = 200
+    _StaticHandler.redirect_location = None
     server = HTTPServer(("127.0.0.1", 0), _StaticHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -123,6 +131,7 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
         server.server_close()
         _StaticHandler.payload = b""
         _StaticHandler.status = 200
+        _StaticHandler.redirect_location = None
 
 
 class TestDownloadToTempfile:
@@ -133,7 +142,9 @@ class TestDownloadToTempfile:
         handler.payload = b"hello-zip-bytes"
         handler.status = 200
 
-        path = download_to_tempfile(f"{base_url}/anything", timeout=10)
+        path = download_to_tempfile(
+            f"{base_url}/anything", timeout=10, allow_insecure_http=True
+        )
 
         try:
             assert path.is_file()
@@ -149,4 +160,54 @@ class TestDownloadToTempfile:
         handler.status = 404
 
         with pytest.raises(HTTPError):
-            download_to_tempfile(f"{base_url}/missing", timeout=10)
+            download_to_tempfile(
+                f"{base_url}/missing", timeout=10, allow_insecure_http=True
+            )
+
+    def test_rejects_plain_http_by_default(self) -> None:
+        with pytest.raises(ValueError, match="disallowed transport"):
+            download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
+
+    def test_rejects_cross_protocol_redirect_before_request(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = "https://127.0.0.1:1/skills.zip"
+
+        with pytest.raises(
+            ValueError, match=r"unsupported redirect.*https://127\.0\.0\.1:1"
+        ):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+
+    def test_logs_sanitized_effective_url_for_same_protocol_redirect(
+        self,
+        static_server: "tuple[str, type[_StaticHandler]]",
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"redirected-zip-bytes"
+        handler.redirect_location = (
+            f"{base_url}/skills.zip?redirect_token=secret#redirect-fragment"
+        )
+
+        configured_url = f"{base_url}/redirect?configured_token=secret"
+        with caplog.at_level(
+            logging.WARNING,
+            logger="flink_agents.runtime.skill.repository._materialize",
+        ):
+            path = download_to_tempfile(
+                configured_url, timeout=10, allow_insecure_http=True
+            )
+
+        try:
+            assert path.read_bytes() == b"redirected-zip-bytes"
+            warning = "\n".join(caplog.messages)
+            assert f"{base_url}/redirect" in warning
+            assert f"{base_url}/skills.zip" in warning
+            assert "configured_token" not in warning
+            assert "redirect_token" not in warning
+            assert "redirect-fragment" not in warning
+        finally:
+            path.unlink(missing_ok=True)

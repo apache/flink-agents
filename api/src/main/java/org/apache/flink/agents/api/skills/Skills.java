@@ -25,9 +25,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
+import java.net.URI;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -41,7 +43,7 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li>{@link #fromLocalDir(String...)} for local directories or {@code .zip} files
- *   <li>{@link #fromUrl(String...)} for http(s) URLs pointing to a {@code .zip}
+ *   <li>{@link #fromUrl(String...)} for HTTPS URLs pointing to a {@code .zip}
  *   <li>{@link #fromClasspath(String...)} for resources on the classpath
  * </ul>
  *
@@ -92,15 +94,92 @@ public class Skills extends SerializableResource {
     }
 
     /**
-     * Create a {@link Skills} resource from one or more http(s) URLs.
+     * Create a {@link Skills} resource from one or more HTTPS URLs.
      *
      * <p>Each URL must point to a {@code .zip} whose top level is the baseDir.
      */
     public static Skills fromUrl(String... urls) {
         return new Skills(
                 Arrays.stream(urls)
-                        .map(u -> new SkillSourceSpec("url", Map.of("url", u)))
+                        .map(
+                                u -> {
+                                    requireUrl(u, false);
+                                    return new SkillSourceSpec("url", Map.of("url", u));
+                                })
                         .collect(Collectors.toList()));
+    }
+
+    /**
+     * Create a {@link Skills} resource from an HTTPS URL pinned to a SHA-256 digest.
+     *
+     * <p>The digest is verified against the downloaded archive before extraction.
+     */
+    public static Skills fromUrlWithSha256(String url, String sha256) {
+        return urlSource(url, sha256, false);
+    }
+
+    /**
+     * Create a {@link Skills} resource that explicitly permits plain HTTP transport.
+     *
+     * <p>This compatibility escape hatch should be used only on trusted networks. Prefer {@link
+     * #fromUrl(String...)} with HTTPS.
+     */
+    public static Skills fromUrlUnsafe(String... urls) {
+        return new Skills(
+                Arrays.stream(urls)
+                        .map(
+                                u -> {
+                                    requireUrl(u, true);
+                                    return new SkillSourceSpec(
+                                            "url", Map.of("url", u, "allow_insecure_http", "true"));
+                                })
+                        .collect(Collectors.toList()));
+    }
+
+    /**
+     * Create a digest-pinned {@link Skills} resource that explicitly permits plain HTTP transport.
+     */
+    public static Skills fromUrlUnsafeWithSha256(String url, String sha256) {
+        return urlSource(url, sha256, true);
+    }
+
+    private static Skills urlSource(String url, String sha256, boolean allowInsecureHttp) {
+        requireUrl(url, allowInsecureHttp);
+        if (sha256 == null || !sha256.matches("[0-9a-fA-F]{64}")) {
+            throw new IllegalArgumentException(
+                    "sha256 must contain exactly 64 hexadecimal characters");
+        }
+        Map<String, String> params =
+                allowInsecureHttp
+                        ? Map.of("url", url, "sha256", sha256, "allow_insecure_http", "true")
+                        : Map.of("url", url, "sha256", sha256);
+        return new Skills(List.of(new SkillSourceSpec("url", params)));
+    }
+
+    private static void requireUrl(String url, boolean allowInsecureHttp) {
+        if (url == null) {
+            throw new IllegalArgumentException("skill URL must not be null");
+        }
+        URI uri;
+        try {
+            uri = URI.create(url);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("Invalid skill URL: " + url, e);
+        }
+        String scheme = uri.getScheme();
+        scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
+        if (!(scheme.equals("http") || scheme.equals("https"))) {
+            throw new IllegalArgumentException("Only HTTP(S) skill URLs are supported: " + url);
+        }
+        if (scheme.equals("http") && !allowInsecureHttp) {
+            throw new IllegalArgumentException(
+                    "Plain HTTP skill URLs are disabled by default; use HTTPS or explicitly allow"
+                            + " insecure HTTP for this source: "
+                            + url);
+        }
+        if (uri.getRawAuthority() == null || uri.getRawAuthority().isEmpty()) {
+            throw new IllegalArgumentException("Skill URL must include a host: " + url);
+        }
     }
 
     /**
