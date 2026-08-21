@@ -20,8 +20,53 @@ set -e
 
 ROOT="$(cd "$( dirname "$0" )" && pwd)/.."
 
-# Default Flink version
-DEFAULT_FLINK_VERSION="2.2"
+# Read the default Flink version from the root pom rather than pinning it here,
+# so bumping the project's Flink version cannot leave this script testing an
+# older line. The pom carries x.y.z; the version tokens used below are x.y.
+# Anything that does not end up shaped x.y is fatal, because the value flows
+# unvalidated into dist module paths, -P profile names and the pip requirement.
+# Whitespace is stripped because XML permits padding inside the element and a
+# version token carries none of its own.
+POM_FLINK_VERSION="$(sed -n 's/.*<flink\.version>\([^<]*\)<\/flink\.version>.*/\1/p' "${ROOT}/pom.xml" 2>/dev/null | head -1 | tr -d '[:space:]')"
+DEFAULT_FLINK_VERSION="${POM_FLINK_VERSION%.*}"
+if [[ -z "${POM_FLINK_VERSION}" ]]; then
+    echo "Error: found no usable <flink.version> value in ${ROOT}/pom.xml; the file must exist and pin an x.y.z version" >&2
+    exit 1
+fi
+if [[ ! "${DEFAULT_FLINK_VERSION}" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "Error: read '${POM_FLINK_VERSION}' as <flink.version> from ${ROOT}/pom.xml; expected an x.y.z version, not a property reference or a shorter version" >&2
+    exit 1
+fi
+
+# The versions -f accepts are derived from the dist modules rather than listed
+# here, because -f resolves to dist/flink-<version>: a value with no directory
+# names a Maven module that does not exist. Glob expansion is already sorted,
+# so the list is deterministic; the ordering is lexicographic rather than by
+# version precedence, so a two-digit minor sorts ahead of a one-digit one.
+SUPPORTED_FLINK_VERSIONS=()
+for dist_dir in "${ROOT}"/dist/flink-*/; do
+    [[ -d "${dist_dir}" ]] || continue
+    dist_dir="${dist_dir%/}"
+    SUPPORTED_FLINK_VERSIONS+=("${dist_dir##*/flink-}")
+done
+# Checked separately from the per-version validation below: with nothing in the
+# set, every version fails that check, and its messages would blame the version
+# under test for what is really a tree carrying no dist modules at all.
+if [[ ${#SUPPORTED_FLINK_VERSIONS[@]} -eq 0 ]]; then
+    echo "Error: found no dist/flink-* modules under ${ROOT}; the set of supported Flink versions is read from them and cannot be determined" >&2
+    exit 1
+fi
+
+# bash 3.2 has no associative arrays, so membership is a scan.
+is_supported_flink_version() {
+    local candidate="$1" supported
+    for supported in "${SUPPORTED_FLINK_VERSIONS[@]}"; do
+        if [[ "${candidate}" == "${supported}" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 
 # Default values
 run_java=true
@@ -29,6 +74,10 @@ run_python=true
 run_e2e=false
 verbose=false
 flink_versions=()
+# Whether -f was passed rather than defaulted. Not recoverable from
+# flink_versions afterwards: the default fill makes a defaulted array
+# indistinguishable from an explicit request for the same version.
+flink_explicit=false
 
 # Help information
 show_help() {
@@ -43,17 +92,21 @@ Options:
   -e, --e2e         Run e2e tests
   -b, --both        Run both Java and Python tests (default)
   -f, --flink       Specify Flink version to test (can be used multiple times)
-                    Supported versions: 2.3, 2.2, 2.1, 2.0, 1.20
-                    Examples: -f 2.3, -f 1.20, -f 2.3 -f 1.20
-                    Default: run all versions if not specified
+                    Supported versions: ${SUPPORTED_FLINK_VERSIONS[*]}
+                    Examples: -e -f 2.3, -e -f 1.20, -e -f 2.3 -f 1.20
+                    Default: ${DEFAULT_FLINK_VERSION}, from flink.version in the root pom.xml
+                    Requires -e: it selects the Flink version the e2e tests run
+                    against. The unit tests cannot be retargeted; each Java
+                    module builds against the version its own pom resolves, and
+                    the Python unit tests install apache-flink~=${DEFAULT_FLINK_VERSION}.0.
   -v, --verbose     Show verbose output
   -h, --help        Display this help message
 
 Examples:
-  $0 --java         # Run only Java tests (all Flink versions)
+  $0 --java         # Run only Java tests
   $0 -p             # Run only Python tests
-  $0 -f 2.2         # Run tests only for Flink 2.2
-  $0 -f 1.20        # Run tests only for Flink 1.20
+  $0 -e -f 2.2      # Run the e2e tests against Flink 2.2
+  $0 -e -f 1.20     # Run the e2e tests against Flink 1.20
   $0 -v             # Run all tests with verbose output
 
 Exit codes:
@@ -84,11 +137,12 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         -f|--flink)
             if [[ -z "$2" || "$2" == -* ]]; then
-                echo "Error: -f requires a version argument (e.g., -f 1.20)" >&2
+                echo "Error: -f requires a version argument (e.g., -e -f 1.20)" >&2
                 show_help
                 exit 1
             fi
             flink_versions+=("$2")
+            flink_explicit=true
             shift
             ;;
         -v|--verbose)
@@ -107,10 +161,49 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# -f selects the Flink version the e2e tests run against, and nothing else
+# reads it. Each Java module compiles and tests against the <flink.version> its
+# own pom resolves: most inherit the root's, while most dist/flink-<v> modules
+# override it with the matching flink.<v>.version, and those modules stay in
+# the unit-test reactor because only the e2e modules are excluded from it. The
+# Python unit tests install the requirement built from the default version. So
+# outside -e the flag has nothing left to select.
+# Checked before the version is validated below: when the flag does not apply
+# at all, the value it carries is beside the point, and reporting that value as
+# unsupported would send the caller looking for a different one.
+if $flink_explicit && ! $run_e2e; then
+    cat >&2 <<EOF
+Error: -f requires -e; it selects the Flink version the e2e tests run against.
+       The unit tests cannot be retargeted: each Java module builds against the
+       version its own pom resolves, and the Python unit tests install
+       apache-flink~=${DEFAULT_FLINK_VERSION}.0.
+EOF
+    exit 1
+fi
+
 # If no version is specified, the default version will be run by default.
 if [ ${#flink_versions[@]} -eq 0 ]; then
     flink_versions=("${DEFAULT_FLINK_VERSION}")
 fi
+
+# Validated here rather than as each -f is parsed so that the defaulted value
+# is checked too. The default and the accepted set are derived from different
+# files -- the root pom's <flink.version> and the dist/ modules -- and nothing
+# else makes them agree, so a pom bumped ahead of its dist modules would
+# otherwise let a bare run reach a Maven module that does not exist.
+# Which of the two is at fault decides the message: a value the caller typed
+# is theirs to correct, while a defaulted one means the repo disagrees with
+# itself and no choice of -f is the fix.
+for version in "${flink_versions[@]}"; do
+    if ! is_supported_flink_version "${version}"; then
+        if $flink_explicit; then
+            echo "Error: unsupported Flink version '${version}'; supported versions: ${SUPPORTED_FLINK_VERSIONS[*]}" >&2
+        else
+            echo "Error: the root pom pins <flink.version> ${POM_FLINK_VERSION}, but ${ROOT}/dist carries no flink-${version} module; dist modules exist for: ${SUPPORTED_FLINK_VERSIONS[*]}" >&2
+        fi
+        exit 1
+    fi
+done
 
 # Remove duplicates and sort version numbers
 flink_versions=($(echo "${flink_versions[@]}" | tr ' ' '\n' | sort -u | tr '\n' ' '))
@@ -272,17 +365,17 @@ python_tests() {
                 if $verbose; then
                     echo "Using pyproject.toml dependency groups"
                 fi
-                pip install -e ".[test]"
-                pip install apache-flink~=${version}.0
+                python3 -m pip install -e ".[test]"
+                python3 -m pip install apache-flink~=${version}.0
             fi
             if $verbose; then
                 echo "Running tests with pytest..."
             fi
             if $run_e2e; then
-                pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -k "e2e_tests_integration" --reruns 2 --reruns-delay 5 -o log_cli=true -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc1=$?
                 # Arm 2: integration-marked tests; trap exit code 5 as failure.
-                pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -m "integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 rc2=$?
                 if [ $rc2 -eq 5 ]; then rc2=1; fi
                 # Logical-OR aggregation: any nonzero exit on either arm yields testcode=1.
@@ -291,7 +384,7 @@ python_tests() {
                 # on either arm indicates a selector regression).
                 testcode=$((rc1 || rc2))
             else
-                pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-OFF}
+                python3 -m pytest flink_agents -k "not e2e_tests" -m "not integration" -o log_cli=true -o log_cli_level=${LOG_LEVEL:-CRITICAL}
                 testcode=$?
             fi
         fi

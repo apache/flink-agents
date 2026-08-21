@@ -155,6 +155,52 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 5
 
 
+def test_tongyi_embedding_returns_token_usage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test DashScope embedding usage is recorded as model token metrics."""
+    mock_embedding = [0.1, 0.2, 0.3]
+    mocked_response = SimpleNamespace(
+        status_code=HTTPStatus.OK,
+        output={
+            "embeddings": [{"embedding": mock_embedding}],
+        },
+        usage={"total_tokens": 6},
+        message="Success",
+    )
+    mock_call = MagicMock(return_value=mocked_response)
+    monkeypatch.setattr(
+        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        mock_call,
+    )
+
+    connection = TongyiEmbeddingModelConnection(
+        name="tongyi",
+        api_key="fake-key",
+    )
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
+            return connection
+        else:
+            msg = f"Unknown resource type: {type}"
+            raise ValueError(msg)
+
+    embedding_model = TongyiEmbeddingModelSetup(
+        name="tongyi",
+        model=test_model,
+        connection="tongyi",
+        resource_context=_make_ctx(get_resource),
+    )
+    embedding_model.open()
+
+    result = embedding_model.embed_with_usage("Test text")
+    assert result.embeddings == mock_embedding
+    assert result.token_usage is not None
+    assert result.token_usage.prompt_tokens == 6
+    assert result.token_usage.total_tokens == 6
+
+
 def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test batch embedding functionality with mocked DashScope API."""
     mock_embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]

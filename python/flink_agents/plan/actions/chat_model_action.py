@@ -40,6 +40,12 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.trace import (
+    ExecutionEntityTypes,
+    ExecutionProblemCategories,
+    ExecutionReporters,
+    LLMExecutionMetadataKeys,
+)
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
@@ -266,11 +272,41 @@ def _generate_structured_output(
     return response
 
 
+def _generate_structured_output_with_report(
+    ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
+) -> ChatMessage:
+    ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
+    try:
+        structured_response = _generate_structured_output(response, output_schema)
+    except Exception as e:
+        ExecutionReporters.failed(
+            ctx,
+            ExecutionEntityTypes.PARSER,
+            STRUCTURED_OUTPUT,
+            {},
+            e,
+            ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
+        )
+        raise
+    else:
+        ExecutionReporters.succeeded(
+            ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+        )
+        return structured_response
+
+
 def _clean_llm_response(raw_response: str) -> str:
     trimmed = raw_response.strip()
     if trimmed.startswith("```"):
         return re.sub(r"(?s)^```(?:json)?\s*(.*?)\s*```$", r"\1", trimmed)
     return trimmed
+
+
+def _require_model_response(response: ChatMessage | None) -> ChatMessage:
+    if response is None:
+        error_message = "ChatModel returned a null response."
+        raise ValueError(error_message)
+    return response
 
 
 async def chat(
@@ -290,6 +326,7 @@ async def chat(
     chat_model = cast(
         "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
     )
+    request_metric_group = ctx.action_metric_group
 
     chat_async = ctx.config.get(AgentExecutionOptions.CHAT_ASYNC)
 
@@ -313,20 +350,40 @@ async def chat(
     response = None
     actual_retry_count = 0
     total_wait_time_sec = 0
+    llm_metadata = {LLMExecutionMetadataKeys.MODEL: chat_model.model}
 
     for attempt in range(num_retries + 1):
         try:
-            if chat_async:
-                response = await ctx.durable_execute_async(
-                    chat_model.chat, messages, prompt_args=prompt_args
+            ExecutionReporters.started(
+                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            )
+            try:
+                if chat_async:
+                    response = await ctx.durable_execute_async(
+                        chat_model.chat, messages, prompt_args=prompt_args
+                    )
+                else:
+                    response = ctx.durable_execute(
+                        chat_model.chat, messages, prompt_args=prompt_args
+                    )
+                response = _require_model_response(response)
+            except Exception as model_error:
+                ExecutionReporters.failed(
+                    ctx,
+                    ExecutionEntityTypes.LLM,
+                    model,
+                    llm_metadata,
+                    model_error,
+                    ExecutionProblemCategories.MODEL_CALL_FAILED,
                 )
-            else:
-                response = ctx.durable_execute(
-                    chat_model.chat, messages, prompt_args=prompt_args
-                )
+                raise
+            ExecutionReporters.succeeded(
+                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            )
 
             if (
-                response.extra_args.get("model_name")
+                request_metric_group is not None
+                and response.extra_args.get("model_name")
                 and response.extra_args.get("promptTokens")
                 and response.extra_args.get("completionTokens")
             ):
@@ -334,9 +391,12 @@ async def chat(
                     response.extra_args["model_name"],
                     response.extra_args["promptTokens"],
                     response.extra_args["completionTokens"],
+                    request_metric_group,
                 )
             if output_schema is not None and len(response.tool_calls) == 0:
-                response = _generate_structured_output(response, output_schema)
+                response = _generate_structured_output_with_report(
+                    ctx, response, output_schema
+                )
             break
         except Exception as e:
             if error_handling_strategy == ErrorHandlingStrategy.IGNORE:

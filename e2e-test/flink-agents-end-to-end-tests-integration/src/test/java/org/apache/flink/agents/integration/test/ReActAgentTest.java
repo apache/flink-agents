@@ -215,9 +215,14 @@ public class ReActAgentTest {
                         .apply(agent)
                         .toDataStream();
 
-        out.print();
+        CloseableIterator<Object> results = out.collectAsync();
 
         env.execute();
+
+        Assertions.assertTrue(results.hasNext(), "The agent should emit a result.");
+        Assertions.assertTrue(
+                results.next() instanceof String,
+                "The result should be a String when no output schema is provided.");
     }
 
     // create ReAct agent; pass false to skip the output schema.

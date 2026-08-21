@@ -102,9 +102,19 @@ public class SchemaUtils {
 
         if (paramType == String.class) {
             paramSchema.put("type", "string");
-        } else if (paramType == int.class || paramType == Integer.class) {
+        } else if (paramType == int.class
+                || paramType == Integer.class
+                || paramType == long.class
+                || paramType == Long.class
+                || paramType == short.class
+                || paramType == Short.class
+                || paramType == byte.class
+                || paramType == Byte.class) {
             paramSchema.put("type", "integer");
-        } else if (paramType == double.class || paramType == Double.class) {
+        } else if (paramType == double.class
+                || paramType == Double.class
+                || paramType == float.class
+                || paramType == Float.class) {
             paramSchema.put("type", "number");
         } else if (paramType == boolean.class || paramType == Boolean.class) {
             paramSchema.put("type", "boolean");

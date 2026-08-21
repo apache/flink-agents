@@ -26,7 +26,6 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -159,48 +158,38 @@ public class SkillManager implements AutoCloseable {
         return repo == null ? null : repo.getSkillDir(skillName);
     }
 
-    /** Resolve a skill resource's relative path to an absolute path, or {@code null} if missing. */
-    @Nullable
-    public Path resolveResourcePath(String skillName, String resourcePath) {
-        SkillRepository repo = repos.get(skillName);
-        if (repo == null) {
-            return null;
-        }
-        Path dir = repo.getSkillDir(skillName);
-        if (dir == null) {
-            return null;
-        }
-        Path resolved = dir.resolve(resourcePath);
-        return Files.isRegularFile(resolved) ? resolved : null;
-    }
-
     private void loadAll() {
-        for (SkillSourceSpec spec : config.getSources()) {
-            try {
-                SkillRepository repo =
-                        SkillSourceRegistry.get(spec.getScheme())
-                                .open(spec.getParams(), classLoader);
-                openedRepos.add(repo);
-                registerRepo(repo, originOf(spec));
-            } catch (IOException | IllegalArgumentException e) {
-                IllegalStateException toThrow =
-                        new IllegalStateException(
-                                "Failed to load skills from "
-                                        + spec.getScheme()
-                                        + ":"
-                                        + spec.getParams(),
-                                e);
-                // Release repos registered before this point. The caller never receives a
-                // SkillManager reference (we're throwing from the constructor path), so
-                // without this cleanup their shutdown hooks + temp dirs would leak until
-                // JVM exit.
+        try {
+            for (SkillSourceSpec spec : config.getSources()) {
                 try {
-                    closeRepos();
-                } catch (Exception cleanupError) {
-                    toThrow.addSuppressed(cleanupError);
+                    SkillRepository repo =
+                            SkillSourceRegistry.get(spec.getScheme())
+                                    .open(spec.getParams(), classLoader);
+                    openedRepos.add(repo);
+                    registerRepo(repo, originOf(spec));
+                } catch (IOException | IllegalArgumentException e) {
+                    throw new IllegalStateException(
+                            "Failed to load skills from "
+                                    + spec.getScheme()
+                                    + ":"
+                                    + spec.getParams(),
+                            e);
                 }
-                throw toThrow;
             }
+        } catch (Throwable t) {
+            // Release every repo opened so far, on any failure path. The caller never
+            // receives a SkillManager reference (we're throwing from the constructor
+            // path), so without this cleanup their shutdown hooks + temp dirs would leak
+            // until JVM exit. The original failure propagates unchanged; a cleanup
+            // failure rides along as suppressed so neither is lost — including an Error,
+            // which closeRepos() does not catch per-repo and which would otherwise
+            // replace the original failure outright.
+            try {
+                closeRepos();
+            } catch (Throwable cleanupError) {
+                t.addSuppressed(cleanupError);
+            }
+            throw t;
         }
     }
 

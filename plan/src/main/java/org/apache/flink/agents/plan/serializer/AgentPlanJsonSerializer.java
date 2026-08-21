@@ -41,6 +41,8 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
             throws IOException {
         jsonGenerator.writeStartObject();
 
+        jsonGenerator.writeStringField("agent_name", agentPlan.getAgentName());
+
         // Serialize actions
         jsonGenerator.writeFieldName("actions");
         jsonGenerator.writeStartObject();
@@ -55,28 +57,6 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
                                         .serialize(action, jsonGenerator, serializerProvider);
                             } catch (IOException e) {
                                 throw new RuntimeException("Error writing action: " + name, e);
-                            }
-                        });
-        jsonGenerator.writeEndObject();
-
-        // Serialize event trigger actions
-        jsonGenerator.writeFieldName("actions_by_event");
-        jsonGenerator.writeStartObject();
-        agentPlan
-                .getActionsByEvent()
-                .forEach(
-                        (eventClass, actions) -> {
-                            try {
-                                jsonGenerator.writeFieldName(eventClass);
-                                jsonGenerator.writeStartArray();
-                                for (Action action : actions) {
-                                    jsonGenerator.writeString(action.getName());
-                                }
-                                jsonGenerator.writeEndArray();
-                            } catch (IOException e) {
-                                throw new RuntimeException(
-                                        "Error writing event trigger actions for: " + eventClass,
-                                        e);
                             }
                         });
         jsonGenerator.writeEndObject();

@@ -14,9 +14,12 @@ This project bundles the following dependencies under the Apache Software Licens
 - com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2
 - com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2
 - com.fasterxml:classmate:1.7.0
-- org.apache.logging.log4j:log4j-api:2.23.1
-- org.apache.logging.log4j:log4j-core:2.23.1
-- org.apache.logging.log4j:log4j-slf4j-impl:2.23.1
+- dev.cel:cel:0.12.0
+- dev.cel:common:0.12.0
+- dev.cel:compiler:0.12.0
+- dev.cel:protobuf:0.12.0
+- dev.cel:runtime:0.12.0
+- dev.cel:v1alpha1:0.12.0
 - org.apache.kafka:kafka-clients:4.0.0
 - org.lz4:lz4-java:1.8.0
 - org.xerial.snappy:snappy-java:1.1.10.5
@@ -49,39 +52,16 @@ This project bundles the following dependencies under the Apache Software Licens
 - org.jetbrains.kotlin:kotlin-reflect:1.8.10
 - org.yaml:snakeyaml:2.3
 - io.netty:netty-handler:4.1.118.Final
-- io.netty:netty-handler-proxy:4.1.118.Final
 - io.netty:netty-resolver:4.1.118.Final
 - io.netty:netty-transport:4.1.118.Final
-- io.netty:netty-codec-socks:4.1.118.Final
 - io.netty:netty-buffer:4.1.118.Final
 - io.netty:netty-codec:4.1.118.Final
 - io.netty:netty-codec-http:4.1.118.Final
 - io.netty:netty-codec-http2:4.1.118.Final
 - io.netty:netty-transport-native-unix-common:4.1.118.Final
-- io.netty:netty-transport-native-epoll:linux-x86_64:4.1.118.Final
 - io.netty:netty-transport-classes-epoll:4.1.118.Final
-- io.netty:netty-transport-native-kqueue:osx-x86_64:4.1.118.Final
-- io.netty:netty-transport-classes-kqueue:4.1.118.Final
-- io.netty:netty-tcnative-boringssl-static:2.0.70.Final
-- io.netty:netty-tcnative-classes:2.0.70.Final
-- io.projectreactor.netty:reactor-netty-http:1.0.48
-- io.netty:netty-resolver-dns:4.1.112.Final
-- io.netty:netty-codec-dns:4.1.112.Final
-- io.netty:netty-resolver-dns-native-macos:osx-x86_64:4.1.112.Final
-- io.netty:netty-resolver-dns-classes-macos:4.1.112.Final
-- io.projectreactor.netty:reactor-netty-core:1.0.48
 - io.netty:netty-common:4.1.118.Final
-- io.projectreactor:reactor-core:3.4.41
-- io.projectreactor:reactor-test:3.4.41
-- io.vertx:vertx-core:4.5.13
-- org.apache.ant:ant:1.10.14
-- org.apache.ant:ant-launcher:1.10.14
-- com.nimbusds:content-type:2.3
-- com.nimbusds:lang-tag:1.7
-- com.nimbusds:nimbus-jose-jwt:9.40
-- com.nimbusds:oauth2-oidc-sdk:11.18
-- net.minidev:json-smart:2.5.0
-- net.minidev:accessors-smart:2.5.0
+- io.projectreactor:reactor-core:3.7.0
 - org.elasticsearch.client:elasticsearch-rest-client:8.19.0
 - org.apache.httpcomponents:httpclient:4.5.13
 - org.apache.httpcomponents:httpcore:4.4.16
@@ -94,13 +74,10 @@ This project bundles the following dependencies under the Apache Software Licens
 - io.opentelemetry:opentelemetry-context:1.29.0
 - com.networknt:json-schema-validator:2.0.0
 - com.ethlo.time:itu:1.14.0
-- org.opentest4j:opentest4j:1.3.0
-- org.apiguardian:apiguardian-api:1.1.2
 - org.apache.commons:commons-collections4:4.3
 - org.apache.commons:commons-lang3:3.12.0
 - org.apache.commons:commons-pool2:2.12.0
 - org.apache.commons:commons-text:1.10.0
-- com.github.stephenc.jcip:jcip-annotations:1.0-1
 - io.milvus:milvus-sdk-java:2.6.18
 - org.apache.fluss:fluss-client:0.9.0-incubating
 - com.google.code.gson:gson:2.13.1
@@ -139,31 +116,24 @@ This project bundles the following dependencies under the Apache Software Licens
 - software.amazon.awssdk:json-utils:2.32.16
 - software.amazon.awssdk:third-party-jackson-core:2.32.16
 - software.amazon.eventstream:eventstream:1.0.1
-- net.java.dev.jna:jna:5.13.0
-- net.java.dev.jna:jna-platform:5.6.0
+- com.google.genai:google-genai:1.56.0
+- com.google.auto.value:auto-value-annotations:1.11.0
+- com.google.http-client:google-http-client:1.46.2
+- com.google.http-client:google-http-client-gson:1.46.2
+- io.grpc:grpc-api:1.70.0
+- io.grpc:grpc-context:1.70.0
+- io.opencensus:opencensus-api:0.31.1
+- io.opencensus:opencensus-contrib-http-util:0.31.1
 
 This project bundles the following dependencies under the MIT license.
 See bundled license files for details.
 
-- slf4j-api:slf4j-api:1.7.36
 - io.github.ollama4j:ollama4j:1.1.5
 - org.jsoup:jsoup:1.21.2
-- com.anthropic:anthropic-java:2.11.1
-- com.anthropic:anthropic-java-client-okhttp:2.11.1
-- com.anthropic:anthropic-java-core:2.11.1
-- com.azure:azure-ai-inference:1.0.0-beta.5
-- com.azure:azure-identity:1.13.3
-- com.azure:azure-json:1.5.0
-- com.azure:azure-core:1.55.3
-- com.azure:azure-xml:1.2.0
-- com.azure:azure-core-http-netty:1.15.11
-- com.azure:azure-core-test:1.27.0-beta.8
-- com.azure:azure-core-http-jdk-httpclient:1.0.3
-- com.azure:azure-core-http-okhttp:1.12.10
-- com.azure:azure-core-http-vertx:1.0.3
+- com.anthropic:anthropic-java:2.12.0
+- com.anthropic:anthropic-java-client-okhttp:2.12.0
+- com.anthropic:anthropic-java-core:2.12.0
 - org.reactivestreams:reactive-streams:1.0.4
-- com.microsoft.azure:msal4j:1.17.1
-- com.microsoft.azure:msal4j-persistence-extension:1.3.0
 - io.modelcontextprotocol.sdk:mcp:0.16.0
 - io.modelcontextprotocol.sdk:mcp-json-jackson2:0.16.0
 - io.modelcontextprotocol.sdk:mcp-json:0.16.0
@@ -172,6 +142,7 @@ See bundled license files for details.
 - io.github.bonede:tree-sitter:0.25.3
 - io.github.bonede:tree-sitter-bash:0.23.3
 - org.codehaus.mojo:animal-sniffer-annotations:1.23
+- org.java-websocket:Java-WebSocket:1.6.0
 
 This project bundles the following dependencies under the BSD 2-Clause license.
 See bundled license files for details.
@@ -181,16 +152,22 @@ See bundled license files for details.
 This project bundles the following dependencies under the BSD 3-Clause license.
 See bundled license files for details.
 
-- com.google.protobuf:protobuf-java:3.25.5
-- org.ow2.asm:asm:9.3
+- com.google.protobuf:protobuf-java:4.33.5
+- com.google.re2j:re2j:1.8
+- org.antlr:antlr4-runtime:4.13.2
+- org.threeten:threeten-extra:1.8.0
+- com.google.api:api-common:2.45.0
+- com.google.auth:google-auth-library-credentials:1.33.0
+- com.google.auth:google-auth-library-oauth2-http:1.33.0
 
 This project bundles the following dependencies under the EPL2 license.
 See bundled license files for details.
 
 - jakarta.json:jakarta.json-api:2.0.1
 - org.eclipse.parsson:parsson:1.0.5
-- org.junit.jupiter:junit-jupiter-api:5.10.1
-- org.junit.jupiter:junit-jupiter-params:5.10.1
-- org.junit.jupiter:junit-jupiter-engine:5.10.1
-- org.junit.platform:junit-platform-commons:1.10.1
-- org.junit.platform:junit-platform-engine:1.10.1
+
+This project bundles the following dependencies under the CDDL 1.1 license, or alternatively
+under the GNU General Public License version 2 with the Classpath Exception.
+See bundled license files for details.
+
+- javax.annotation:javax.annotation-api:1.3.2

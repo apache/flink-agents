@@ -114,7 +114,8 @@ class ParallelChatAgent(Agent):
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollama_server",
             model=OLLAMA_MODEL,
-            extract_reasoning=True,
+            think=False,
+            extract_reasoning=False,
         )
 
     @action(InputEvent.EVENT_TYPE)
@@ -155,7 +156,11 @@ class ParallelChatAgent(Agent):
         response_event = ChatResponseEvent.from_event(event)
         parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
         if isinstance(parsed, dict):
-            parsed = SummaryResponse(**parsed) if "summary" in parsed else AspectResponse(**parsed)
+            parsed = (
+                SummaryResponse(**parsed)
+                if "summary" in parsed
+                else AspectResponse(**parsed)
+            )
         if isinstance(parsed, SummaryResponse):
             ctx.send_event(
                 _build_output_event(

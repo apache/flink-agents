@@ -23,6 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
+import org.apache.flink.agents.api.embedding.model.EmbeddingTokenUsage;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
@@ -80,36 +82,67 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
     public BedrockEmbeddingModelConnection(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
+        this.client = createClient(resolveRegion(descriptor));
+        this.defaultModel = resolveDefaultModel(descriptor);
+        this.embedPool = Executors.newFixedThreadPool(resolveEmbedConcurrency(descriptor));
+        this.retryExecutor = createRetryExecutor(descriptor);
+    }
 
+    BedrockEmbeddingModelConnection(
+            ResourceDescriptor descriptor,
+            ResourceContext resourceContext,
+            BedrockRuntimeClient client,
+            ExecutorService embedPool,
+            RetryExecutor retryExecutor,
+            String defaultModel) {
+        super(descriptor, resourceContext);
+        this.client = client;
+        this.defaultModel = defaultModel;
+        this.embedPool = embedPool;
+        this.retryExecutor = retryExecutor;
+    }
+
+    private static BedrockRuntimeClient createClient(String region) {
+        return BedrockRuntimeClient.builder()
+                .region(Region.of(region))
+                .credentialsProvider(DefaultCredentialsProvider.create())
+                .build();
+    }
+
+    private static String resolveRegion(ResourceDescriptor descriptor) {
         String region = descriptor.getArgument("region");
         if (region == null || region.isBlank()) {
             region = "us-east-1";
         }
+        return region;
+    }
 
-        this.client =
-                BedrockRuntimeClient.builder()
-                        .region(Region.of(region))
-                        .credentialsProvider(DefaultCredentialsProvider.create())
-                        .build();
-
+    private static String resolveDefaultModel(ResourceDescriptor descriptor) {
         String model = descriptor.getArgument("model");
-        this.defaultModel = (model != null && !model.isBlank()) ? model : DEFAULT_MODEL;
+        return (model != null && !model.isBlank()) ? model : DEFAULT_MODEL;
+    }
 
+    private static int resolveEmbedConcurrency(ResourceDescriptor descriptor) {
         Integer concurrency = descriptor.getArgument("embed_concurrency");
-        int threads = concurrency != null ? concurrency : 4;
-        this.embedPool = Executors.newFixedThreadPool(threads);
+        return concurrency != null ? concurrency : 4;
+    }
 
+    private static RetryExecutor createRetryExecutor(ResourceDescriptor descriptor) {
         Integer retries = descriptor.getArgument("max_retries");
-        this.retryExecutor =
-                RetryExecutor.builder()
-                        .maxRetries(retries != null ? retries : 5)
-                        .initialBackoffMs(200)
-                        .retryablePredicate(BedrockEmbeddingModelConnection::isRetryable)
-                        .build();
+        return RetryExecutor.builder()
+                .maxRetries(retries != null ? retries : 5)
+                .initialBackoffMs(200)
+                .retryablePredicate(BedrockEmbeddingModelConnection::isRetryable)
+                .build();
     }
 
     @Override
     public float[] embed(String text, Map<String, Object> parameters) {
+        return embedWithUsage(text, parameters).getEmbeddings();
+    }
+
+    @Override
+    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
         String model = (String) parameters.getOrDefault("model", defaultModel);
         Integer dimensions = (Integer) parameters.get("dimensions");
 
@@ -138,10 +171,19 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
             for (int i = 0; i < embeddingNode.size(); i++) {
                 embedding[i] = (float) embeddingNode.get(i).asDouble();
             }
-            return embedding;
+            return new EmbeddingResult<>(embedding, extractTokenUsage(result));
         } catch (Exception e) {
             throw new RuntimeException("Failed to parse Bedrock embedding response.", e);
         }
+    }
+
+    private static EmbeddingTokenUsage extractTokenUsage(JsonNode result) {
+        JsonNode inputTokenCount = result.get("inputTextTokenCount");
+        if (inputTokenCount == null || !inputTokenCount.isNumber()) {
+            return null;
+        }
+        long tokens = inputTokenCount.asLong();
+        return new EmbeddingTokenUsage(tokens, tokens);
     }
 
     private static boolean isRetryable(Exception e) {
@@ -155,27 +197,52 @@ public class BedrockEmbeddingModelConnection extends BaseEmbeddingModelConnectio
 
     @Override
     public List<float[]> embed(List<String> texts, Map<String, Object> parameters) {
+        return embedWithUsage(texts, parameters).getEmbeddings();
+    }
+
+    @Override
+    public EmbeddingResult<List<float[]>> embedWithUsage(
+            List<String> texts, Map<String, Object> parameters) {
         if (texts.size() <= 1) {
             List<float[]> results = new ArrayList<>(texts.size());
+            EmbeddingTokenUsage totalUsage = null;
             for (String text : texts) {
-                results.add(embed(text, parameters));
+                EmbeddingResult<float[]> result = embedWithUsage(text, parameters);
+                results.add(result.getEmbeddings());
+                totalUsage = mergeUsage(totalUsage, result.getTokenUsage());
             }
-            return results;
+            return new EmbeddingResult<>(results, totalUsage);
         }
         @SuppressWarnings("unchecked")
-        CompletableFuture<float[]>[] futures =
+        CompletableFuture<EmbeddingResult<float[]>>[] futures =
                 texts.stream()
                         .map(
                                 text ->
                                         CompletableFuture.supplyAsync(
-                                                () -> embed(text, parameters), embedPool))
+                                                () -> embedWithUsage(text, parameters), embedPool))
                         .toArray(CompletableFuture[]::new);
         CompletableFuture.allOf(futures).join();
         List<float[]> results = new ArrayList<>(texts.size());
-        for (CompletableFuture<float[]> f : futures) {
-            results.add(f.join());
+        EmbeddingTokenUsage totalUsage = null;
+        for (CompletableFuture<EmbeddingResult<float[]>> f : futures) {
+            EmbeddingResult<float[]> result = f.join();
+            results.add(result.getEmbeddings());
+            totalUsage = mergeUsage(totalUsage, result.getTokenUsage());
         }
-        return results;
+        return new EmbeddingResult<>(results, totalUsage);
+    }
+
+    private static EmbeddingTokenUsage mergeUsage(
+            EmbeddingTokenUsage left, EmbeddingTokenUsage right) {
+        if (left == null) {
+            return right;
+        }
+        if (right == null) {
+            return left;
+        }
+        return new EmbeddingTokenUsage(
+                left.getPromptTokens() + right.getPromptTokens(),
+                left.getTotalTokens() + right.getTotalTokens());
     }
 
     @Override

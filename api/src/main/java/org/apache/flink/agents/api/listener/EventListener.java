@@ -22,11 +22,12 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 
 /**
- * Interface for event listeners that are notified when events are received for processing.
+ * Interface for event listeners that are notified when business events are received for processing.
  *
  * <p>EventListener provides a callback mechanism triggered at the beginning of event processing.
  * This is useful for monitoring, metrics collection, debugging, or triggering side effects based on
- * event reception.
+ * event reception. Runtime observability records such as execution trace lifecycle events are
+ * written to Event Log but are not delivered to this listener.
  *
  * <p>Event listeners are executed synchronously when an event is received, before any actions are
  * triggered. Implementations should be lightweight and avoid blocking operations to prevent

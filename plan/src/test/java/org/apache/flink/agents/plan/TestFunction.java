@@ -30,6 +30,10 @@ public class TestFunction {
         return a + b;
     }
 
+    public static void failWithUserException() {
+        throw new IllegalStateException("user failure from reflected function");
+    }
+
     @Test
     public void testJavaFunctionExecution() throws Exception {
         Function func =
@@ -47,6 +51,16 @@ public class TestFunction {
                 new JavaFunction(TestFunction.class, "add", new Class[] {int.class, int.class});
         int result = (int) func.call(1, 2);
         Assertions.assertEquals(3, result);
+    }
+
+    @Test
+    public void testJavaFunctionUnwrapsInvocationTargetException() throws Exception {
+        Function func =
+                new JavaFunction(TestFunction.class, "failWithUserException", new Class[] {});
+
+        IllegalStateException exception =
+                Assertions.assertThrows(IllegalStateException.class, func::call);
+        Assertions.assertEquals("user failure from reflected function", exception.getMessage());
     }
 
     public static void check_class(InputEvent a, OutputEvent b) {}

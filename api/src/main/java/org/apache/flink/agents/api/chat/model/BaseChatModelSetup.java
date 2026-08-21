@@ -48,6 +48,7 @@ public abstract class BaseChatModelSetup extends Resource {
     @Nullable protected String skillDiscoveryPrompt;
     protected List<String> allowedCommands;
     protected List<String> allowedScriptDirs;
+    protected StructuredOutputStrategy structuredOutputStrategy;
 
     @Nullable protected BaseChatModelConnection connection;
     protected final List<Tool> tools = new ArrayList<>();
@@ -67,6 +68,10 @@ public abstract class BaseChatModelSetup extends Resource {
                 declaredScriptDirs == null
                         ? new ArrayList<>()
                         : new ArrayList<>(declaredScriptDirs);
+        this.structuredOutputStrategy =
+                StructuredOutputStrategy.fromArgument(
+                        descriptor.getArgument("structured_output_strategy"),
+                        StructuredOutputStrategy.AUTO);
     }
 
     /**
@@ -109,18 +114,21 @@ public abstract class BaseChatModelSetup extends Resource {
     public abstract Map<String, Object> getParameters();
 
     /**
-     * Record token usage metrics for the given model on this setup's bound metric group.
+     * Record token usage metrics for the given model on the provided metric group.
      *
+     * @param metricGroup the non-null metric group captured when the request was initiated
      * @param modelName the name of the model used
      * @param promptTokens the number of prompt tokens
      * @param completionTokens the number of completion tokens
      */
-    public void recordTokenMetrics(String modelName, long promptTokens, long completionTokens) {
-        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
-        if (metricGroup == null) {
-            return;
-        }
-        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", modelName);
+    public void recordTokenMetrics(
+            FlinkAgentsMetricGroup metricGroup,
+            String modelName,
+            long promptTokens,
+            long completionTokens) {
+        FlinkAgentsMetricGroup modelGroup =
+                Preconditions.checkNotNull(metricGroup, "Metric group must not be null.")
+                        .getSubGroup("model", modelName);
         modelGroup.getCounter("promptTokens").inc(promptTokens);
         modelGroup.getCounter("completionTokens").inc(completionTokens);
     }
@@ -187,7 +195,7 @@ public abstract class BaseChatModelSetup extends Resource {
         return this.connectionName;
     }
 
-    @VisibleForTesting
+    /** Returns the configured model or deployment identifier used by this setup. */
     public String getModel() {
         return model;
     }
@@ -218,5 +226,16 @@ public abstract class BaseChatModelSetup extends Resource {
 
     public List<String> getAllowedScriptDirs() {
         return allowedScriptDirs;
+    }
+
+    /**
+     * The configured intent about how an output schema should be applied, defaulting to {@link
+     * StructuredOutputStrategy#AUTO}. Whether native structured output is actually applied combines
+     * this policy with the connection's model-dependent capability.
+     *
+     * @return the structured output strategy
+     */
+    public StructuredOutputStrategy getStructuredOutputStrategy() {
+        return structuredOutputStrategy;
     }
 }

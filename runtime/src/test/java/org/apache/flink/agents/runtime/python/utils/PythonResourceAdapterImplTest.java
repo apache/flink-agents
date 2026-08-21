@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -179,6 +180,17 @@ public class PythonResourceAdapterImplTest {
         assertThat(result).isEqualTo(expectedResult);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.CALL_METHOD, obj, methodName, kwargs);
+    }
+
+    @Test
+    void testSetMetricGroup() {
+        Object pythonResource = new Object();
+        FlinkAgentsMetricGroup metricGroup = mock(FlinkAgentsMetricGroup.class);
+
+        pythonResourceAdapter.setMetricGroup(pythonResource, metricGroup);
+
+        verify(mockInterpreter)
+                .invoke(PythonResourceAdapterImpl.SET_METRIC_GROUP, pythonResource, metricGroup);
     }
 
     @Test

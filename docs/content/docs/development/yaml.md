@@ -278,19 +278,38 @@ Inline action (map) fields:
 |-------|----------|-------------|
 | `name` | yes | Action name (unique within the agent). |
 | `function` | yes | Fully-qualified callable in the form `<module-or-class>:<qualname>`. See [Function references](#function-references). |
-| `trigger_conditions` | yes | List of event types the action listens to. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) or your own event-type strings. |
+| `trigger_conditions` | yes | Non-empty list of strings containing exact event types or condition expressions that return a Boolean. Each string must contain at least one non-whitespace character. Built-in [event aliases](#event-aliases) (`input`, `chat_request`, ...) may be used as complete entries. All entries use OR semantics. |
 | `type` | no | Implementation language: `python` or `java`. Defaults to `python` (see [Selecting the implementation language](#selecting-the-implementation-language)). |
 | `config` | no | Free-form configuration map passed to the action at runtime. |
+
+For built-in event types, prefer an [event alias](#event-aliases) such as `input`. Trigger-condition
+matching and expression semantics are shared with annotated and programmatically registered actions;
+see [Trigger Conditions]({{< ref "docs/development/workflow_agent#trigger-conditions" >}}).
+
+Every entry must remain a non-empty string after YAML parsing. Quote condition expressions, for
+example `"ready == true"`. Quotes are required for literal expressions such as `"true"`; without
+them, YAML parses `true`, `false`, or `null` as a non-string value. When an exact custom event type
+requires quotes, preserve those quotes inside the YAML string:
+
+```yaml
+trigger_conditions:
+  - order-created
+  - "'order:created'"
+  - "'EventType.custom'"
+```
+
+An `actions` list can mix inline actions and shared-action references:
 
 ```yaml
 actions:
   - name: action1
     function: my_pkg.actions:action1
-    trigger_conditions: [input]
+    trigger_conditions: [input, custom_event]
     type: python
   - name: action2
     function: my_pkg.actions:action2
-    trigger_conditions: [chat_response]
+    trigger_conditions:
+      - "type == EventType.ChatResponseEvent && response.content != ''"
     type: python
   - action3                       # shared action reference (declared at file level)
 ```
@@ -498,7 +517,7 @@ When `type:` resolves to the **opposite** language of the loader, the loader bui
 
 ### Provider aliases
 
-For `clazz:` on resource descriptors and for event names in `trigger_conditions:`, you can use a short alias instead of a fully-qualified class path.
+For `clazz:` on resource descriptors and for complete event-type entries in `trigger_conditions:`, you can use a short alias instead of a fully-qualified class path. Event alias replacement is an exact complete-entry lookup: `input` is replaced, while `type == input`, `attributes.kind == 'input'`, and the quoted event type `'input'` remain unchanged.
 
 #### Event aliases
 
@@ -512,6 +531,12 @@ For `clazz:` on resource descriptors and for event names in `trigger_conditions:
 | `tool_response`                | `ToolResponseEvent`              |
 | `context_retrieval_request`    | `ContextRetrievalRequestEvent`   |
 | `context_retrieval_response`   | `ContextRetrievalResponseEvent`  |
+
+{{< hint warning >}}
+`output` resolves to `OutputEvent`, but output events are emitted directly downstream and bypass
+action matching. Therefore, using `output` as a trigger condition never invokes an action. See
+[Sending events]({{< ref "docs/development/workflow_agent#sending-events" >}}).
+{{< /hint >}}
 
 For custom event types defined in your code, write the event's full `EVENT_TYPE` string instead of an alias.
 
@@ -528,10 +553,11 @@ Common chat-model aliases:
 | `openai_completions` | —                           | OpenAI Completions (Java)   |
 | `openai_responses`   | —                           | OpenAI Responses (Java)     |
 | `anthropic`          | Anthropic                   | Anthropic                   |
-| `azure_openai`       | Azure OpenAI (Python)       | —                           |
-| `azure`              | —                           | Azure OpenAI (Java)         |
+| `gemini`             | —                           | Gemini (Java)               |
+| `azure_openai`       | Azure OpenAI (Python)       | Azure OpenAI (Java)         |
 | `bedrock`            | —                           | Bedrock (Java)              |
 | `tongyi`             | Tongyi (Python)             | —                           |
+| `vllm`               | vLLM (Python)               | vLLM (Java)                 |
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 
@@ -544,10 +570,14 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 
 Vector-store aliases:
 
-| Alias           | `type: python` | `type: java`   |
-| --------------- | -------------- | -------------- |
-| `chroma`        | Chroma         | —              |
-| `elasticsearch` | —              | Elasticsearch  |
+| Alias           | `type: python` | `type: java`    |
+| --------------- | -------------- | --------------- |
+| `chroma`        | Chroma         | —               |
+| `mem0`          | Mem0           | —               |
+| `elasticsearch` | —              | Elasticsearch   |
+| `opensearch`    | —              | OpenSearch      |
+| `s3_vectors`    | —              | S3 Vectors      |
+| `milvus`        | —              | Milvus          |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
@@ -636,10 +666,12 @@ Because Pydantic models are easier to author and evolve than raw JSON Schema, th
 python -m flink_agents.api.yaml.specs > docs/yaml-schema.json
 ```
 
+The coding-agent skill under `dev/agent-skills/` bundles a copy of the schema so it can work offline, so refresh that copy in the same change. `python3 tools/check-skill-schema.py` reports whether it is current and prints the two edits needed when it is not.
+
 Continuous tests then verify cross-runtime consistency:
 
 - the JSON Schema exported by the Pydantic specs matches the checked-in `docs/yaml-schema.json`;
-- the JSON Schema exported by the Java POJOs matches the checked-in `docs/yaml-schema.json`;
+- the Java POJOs match the checked-in `docs/yaml-schema.json` in property names, required fields, and `additionalProperties` strictness;
 - the Pydantic specs stay aligned with the Python `Agent` API;
 - the Java POJOs stay aligned with the Java `Agent` API.
 

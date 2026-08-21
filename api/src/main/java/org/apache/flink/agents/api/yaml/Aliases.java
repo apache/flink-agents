@@ -86,14 +86,17 @@ public final class Aliases {
                 "openai_completions", ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION);
         chatConnJava.put("openai_responses", ResourceName.ChatModel.OPENAI_RESPONSES_CONNECTION);
         chatConnJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_CONNECTION);
-        chatConnJava.put("azure", ResourceName.ChatModel.AZURE_CONNECTION);
+        chatConnJava.put("gemini", ResourceName.ChatModel.GEMINI_CONNECTION);
+        chatConnJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_CONNECTION);
         chatConnJava.put("bedrock", ResourceName.ChatModel.BEDROCK_CONNECTION);
+        chatConnJava.put("vllm", ResourceName.ChatModel.VLLM_CONNECTION);
         Map<String, String> chatConnPython = new HashMap<>();
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
         chatConnPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_CONNECTION);
         chatConnPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_CONNECTION);
         chatConnPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_CONNECTION);
+        chatConnPython.put("vllm", ResourceName.ChatModel.Python.VLLM_CONNECTION);
         ca.put(ResourceType.CHAT_MODEL_CONNECTION, buildLangBuckets(chatConnJava, chatConnPython));
 
         // CHAT_MODEL
@@ -102,14 +105,17 @@ public final class Aliases {
         chatJava.put("openai_completions", ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP);
         chatJava.put("openai_responses", ResourceName.ChatModel.OPENAI_RESPONSES_SETUP);
         chatJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_SETUP);
-        chatJava.put("azure", ResourceName.ChatModel.AZURE_SETUP);
+        chatJava.put("gemini", ResourceName.ChatModel.GEMINI_SETUP);
+        chatJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_SETUP);
         chatJava.put("bedrock", ResourceName.ChatModel.BEDROCK_SETUP);
+        chatJava.put("vllm", ResourceName.ChatModel.VLLM_SETUP);
         Map<String, String> chatPython = new HashMap<>();
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
         chatPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_SETUP);
         chatPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_SETUP);
         chatPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_SETUP);
+        chatPython.put("vllm", ResourceName.ChatModel.Python.VLLM_SETUP);
         ca.put(ResourceType.CHAT_MODEL, buildLangBuckets(chatJava, chatPython));
 
         // EMBEDDING_MODEL_CONNECTION
@@ -137,8 +143,12 @@ public final class Aliases {
         // VECTOR_STORE
         Map<String, String> vsJava = new HashMap<>();
         vsJava.put("elasticsearch", ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE);
+        vsJava.put("opensearch", ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE);
+        vsJava.put("s3_vectors", ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE);
+        vsJava.put("milvus", ResourceName.VectorStore.MILVUS_VECTOR_STORE);
         Map<String, String> vsPython = new HashMap<>();
         vsPython.put("chroma", ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE);
+        vsPython.put("mem0", ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
         ca.put(ResourceType.VECTOR_STORE, buildLangBuckets(vsJava, vsPython));
 
         CLAZZ_ALIASES = Collections.unmodifiableMap(ca);

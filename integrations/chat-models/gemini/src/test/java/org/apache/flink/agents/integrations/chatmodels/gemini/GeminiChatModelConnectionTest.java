@@ -224,6 +224,71 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName(
+            "convertFunctionCall synthesizes a unique id when the API omits functionCall.id, so"
+                    + " parallel id-less calls cannot collide")
+    void testConvertFunctionCallWithoutIdSynthesizesUniqueIds() {
+        // The Gemini Developer API frequently returns functionCall parts with no id.
+        FunctionCall first = FunctionCall.builder().name("get_weather").args(Map.of()).build();
+        FunctionCall second = FunctionCall.builder().name("get_time").args(Map.of()).build();
+
+        GeminiChatModelConnection conn = connection();
+        Map<String, Object> firstCall = conn.convertFunctionCall(first, null);
+        Map<String, Object> secondCall = conn.convertFunctionCall(second, null);
+
+        assertThat(firstCall.get("id")).isNotNull();
+        assertThat(firstCall.get("original_id")).isEqualTo(firstCall.get("id"));
+        assertThat(firstCall).containsEntry("synthetic_id", Boolean.TRUE);
+        // ToolCallAction keys success/responses/error on `id`; distinct ids are what prevent two
+        // parallel id-less calls from overwriting each other.
+        assertThat(firstCall.get("id")).isNotEqualTo(secondCall.get("id"));
+    }
+
+    @Test
+    @DisplayName("A synthetic id is never echoed back to the Gemini API on replay")
+    void testSyntheticIdNotEchoedToGemini() {
+        FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
+
+        GeminiChatModelConnection conn = connection();
+        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
+        Part part = conn.convertToolCallToPart(toolCall);
+
+        FunctionCall replayed = part.functionCall().orElseThrow();
+        assertThat(replayed.id()).isEmpty();
+        assertThat(replayed.name()).hasValue("get_weather");
+    }
+
+    @Test
+    @DisplayName(
+            "Second turn resolves the function name via the synthetic id (full id-less round"
+                    + " trip)")
+    void testSyntheticIdResolvesFunctionNameOnSecondTurn() {
+        FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
+
+        GeminiChatModelConnection conn = connection();
+        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
+        String syntheticId = (String) toolCall.get("original_id");
+
+        // Assistant turn carrying the id-less tool call, exactly as convertResponse builds it.
+        ChatMessage assistant = ChatMessage.assistant("");
+        assistant.setToolCalls(List.of(toolCall));
+
+        // Runtime contract: ToolCallAction copies `original_id` into the TOOL message's
+        // `externalId`. Before the fix, no id existed, externalId was never set, and this
+        // second-turn conversion threw "Tool message must carry the function name".
+        ChatMessage tool = ChatMessage.tool("sunny, 22C");
+        tool.getExtraArgs().put("externalId", syntheticId);
+
+        Map<String, String> idToName =
+                GeminiChatModelConnection.buildToolCallIdToNameMap(List.of(assistant, tool));
+        Content content = conn.convertToContent(tool, idToName);
+
+        Part part = content.parts().orElseThrow().get(0);
+        assertThat(part.functionResponse()).isPresent();
+        assertThat(part.functionResponse().orElseThrow().name()).hasValue("get_weather");
+    }
+
+    @Test
     @DisplayName("Tool-call round-trip preserves name, args and thoughtSignature")
     void testToolCallRoundTrip() {
         byte[] signature = new byte[] {9, 8, 7};

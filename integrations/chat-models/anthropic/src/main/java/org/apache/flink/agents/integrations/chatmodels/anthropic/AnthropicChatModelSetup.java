@@ -41,11 +41,15 @@ import java.util.Optional;
  *   <li><b>temperature</b> (optional): Sampling temperature 0.0-1.0 (default: 0.1)
  *   <li><b>max_tokens</b> (optional): Maximum tokens in response (default: 1024)
  *   <li><b>json_prefill</b> (optional): When true, prefills assistant response with "{" to enforce
- *       JSON output. Automatically disabled when tools are passed. (default: true)
+ *       JSON output. Applies only on models Anthropic documents as accepting assistant-message
+ *       prefilling, and is automatically disabled when tools are passed, or when the request
+ *       carries an output_config, whether that was derived from an output schema or supplied
+ *       through additional_kwargs. (default: false)
  *   <li><b>strict_tools</b> (optional): When true, tool calls adhere strictly to the JSON schema.
  *       (default: false)
  *   <li><b>tools</b> (optional): List of tool names available for the model to use
- *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences)
+ *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences).
+ *       An output_config supplied here takes precedence over one derived from an output schema.
  * </ul>
  *
  * <p>Example usage:
@@ -74,7 +78,7 @@ public class AnthropicChatModelSetup extends BaseChatModelSetup {
     private static final String DEFAULT_MODEL = "claude-sonnet-4-20250514";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final long DEFAULT_MAX_TOKENS = 1024L;
-    private static final boolean DEFAULT_JSON_PREFILL = true;
+    private static final boolean DEFAULT_JSON_PREFILL = false;
     private static final boolean DEFAULT_STRICT_TOOLS = false;
 
     private final Double temperature;

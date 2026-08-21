@@ -20,24 +20,40 @@
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.events.event import InputEvent
+from flink_agents.api.decorators import action
+from flink_agents.api.events.event import Event
 from flink_agents.api.function import JavaFunction
+from flink_agents.api.runner_context import RunnerContext
 
 JAVA_HANDLER_QUALNAME = "org.apache.flink.agents.resource.test.JavaActionHandler"
 JAVA_HANDLER_METHOD = "multiplyByTwo"
 
 
 class PythonAgentWithJavaActionAgent(Agent):
-    """Python agent that dispatches into ``JavaActionHandler.multiplyByTwo``."""
+    """Python agent whose overlapping expressions dispatch one Java action."""
 
     def __init__(self) -> None:
         """Create a PythonAgentWithJavaActionAgent."""
         super().__init__()
         self.add_action(
             name="multiply_by_two",
-            trigger_conditions=[InputEvent.EVENT_TYPE],
+            trigger_conditions=[
+                "type == EventType.InputEvent && input > 1 && input < 7",
+                "type == EventType.InputEvent && input > 3 && input < 9",
+            ],
             func=JavaFunction.for_action(JAVA_HANDLER_QUALNAME, JAVA_HANDLER_METHOD),
         )
+
+
+class InvalidTriggerConditionAgent(Agent):
+    """Agent used to exercise Java Plan validation through the real gateway."""
+
+    @action("type ==")
+    @staticmethod
+    def invalid_condition(event: Event, ctx: RunnerContext) -> None:
+        """Provide a serializable action body that AgentPlan validation must reject."""
+        message = "an invalid trigger condition must never execute"
+        raise AssertionError(message)
 
 
 class SingleKeySelector(KeySelector):

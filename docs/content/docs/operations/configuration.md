@@ -44,10 +44,11 @@ Users can explicitly modify the configuration when defining the `AgentsExecution
 
 ```python
 # Get Flink Agents execution environment
-agents_env = AgentsExecutionEnvironment.get_execution_environment()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
 # Get configuration object from the environment
-config = agents_env.get_configuration()
+config = agents_env.get_config()
 
 # Set custom configuration using a direct key (string-based key)
 # This is suitable for user-defined or non-standardized settings.
@@ -104,7 +105,7 @@ By default, the configuration is automatically loaded from `$FLINK_HOME/conf/con
 
 **Special Condition**
 
-In the following two cases, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the files are not set, no configuration files will be loaded, potentially resulting in unexpected behavior or failures.
+In the following case, Flink Agents may not locate the corresponding configuration file, necessitating manual configuration. If the file is not set, no configuration file will be loaded, potentially resulting in unexpected behavior or failures.
 
 - **For MiniCluster**:
   Manual setup is **required** — always export the environment variable before running the job:
@@ -114,13 +115,6 @@ In the following two cases, Flink Agents may not locate the corresponding config
   ```
 
   This ensures that Flink can locate and load the configuration file correctly.
-
-- **Local mode**: When [run without flink]({{< ref "docs/operations/deployment">}}), use the `AgentsExecutionEnvironment.get_configuration()` API to load the YAML file directly:
-
-  ```python
-  config = agents_env.get_configuration("path/to/your/config.yaml")
-  ```
-  
 
 ## Built-in configuration options
 
@@ -133,6 +127,7 @@ Here is the list of all built-in core configuration options.
 | `baseLogDir`              | (none)                     | String                | Base directory for file-based event logs. If not set, uses `java.io.tmpdir/flink-agents`. Setting this value also implicitly switches `eventLoggerType` to `file`.                                                                                              |
 | `prettyPrint`             | false                      | boolean               | Whether to enable pretty-printed JSON format for event logs. When set to `true`, each event is written as formatted multi-line JSON instead of JSONL (JSON Lines) format. {{< hint info >}}Note: enabling this option makes the log file no longer valid JSONL format.  {{< /hint >}} |
 | `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
+| `action.trigger-condition.evaluate-failure-strategy` | `WARN_AND_SKIP` | ConditionEvaluationFailureStrategy | Handles event-time failures while preparing variables for or evaluating a compiled condition, including a dynamic non-Boolean result. <br/><ul><li>`WARN_AND_SKIP` (default): log a warning, treat that condition as false, and continue with later OR conditions.</li><li>`FAIL`: throw `IllegalStateException` and fail the Flink task; recovery follows the job's restart configuration.</li></ul> Plan-validation failures and runtime compilation or static type-check failures occur during initialization and are not handled by this option. |
 | `error-handling-strategy` | ErrorHandlingStrategy.FAIL | ErrorHandlingStrategy | Strategy for handling errors during model requests, include timeout and unexpected output schema. <br/>The option value could be:<br/> <ul><li>`ErrorHandlingStrategy.FAIL`</li> <li>`ErrorHandlingStrategy.RETRY`</li> <li>`ErrorHandlingStrategy.IGNORE`</li> |
 | `max-retries`             | 3                          | int                   | Number of retries when using `ErrorHandlingStrategy.RETRY`.                                                                                                                                                                                                     |
 | `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries when using `ErrorHandlingStrategy.RETRY`. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. Retry count and total wait time are reported in `ChatResponseEvent` and recorded as metrics (`retryCount`, `retryWaitSec`) under the connection name. |
@@ -142,13 +137,30 @@ Here is the list of all built-in core configuration options.
 | `num-async-threads`       | os cpu count * 2           | int                   | The thread pool size for async executor.                                                                                                                                                                                                                        |
 | `job-identifier`          | none                       | String                | The unique identifier of job, remaining consistent after restoring from a savepoint. If not set, uses flink job id.                                                                                                                                             |
 | `event-log.level`         | STANDARD                   | EventLogLevel         | Global default verbosity for the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}). Valid values: `OFF` (skip event), `STANDARD` (payload may be truncated/summarized to keep logs concise), `VERBOSE` (full payload). Can be overridden per event type — see [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}). |
+| `event-log.trace.enabled` | false                      | boolean               | Whether to persist Agent Trace information in the Event Log. When enabled, business Events include trace context and Action/LLM/Parser/Tool lifecycle Events are logged. |
 | `event-log.type.<EVENT_TYPE>.level` | (inherits) | EventLogLevel         | Override the log level for a specific event type. `<EVENT_TYPE>` is the event's routing type string (the same value that appears as `eventType` in the JSON log, e.g., `_chat_request_event` for built-ins, or `com.example.myapp.OrderEvent` for user-defined types). For dotted types, resolution walks up dot segments before falling back to `event-log.level`. See [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}) for examples. |
 | `event-log.standard.max-string-length` | 2000              | int                   | At `STANDARD` level, strings in the event payload longer than this are truncated. Has no effect at `VERBOSE`.                                                                                                                                                  |
 | `event-log.standard.max-array-elements` | 20               | int                   | At `STANDARD` level, arrays in the event payload with more than this many elements are truncated. Has no effect at `VERBOSE`.                                                                                                                                  |
 | `event-log.standard.max-depth` | 5                     | int                   | At `STANDARD` level, objects nested deeper than this are summarized. Has no effect at `VERBOSE`.                                                                                                                                                               |
 | `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
-| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`.                                                                                       |
+| `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`. An enabled run-begin memory snapshot also refreshes TTL for entries it reads under `ON_READ_AND_WRITE`. |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
+
+### Memory Event Options
+
+The eight `memory.generate-event*` options have no raw `ConfigOption` default. When a sub-key and the master switch are both unset, the runtime uses the effective default shown below. See [Memory Events]({{< ref "docs/development/memory/memory_events" >}}) for resolution order, event payloads, and subscription examples.
+
+| Key | Raw default | Effective default | Type | Description |
+|-----|-------------|-------------------|------|-------------|
+| `memory.generate-event` | unset | per-operation defaults | boolean | Master fallback for unset operation-specific switches. |
+| `memory.generate-event.short-term-write` | unset | on | boolean | Emit short-term memory write events. |
+| `memory.generate-event.short-term-read` | unset | off | boolean | Emit short-term memory read events. |
+| `memory.generate-event.sensory-write` | unset | on | boolean | Emit sensory memory write events. |
+| `memory.generate-event.sensory-read` | unset | off | boolean | Emit sensory memory read events. |
+| `memory.generate-event.long-term-update` | unset | on | boolean | Emit long-term memory add/delete events. |
+| `memory.generate-event.long-term-get` | unset | on | boolean | Emit long-term memory get events. |
+| `memory.generate-event.long-term-search` | unset | on | boolean | Emit long-term memory search events. |
+| `agent-run.begin-event` | false | off | boolean | Opt in to the agent-run begin event. Independent of the memory-event master switch. |
 
 ### Action State Store
 

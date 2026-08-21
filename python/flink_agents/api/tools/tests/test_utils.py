@@ -174,6 +174,16 @@ def test_model_from_java_schema_fields_are_required() -> None:
     assert field.is_required()
 
 
+def test_model_from_java_schema_without_description() -> None:
+    # Java only emits a "description" key for a @ToolParam with a non-empty
+    # description (ToolParam.description() defaults to ""), so a param without
+    # one must be tolerated and fall back to a generated description.
+    schema_str = json.dumps({"properties": {"a": {"type": "number"}}})
+    field = create_model_from_java_tool_schema_str("J", schema_str).model_fields["a"]
+    assert field.annotation is float
+    assert field.description == "Parameter: a"
+
+
 # ---- create_java_tool_schema_str_from_model ----------------------------------
 
 

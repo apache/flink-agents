@@ -18,6 +18,7 @@
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -113,9 +114,16 @@ class MockToolChatConnection(BaseChatModelConnection):
         self,
         messages: list[ChatMessage],
         tools: list[BaseTool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: object,
     ) -> ChatMessage:
-        """Return a tool call for user input, or echo the tool response."""
+        """Return a tool call for user input, or echo the tool response.
+
+        A non-``None`` ``output_schema`` is rejected: this connection has no native
+        structured-output translation. Declaring the parameter keeps a caller-supplied
+        schema out of ``**kwargs``.
+        """
+        self._reject_unsupported_output_schema(output_schema)
         last_message = messages[-1]
         if last_message.role == MessageRole.TOOL:
             return ChatMessage(role=MessageRole.ASSISTANT, content=last_message.content)

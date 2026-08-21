@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Mapping, Sequence
 
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.java_chat_model import (
     JavaChatModelConnection,
@@ -26,6 +27,9 @@ from flink_agents.api.chat_models.java_chat_model import (
 )
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
+from flink_agents.runtime.java.java_resource_wrapper import (
+    set_java_resource_metric_group,
+)
 
 
 class JavaChatModelConnectionImpl(JavaChatModelConnection):
@@ -52,18 +56,31 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         self._j_resource_adapter = j_resource_adapter
 
     @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
+
+    @override
     def chat(
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Chat method that throws UnsupportedOperationException.
+        """Chat by forwarding the request to the wrapped Java connection.
 
         This connection serves as a Java resource wrapper only.
         Chat operations should be performed on the Java side using the underlying Java
         chat model object.
+
+        A non-``None`` ``output_schema`` is rejected: only messages, tools and kwargs
+        cross to the Java three-argument ``chat``, so a schema forwarded here would be
+        dropped on the way. Declaring the parameter keeps a caller-supplied schema out
+        of ``**kwargs``, which crosses to Java as ``modelParams`` — a provider-facing
+        map, not a channel for framework execution metadata.
         """
+        self._reject_unsupported_output_schema(output_schema)
         java_messages = [
             self._j_resource_adapter.fromPythonChatMessage(message)
             for message in messages
@@ -113,6 +130,11 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
 
         self._j_resource = j_resource
         self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def set_metric_group(self, metric_group: Any) -> None:
+        super().set_metric_group(metric_group)
+        set_java_resource_metric_group(self._j_resource, metric_group)
 
     @property
     @override

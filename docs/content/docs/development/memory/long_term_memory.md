@@ -56,12 +56,15 @@ When all three options are configured, the framework automatically creates a Mem
 {{< tab "Python" >}}
 
 ```python
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.core_options import AgentConfigOptions
 from flink_agents.api.memory.long_term_memory import LongTermMemoryOptions
 
-env = AgentsExecutionEnvironment.get_execution_environment()
-agents_config = env.get_config()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+agents_config = agents_env.get_config()
 
 # Set job identifier (maps to Mem0 user_id)
 agents_config.set(AgentConfigOptions.JOB_IDENTIFIER, "my_job")
@@ -455,6 +458,8 @@ The snippets below show how to read from and write to Long-Term Memory inside an
 {{< tab "Python" >}}
 
 ```python
+from pyflink.datastream import StreamExecutionEnvironment
+
 from flink_agents.api.decorators import action
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.core_options import AgentConfigOptions
@@ -488,8 +493,9 @@ class PersonalizedAssistant:
         ctx.send_event(OutputEvent(output=response))
 
 # Setup
-env = AgentsExecutionEnvironment.get_execution_environment()
-agents_config = env.get_config()
+env = StreamExecutionEnvironment.get_execution_environment()
+agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
+agents_config = agents_env.get_config()
 agents_config.set(AgentConfigOptions.JOB_IDENTIFIER, "personalized_assistant")
 agents_config.set(LongTermMemoryOptions.Mem0.CHAT_MODEL_SETUP, "my_chat_model")
 agents_config.set(LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP, "my_embedding_model")
@@ -533,7 +539,7 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 ## Context Isolation
 
-Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition maintains its own isolated set of memories, ensuring that memories from one user or session do not leak into another.
+Long-Term Memory automatically provides context isolation through Flink's keyed partition model. Each keyed partition normally maintains its own isolated set of memories.
 
 The isolation hierarchy works as follows:
 - **Job-level** (`JOB_IDENTIFIER`): Separates memories between different Flink jobs
@@ -542,4 +548,4 @@ The isolation hierarchy works as follows:
 
 This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
 
-> **Note:** Partition-level isolation is currently derived from the hash of the partition key (`String.valueOf(key.hashCode())`) rather than the full original key. Distinct keys whose hashes collide may therefore share the same memory context. Avoid relying on isolation as a strict security boundary; if collision-free isolation is required, encode a unique identifier into the memory set name.
+> **Note:** Partition-level isolation uses a textual identity derived from the logical key instead of `key.hashCode()`. Java keys use `String.valueOf(key)`. Default-serialized PyFlink keys are deserialized and use Python `str`; explicitly typed PyFlink keys use `String.valueOf`, except byte-array keys, which use Python's bytes representation. This avoids hash collisions, but distinct keys may still share a memory context if they produce the same text, for example when custom key types have non-unique `toString()` or `__str__()` implementations. Key representations should therefore be stable and unique, and this isolation should not be treated as a security boundary.

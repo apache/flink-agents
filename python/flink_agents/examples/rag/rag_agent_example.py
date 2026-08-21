@@ -15,147 +15,16 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-import os
+from pyflink.datastream import StreamExecutionEnvironment
 
-from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.decorators import (
-    action,
-    chat_model_setup,
-    embedding_model_setup,
-    prompt,
-    vector_store,
-)
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.context_retrieval_event import (
-    ContextRetrievalRequestEvent,
-    ContextRetrievalResponseEvent,
-)
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
-from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceName,
     ResourceType,
 )
-from flink_agents.api.runner_context import RunnerContext
+from flink_agents.examples.rag.agents.rag_agent import MyRAGAgent
 from flink_agents.examples.rag.knowledge_base_setup import populate_knowledge_base
-
-OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
-OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
-
-
-class MyRAGAgent(Agent):
-    """Example RAG agent demonstrating context retrieval.
-
-    This RAG agent shows how to:
-    1. Receive a user query
-    2. Retrieve relevant context from a vector store using semantic search
-    3. Augment the user query with retrieved context
-    4. Generate enhanced responses using the chat model
-
-    This is a basic example demonstrating RAG workflow with Ollama and ChromaDB.
-    """
-
-    @prompt
-    @staticmethod
-    def context_enhanced_prompt() -> Prompt:
-        """Prompt template for enhancing user queries with retrieved context."""
-        template = """Based on the following context, please answer the user's question.
-
-Context:
-{context}
-
-User Question:
-{user_query}
-
-Please provide a helpful answer based on the context provided."""
-        return Prompt.from_text(template)
-
-    @embedding_model_setup
-    @staticmethod
-    def text_embedder() -> ResourceDescriptor:
-        """Embedding model setup for generating text embeddings."""
-        return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.OLLAMA_SETUP,
-            connection="ollama_embedding_connection",
-            model=OLLAMA_EMBEDDING_MODEL,
-        )
-
-    @vector_store
-    @staticmethod
-    def knowledge_base() -> ResourceDescriptor:
-        """Vector store setup for knowledge base."""
-        return ResourceDescriptor(
-            clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
-            embedding_model="text_embedder",
-            collection="example_knowledge_base",
-        )
-
-    @chat_model_setup
-    @staticmethod
-    def chat_model() -> ResourceDescriptor:
-        """Chat model setup for generating responses."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.OLLAMA_SETUP,
-            connection="ollama_chat_connection",
-            model=OLLAMA_CHAT_MODEL,
-        )
-
-    @action(EventType.InputEvent)
-    @staticmethod
-    def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Process user input and retrieve relevant context."""
-        user_query = str(InputEvent.from_event(event).input)
-        ctx.send_event(
-            ContextRetrievalRequestEvent(
-                query=user_query,
-                vector_store="knowledge_base",
-                max_results=3,
-            )
-        )
-
-    @action(EventType.ContextRetrievalResponseEvent)
-    @staticmethod
-    def process_retrieved_context(
-        event: Event, ctx: RunnerContext
-    ) -> None:
-        """Process retrieved context and create enhanced chat request."""
-        retrieval_event = ContextRetrievalResponseEvent.from_event(event)
-        user_query = retrieval_event.query
-        retrieved_docs = retrieval_event.documents
-
-        # Create context from retrieved documents
-        context_text = "\n\n".join(
-            [f"{i + 1}. {doc.content}" for i, doc in enumerate(retrieved_docs)]
-        )
-
-        # Get prompt resource and format it
-        prompt_resource = ctx.get_resource(
-            "context_enhanced_prompt", ResourceType.PROMPT
-        )
-        enhanced_prompt = prompt_resource.format_string(
-            context=context_text, user_query=user_query
-        )
-
-        # Send chat request with enhanced prompt
-        ctx.send_event(
-            ChatRequestEvent(
-                model="chat_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=enhanced_prompt)],
-            )
-        )
-
-    @action(EventType.ChatResponseEvent)
-    @staticmethod
-    def process_chat_response(event: Event, ctx: RunnerContext) -> None:
-        """Process chat model response and generate output."""
-        chat_response = ChatResponseEvent.from_event(event)
-        if chat_response.response and chat_response.response.content:
-            ctx.send_event(OutputEvent(output=chat_response.response.content))
-
 
 if __name__ == "__main__":
     print("Starting RAG Example Agent...")
@@ -165,17 +34,9 @@ if __name__ == "__main__":
 
     agent = MyRAGAgent()
 
-    # Prepare example queries
-    input_list = []
-    test_queries = [
-        {"key": "001", "value": "What is Apache Flink?"},
-        {"key": "002", "value": "What is Apache Flink Agents?"},
-        {"key": "003", "value": "What is Python?"},
-    ]
-    input_list.extend(test_queries)
-
-    # Setup the Agents execution environment
-    agents_env = AgentsExecutionEnvironment.get_execution_environment()
+    # Set up the Flink streaming environment and the Agents execution environment.
+    env = StreamExecutionEnvironment.get_execution_environment()
+    agents_env = AgentsExecutionEnvironment.get_execution_environment(env)
 
     # Setup Ollama embedding and chat model connections
     agents_env.add_resource(
@@ -185,19 +46,29 @@ if __name__ == "__main__":
     )
     agents_env.add_resource(
         "ollama_chat_connection",
-        ResourceType.EMBEDDING_MODEL,
-        ResourceDescriptor(clazz=ResourceName.ChatModel.OLLAMA_CONNECTION),
+        ResourceType.CHAT_MODEL_CONNECTION,
+        ResourceDescriptor(
+            clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
+            request_timeout=240.0,
+        ),
     )
 
-    output_list = agents_env.from_list(input_list).apply(agent).to_list()
+    # A small stream of example queries, keyed by the query text.
+    query_stream = env.from_collection(
+        [
+            "What is Apache Flink?",
+            "What is Apache Flink Agents?",
+            "What is Python?",
+        ],
+    )
 
-    agents_env.execute()
+    # Use the RAG agent to answer each query and print the responses to stdout.
+    response_stream = (
+        agents_env.from_datastream(input=query_stream, key_selector=lambda x: x)
+        .apply(agent)
+        .to_datastream()
+    )
+    response_stream.print()
 
-    print("\n" + "=" * 50)
-    print("RAG Example Results:")
-    print("=" * 50)
-
-    for output in output_list:
-        for key, value in output.items():
-            print(f"\n[{key}] Response: {value}")
-            print("-" * 40)
+    # Execute the Flink pipeline.
+    agents_env.execute("RAG Agent Example Job")

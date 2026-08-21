@@ -20,11 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from flink_agents.api.events.tool_event import ToolRequestEvent
 from flink_agents.e2e_tests.test_utils import (
     assert_tool_invoked,
     collect_tool_invocations,
-    tool_invocations_from_events,
 )
 
 
@@ -33,12 +31,9 @@ def _tool_request_record(tool_calls: list) -> dict:
     return {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
+        "eventId": "00000000-0000-0000-0000-000000000001",
         "eventType": "_tool_request_event",
-        "event": {
-            "eventType": "_tool_request_event",
-            "id": "00000000-0000-0000-0000-000000000001",
-            "attributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
-        },
+        "eventAttributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
     }
 
 
@@ -66,8 +61,9 @@ def test_collect_tool_invocations(tmp_path: Path) -> None:
     other_event = {
         "timestamp": "2026-05-31T00:00:00Z",
         "logLevel": "STANDARD",
+        "eventId": "00000000-0000-0000-0000-000000000002",
         "eventType": "_input_event",
-        "event": {"eventType": "_input_event", "id": "x", "attributes": {}},
+        "eventAttributes": {},
     }
     _write_log(
         log_dir,
@@ -91,17 +87,41 @@ def test_collect_tool_invocations_no_tool(tmp_path: Path) -> None:
             {
                 "timestamp": "2026-05-31T00:00:00Z",
                 "logLevel": "STANDARD",
+                "eventId": "00000000-0000-0000-0000-000000000003",
                 "eventType": "_output_event",
-                "event": {
-                    "eventType": "_output_event",
-                    "id": "y",
-                    "attributes": {},
-                },
+                "eventAttributes": {},
             }
         ],
     )
 
     assert collect_tool_invocations(log_dir) == []
+
+
+def test_collect_tool_invocations_legacy_format(tmp_path: Path) -> None:
+    """Parser remains compatible with the old nested event log format."""
+    log_dir = tmp_path / "event_logs"
+    _write_log(
+        log_dir,
+        [
+            {
+                "timestamp": "2026-05-31T00:00:00Z",
+                "logLevel": "STANDARD",
+                "eventType": "_tool_request_event",
+                "event": {
+                    "eventType": "_tool_request_event",
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "attributes": {
+                        "model": "qwen3:1.7b",
+                        "tool_calls": [_function_tool_call("add", {"a": 1, "b": 2})],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert collect_tool_invocations(log_dir) == [
+        {"name": "add", "arguments": {"a": 1, "b": 2}}
+    ]
 
 
 def test_assert_tool_invoked_dict_args() -> None:
@@ -129,22 +149,3 @@ def test_assert_tool_invoked_mismatch_reports_invocations() -> None:
         assert_tool_invoked(invocations, "add", {"a": 1, "b": 2})
     assert "add" in str(exc_info.value)
     assert "9" in str(exc_info.value)
-
-
-def test_tool_invocations_from_events() -> None:
-    """Live ToolRequestEvents normalize to the same {name, arguments} shape.
-
-    One event carrying two tool calls yields one invocation per call, in order.
-    """
-    event = ToolRequestEvent(
-        model="qwen3:1.7b",
-        tool_calls=[
-            _function_tool_call("add", {"a": 1, "b": 2}),
-            _function_tool_call("multiply", {"a": 4444, "b": 312}),
-        ],
-    )
-
-    assert tool_invocations_from_events([event]) == [
-        {"name": "add", "arguments": {"a": 1, "b": 2}},
-        {"name": "multiply", "arguments": {"a": 4444, "b": 312}},
-    ]

@@ -25,6 +25,12 @@ import java.util.List;
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
 
+    /** Behaviour when a trigger condition throws or returns a non-Boolean at evaluation time. */
+    public enum ConditionEvaluationFailureStrategy {
+        WARN_AND_SKIP,
+        FAIL
+    }
+
     /**
      * The config parameter specifies which event logger implementation to use. Defaults to {@link
      * LoggerType#SLF4J}, which surfaces events in Flink's Web UI; setting {@link LoggerType#FILE}
@@ -32,6 +38,17 @@ public class AgentConfigOptions {
      */
     public static final ConfigOption<LoggerType> EVENT_LOGGER_TYPE =
             new ConfigOption<>("eventLoggerType", LoggerType.class, LoggerType.SLF4J);
+
+    /**
+     * Specifies how condition evaluation failures are handled. Defaults to {@code WARN_AND_SKIP};
+     * use {@code FAIL} to enforce fail-fast behavior.
+     */
+    public static final ConfigOption<ConditionEvaluationFailureStrategy>
+            CONDITION_EVALUATION_FAILURE_STRATEGY =
+                    new ConfigOption<>(
+                            "action.trigger-condition.evaluate-failure-strategy",
+                            ConditionEvaluationFailureStrategy.class,
+                            ConditionEvaluationFailureStrategy.WARN_AND_SKIP);
 
     /** The config parameter specifies the directory for the FileEvent file. */
     public static final ConfigOption<String> BASE_LOG_DIR =
@@ -129,6 +146,14 @@ public class AgentConfigOptions {
      */
     public static final ConfigOption<EventLogLevel> EVENT_LOG_LEVEL =
             new ConfigOption<>("event-log.level", EventLogLevel.class, EventLogLevel.STANDARD);
+
+    /**
+     * Whether to persist Agent Trace context and execution lifecycle Events in the Event Log.
+     * Business Events continue to be logged without trace context when this option is disabled.
+     * In-process execution reporting, including built-in metrics, is unaffected.
+     */
+    public static final ConfigOption<Boolean> EVENT_LOG_TRACE_ENABLED =
+            new ConfigOption<>("event-log.trace.enabled", Boolean.class, false);
 
     /**
      * The maximum string length for event payloads when logging at STANDARD level. Strings

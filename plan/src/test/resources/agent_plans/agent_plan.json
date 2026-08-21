@@ -5,7 +5,10 @@
       "exec": {
         "qualname": "org.apache.flink.agents.plan.TestAction",
         "method_name": "legal",
-        "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"],
+        "parameter_types": [
+          "org.apache.flink.agents.api.Event",
+          "org.apache.flink.agents.api.context.RunnerContext"
+        ],
         "func_type": "JavaFunction"
       },
       "trigger_conditions": [
@@ -17,7 +20,10 @@
       "exec": {
         "qualname": "org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializerTest$MyAction",
         "method_name": "doNothing",
-        "parameter_types": ["org.apache.flink.agents.api.Event", "org.apache.flink.agents.api.context.RunnerContext"],
+        "parameter_types": [
+          "org.apache.flink.agents.api.Event",
+          "org.apache.flink.agents.api.context.RunnerContext"
+        ],
         "func_type": "JavaFunction"
       },
       "trigger_conditions": [
@@ -25,15 +31,6 @@
         "MyEvent"
       ]
     }
-  },
-  "actions_by_event": {
-    "_input_event": [
-      "first_action",
-      "second_action"
-    ],
-    "MyEvent": [
-      "second_action"
-    ]
   },
   "config": {
     "conf_data": {

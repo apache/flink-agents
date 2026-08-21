@@ -21,8 +21,6 @@ from pathlib import Path
 
 from ollama import Client
 
-from flink_agents.api.events.tool_event import ToolRequestEvent
-
 current_dir = Path(__file__).parent
 
 
@@ -66,9 +64,13 @@ def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
                 if not line.strip():
                     continue
                 record = json.loads(line)
-                if record.get("eventType") != "_tool_request_event":
+                event_type = record.get("eventType")
+                if event_type != "_tool_request_event":
                     continue
-                tool_calls = record["event"]["attributes"].get("tool_calls", [])
+                attributes = record.get("eventAttributes")
+                if attributes is None:
+                    attributes = record["event"].get("attributes", {})
+                tool_calls = attributes.get("tool_calls", [])
                 for tool_call in tool_calls:
                     function = tool_call["function"]
                     invocations.append(
@@ -77,35 +79,6 @@ def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
                             "arguments": function["arguments"],
                         }
                     )
-    return invocations
-
-
-def tool_invocations_from_events(events: list[ToolRequestEvent]) -> list[dict]:
-    """Normalize live ``ToolRequestEvent`` objects to the same invocation shape.
-
-    Adapts the in-memory capture (the ``LocalRunner`` hook) to the same
-    ``{name, arguments}`` shape :func:`collect_tool_invocations` returns from the
-    event log, so both sources feed :func:`assert_tool_invoked` identically. Each
-    event's ``tool_calls`` is a list of nested ``{id, type, function:{name,
-    arguments}}`` dicts; order is preserved.
-
-    Args:
-        events: ``ToolRequestEvent`` objects captured during a local run.
-
-    Returns:
-        Ordered list of ``{"name": str, "arguments": dict | str}``, one per tool
-        call across all events.
-    """
-    invocations = []
-    for event in events:
-        for tool_call in event.tool_calls:
-            function = tool_call["function"]
-            invocations.append(
-                {
-                    "name": function["name"],
-                    "arguments": function["arguments"],
-                }
-            )
     return invocations
 
 

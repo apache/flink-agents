@@ -26,7 +26,12 @@ under the License.
 
 A workflow style agent in Flink-Agents is an agent whose reasoning and behavior are organized as a directed workflow of modular steps, called actions, connected by events. This design is inspired by the need to orchestrate complex, multi-stage tasks in a transparent, extensible, and data-centric way, leveraging Apache Flink's streaming architecture.
 
-In Flink-Agents, a workflow agent is defined as a class that inherits from the `Agent` base class. The agent's logic is expressed as a set of actions, each of which is a function decorated with `@action(EventType.X)` in python (or a method annotated with `@Action(EventType.X)` in java). Actions consume events, perform reasoning or tool calls, and emit new events, which may trigger downstream actions. This event-driven workflow forms a directed cyclic graph of computation, where each node is an action and each edge is an event type.
+In Flink-Agents, a workflow agent is a class that inherits from the `Agent` base class. Its workflow
+is defined by actions: functions decorated with `@action(...)` in Python or methods annotated with
+`@Action(...)` in Java. Each action declares one or more trigger conditions, which may be exact event
+types or condition expressions. Actions consume events, perform reasoning or tool calls, and emit new
+events that may trigger other actions. This event-driven workflow forms a directed graph that may
+contain cycles. Each node is an action, and each edge represents an event flow between actions.
 
 A workflow agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
@@ -230,12 +235,14 @@ public class ReviewAnalysisAgent extends Agent {
 
 ## Action
 
-An action is a piece of code that can be executed. Each action listens to at least one type of event. When an event of the listening type occurs, the action will be triggered. An action can also generate new events, to trigger other actions.
+An action is a piece of code that can be executed. It declares one or more trigger conditions and is
+triggered when an event matches one of them.
 
-
-To declare an action in Agent, user can use `@action` to decorate a function of Agent class in python (or annotate a method of Agent class in java), and declare the listened event types as decorator/annotation parameters. 
-
-The decorated/annotated function signature should be `(Event, RunnerContext) -> None`. In Python, actions can also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
+Use `@action(*trigger_conditions, target=None)` to decorate a Python function or `@Action({...})` to
+annotate a Java method. The function or method accepts the triggering `Event` and a `RunnerContext`.
+It sends events through the context rather than returning a result, so declare its return type as
+`None` in Python or `void` in Java. A native Java action must be `public static`. Python actions can
+also be defined as `async def` when using async execution (see [Async Execution](#async-execution)).
 
 {{< tabs "Action Function" >}}
 
@@ -264,9 +271,78 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-In the function, user can also send new events, to trigger other actions, or output the data.
+### Registering Actions Programmatically
 
-**Trigger another action** — send a built-in or custom event that another action listens to:
+As an alternative to annotations, register an action through the `Agent` API:
+
+{{< tabs "Programmatic Action" >}}
+
+{{< tab "Python" >}}
+```python
+agent.add_action(
+    "process_event",
+    [EventType.InputEvent],
+    process_event,
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class ProgrammaticAgent extends Agent {
+    public ProgrammaticAgent() throws NoSuchMethodException {
+        addAction(
+                new String[] {EventType.InputEvent},
+                ProgrammaticAgent.class.getMethod(
+                        "processEvent", Event.class, RunnerContext.class));
+    }
+
+    public static void processEvent(Event event, RunnerContext ctx) {
+        // Handle the input event.
+    }
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+### Trigger Conditions
+
+A trigger condition is either:
+
+- An **exact event type**, such as `EventType.InputEvent` or a custom event's `EVENT_TYPE` constant.
+- A **condition expression** that evaluates event data to `true` or `false`. Expressions are written
+  in [Common Expression Language (CEL)](https://cel.dev/); Flink Agents supports the subset described
+  in [Trigger Condition Reference](#trigger-condition-reference).
+
+Conditions on the same action are alternatives (OR). For example, separate conditions for
+`EventType.InputEvent` and `attributes.urgent == true` allow any input event to trigger the action,
+even when `urgent` is false. To require both, combine them in one expression:
+
+```text
+type == EventType.InputEvent && attributes.urgent == true
+```
+
+When passed directly to `@action` or `@Action`, `EventType.InputEvent` declares an exact event-type
+condition. Within an expression, it is a value and must be compared with `type`, as shown above. A
+bare identifier or dotted path is treated as an exact event type, so write attribute checks
+explicitly, for example `ready == true` or `attributes.ready == true`.
+
+#### Matching Behavior
+
+When an event arrives:
+
+1. The runtime selects every action with an exact event-type condition that matches the event's type.
+2. For each remaining action, it evaluates expressions in declaration order and stops at the first
+   `true` result.
+3. Every selected action is executed once, even if more than one of its conditions matches.
+
+### Sending Events
+
+An action can send an event to trigger another action or emit output downstream.
+
+**Trigger another action** — send a built-in or custom event that matches another action's trigger
+conditions:
 
 {{< tabs "Trigger Another Action" >}}
 
@@ -275,7 +351,6 @@ In the function, user can also send new events, to trigger other actions, or out
 @action(EventType.InputEvent)
 @staticmethod
 def process_input(event: Event, ctx: RunnerContext) -> None:
-    # send a ChatRequestEvent to trigger the built-in chat-model action
     ctx.send_event(ChatRequestEvent(model="my_model", messages=messages))
 ```
 {{< /tab >}}
@@ -284,8 +359,6 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
 ```java
 @Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {
-    InputEvent inputEvent = InputEvent.fromEvent(event);
-    // send ChatRequestEvent
     ctx.sendEvent(new ChatRequestEvent("my_model", messages));
 }
 ```
@@ -293,16 +366,15 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 
 {{< /tabs >}}
 
-**Emit downstream output** — send an `OutputEvent` to produce an output of the agent:
+**Emit downstream output** — send an `OutputEvent`:
 
 {{< tabs "Emit Output" >}}
 
 {{< tab "Python" >}}
 ```python
-@action(ChatResponseEvent.EVENT_TYPE)
+@action(EventType.ChatResponseEvent)
 @staticmethod
 def emit_output(event: Event, ctx: RunnerContext) -> None:
-    # output data to downstream
     ctx.send_event(OutputEvent(output=result))
 ```
 {{< /tab >}}
@@ -311,7 +383,6 @@ def emit_output(event: Event, ctx: RunnerContext) -> None:
 ```java
 @Action(EventType.ChatResponseEvent)
 public static void emitOutput(Event event, RunnerContext ctx) {
-    // output data to downstream
     ctx.sendEvent(new OutputEvent(result));
 }
 ```
@@ -320,13 +391,68 @@ public static void emitOutput(Event event, RunnerContext ctx) {
 {{< /tabs >}}
 
 {{< hint info >}}
-An `OutputEvent` is collected and emitted to the agent's downstream **immediately**, bypassing
-action routing, while other events (such as `ChatRequestEvent`) are routed to the actions that
-listen for them. Sending a `ChatRequestEvent` and an `OutputEvent` from the same action is valid
-API usage, but it produces both an immediate output and, once the chat response is handled, a
-later model-based output. For the normal chat request/response workflow, emit the `OutputEvent`
-from the action that handles the `ChatResponseEvent`, as shown above.
+`OutputEvent` is emitted directly downstream and bypasses action matching. Therefore, an
+`OutputEvent` trigger never invokes an action. Other events go through action matching as usual.
 {{< /hint >}}
+
+### Trigger Condition Reference
+
+#### Custom Event-Type Names
+
+A custom event type may be a bare name such as `order.created` or `order-created`. Each dot-separated
+segment must start with an ASCII letter or underscore and may then contain ASCII letters, digits,
+underscores, or hyphens. Quote a name that contains other punctuation or would otherwise be parsed as
+an expression, for example `'order:created'`, `'true'`, or `'EventType.custom'`. In Java and Python,
+the quotes are part of the condition string. For example, use `@Action("'order:created'")` in Java or
+`@action("'order:created'")` in Python. A quoted name matches the literal event-type string; it does
+not reference a built-in `EventType` constant. Quoted names must be non-empty and cannot contain
+whitespace, quotes, backslashes, or control characters.
+
+#### Expression Variables
+
+Java and Python actions use the same Java runtime to evaluate condition expressions. Expressions can
+access these framework variables:
+
+| Variable     | Value                                |
+|--------------|--------------------------------------|
+| `type`       | The event type string                |
+| `id`         | The event ID as a string             |
+| `EventType`  | The built-in event-type constants    |
+| `attributes` | The event's top-level attribute map  |
+
+#### Accessing Attributes
+
+- Top-level attributes are also available as bare variables, so `score > 80` and
+  `attributes.score > 80` refer to the same field.
+- Nested values are not flattened. For `{input: {status: "ok"}}`, use `input.status` or
+  `attributes.input.status`; bare `status` does not refer to the nested value. Other event payloads
+  keep their top-level envelope, for example `response.content`.
+- Framework variables take precedence over attributes with the same names. Use `attributes["type"]`
+  or `attributes["id"]` to access a colliding attribute.
+- For a top-level key containing dots, use a literal index such as `attributes["a.b.c"]`. Test its
+  presence with `"a.b.c" in attributes`.
+
+#### Missing Attributes and Value Types
+
+A present attribute whose value is `null` remains `null`, while a missing attribute remains absent.
+Use `has(attributes.field)` before reading an optional attribute. Reading a missing attribute without
+a guard causes an event-time evaluation failure. With the default `WARN_AND_SKIP` strategy, the
+runtime logs a warning, treats that condition as false, and continues with later OR conditions;
+`FAIL` fails the Flink task. See the
+[condition evaluation failure strategy]({{< ref "docs/operations/configuration#core-options" >}}).
+
+Strings remain strings even when they contain JSON. To match nested data, send a structured map or
+list instead of a JSON-encoded string. Decimal values and integers outside the signed 64-bit range are
+evaluated as doubles and may lose precision.
+
+#### Limitations
+
+- `has(...)` is the only supported CEL macro. The comprehension macros `exists`, `exists_one`,
+  `all`, `filter`, and `map` are not supported.
+- Dynamic root access such as `attributes[key]` and operations over the whole `attributes` map are
+  rejected when the runtime compiles the condition. Operator initialization fails, so the job cannot
+  start. This happens before event-time evaluation and is not controlled by the condition evaluation
+  failure strategy. Dynamic access inside a selected top-level attribute remains supported.
 
 ### Durable Execution
 
@@ -580,12 +706,17 @@ public class MyAgent extends Agent {
 
 ## Event
 
-Events are JSON-serializable messages passed between actions. Every event has a `type` string used for routing and an `attributes` map that carries the payload. A single event may trigger multiple actions if they are all listening to its type.
+Events are JSON-serializable messages passed between actions. Every event has a `type` string and an
+`attributes` map that carries its payload. Action routing can match the exact event type or evaluate
+a condition expression against the event data. One event may trigger multiple actions.
 
 ### Special Events
 
-* `InputEvent`: Generated by the framework, carrying an input data record that arrives at the agent in its `input` attribute. Actions listening to `InputEvent` are the entry points of the agent.
-* `OutputEvent`: The framework listens to `OutputEvent` and converts its `output` attribute into outputs of the agent.
+* `InputEvent`: Generated by the framework when an input record arrives. The record is available in
+  the event's `input` attribute. Actions whose trigger conditions match an `InputEvent` are the
+  agent's entry points.
+* `OutputEvent`: When an action sends this event, the framework emits its `output` attribute
+  downstream as an agent output. It bypasses action matching.
 
 ### Unified Event
 
@@ -631,6 +762,13 @@ public static void handleMyEvent(Event event, RunnerContext ctx) {
 
 {{< /tabs >}}
 
+{{< hint info >}}
+`upstreamEventId` and `upstreamActionName` (`upstream_event_id` and
+`upstream_action_name` in Python) are framework-managed lineage metadata. User code should keep
+user data in `attributes`. Values accepted during deserialization or reconstruction are
+overwritten when an Action emits the Event.
+{{< /hint >}}
+
 ### JSON Serialization
 
 Events are serialized as JSON when passed between Python actions or across the Java-Python boundary. This means attribute values of non-trivial types (such as Pydantic models) lose their type information and arrive as plain `dict` objects. Users must manually reconstruct the typed object:
@@ -658,11 +796,8 @@ class MyEvent(Event):
     @override
     def from_event(cls, event: Event) -> "MyEvent":
         assert "value" in event.attributes
-        result = MyEvent(value=event.attributes["value"])
-        # Preserve the base event id. Assign it last: the content-based id is
-        # regenerated whenever another field changes.
-        result.id = event.id
-        return result
+        result = cls(value=event.attributes["value"])
+        return result.reconstruct_from(event)
 
     @property
     def value(self) -> str:
@@ -688,13 +823,7 @@ public class MyEvent extends Event {
     }
 
     public static MyEvent fromEvent(Event event) {
-        // Preserve the base event id (and sourceTimestamp) so event logs, listeners,
-        // correlation, deduplication, and timestamp propagation stay consistent.
-        MyEvent result = new MyEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, MyEvent::new);
     }
 
     public String getValue() {
@@ -706,17 +835,23 @@ public class MyEvent extends Event {
 
 {{< /tabs >}}
 
-{{< hint info >}}
-When reconstructing a typed event, preserve the base `Event` metadata so that event logs,
-listeners, correlation, deduplication, and downstream timestamp propagation stay consistent with
-built-in events:
+{{< hint warning >}}
+Python Event IDs are immutable. Custom `from_event` implementations written against earlier
+versions may assign `result.id = event.id`; that assignment now raises a Pydantic
+`ValidationError`. Replace `result.id = event.id` followed by `return result` with
+`return result.reconstruct_from(event)`.
 
-- **`id`**: copy the source event's `id` onto the reconstructed event, as all built-in events do
-  in both languages. In Python, assign `result.id = event.id` **last**, because the content-based
-  `id` is regenerated whenever any other field changes.
-- **`sourceTimestamp`** (Java only): carry it over with `setSourceTimestamp(...)` when
-  `hasSourceTimestamp()` is true, matching built-in Java events. This field is runtime-internal and
-  used for timestamp propagation; the Python `Event` has no equivalent.
+Typed reconstruction represents the same Event occurrence, so it must preserve the base Event's
+identity and framework-managed metadata:
+
+- **Python**: return `reconstruct_from(event)` after constructing the typed object.
+  It returns a new typed object with the Event's UUIDv4 `id`, `upstream_event_id`, and
+  `upstream_action_name`; the returned Event's `id` remains immutable.
+- **Java**: implement the typed constructor that accepts `(UUID id, Map<String, Object>
+  attributes)`, then have `fromEvent` return
+  `reconstructFrom(event, MyEvent::new)`. The framework supplies the original ID and
+  attributes, validates that the ID is preserved, and carries over `sourceTimestamp`,
+  `upstreamEventId`, and `upstreamActionName`.
 {{< /hint >}}
 
 {{< hint info >}}

@@ -48,16 +48,51 @@ esac
     [ "$status" -ne 0 ]
 }
 
-@test "validate_python_bin: Python 3.12 is rejected" {
+@test "validate_python_bin: Python 3.12 is rejected for Flink Agents 0.2.x" {
+    FLINK_AGENTS_VERSION="0.2.1"
     fake_python "3.12"
     run validate_python_bin fake_py
     [ "$status" -ne 0 ]
 }
 
-@test "validate_python_bin: Python 3.13 is rejected" {
+@test "validate_python_bin: Python 3.12 is accepted for Flink Agents 0.3.0+" {
+    FLINK_AGENTS_VERSION="0.3.0"
+    fake_python "3.12"
+    run validate_python_bin fake_py
+    [ "$status" -eq 0 ]
+}
+
+@test "validate_python_bin: Python 3.13 is rejected for Flink Agents 0.3.0+" {
+    FLINK_AGENTS_VERSION="0.3.0"
     fake_python "3.13"
     run validate_python_bin fake_py
     [ "$status" -ne 0 ]
+}
+
+# Python 3.12 support also requires Flink 2.1+, independent of the Agents
+# version: 0.3.0 alone is not enough if Flink is 2.0.x or 1.20.x.
+@test "validate_python_bin: Python 3.12 is rejected for Flink Agents 0.3.0 on Flink 2.0.x" {
+    FLINK_AGENTS_VERSION="0.3.0"
+    FLINK_VERSION="2.0.2"
+    fake_python "3.12"
+    run validate_python_bin fake_py
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_python_bin: Python 3.12 is rejected for Flink Agents 0.3.0 on Flink 1.20.x" {
+    FLINK_AGENTS_VERSION="0.3.0"
+    FLINK_VERSION="1.20.5"
+    fake_python "3.12"
+    run validate_python_bin fake_py
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_python_bin: Python 3.12 is accepted for Flink Agents 0.3.0 on Flink 2.1.x" {
+    FLINK_AGENTS_VERSION="0.3.0"
+    FLINK_VERSION="2.1.3"
+    fake_python "3.12"
+    run validate_python_bin fake_py
+    [ "$status" -eq 0 ]
 }
 
 @test "validate_python_bin: Python 2.7 is rejected" {

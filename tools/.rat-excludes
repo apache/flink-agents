@@ -22,4 +22,9 @@ PULL_REQUEST_TEMPLATE.md
 .*\.egg-info/*
 licenses/*
 skills/*
+flink-agents-dev
 .*\.yaml$
+AGENTS.md
+code_review.md
+CLAUDE.md
+review-guides/*

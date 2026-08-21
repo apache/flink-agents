@@ -16,12 +16,31 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Sequence, cast
+from dataclasses import dataclass
+from typing import Any, Dict, Generic, Sequence, TypeVar, cast
 
 from pydantic import Field
 from typing_extensions import override
 
 from flink_agents.api.resource import Resource, ResourceType
+
+EmbeddingValue = TypeVar("EmbeddingValue", list[float], list[list[float]])
+
+
+@dataclass(frozen=True)
+class EmbeddingTokenUsage:
+    """Token usage reported by an embedding provider."""
+
+    prompt_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class EmbeddingResult(Generic[EmbeddingValue]):
+    """Embedding provider result with optional token usage metadata."""
+
+    embeddings: EmbeddingValue
+    token_usage: EmbeddingTokenUsage | None = None
 
 
 class BaseEmbeddingModelConnection(Resource, ABC):
@@ -61,6 +80,12 @@ class BaseEmbeddingModelConnection(Resource, ABC):
             A list of floating-point numbers representing the embedding vector.
             The dimension of the vector depends on the specific embedding model used.
         """
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return provider token usage when available."""
+        return EmbeddingResult(embeddings=self.embed(text, **kwargs))
 
 
 class BaseEmbeddingModelSetup(Resource, ABC):
@@ -123,3 +148,11 @@ class BaseEmbeddingModelSetup(Resource, ABC):
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
         return self._get_connection().embed(text, **merged_kwargs)
+
+    def embed_with_usage(
+        self, text: str | Sequence[str], **kwargs: Any
+    ) -> EmbeddingResult[list[float] | list[list[float]]]:
+        """Generate embeddings and return provider token usage when available."""
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        return self._get_connection().embed_with_usage(text, **merged_kwargs)

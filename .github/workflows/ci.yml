@@ -47,9 +47,14 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
       - name: Check code style
         run: ./tools/lint.sh -c
+      - name: Check AGENTS.md freshness
+        run: python3 tools/check-agents-md.py
+      - name: Check bundled YAML schema freshness
+        if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
+        run: python3 tools/check-skill-schema.py
 
-  install_sh_tests:
-    name: install.sh tests (${{ matrix.os }})
+  tools_script_tests:
+    name: tools script tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,7 +65,7 @@ jobs:
       - name: Install bash 4+ (macOS)
         if: runner.os == 'macOS'
         run: brew install bash
-      - name: Run install.sh tests
+      - name: Run tools script tests
         run: bash tools/test/run.sh
 
   build_backend_tests:
@@ -153,6 +158,7 @@ jobs:
   python_it_tests:
     name: it-python [${{ matrix.os }}] [java-17] [python-${{ matrix.python-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -201,6 +207,7 @@ jobs:
   java_it_tests:
     name: it-java [${{ matrix.os }}] [java-${{ matrix.java-version}}] [flink-${{ matrix.flink-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:
@@ -238,9 +245,37 @@ jobs:
           LOG_LEVEL: INFO
         run: tools/ut.sh -j -e -f ${{ matrix.flink-version }}
 
+  elasticsearch_tests:
+    name: Elasticsearch vector-store tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+      - name: Install flink-agents Java
+        run: bash tools/build.sh -j
+      - name: Start Elasticsearch
+        run: |
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
+          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
+          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
+      - name: Run Elasticsearch tests
+        env:
+          ES_HOST: http://localhost:9200
+        run: |
+          mvn -B --no-transfer-progress -pl integrations/vector-stores/elasticsearch -am -Dspotless.skip=true -Drat.skip=true -Dtest=ElasticsearchVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
+      - name: Stop Elasticsearch
+        if: always()
+        run: docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
+
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     env:
       SKIP_SPOTLESS_CHECK: true
     strategy:

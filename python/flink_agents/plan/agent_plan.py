@@ -66,15 +66,13 @@ class AgentPlan(BaseModel):
     ----------
     actions: Dict[str, Action]
         Mapping of action names to actions
-    actions_by_event : Dict[Type[Event], str]
-        Mapping of event types to the list of actions name that listen to them.
     resource_providers: ResourceProvider
         Two level mapping of resource type to resource name to resource provider.
     """
 
     actions: Dict[str, Action]
-    actions_by_event: Dict[str, List[str]]
     resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None = None
+    agent_name: str | None = None
     config: AgentConfiguration | None = None
 
     @field_serializer("resource_providers")
@@ -138,17 +136,14 @@ class AgentPlan(BaseModel):
         return self
 
     @staticmethod
-    def from_agent(agent: Agent, config: AgentConfiguration) -> "AgentPlan":
+    def from_agent(
+        agent: Agent, config: AgentConfiguration, agent_name: str | None = None
+    ) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
-        actions_by_event = {}
         for action in _get_actions(agent) + BUILT_IN_ACTIONS:
             assert action.name not in actions, f"Duplicate action name: {action.name}"
             actions[action.name] = action
-            for event_type in action.trigger_conditions:
-                if event_type not in actions_by_event:
-                    actions_by_event[event_type] = []
-                actions_by_event[event_type].append(action.name)
 
         resource_providers = {}
         for provider in _get_resource_providers(agent, config):
@@ -162,25 +157,10 @@ class AgentPlan(BaseModel):
             resource_providers[type][name] = provider
         return AgentPlan(
             actions=actions,
-            actions_by_event=actions_by_event,
             resource_providers=resource_providers,
+            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
             config=config,
         )
-
-    def get_actions(self, event_type: str) -> List[Action]:
-        """Get actions that listen to the specified event type.
-
-        Parameters
-        ----------
-        event_type : Type[Event]
-            The event type to query.
-
-        Returns:
-        -------
-        list[Action]
-            List of Actions that will respond to this event type.
-        """
-        return [self.actions[name] for name in self.actions_by_event[event_type]]
 
     def get_action_config(self, action_name: str) -> Dict[str, Any]:
         """Get config of the action.
@@ -213,17 +193,6 @@ class AgentPlan(BaseModel):
             The option value of the action config.
         """
         return self.actions[action_name].config.get(key, None)
-
-
-def _resolve_event_type(evt: Any) -> str:
-    """Convert a listen-event entry to a routing-key string.
-
-    Only string type identifiers are accepted.
-    """
-    if isinstance(evt, str):
-        return evt
-    msg = f"Event type must be a string identifier, got {evt!r}"
-    raise ValueError(msg)
 
 
 def _action_marker(value: Any) -> tuple | None:
@@ -289,9 +258,7 @@ def _get_actions(agent: Agent) -> List[Action]:
             Action(
                 name=name,
                 exec=exec_,
-                trigger_conditions=[
-                    _resolve_event_type(et) for et in trigger_conditions
-                ],
+                trigger_conditions=list(trigger_conditions),
             )
         )
     for name, action_tuple in agent.actions.items():
@@ -299,10 +266,7 @@ def _get_actions(agent: Agent) -> List[Action]:
             Action(
                 name=name,
                 exec=_to_plan_function(action_tuple[1]),
-                trigger_conditions=[
-                    _resolve_event_type(et)
-                    for et in action_tuple[0]
-                ],
+                trigger_conditions=list(action_tuple[0]),
                 config=action_tuple[2],
             )
         )
@@ -480,14 +444,13 @@ def _add_mcp_server(
         ]
     )
 
-    resource_providers.extend(
-        [
+    for tool in mcp_server.list_tools():
+        tool.mcp_server_name = name
+        resource_providers.append(
             PythonSerializableResourceProvider.from_resource(
                 name=tool.name, resource=tool
             )
-            for tool in mcp_server.list_tools()
-        ]
-    )
+        )
 
     mcp_server.close()
 

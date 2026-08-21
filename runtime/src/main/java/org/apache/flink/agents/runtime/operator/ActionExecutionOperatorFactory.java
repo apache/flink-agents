@@ -26,6 +26,8 @@ import org.apache.flink.streaming.api.operators.OneInputStreamOperatorFactory;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamOperatorParameters;
 
+import static org.apache.flink.util.Preconditions.checkArgument;
+
 /** Operator factory for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorFactory<IN, OUT> extends AbstractStreamOperatorFactory<OUT>
         implements OneInputStreamOperatorFactory<IN, OUT> {
@@ -34,17 +36,36 @@ public class ActionExecutionOperatorFactory<IN, OUT> extends AbstractStreamOpera
 
     private final Boolean inputIsJava;
 
+    private final boolean pythonKeyIsPickled;
+
     private final ActionStateStore actionStateStore;
 
     public ActionExecutionOperatorFactory(AgentPlan agentPlan, Boolean inputIsJava) {
-        this(agentPlan, inputIsJava, null);
+        this(agentPlan, inputIsJava, false, null);
+        checkArgument(
+                Boolean.TRUE.equals(inputIsJava),
+                "PyFlink input must provide whether its logical key uses pickle serialization");
+    }
+
+    public ActionExecutionOperatorFactory(
+            AgentPlan agentPlan, Boolean inputIsJava, boolean pythonKeyIsPickled) {
+        this(agentPlan, inputIsJava, pythonKeyIsPickled, null);
     }
 
     @VisibleForTesting
     protected ActionExecutionOperatorFactory(
             AgentPlan agentPlan, Boolean inputIsJava, ActionStateStore actionStateStore) {
+        this(agentPlan, inputIsJava, false, actionStateStore);
+    }
+
+    private ActionExecutionOperatorFactory(
+            AgentPlan agentPlan,
+            Boolean inputIsJava,
+            boolean pythonKeyIsPickled,
+            ActionStateStore actionStateStore) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
+        this.pythonKeyIsPickled = pythonKeyIsPickled;
         this.actionStateStore = actionStateStore;
         this.chainingStrategy = ChainingStrategy.ALWAYS;
     }
@@ -56,6 +77,7 @@ public class ActionExecutionOperatorFactory<IN, OUT> extends AbstractStreamOpera
                 new ActionExecutionOperator<>(
                         agentPlan,
                         inputIsJava,
+                        pythonKeyIsPickled,
                         parameters.getProcessingTimeService(),
                         parameters.getMailboxExecutor(),
                         actionStateStore);

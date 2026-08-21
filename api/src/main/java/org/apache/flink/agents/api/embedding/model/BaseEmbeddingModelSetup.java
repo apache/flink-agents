@@ -109,6 +109,17 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         return getConnection().embed(text, params);
     }
 
+    public EmbeddingResult<float[]> embedWithUsage(String text) {
+        return embedWithUsage(text, Collections.emptyMap());
+    }
+
+    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+        BaseEmbeddingModelConnection currentConnection = getConnection();
+        return currentConnection.embedWithUsage(text, params);
+    }
+
     /**
      * Generate embeddings for multiple texts.
      *
@@ -124,5 +135,17 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
         return getConnection().embed(texts, params);
+    }
+
+    public EmbeddingResult<List<float[]>> embedWithUsage(List<String> texts) {
+        return embedWithUsage(texts, Collections.emptyMap());
+    }
+
+    public EmbeddingResult<List<float[]>> embedWithUsage(
+            List<String> texts, Map<String, Object> parameters) {
+        Map<String, Object> params = this.getParameters();
+        params.putAll(parameters);
+        BaseEmbeddingModelConnection currentConnection = getConnection();
+        return currentConnection.embedWithUsage(texts, params);
     }
 }

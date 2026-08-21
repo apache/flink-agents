@@ -53,8 +53,8 @@ if __name__ == "__main__":
         event,
         runner_context,
     ]
-    listen_event_types1 = action1.trigger_conditions
-    assert listen_event_types1 == [input_event]
+    trigger_conditions1 = action1.trigger_conditions
+    assert trigger_conditions1 == [input_event]
 
     # check the second action
     assert "secondAction" in actions
@@ -67,21 +67,15 @@ if __name__ == "__main__":
         event,
         runner_context,
     ]
-    listen_event_types2 = action2.trigger_conditions
-    assert sorted(listen_event_types2) == [
+    trigger_conditions2 = action2.trigger_conditions
+    assert sorted(trigger_conditions2) == [
         my_event,
         input_event,
     ]
 
-    # check actions_by_event
-    actions_by_event = agent_plan.actions_by_event
-    assert len(actions_by_event) == 6
-
-    assert input_event in actions_by_event
-    assert sorted(actions_by_event[input_event]) == ["firstAction", "secondAction"]
-
-    assert my_event in actions_by_event
-    assert actions_by_event[my_event] == ["secondAction"]
+    # Runtime indexes are derived after plan loading and are not part of the
+    # wire format.
+    assert "actions_by_event" not in raw_agent_plan
 
     # check Java tool parameter injection survives agent plan JSON
     raw_tool_providers = raw_agent_plan["resource_providers"].get(

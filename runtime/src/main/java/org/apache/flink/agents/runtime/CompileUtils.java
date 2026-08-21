@@ -24,9 +24,13 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
+
+import static org.apache.flink.util.Preconditions.checkArgument;
 
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
@@ -37,7 +41,12 @@ public class CompileUtils {
             throws JsonProcessingException {
         // deserialize agent plan json.
         AgentPlan agentPlan = new ObjectMapper().readValue(agentPlanJson, AgentPlan.class);
-        return connectToAgent(inputDataStream, agentPlan, TypeInformation.of(byte[].class), false);
+        return connectToAgent(
+                inputDataStream,
+                agentPlan,
+                TypeInformation.of(byte[].class),
+                false,
+                isPickledPythonKeyType(inputDataStream.getKeyType()));
     }
 
     // ============================ invoke by java ====================================
@@ -48,7 +57,8 @@ public class CompileUtils {
 
     public static <IN, K> DataStream<Object> connectToAgent(
             KeyedStream<IN, K> keyedInputStream, AgentPlan agentPlan) {
-        return connectToAgent(keyedInputStream, agentPlan, TypeInformation.of(Object.class), true);
+        return connectToAgent(
+                keyedInputStream, agentPlan, TypeInformation.of(Object.class), true, false);
     }
 
     // ============================ basic ====================================
@@ -73,13 +83,32 @@ public class CompileUtils {
             KeyedStream<IN, K> keyedInputStream,
             AgentPlan agentPlan,
             TypeInformation<OUT> outTypeInformation,
-            boolean inputIsJava) {
+            boolean inputIsJava,
+            boolean pythonKeyIsPickled) {
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
                                 "action-execute-operator",
                                 outTypeInformation,
-                                new ActionExecutionOperatorFactory(agentPlan, inputIsJava))
+                                new ActionExecutionOperatorFactory(
+                                        agentPlan, inputIsJava, pythonKeyIsPickled))
                         .setParallelism(keyedInputStream.getParallelism());
+    }
+
+    /**
+     * Returns whether PyFlink's single logical key field uses its default pickle representation.
+     */
+    static boolean isPickledPythonKeyType(TypeInformation<?> keyType) {
+        checkArgument(
+                keyType instanceof RowTypeInfo,
+                "Expected PyFlink key type to be a single-field RowTypeInfo, but got %s",
+                keyType);
+        RowTypeInfo rowType = (RowTypeInfo) keyType;
+        checkArgument(
+                rowType.getArity() == 1,
+                "Expected PyFlink key type to contain one logical field, but got arity %s",
+                rowType.getArity());
+        TypeInformation<?> logicalKeyType = rowType.getTypeAt(0);
+        return logicalKeyType instanceof PickledByteArrayTypeInfo;
     }
 }

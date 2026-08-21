@@ -1,0 +1,2 @@
+{"id": 1, "result": "the first message. 8.8.8.8 mock chat model just for testing."}
+{"id": 2, "result": "the second message. 8.8.8.8 mock chat model just for testing."}

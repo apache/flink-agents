@@ -27,6 +27,22 @@ from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 
 
+def set_java_resource_metric_group(j_resource: Any, metric_group: Any) -> None:
+    """Bind the underlying Java metric group to a wrapped Java resource."""
+    if j_resource is None:
+        return
+    from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+
+    if metric_group is None:
+        j_metric_group = None
+    elif isinstance(metric_group, FlinkMetricGroup):
+        j_metric_group = metric_group._j_metric_group
+    else:
+        msg = "Java resource metric groups must be FlinkMetricGroup or None."
+        raise TypeError(msg)
+    j_resource.setMetricGroup(j_metric_group)
+
+
 class JavaTool(Tool):
     """Java Tool that carries tool metadata and can be recognized by PythonChatModel."""
 

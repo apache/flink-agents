@@ -292,6 +292,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `tools` | List[str] | None | List of tool names available to the model |
 | `max_tokens` | int | `1024` | Maximum number of tokens to generate |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `json_prefill` | bool | `False` | Prefill assistant response with "{" to enforce JSON output (applies only on models that accept assistant-message prefilling; disabled when tools are used, or when the request carries an `output_config`) |
 | `additional_kwargs` | dict | `{}` | Additional Anthropic API parameters |
 
 {{< /tab >}}
@@ -306,9 +307,9 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `tools` | List<String> | None | List of tool names available to the model |
 | `max_tokens` | long | `1024` | Maximum number of tokens to generate |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
-| `json_prefill` | boolean | `true` | Prefill assistant response with "{" to enforce JSON output (disabled when tools are used) |
+| `json_prefill` | boolean | `false` | Prefill assistant response with "{" to enforce JSON output (applies only on models that accept assistant-message prefilling; disabled when tools are used, or when the request carries an `output_config`) |
 | `strict_tools` | boolean | `false` | Enable strict mode for tool calling schemas |
-| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences) |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences); an `output_config` supplied here takes precedence over one derived from an output schema |
 
 {{< /tab >}}
 
@@ -390,105 +391,25 @@ Some popular options include:
 Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.
 {{< /hint >}}
 
-### Azure AI
-
-Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
-
-{{< hint info >}}
-Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
-{{< hint warning >}}
-**Azure AI vs Azure OpenAI:** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [Azure OpenAI](#azure-openai) instead.
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Create an Azure AI resource in the [Azure Portal](https://portal.azure.com/)
-2. Obtain your endpoint URL and API key from the Azure AI resource
-
-#### AzureAIChatModelConnection Parameters
-
-{{< tabs "AzureAIChatModelConnection Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter | Type   | Default  | Description                            |
-|-----------|--------|----------|----------------------------------------|
-| `endpoint` | String | Required | Azure AI service endpoint URL          |
-| `apiKey`   | String | Required | Azure AI API key for authentication   |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### AzureAIChatModelSetup Parameters
-
-{{< tabs "AzureAIChatModelSetup Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter    | Type             | Default  | Description                                      |
-|--------------|------------------|----------|--------------------------------------------------|
-| `connection` | String           | Required | Reference to connection method name              |
-| `model`      | String           | Required | Name of the chat model to use (e.g., "gpt-4o")   |
-| `prompt`     | Prompt \| String | None     | Prompt template or reference to prompt resource  |
-| `tools`      | List[String]     | None     | List of tool names available to the model        |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Usage Example
-
-{{< tabs "Azure AI Usage Example" >}}
-
-{{< tab "Java" >}}
-```java
-public class MyAgent extends Agent {
-    @ChatModelConnection
-    public static ResourceDescriptor azureAIConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
-                .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
-                .addInitialArgument("apiKey", "your-api-key-here")
-                .build();
-    }
-
-    @ChatModelSetup
-    public static ResourceDescriptor azureAIChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
-                .addInitialArgument("connection", "azureAIConnection")
-                .addInitialArgument("model", "gpt-4o")
-                .build();
-    }
-    
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Available Models
-
-Azure AI supports various models through the Azure AI Inference API. Visit the [Azure AI Model Catalog](https://ai.azure.com/explore/models) for the complete and up-to-date list of available models.
-
-Some popular options include:
-- **GPT-4o** (gpt-4o)
-- **GPT-4** (gpt-4)
-- **GPT-4 Turbo** (gpt-4-turbo)
-- **GPT-3.5 Turbo** (gpt-3.5-turbo)
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
 ### Azure OpenAI
 
 Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
 {{< hint warning >}}
-**Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
+**Migrating from Azure AI:** `AzureAIChatModelConnection` and `AzureAIChatModelSetup` have been removed. Replace them with `OpenAICompletionsConnection` and `OpenAICompletionsSetup` (see [OpenAI](#openai)), pointed at a Microsoft Foundry OpenAI v1 endpoint. There are two declarations to change, not one.
+
+On the connection, `AzureAIChatModelConnection` → `OpenAICompletionsConnection`:
+
+- `endpoint` becomes `api_base_url`, **and the value changes shape, not just the key**: `https://<resource>.services.ai.azure.com/models` becomes `https://<resource>.openai.azure.com/openai/v1/`. `https://<resource>.services.ai.azure.com/openai/v1/` is also accepted. Carrying the old value over unchanged will not work.
+- `apiKey` becomes `api_key`.
+
+On the setup, `AzureAIChatModelSetup` → `OpenAICompletionsSetup`:
+
+- Set `model` explicitly to your Foundry deployment name. Leaving it out is **not** reported as a configuration error: `OpenAICompletionsSetup` substitutes its own OpenAI default (`gpt-4o-mini`), and on the OpenAI v1 route that value is read as a deployment name. If no deployment on the resource carries that name, the request fails later at the provider; if one does, it is used silently in place of the deployment you meant.
+
+In YAML, `clazz: azure` no longer resolves to anything. Use `clazz: openai_completions` with `type: java`, in both `chat_model_connections` and `chat_model_setups`.
+
+The target is `OpenAICompletionsConnection` rather than `AzureOpenAIChatModelConnection` because the `/openai/v1/` route uses implicit versioning and takes no `api-version`, which `AzureOpenAIChatModelConnection` requires.
 {{< /hint >}}
 
 #### Prerequisites
@@ -506,9 +427,9 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | Required | Azure OpenAI API key for authentication |
-| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-02-15-preview"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `api_version` | str | Required | Azure OpenAI REST API version (e.g., "2024-10-21"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | str | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) |
-| `timeout` | float | `60.0` | API request timeout in seconds |
+| `timeout` | float | `60.0` | API request timeout in seconds; `0` disables timeouts |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
 
 {{< /tab >}}
@@ -518,10 +439,10 @@ Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azur
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | Azure OpenAI API key for authentication |
-| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-02-01"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
+| `api_version` | String | Required | Azure OpenAI REST API version (e.g., "2024-10-21"). See [API versions](https://learn.microsoft.com/en-us/azure/ai-services/openai/reference#rest-api-versioning) |
 | `azure_endpoint` | String | Required | Azure OpenAI endpoint URL (e.g., `https://{resource-name}.openai.azure.com`) — either a direct Azure resource or a proxy/gateway URL that fronts an Azure OpenAI service |
-| `timeout` | int | None | Timeout in seconds for API requests; must be greater than 0, otherwise ignored (SDK default applies) |
-| `max_retries` | int | None | Maximum number of API retry attempts; must be non-negative, otherwise ignored (SDK default applies) |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
+| `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
 | `azure_url_path_mode` | String | `"AUTO"` | Controls how the SDK constructs Azure OpenAI request URLs. One of `"AUTO"`, `"LEGACY"`, or `"UNIFIED"`. Custom gateways that proxy Azure OpenAI typically need `"LEGACY"` to force the `/openai/deployments/{model}` path |
 
 {{< /tab >}}
@@ -580,7 +501,7 @@ class MyAgent(Agent):
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             api_key="<your-api-key>",
-            api_version="2024-02-15-preview",
+            api_version="2024-10-21",
             azure_endpoint="https://your-resource.openai.azure.com"
         )
 
@@ -606,7 +527,7 @@ public class MyAgent extends Agent {
     public static ResourceDescriptor azureOpenAIConnection() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_CONNECTION)
                 .addInitialArgument("api_key", "<your-api-key>")
-                .addInitialArgument("api_version", "2024-02-01")
+                .addInitialArgument("api_version", "2024-10-21")
                 .addInitialArgument("azure_endpoint", "https://your-resource.openai.azure.com")
                 .build();
     }
@@ -641,6 +562,102 @@ Some popular options include:
 
 {{< hint warning >}}
 Model availability depends on your Azure region and subscription. Always check the official Azure OpenAI documentation for regional availability before implementing in production.
+{{< /hint >}}
+
+### Gemini
+
+Google Gemini provides cloud-based chat models through the Gemini Developer API and Vertex AI. The Flink Agents Gemini integration uses the official Google Gen AI SDK and supports text conversations, system instructions, and tool calling.
+
+{{< hint warning >}}
+Vertex AI support is experimental. The connection path has been smoke-tested during construction but has not yet been verified end to end.
+{{< /hint >}}
+
+{{< hint info >}}
+Gemini is only supported in Java currently. To use Gemini from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. For the Gemini Developer API, create an API key in [Google AI Studio](https://aistudio.google.com/app/apikey)
+2. For Vertex AI, enable Vertex AI in your Google Cloud project and configure Google Cloud credentials
+
+#### GeminiChatModelConnection Parameters
+
+{{< tabs "GeminiChatModelConnection Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required unless `base_url` is set or `vertex_ai` is `true` | Gemini Developer API key |
+| `base_url` | String | None | Custom endpoint, such as a proxy that injects credentials |
+| `model` | String | None | Default model name, used when no model is supplied per setup |
+| `timeout` | int | None | API request timeout in seconds |
+| `vertex_ai` | boolean | `false` | Use the experimental Vertex AI backend; not yet verified end to end |
+| `project` | String | None | Vertex AI project id |
+| `location` | String | None | Vertex AI location |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### GeminiChatModelSetup Parameters
+
+{{< tabs "GeminiChatModelSetup Parameters" >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"gemini-3.1-pro-preview"` | Name of the chat model to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List<String> | None | List of tool names available to the model |
+| `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_output_tokens` | long | `1024` | Maximum number of tokens to generate |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Gemini parameters (`top_k`, `top_p`, `stop_sequences`) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Gemini Usage Example" >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor geminiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_CONNECTION)
+                .addInitialArgument("api_key", System.getenv("GEMINI_API_KEY"))
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor geminiChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.GEMINI_SETUP)
+                .addInitialArgument("connection", "geminiConnection")
+                .addInitialArgument("model", "gemini-3.1-pro-preview")
+                .addInitialArgument("temperature", 0.1d)
+                .addInitialArgument("max_output_tokens", 1024)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [Gemini models documentation](https://ai.google.dev/gemini-api/docs/models) for the complete and up-to-date list of available models.
+
+{{< hint warning >}}
+Model availability and names may differ between the Gemini Developer API and Vertex AI. Always check the official Gemini documentation before implementing in production.
 {{< /hint >}}
 
 ### Ollama
@@ -815,7 +832,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | `api_key` | str | Required | OpenAI API key for authentication |
 | `api_base_url` | str | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
 | `max_retries` | int | `3` | Maximum number of API retry attempts |
-| `timeout` | float | `60.0` | API request timeout in seconds |
+| `timeout` | float | `60.0` | API request timeout in seconds; `0` disables timeouts |
 | `default_headers` | dict | None | Default headers for API requests |
 | `reuse_client` | bool | `True` | Whether to reuse the OpenAI client between requests |
 
@@ -827,8 +844,8 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | `"https://api.openai.com/v1"` | Base URL for OpenAI API |
-| `max_retries` | int | `2` | Maximum number of API retry attempts |
-| `timeout` | int | None | Timeout in seconds for API requests |
+| `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -845,7 +862,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | str | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
@@ -863,7 +880,7 @@ OpenAI provides cloud-based chat models with state-of-the-art performance for a 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | String | Required | Reference to connection method name |
-| `model` | String | `"gpt-3.5-turbo"` | Name of the chat model to use |
+| `model` | String | `"gpt-4o-mini"` | Name of the chat model to use |
 | `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
 | `tools` | List<String> | None | List of tool names available to the model |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 2.0) |
@@ -958,8 +975,8 @@ Responses API is only supported in Java currently. To use OpenAI Responses API f
 |-----------|------|---------|-------------|
 | `api_key` | String | Required | OpenAI API key for authentication |
 | `api_base_url` | String | None | Base URL for OpenAI API (useful for proxies) |
-| `max_retries` | int | `2` | Maximum number of API retry attempts |
-| `timeout` | int | None | Timeout in seconds for API requests |
+| `max_retries` | int | `3` | Maximum number of API retry attempts; must be non-negative |
+| `timeout` | float | `60` | Timeout in seconds for API requests; `0` disables timeouts; must be 0–2,147,483.647 |
 | `default_headers` | Map<String, String> | None | Default headers for API requests |
 | `model` | String | None | Default model to use if not specified in setup |
 
@@ -1110,6 +1127,119 @@ Some popular options include:
 {{< hint warning >}}
 Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
 {{< /hint >}}
+
+### vLLM
+
+[vLLM](https://docs.vllm.ai) serves open-weight models behind an OpenAI-compatible API and is a popular choice for self-hosted production deployments. Flink Agents provides a dedicated connection that reuses the OpenAI integration with vLLM-friendly defaults, in both Java and Python.
+
+#### Prerequisites
+
+1. Install vLLM and start a server. For agent use, enable automatic tool calling — Flink Agents sends tools without a named `tool_choice`, so the server needs `--enable-auto-tool-choice` plus a model-specific `--tool-call-parser` (for Qwen2.5, vLLM recommends `hermes`):
+
+   ```bash
+   vllm serve Qwen/Qwen2.5-7B-Instruct --enable-auto-tool-choice --tool-call-parser hermes
+   ```
+
+   Without these flags the server can chat but tool calls are not parsed into the OpenAI `tool_calls` field, so the model cannot drive an agent's tools. The parser is model-specific; see the [vLLM tool calling docs](https://docs.vllm.ai/en/stable/features/tool_calling/).
+2. By default the server listens on `http://localhost:8000` and requires no API key. If the server is started with `--api-key`, pass the same key in the connection.
+
+#### VLLMChatModelConnection Parameters
+
+{{< tabs "VLLMChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_base_url` | str | `"http://localhost:8000/v1"` | vLLM server URL |
+| `api_key` | str | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers. Unlike the OpenAI connection, the `OPENAI_API_KEY` / `OPENAI_API_BASE_URL` environment variables are not consulted |
+| `timeout` | float | `60.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum number of API retries |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_base_url` | String | `"http://localhost:8000/v1"` | vLLM server URL |
+| `api_key` | String | `"EMPTY"` | Only needed when the server is started with `--api-key`; the placeholder default works for unauthenticated servers |
+| `timeout` | int | SDK default | Seconds before an API call times out |
+| `max_retries` | int | SDK default | Retry attempts on failure |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### VLLMChatModelSetup Parameters
+
+Same as the [OpenAI Completions setup](#openaicompletionssetup-parameters), with one difference: `model` is **required** and has no default — it must match the model name served by the vLLM server (see `vllm serve <model>`, or query `GET /v1/models`).
+
+#### Usage Example
+
+{{< tabs "vLLM Usage Example" >}}
+
+{{< tab "Python" >}}
+
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def vllm_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.VLLM_CONNECTION,
+            api_base_url="http://localhost:8000/v1",
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def vllm_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.VLLM_SETUP,
+            connection="vllm_connection",
+            model="Qwen/Qwen2.5-7B-Instruct",
+            temperature=0.3,
+        )
+
+    ...
+```
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+```java
+public class MyAgent extends Agent {
+
+    @ChatModelConnection
+    public static ResourceDescriptor vllmConnection() {
+        return ResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.VLLM_CONNECTION)
+                .addInitialArgument("api_base_url", "http://localhost:8000/v1")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor vllmChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.VLLM_SETUP)
+                .addInitialArgument("connection", "vllmConnection")
+                .addInitialArgument("model", "Qwen/Qwen2.5-7B-Instruct")
+                .addInitialArgument("temperature", 0.3d)
+                .build();
+    }
+
+    // ...
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+A vLLM server serves the model(s) it was started with. Query `GET /v1/models` on the server to list them; the `model` value in the setup must match one of the returned names.
 
 ## Using Cross-Language Providers
 

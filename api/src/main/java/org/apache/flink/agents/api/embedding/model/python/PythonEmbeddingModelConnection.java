@@ -19,6 +19,8 @@ package org.apache.flink.agents.api.embedding.model.python;
 
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelConnection;
 import org.apache.flink.agents.api.embedding.model.EmbeddingModelUtils;
+import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -40,6 +42,9 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
         implements PythonResourceWrapper {
+
+    private static final String CALL_EMBED_WITH_USAGE =
+            "python_java_utils.call_embedding_with_usage";
 
     private final PyObject embeddingModel;
     private final PythonResourceAdapter adapter;
@@ -119,8 +124,44 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
     }
 
     @Override
+    public EmbeddingResult<float[]> embedWithUsage(String text, Map<String, Object> parameters) {
+        checkState(
+                embeddingModel != null,
+                "EmbeddingModelSetup is not initialized. Cannot perform embed operation.");
+
+        Map<String, Object> kwargs = new HashMap<>(parameters);
+        kwargs.put("text", text);
+        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs);
+        return EmbeddingModelUtils.toSingleEmbeddingResult(result);
+    }
+
+    @Override
+    public EmbeddingResult<List<float[]>> embedWithUsage(
+            List<String> texts, Map<String, Object> parameters) {
+        checkState(
+                embeddingModel != null,
+                "EmbeddingModelSetup is not initialized. Cannot perform embed operation.");
+
+        Map<String, Object> kwargs = new HashMap<>(parameters);
+        kwargs.put("text", texts);
+        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs);
+        return EmbeddingModelUtils.toBatchEmbeddingResult(result);
+    }
+
+    @Override
     public Object getPythonResource() {
         return embeddingModel;
+    }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
     }
 
     @Override

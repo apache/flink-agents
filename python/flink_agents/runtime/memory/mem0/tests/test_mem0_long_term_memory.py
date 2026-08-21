@@ -325,11 +325,11 @@ def test_delete_memory_set(ltm) -> None:
 
 
 def test_switch_context(ltm) -> None:
-    ltm.switch_context("key_a")
+    ltm.switch_context("key_a", observation_id="action-a")
     memory_set = ltm.get_memory_set(name="context_set")
     memory_set.add(items="Data for key_a")
 
-    ltm.switch_context("key_b")
+    ltm.switch_context("key_b", observation_id="action-b")
     # key_b should have no items in the same memory set name
     items = memory_set.get()
     # Items from key_a should not be visible under key_b
@@ -337,7 +337,7 @@ def test_switch_context(ltm) -> None:
     assert len(items) == 0
 
     # Reset context
-    ltm.switch_context("")
+    ltm.switch_context("", observation_id="action-empty")
 
 
 class MockChatModelWithTokenUsage:
@@ -462,7 +462,7 @@ def test_token_usage_reported_on_switch_context() -> None:
     )
 
     # First switch_context triggers lazy init; no metrics yet.
-    ltm.switch_context("key_1")
+    ltm.switch_context("key_1", observation_id="action-1")
 
     memory_set = ltm.get_memory_set(name="token_test_set")
     memory_set.add(items="Test content for token tracking.")
@@ -473,7 +473,7 @@ def test_token_usage_reported_on_switch_context() -> None:
     assert model_group._counters.get("promptTokens", 0) == 0
 
     # switch_context drains the queue on the mailbox thread.
-    ltm.switch_context("key_2")
+    ltm.switch_context("key_2", observation_id="action-2")
 
     # Mem0 makes 2 LLM calls per add (fact extraction + memory update).
     # Each call returns 10 prompt tokens and 5 completion tokens.
@@ -521,7 +521,7 @@ def test_token_usage_flushed_on_close() -> None:
         vector_store_name="test_vector_store",
     )
 
-    ltm.switch_context("key_1")
+    ltm.switch_context("key_1", observation_id="action-1")
 
     memory_set = ltm.get_memory_set(name="close_test_set")
     memory_set.add(items="First item.")

@@ -25,7 +25,7 @@ docs/yaml-schema.json.
 import json
 import sys
 from enum import Enum
-from typing import Any, Dict, List, Literal
+from typing import Annotated, Any, Dict, List, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -186,26 +186,20 @@ class SkillsSpec(BaseModel):
 
 
 class ActionSpec(BaseModel):
-    """An action references a user function and its trigger conditions.
+    """An action referencing a user function and its trigger conditions.
 
-    ``function`` is written as ``<module-or-class>:<qualname>`` — the
-    colon separates the Python module (or Java class FQN) from the
-    attribute path inside it.
+    ``function`` uses ``<module-or-class>:<qualname>``.
 
-    ``trigger_conditions`` carries one or more strings. Each is either an
-    event-type name (bare identifier) or a future condition-expression
-    form — the runtime classifies the string when it loads the plan.
-
-    Action signatures are fixed (``(Event, RunnerContext)``), so there is
-    no ``parameter_types`` knob — Python doesn't need it, and the Java
-    action signature is determined by the action contract.
+    Each ``trigger_conditions`` entry is an event-type name or Boolean
+    condition expression. Entries combine with OR semantics. Expression
+    validation occurs when the plan is applied.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
     function: str | None = None
-    trigger_conditions: List[str] = Field(..., min_length=1)
+    trigger_conditions: List[Annotated[str, Field(pattern=r"\S")]] = Field(min_length=1)
     config: Dict[str, Any] | None = None
     type: Language | None = None
 

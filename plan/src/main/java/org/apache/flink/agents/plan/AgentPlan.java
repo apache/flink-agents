@@ -35,7 +35,6 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -55,7 +54,6 @@ import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
-import org.apache.flink.api.java.tuple.Tuple3;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -92,40 +90,44 @@ public class AgentPlan implements Serializable {
     /** Mapping from action name to action itself. */
     private Map<String, Action> actions;
 
-    /** Mapping from event type string to list of actions that should be triggered by the event. */
-    private Map<String, List<Action>> actionsByEvent;
-
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
+    /** User-visible agent identity used for observability. */
+    private String agentName;
+
     private AgentConfiguration config;
 
-    public AgentPlan(Map<String, Action> actions, Map<String, List<Action>> actionsByEvent) {
-        this.actions = actions;
-        this.actionsByEvent = actionsByEvent;
+    public AgentPlan(Map<String, Action> actions) {
+        this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = new HashMap<>();
         this.config = new AgentConfiguration();
     }
 
     public AgentPlan(
             Map<String, Action> actions,
-            Map<String, List<Action>> actionsByEvent,
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
-        this.actions = actions;
-        this.actionsByEvent = actionsByEvent;
+        this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
     }
 
     public AgentPlan(
             Map<String, Action> actions,
-            Map<String, List<Action>> actionsByEvent,
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             AgentConfiguration config) {
-        this.actions = actions;
-        this.actionsByEvent = actionsByEvent;
+        this(actions, resourceProviders, config, null);
+    }
+
+    public AgentPlan(
+            Map<String, Action> actions,
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            AgentConfiguration config,
+            String agentName) {
+        this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = config;
+        this.agentName = agentName;
     }
 
     /**
@@ -140,10 +142,17 @@ public class AgentPlan implements Serializable {
     }
 
     public AgentPlan(Agent agent, AgentConfiguration config) throws Exception {
-        this(new HashMap<>(), new HashMap<>());
+        this(agent, config, defaultAgentName(agent));
+    }
+
+    public AgentPlan(Agent agent, AgentConfiguration config, String agentName) throws Exception {
+        this.actions = new LinkedHashMap<>();
+        this.resourceProviders = new HashMap<>();
+        this.config = config;
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
-        this.config = config;
+        this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
+        this.agentName = agentName != null ? agentName : defaultAgentName(agent);
     }
 
     public Map<String, Action> getActions() {
@@ -158,16 +167,12 @@ public class AgentPlan implements Serializable {
         return Objects.requireNonNull(actions.get(actionName).getConfig()).get(key);
     }
 
-    public Map<String, List<Action>> getActionsByEvent() {
-        return actionsByEvent;
-    }
-
     public Map<ResourceType, Map<String, ResourceProvider>> getResourceProviders() {
         return resourceProviders;
     }
 
-    public List<Action> getActionsTriggeredBy(String eventType) {
-        return actionsByEvent.get(eventType);
+    public String getAgentName() {
+        return agentName;
     }
 
     public AgentConfiguration getConfig() {
@@ -186,47 +191,38 @@ public class AgentPlan implements Serializable {
     private void readObject(ObjectInputStream in) throws IOException, ClassNotFoundException {
         String serializedStr = in.readUTF();
         AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
-        this.actions = agentPlan.getActions();
-        this.actionsByEvent = agentPlan.getActionsByEvent();
+        this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(agentPlan.getActions()));
         this.resourceProviders = agentPlan.getResourceProviders();
+        this.agentName = agentPlan.getAgentName();
         this.config = agentPlan.getConfig();
+    }
+
+    private static String defaultAgentName(Agent agent) {
+        String simpleName = agent.getClass().getSimpleName();
+        return simpleName == null || simpleName.isEmpty() ? agent.getClass().getName() : simpleName;
     }
 
     private void extractActions(
             String actionName,
-            String[] triggerEntries,
+            String[] triggerConditions,
             org.apache.flink.agents.plan.Function function,
             Map<String, Object> config)
             throws Exception {
-        List<String> triggerConditions = new ArrayList<>(Arrays.asList(triggerEntries));
-
-        if (triggerConditions.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Action "
-                            + actionName
-                            + " must specify at least one trigger entry via @Action(EventType.x).");
-        }
-
-        // Create an Action
-        Action action = new Action(actionName, function, triggerConditions, config);
-
-        // Add to actions map
-        actions.put(action.getName(), action);
-
-        // Add to actionsByEvent map
-        for (String eventTypeName : triggerConditions) {
-            actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
-        }
+        Action action =
+                new Action(
+                        actionName,
+                        function,
+                        triggerConditions == null ? null : Arrays.asList(triggerConditions),
+                        config);
+        registerAction(action);
     }
 
     private void addBuiltAction(Action action) {
-        // Add to actions map
-        actions.put(action.getName(), action);
+        registerAction(action);
+    }
 
-        // Add to actionsByEvent map
-        for (String eventTypeName : action.getListenEventTypes()) {
-            actionsByEvent.computeIfAbsent(eventTypeName, k -> new ArrayList<>()).add(action);
-        }
+    private void registerAction(Action action) {
+        actions.put(action.getName(), action);
     }
 
     private void extractActionsFromAgent(Agent agent) throws Exception {
@@ -261,7 +257,7 @@ public class AgentPlan implements Serializable {
                     Objects.requireNonNull(
                             method.getAnnotation(
                                     org.apache.flink.agents.api.annotation.Action.class));
-            String[] triggerEntries = actionAnnotation.value();
+            String[] triggerConditions = actionAnnotation.value();
             org.apache.flink.agents.api.annotation.PythonFunction target =
                     actionAnnotation.target();
             String targetModule = target.module();
@@ -286,20 +282,13 @@ public class AgentPlan implements Serializable {
                                 + method.getName()
                                 + "' must set both module and qualname");
             }
-            extractActions(method.getName(), triggerEntries, execFunction, null);
+            extractActions(method.getName(), triggerConditions, execFunction, null);
         }
 
-        for (Map.Entry<
-                        String,
-                        Tuple3<
-                                String[],
-                                org.apache.flink.agents.api.function.Function,
-                                Map<String, Object>>>
-                action : agent.getActions().entrySet()) {
+        for (var action : agent.getActions().entrySet()) {
             String actionName = action.getKey();
-            Tuple3<String[], org.apache.flink.agents.api.function.Function, Map<String, Object>>
-                    tuple = action.getValue();
-            extractActions(actionName, tuple.f0, toPlanFunction(tuple.f1), tuple.f2);
+            var definition = action.getValue();
+            extractActions(actionName, definition.f0, toPlanFunction(definition.f1), definition.f2);
         }
     }
 
@@ -316,31 +305,40 @@ public class AgentPlan implements Serializable {
     }
 
     private void extractResource(ResourceType type, Method method) throws Exception {
-        extractResource(type, method, null);
+        extractResource(type, method, null, false);
     }
 
     private void extractResource(
             ResourceType type,
             Method method,
-            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator)
+            Function<ResourceDescriptor, ResourceDescriptor> descriptorDecorator,
+            boolean isPython)
             throws Exception {
         String name = method.getName();
-        ResourceProvider provider;
         ResourceDescriptor descriptor = (ResourceDescriptor) method.invoke(null);
 
         descriptor =
                 descriptorDecorator != null ? descriptorDecorator.apply(descriptor) : descriptor;
 
-        if (PythonResourceWrapper.class.isAssignableFrom(
-                Class.forName(
-                        descriptor.getClazz(),
-                        true,
-                        Thread.currentThread().getContextClassLoader()))) {
-            provider = new PythonResourceProvider(name, type, descriptor);
-        } else {
-            provider = new JavaResourceProvider(name, type, descriptor);
+        addResourceProvider(createDescriptorResourceProvider(name, type, descriptor, isPython));
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor) {
+        return createDescriptorResourceProvider(name, type, descriptor, false);
+    }
+
+    private ResourceProvider createDescriptorResourceProvider(
+            String name, ResourceType type, ResourceDescriptor descriptor, boolean isPython) {
+        if (isPython || isPythonResource(descriptor)) {
+            return new PythonResourceProvider(name, type, descriptor);
         }
-        addResourceProvider(provider);
+        return new JavaResourceProvider(name, type, descriptor);
+    }
+
+    private boolean isPythonResource(ResourceDescriptor descriptor) {
+        String pythonClazz = descriptor.getArgument("pythonClazz");
+        return pythonClazz != null && !pythonClazz.isEmpty();
     }
 
     private void extractTool(Method method) throws Exception {
@@ -382,7 +380,8 @@ public class AgentPlan implements Serializable {
         Iterable<? extends SerializableResource> tools =
                 (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
 
-        for (SerializableResource tool : tools) {
+        for (SerializableResource discoveredTool : tools) {
+            SerializableResource tool = attachMcpServerNameIfSupported(discoveredTool, name);
             Method getNameMethod = tool.getClass().getMethod("getName");
             String toolName = (String) getNameMethod.invoke(tool);
             addResourceProvider(
@@ -406,6 +405,19 @@ public class AgentPlan implements Serializable {
         // Call close() via reflection
         Method closeMethod = mcpServer.getClass().getMethod("close");
         closeMethod.invoke(mcpServer);
+    }
+
+    private static SerializableResource attachMcpServerNameIfSupported(
+            SerializableResource tool, String mcpServerName) throws Exception {
+        try {
+            Method method = tool.getClass().getMethod("withMcpServerName", String.class);
+            Object associatedTool = method.invoke(tool, mcpServerName);
+            return associatedTool instanceof SerializableResource
+                    ? (SerializableResource) associatedTool
+                    : tool;
+        } catch (NoSuchMethodException ignored) {
+            return tool;
+        }
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -525,7 +537,8 @@ public class AgentPlan implements Serializable {
                                     new ResourceDescriptor(
                                             desc.getModule(),
                                             PythonMCPServer.class.getName(),
-                                            new HashMap<>(desc.getInitialArguments())));
+                                            new HashMap<>(desc.getInitialArguments())),
+                            true);
                 }
             }
         }
@@ -576,17 +589,8 @@ public class AgentPlan implements Serializable {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     ResourceDescriptor descriptor =
                             requireResourceDescriptor(kv.getKey(), type, kv.getValue());
-                    ResourceProvider provider;
-                    if (PythonResourceWrapper.class.isAssignableFrom(
-                            Class.forName(
-                                    descriptor.getClazz(),
-                                    true,
-                                    Thread.currentThread().getContextClassLoader()))) {
-                        provider = new PythonResourceProvider(kv.getKey(), type, descriptor);
-                    } else {
-                        provider = new JavaResourceProvider(kv.getKey(), type, descriptor);
-                    }
-                    addResourceProvider(provider);
+                    addResourceProvider(
+                            createDescriptorResourceProvider(kv.getKey(), type, descriptor));
                 }
             }
         }

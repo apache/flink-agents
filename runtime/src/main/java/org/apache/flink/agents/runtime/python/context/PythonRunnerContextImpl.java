@@ -18,7 +18,10 @@
 
 package org.apache.flink.agents.runtime.python.context;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -27,10 +30,17 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import javax.annotation.concurrent.NotThreadSafe;
 
 import java.io.IOException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /** A specialized {@link RunnerContext} that is specifically used when executing Python actions. */
 @NotThreadSafe
 public class PythonRunnerContextImpl extends RunnerContextImpl {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    private static final TypeReference<LinkedHashMap<String, Object>> METADATA_TYPE =
+            new TypeReference<>() {};
 
     /**
      * Reference to the Python awaitable object in the interpreter. This is set when a Python action
@@ -61,6 +71,31 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         sendEvent(event);
     }
 
+    public void reportExecutionStartedJson(
+            String entityType, String entityName, String entityMetadataJson) throws Exception {
+        reportExecutionStarted(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+    }
+
+    public void reportExecutionSucceededJson(
+            String entityType, String entityName, String entityMetadataJson) throws Exception {
+        reportExecutionSucceeded(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+    }
+
+    public void reportExecutionFailedJson(
+            String entityType,
+            String entityName,
+            String entityMetadataJson,
+            String errorType,
+            String errorMessage,
+            String problemCategory)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                parseEntityMetadata(entityMetadataJson),
+                ExecutionLifecycleEvents.executionFailed(errorType, errorMessage, problemCategory));
+    }
+
     public void checkMailboxThread() {
         // this method will be invoked by PythonActionExecutor's python interpreter.
         this.mailboxThreadChecker.run();
@@ -72,5 +107,13 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
 
     public void setPythonAwaitableRef(String pythonAwaitableRef) {
         this.pythonAwaitableRef = pythonAwaitableRef;
+    }
+
+    private static Map<String, Object> parseEntityMetadata(String entityMetadataJson)
+            throws IOException {
+        if (entityMetadataJson == null || entityMetadataJson.isEmpty()) {
+            return Map.of();
+        }
+        return OBJECT_MAPPER.readValue(entityMetadataJson, METADATA_TYPE);
     }
 }

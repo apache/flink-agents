@@ -31,7 +31,7 @@ from flink_agents.plan.actions.chat_model_action import (
     _save_tool_request_event_context,
     _update_tool_call_context,
 )
-from flink_agents.runtime.local_memory_object import LocalMemoryObject
+from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
 
 def _memory() -> LocalMemoryObject:

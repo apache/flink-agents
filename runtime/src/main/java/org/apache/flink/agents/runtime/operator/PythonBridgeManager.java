@@ -27,6 +27,7 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
+import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.JavaResourceAdapter;
@@ -173,7 +174,7 @@ class PythonBridgeManager implements AutoCloseable {
                 initPythonActionExecutor(agentPlan, jobIdentifier);
             }
             if (mem0Configured) {
-                wireLongTermMemory();
+                wireLongTermMemory(agentPlan);
             }
             initialized = true;
         }
@@ -220,7 +221,7 @@ class PythonBridgeManager implements AutoCloseable {
      * {@code create_flink_runner_context} already initialised via {@code _init_long_term_memory})
      * and wrap it as a Java {@link Mem0LongTermMemory}.
      */
-    private void wireLongTermMemory() {
+    private void wireLongTermMemory(AgentPlan agentPlan) {
         PyObject pyCtx = pythonActionExecutor.getPythonRunnerContext();
         Object pyLtm = pythonInterpreter.invoke("python_java_utils.get_long_term_memory", pyCtx);
         if (pyLtm == null) {
@@ -235,6 +236,13 @@ class PythonBridgeManager implements AutoCloseable {
                             LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
         }
         longTermMemory = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
+        MemoryEventSettings settings = MemoryEventSettings.from(agentPlan.getConfigData());
+        longTermMemory.configureObservation(
+                settings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_UPDATE),
+                settings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_GET),
+                settings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_SEARCH));
+        // The Python runner context drains LTM observation records at action finish.
+        pythonRunnerContext.setLongTermMemory(longTermMemory);
     }
 
     private void initPythonActionExecutor(AgentPlan agentPlan, String jobIdentifier)

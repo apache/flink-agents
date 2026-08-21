@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
@@ -42,6 +43,12 @@ public class JavaActionTask extends ActionTask {
 
     public JavaActionTask(Object key, Event event, Action action) {
         super(key, event, action);
+        checkState(action.getExec() instanceof JavaFunction);
+    }
+
+    public JavaActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        super(key, event, action, traceContext);
         checkState(action.getExec() instanceof JavaFunction);
     }
 
@@ -83,7 +90,9 @@ public class JavaActionTask extends ActionTask {
 
         if (finished) {
             return new ActionTaskResult(
-                    true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+                    true,
+                    runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()),
+                    null);
         } else {
             return new ActionTaskResult(false, Collections.emptyList(), this);
         }

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.python.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -39,6 +40,27 @@ public class PythonActionTask extends ActionTask {
         checkState(action.getExec() instanceof PythonFunction);
     }
 
+    protected PythonActionTask(Object key, Event event, Action action, String observationId) {
+        super(key, event, action, observationId);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
+    public PythonActionTask(
+            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
+        super(key, event, action, traceContext);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
+    protected PythonActionTask(
+            Object key,
+            Event event,
+            Action action,
+            String observationId,
+            ExecutionTraceContext traceContext) {
+        super(key, event, action, observationId, traceContext);
+        checkState(action.getExec() instanceof PythonFunction);
+    }
+
     public ActionTaskResult invoke(ClassLoader userCodeClassLoader, PythonActionExecutor executor)
             throws Exception {
         LOG.debug(
@@ -49,8 +71,7 @@ public class PythonActionTask extends ActionTask {
         runnerContext.checkNoPendingEvents();
 
         String pythonAwaitableRef =
-                executor.executePythonFunction(
-                        (PythonFunction) action.getExec(), event, key.hashCode());
+                executor.executePythonFunction((PythonFunction) action.getExec(), event);
         // If a user-defined action uses an interface to submit asynchronous tasks, it will return a
         // Python coroutine (awaitable) object instance upon its first execution. Otherwise, it
         // means that no asynchronous tasks were submitted and the action has already completed.
@@ -58,11 +79,13 @@ public class PythonActionTask extends ActionTask {
             // The Python action generates an awaitable. We need to execute it once, which will
             // submit an asynchronous task and return whether the action has been completed.
             ((PythonRunnerContextImpl) runnerContext).setPythonAwaitableRef(pythonAwaitableRef);
-            ActionTask tempGeneratedActionTask = new PythonGeneratorActionTask(key, event, action);
+            ActionTask tempGeneratedActionTask =
+                    new PythonGeneratorActionTask(
+                            key, event, action, getObservationId(), traceContext);
             tempGeneratedActionTask.setRunnerContext(runnerContext);
             return tempGeneratedActionTask.invoke(userCodeClassLoader, executor);
         }
         return new ActionTaskResult(
-                true, runnerContext.drainEvents(event.getSourceTimestamp()), null);
+                true, runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()), null);
     }
 }

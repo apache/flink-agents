@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.resource.python;
 
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -24,6 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -54,12 +57,17 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
 
     @SuppressWarnings("unchecked")
     public List<PythonMCPTool> listTools() {
+        return listTools(null);
+    }
+
+    @SuppressWarnings("unchecked")
+    public List<PythonMCPTool> listTools(@Nullable String mcpServerName) {
         Object result = adapter.callMethod(server, "list_tools", Collections.emptyMap());
         if (result instanceof List) {
             List<Object> pythonTools = (List<Object>) result;
             List<PythonMCPTool> tools = new ArrayList<>(pythonTools.size());
             for (Object pyTool : pythonTools) {
-                tools.add(new PythonMCPTool(adapter, (PyObject) pyTool));
+                tools.add(new PythonMCPTool(adapter, (PyObject) pyTool, mcpServerName));
             }
             return tools;
         }
@@ -82,6 +90,17 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     @Override
     public Object getPythonResource() {
         return server;
+    }
+
+    @Override
+    public PythonResourceAdapter getPythonResourceAdapter() {
+        return adapter;
+    }
+
+    @Override
+    public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
+        super.setMetricGroup(metricGroup);
+        setPythonResourceMetricGroup(metricGroup);
     }
 
     @Override
