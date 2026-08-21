@@ -205,8 +205,9 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
 
     Returns ``None`` (leaving the request unchanged) unless the schema is a
     ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
-    prompt-engineering fallback. If the BaseModel cannot be converted to JSON schema
-    (e.g., contains Callable fields), returns ``None`` to fall back to prompt engineering.
+    prompt-engineering fallback. If the BaseModel cannot be converted to JSON
+    schema (e.g., contains Callable fields), returns ``None`` to fall back to
+    prompt engineering.
 
     Anthropic's format object carries only the schema and its type, so it shares no
     shape with the providers that nest the schema under a named, strict
