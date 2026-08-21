@@ -84,11 +84,11 @@ public class AgentConfigOptions {
     /**
      * The config parameter determines whether pruning sends tombstone (null-valued) records to the
      * Kafka action state topic so log compaction can reclaim pruned keys. Defaults to {@code
-     * false}: without tombstones the topic grows unboundedly, but restoring any checkpoint or
-     * savepoint replays correctly. When enabled, restoring from the latest completed checkpoint is
-     * unaffected, but restoring an older checkpoint or savepoint may replay tombstones written
-     * after that restore point, erasing action state the replay still needs and causing already
-     * completed actions to re-execute. Enable only if the job never restores from non-latest
+     * false}: disabling this option does not invalidate older restore points through pruning, but
+     * the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning
+     * remains usable, but restoring an earlier checkpoint or savepoint may replay tombstones
+     * written after that restore point, erasing action state the replay still needs and causing
+     * already completed actions to re-execute. Enable only if the job never restores from earlier
      * checkpoints or savepoints, or if re-executing actions is acceptable.
      *
      * <p>Also note: an agent key that itself contains the {@code _} character (e.g. {@code
