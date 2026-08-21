@@ -103,8 +103,8 @@ public interface ActionStateStore extends AutoCloseable {
      * test backends where replay loads nothing extra. Implementations that do not rebuild from a
      * shared backend can ignore this.
      *
-     * @param ownershipFilter predicate over the key-group (the first segment of the composite
-     *     state key); {@code null} retains everything.
+     * @param ownershipFilter predicate over the key-group (the first segment of the composite state
+     *     key); {@code null} retains everything.
      */
     default void setOwnershipFilter(IntPredicate ownershipFilter) {}
 

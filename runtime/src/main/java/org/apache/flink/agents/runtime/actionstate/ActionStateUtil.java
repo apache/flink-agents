@@ -88,10 +88,10 @@ public class ActionStateUtil {
     }
 
     /**
-     * Extracts the key-group from a composite state key. The key-group is the first segment and
-     * was computed from the original typed key via {@link
-     * KeyGroupRangeAssignment#assignToKeyGroup}. Rejects keys without the expected segment layout,
-     * including keys written in the pre-key-group 4-segment format.
+     * Extracts the key-group from a composite state key. The key-group is the first segment and was
+     * computed from the original typed key via {@link KeyGroupRangeAssignment#assignToKeyGroup}.
+     * Rejects keys without the expected segment layout, including keys written in the pre-key-group
+     * 4-segment format.
      */
     public static int parseKeyGroup(String key) {
         Preconditions.checkNotNull(key, "key cannot be null.");
@@ -122,9 +122,9 @@ public class ActionStateUtil {
     }
 
     /**
-     * Like {@link #matchesBusinessKey} with an additional predicate over the parsed
-     * sequence-number segment. Returns {@code false} for keys that cannot be attributed (malformed
-     * layout or unparsable sequence number): never prune what cannot be attributed.
+     * Like {@link #matchesBusinessKey} with an additional predicate over the parsed sequence-number
+     * segment. Returns {@code false} for keys that cannot be attributed (malformed layout or
+     * unparsable sequence number): never prune what cannot be attributed.
      */
     public static boolean matchesBusinessKeyWithSeqNum(
             String stateKey, Object businessKey, LongPredicate seqNumFilter) {
@@ -143,8 +143,8 @@ public class ActionStateUtil {
 
     /**
      * Returns {@code true} if the composite {@code stateKey}'s key-group is accepted by the given
-     * ownership filter. A {@code null} filter retains every key (the default for in-memory and
-     * test backends).
+     * ownership filter. A {@code null} filter retains every key (the default for in-memory and test
+     * backends).
      *
      * <p>Keys without the expected segment layout — including records written in the pre-key-group
      * 4-segment format — are dropped deterministically: they cannot be attributed to a key-group,

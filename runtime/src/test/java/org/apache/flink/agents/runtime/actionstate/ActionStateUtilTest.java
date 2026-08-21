@@ -22,7 +22,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
-import java.util.function.IntPredicate;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -125,7 +124,8 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("test-input");
         long seqNum = 123;
 
-        String generatedKey = ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
+        String generatedKey =
+                ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
 
         // Parse the generated key
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
@@ -148,7 +148,9 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("round-trip-input");
         long seqNum = 456;
 
-        String generatedKey = ActionStateUtil.generateKey(originalKey, seqNum, action, inputEvent, MAX_PARALLELISM);
+        String generatedKey =
+                ActionStateUtil.generateKey(
+                        originalKey, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
         assertEquals(originalKey.toString(), parsedParts.get(1));
@@ -196,7 +198,8 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("input-with-special@chars");
         long seqNum = 789;
 
-        String generatedKey = ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
+        String generatedKey =
+                ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
         assertEquals(key.toString(), parsedParts.get(1));
@@ -300,7 +303,6 @@ public class ActionStateUtilTest {
         assertFalse(
                 ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 1L, seq -> seq > 5));
         // Wrong business key never matches, regardless of the seqNum filter.
-        assertFalse(
-                ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 5L, seq -> true));
+        assertFalse(ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 5L, seq -> true));
     }
 }

@@ -200,13 +200,13 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * <p>UnionListState broadcasts every subtask's recovery marker to all subtasks, so a naive
      * replay would load the full key set into every subtask's cache, where the foreign keys are
      * never pruned and stay resident for the whole attempt (the orphan-state leak). {@code
-     * ownershipFilter} restricts the rebuilt cache to key-groups owned by the current subtask; it is
-     * installed on the store just before {@link #rebuildState(List)}.
+     * ownershipFilter} restricts the rebuilt cache to key-groups owned by the current subtask; it
+     * is installed on the store just before {@link #rebuildState(List)}.
      *
      * @param operatorStateBackend the operator state backend used to obtain the recovery-marker
      *     union-list state.
-     * @param ownershipFilter predicate accepting only the key-groups owned by the current
-     *     subtask; {@code null} retains all keys (e.g. for the in-memory/test backends).
+     * @param ownershipFilter predicate accepting only the key-groups owned by the current subtask;
+     *     {@code null} retains all keys (e.g. for the in-memory/test backends).
      */
     void handleRecovery(
             OperatorStateBackend operatorStateBackend, @Nullable IntPredicate ownershipFilter)
