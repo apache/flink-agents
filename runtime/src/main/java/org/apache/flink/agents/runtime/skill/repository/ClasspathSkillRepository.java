@@ -23,12 +23,10 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.LinkedHashSet;
@@ -136,8 +134,8 @@ public final class ClasspathSkillRepository extends AbstractMaterializedSkillRep
             throws IOException {
         Path p;
         try {
-            p = Paths.get(url.toURI());
-        } catch (URISyntaxException e) {
+            p = LocalUrls.toLocalFile(url).toPath();
+        } catch (IOException e) {
             throw new IOException("Bad classpath URL: " + url, e);
         }
         if (Files.isDirectory(p)) {
@@ -171,8 +169,9 @@ public final class ClasspathSkillRepository extends AbstractMaterializedSkillRep
                 }
                 File jarFileObj;
                 try {
-                    jarFileObj = new File(u.toURI());
-                } catch (URISyntaxException e) {
+                    jarFileObj = LocalUrls.toLocalFile(u);
+                } catch (IOException e) {
+                    // Skip URLs we can't resolve to a local file (non-file protocols, malformed).
                     continue;
                 }
                 if (!jarFileObj.isFile()) {
