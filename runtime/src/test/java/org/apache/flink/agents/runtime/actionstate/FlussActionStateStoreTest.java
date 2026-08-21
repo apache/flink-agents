@@ -121,6 +121,17 @@ public class FlussActionStateStoreTest {
         assertThat(store.get(TEST_KEY, 3L, testAction, testEvent)).isNull();
     }
 
+    @Test
+    void testPruneStateRetainsKeyContainingUnderscore() throws Exception {
+        String agentKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(agentKey, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        store.pruneState(agentKey, 1L);
+
+        assertThat(actionStates).containsKey(stateKey);
+    }
+
     // ==================== rebuildState tests ====================
 
     @Test

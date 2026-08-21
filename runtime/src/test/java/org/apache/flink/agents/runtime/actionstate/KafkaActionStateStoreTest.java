@@ -19,23 +19,38 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.clients.producer.Callback;
 import org.apache.kafka.clients.producer.MockProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.LoggerContext;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configuration;
+import org.apache.logging.log4j.core.config.LoggerConfig;
+import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -83,6 +98,14 @@ public class KafkaActionStateStoreTest {
         testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test data");
         testActionState = new ActionState(testEvent);
+    }
+
+    /** Builds a store sharing this test's mock consumer but with tombstone emission enabled. */
+    private KafkaActionStateStore tombstoneEnabledStore(
+            Map<String, ActionState> states, Producer<String, ActionState> producer) {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED, true);
+        return new KafkaActionStateStore(states, config, producer, mockConsumer, TEST_TOPIC);
     }
 
     @Test
@@ -140,6 +163,16 @@ public class KafkaActionStateStoreTest {
         assertNotNull(actionStateStore.get(TEST_KEY, 2L, testAction, testEvent));
         assertNull(actionStateStore.get(TEST_KEY, 3L, testAction, testEvent));
         assertNull(actionStateStore.get(TEST_KEY, 4L, testAction, testEvent));
+    }
+
+    @Test
+    void testGetRetainsUnparseableKey() throws Exception {
+        String flinkKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(flinkKey, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        assertThat(actionStateStore.get(flinkKey, 2L, testAction, testEvent)).isNull();
+        assertThat(actionStates).containsKey(stateKey);
     }
 
     @Test
@@ -205,6 +238,173 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testPruneStateSendsTombstonesWithCorrectKeys() throws Exception {
+        // Arrange
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String key1 = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        String key2 = ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent);
+        String key3 = ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent);
+        actionStates.put(key1, testActionState);
+        actionStates.put(key2, testActionState);
+        actionStates.put(key3, testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - exactly keys for seqNum 1 and 2 appear as tombstones
+        var history = mockProducer.history();
+        assertThat(history).extracting(ProducerRecord::topic).containsOnly(TEST_TOPIC);
+        assertThat(history).extracting(ProducerRecord::key).containsExactlyInAnyOrder(key1, key2);
+        assertThat(history).extracting(ProducerRecord::value).containsOnlyNulls();
+    }
+
+    @Test
+    void testPruneStateDoesNotPruneOtherKeysWithMatchingPrefix() throws Exception {
+        // Arrange - Flink key "a" seq 1 yields state key "a_1_<uuid>_<uuid>", which is a
+        // prefix match for pruning Flink key "a_1"
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        actionStates.put(otherKeyState, testActionState);
+
+        // Act - prune a DIFFERENT Flink key whose name collides with "a"'s key prefix
+        actionStateStore.pruneState("a_1", 10L);
+
+        // Assert - Flink key "a"'s state is untouched and no tombstones were sent
+        assertThat(actionStates).containsKey(otherKeyState);
+        assertThat(mockProducer.history()).isEmpty();
+    }
+
+    @Test
+    void testPruneStateEvictsCacheEvenWhenTombstoneSendFails() throws Exception {
+        // Arrange - a producer whose send() completes its callback with an exception, exercising
+        // the async failure path (mockProducer's autoComplete=true completes sends successfully
+        // before errorNext() can take effect, so a dedicated producer is needed here)
+        AtomicBoolean failureCallbackInvoked = new AtomicBoolean();
+        MockProducer<String, ActionState> failingProducer =
+                new MockProducer<>(
+                        false,
+                        new ActionStateKeyPartitioner(),
+                        new StringSerializer(),
+                        new ActionStateKafkaSeder()) {
+                    @Override
+                    public synchronized Future<RecordMetadata> send(
+                            ProducerRecord<String, ActionState> record, Callback callback) {
+                        assertThat(callback).isNotNull();
+                        Future<RecordMetadata> future =
+                                super.send(
+                                        record,
+                                        (metadata, exception) -> {
+                                            failureCallbackInvoked.set(exception != null);
+                                            callback.onCompletion(metadata, exception);
+                                        });
+                        assertThat(errorNext(new RuntimeException("simulated broker failure")))
+                                .isTrue();
+                        return future;
+                    }
+                };
+        actionStateStore = tombstoneEnabledStore(actionStates, failingProducer);
+        String stateKey = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        TestAppender appender = new TestAppender("KafkaActionStateStoreTestAppender");
+        appender.start();
+        LoggerContext loggerContext = (LoggerContext) LogManager.getContext(false);
+        Configuration loggerConfiguration = loggerContext.getConfiguration();
+        String loggerName = KafkaActionStateStore.class.getName();
+        LoggerConfig loggerConfig = loggerConfiguration.getLoggerConfig(loggerName);
+        boolean addedLoggerConfig = !loggerConfig.getName().equals(loggerName);
+        if (addedLoggerConfig) {
+            loggerConfig = new LoggerConfig(loggerName, Level.WARN, false);
+            loggerConfiguration.addLogger(loggerName, loggerConfig);
+        }
+        loggerConfig.addAppender(appender, Level.WARN, null);
+        loggerContext.updateLoggers();
+
+        try {
+            // Act - should not throw despite the async send failure
+            actionStateStore.pruneState(TEST_KEY, 1L);
+
+            // Assert - the failure is reported and the in-memory entry is still evicted
+            assertThat(failureCallbackInvoked).isTrue();
+            assertThat(appender.getMessages())
+                    .anyMatch(message -> message.contains("Failed to send tombstone record"));
+            assertThat(actionStates).doesNotContainKey(stateKey);
+        } finally {
+            loggerConfig.removeAppender(appender.getName());
+            if (addedLoggerConfig) {
+                loggerConfiguration.removeLogger(loggerName);
+            }
+            appender.stop();
+            loggerContext.updateLoggers();
+        }
+    }
+
+    @Test
+    void testPruneStateSkipsUnparseableKeys() throws Exception {
+        // Arrange - a Flink key that itself contains the "_" separator (e.g. "user_123")
+        // produces a state key with 5 "_"-separated parts once seqNum and the two UUIDs are
+        // appended, which ActionStateUtil.parseKey cannot split into exactly 4 parts
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        String agentKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(agentKey, 1L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        // Act - should not throw despite the unparseable key
+        actionStateStore.pruneState(agentKey, 10L);
+
+        // Assert - the unparseable entry is retained, and no tombstone was sent for it
+        assertThat(actionStates).containsKey(stateKey);
+        assertThat(mockProducer.history()).isEmpty();
+    }
+
+    @Test
+    void testPruneStateNoTombstonesByDefault() throws Exception {
+        // Arrange - setUp store uses a default AgentConfiguration (tombstones disabled)
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+        actionStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent), testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - no tombstones sent, but in-memory entries are still evicted
+        assertThat(mockProducer.history()).isEmpty();
+        assertThat(actionStates).isEmpty();
+    }
+
+    @Test
+    void testPruneStateNoMatchingKeys() throws Exception {
+        // Arrange - add states for a different key
+        actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
+        actionStates.put(
+                ActionStateUtil.generateKey("other-key", 1L, testAction, testEvent),
+                testActionState);
+
+        // Act
+        actionStateStore.pruneState(TEST_KEY, 2L);
+
+        // Assert - no tombstones sent, other key's state remains
+        assertThat(mockProducer.history()).isEmpty();
+        assertThat(actionStates).hasSize(1);
+    }
+
+    @Test
+    void testPruneStateWithNullProducer() throws Exception {
+        // Arrange - tombstones enabled but producer is null
+        Map<String, ActionState> localStates = new HashMap<>();
+        KafkaActionStateStore nullProducerStore = tombstoneEnabledStore(localStates, null);
+        localStates.put(
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent), testActionState);
+
+        // Act - should not throw
+        nullProducerStore.pruneState(TEST_KEY, 1L);
+
+        // Assert - in-memory removal still works
+        assertThat(localStates).isEmpty();
+    }
+
+    @Test
     void testActionStateUpdates() throws Exception {
         // Arrange
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
@@ -259,6 +459,42 @@ public class KafkaActionStateStoreTest {
                         actionStates.get(
                                 ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent)))
                 .isEqualTo(thirdState);
+    }
+
+    @Test
+    void testRebuildStateRemovesTombstonedKeys() throws Exception {
+        // Arrange - two state records followed by a tombstone for the first key
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L));
+        String key1 = ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent);
+        String key2 = ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent);
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 0L, key1, testActionState));
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 1L, key2, testActionState));
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 2L, key1, null));
+
+        // Act
+        actionStateStore.rebuildState(recoveryMarkers);
+
+        // Assert - the tombstoned key is removed, the other key is restored
+        assertThat(actionStates).doesNotContainKey(key1);
+        assertThat(actionStates.get(key2)).isEqualTo(testActionState);
+    }
+
+    private static class TestAppender extends AbstractAppender {
+
+        private final List<String> messages = Collections.synchronizedList(new ArrayList<>());
+
+        private TestAppender(String name) {
+            super(name, null, PatternLayout.newBuilder().withPattern("%msg").build(), true, null);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            messages.add(event.getMessage().getFormattedMessage());
+        }
+
+        private List<String> getMessages() {
+            return messages;
+        }
     }
 
     /** Contract: the consumer is closed even when closing the producer throws. */

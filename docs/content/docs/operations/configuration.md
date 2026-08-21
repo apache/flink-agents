@@ -170,6 +170,8 @@ The eight `memory.generate-event*` options have no raw `ConfigOption` default. W
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
 | `actionStateStoreBackend`    | (none)           | String  | The backend for action state store. Supported values: `"kafka"`, `"fluss"`.              |
 
+Durable action state stores currently join raw Flink keys and other key parts with an unescaped `_`. Flink keys containing `_` cannot be parsed safely during pruning, so both Kafka and Fluss retain their state in memory and backend storage. Kafka also emits no tombstones for those keys.
+
 #### Kafka-based Action State Store
 
 Here are the configuration options for Kafka-based Action State Store.
@@ -180,6 +182,7 @@ Here are the configuration options for Kafka-based Action State Store.
 | `kafkaActionStateTopic`             | (none)                   | String  | The config parameter specifies the Kafka topic for action state.            |
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
+| `kafkaActionStateTombstoneEnabled`  | false                    | Boolean | Whether pruning sends tombstone records so log compaction can reclaim pruned keys on a compacted action-state topic. Off by default: pruning does not invalidate older restore points, but the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning remains usable, but restoring an earlier checkpoint or savepoint may replay later tombstones and re-execute already completed actions. Enable only if the job never restores from earlier checkpoints or savepoints, or if re-executing actions is acceptable. |
 
 #### Fluss-based Action State Store
 

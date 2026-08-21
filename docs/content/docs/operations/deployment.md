@@ -92,7 +92,7 @@ After recovery from a checkpoint, Flink Agents reprocess events that arrived aft
 
 ### Exactly-Once Action Consistency
 
-To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and will not re-execute actions that were already completed. This guarantees each action is executed exactly once after recovering from a checkpoint.
+To ensure exactly-once action consistency, you must configure an external action state store. Flink Agents record action state in this store on a per-action basis. After recovering from a checkpoint, Flink Agents consult the external store and reuse completed action state when its backing record remains available. This prevents re-execution for checkpoints supported by the store's retained recovery history.
 
 When a completed Action is reused during recovery, its stored output Events keep their original Event IDs, while their lineage is rebound to the Event that triggers the reused Action in the recovered execution.
 
@@ -103,6 +103,10 @@ The same persisted action state is also used by fine-grained durable execution.
 {{< /hint >}}
 
 See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
+
+{{< hint warning >}}
+**Note**: Enabling Kafka action-state tombstones can invalidate checkpoints or savepoints older than the prune and cause completed actions to execute again. See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for the recovery trade-off.
+{{< /hint >}}
 
 {{< hint info >}}
 **Note**: Exactly-once action consistency is guaranteed only if, after recovering from the same checkpoint, inputs for each key arrive in the same order as before recovery. If this ordering requirement is not met, the system falls back to exactly-once output consistency.
