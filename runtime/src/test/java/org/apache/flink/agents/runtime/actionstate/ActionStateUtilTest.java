@@ -251,13 +251,31 @@ public class ActionStateUtilTest {
     }
 
     @Test
-    public void testIsKeyRetainedDropsLegacyFormatKeys() {
+    public void testIsKeyRetainedKeepsLegacyFormatKeys() {
         // Records written in the pre-key-group 4-segment format cannot be attributed to a
-        // key-group and are dropped deterministically instead of being retained (which would
-        // resurrect the orphan-state leak) or crashing the rebuild.
+        // key-group, so they have UNKNOWN ownership and are retained in every subtask (rather than
+        // dropped) to preserve durable state across a key-group upgrade. A filter that rejects
+        // every key-group still keeps them; lookups reach them via ActionStateUtil.legacyKeyOf.
         String legacyKey = "test-key_1_event-uuid_action-uuid";
-        assertFalse(ActionStateUtil.isKeyRetained(kg -> true, legacyKey));
-        assertFalse(ActionStateUtil.isKeyRetained(kg -> true, "malformed-key"));
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, legacyKey));
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, "malformed-key"));
+    }
+
+    @Test
+    public void testLegacyKeyOfStripsKeyGroupPrefix() throws Exception {
+        Object key = "legacy-lookup";
+        Action action = new NoOpAction("legacy-action");
+        InputEvent event = new InputEvent("legacy-input");
+        String currentKey = ActionStateUtil.generateKey(key, 3, action, event, MAX_PARALLELISM);
+
+        // The legacy form is the current key without its leading key-group segment, i.e. the
+        // 4-segment businessKey_seqNum_eventUUID_actionUUID that pre-key-group writers produced.
+        List<String> parts = ActionStateUtil.parseKey(currentKey);
+        String expectedLegacy =
+                String.join("_", parts.get(1), parts.get(2), parts.get(3), parts.get(4));
+        assertEquals(expectedLegacy, ActionStateUtil.legacyKeyOf(currentKey));
+        // A key without a separator is returned unchanged.
+        assertEquals("noseparator", ActionStateUtil.legacyKeyOf("noseparator"));
     }
 
     @Test
