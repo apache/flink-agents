@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 from typing import Any, Dict, List, Literal, Sequence
 
 import httpx
@@ -25,7 +26,7 @@ from openai import NOT_GIVEN, OpenAI
 # has existed at this path since the structured-output support in openai 1.66.3 (the
 # pinned minimum). A future openai bump that moves it will fail loudly on import here.
 from openai.lib._pydantic import to_strict_json_schema
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, PydanticInvalidForJsonSchema
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -41,6 +42,8 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
     convert_to_openai_messages,
     resolve_openai_credentials,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 MAX_OPENAI_TIMEOUT_SECONDS = 2_147_483.647
@@ -87,7 +90,8 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
 
     Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
     subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
-    fallback.
+    fallback. If the BaseModel cannot be converted to JSON schema (e.g., contains
+    Callable fields), returns ``None`` to fall back to prompt engineering.
     """
     if output_schema is None:
         return None
@@ -96,14 +100,22 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     )
     if not (isinstance(model, type) and issubclass(model, BaseModel)):
         return None
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": model.__name__,
-            "schema": to_strict_json_schema(model),
-            "strict": True,
-        },
-    }
+    try:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": model.__name__,
+                "schema": to_strict_json_schema(model),
+                "strict": True,
+            },
+        }
+    except PydanticInvalidForJsonSchema as e:
+        logger.warning(
+            "Pydantic model %s cannot be converted to JSON schema, falling back to prompt engineering: %s",
+            model.__name__,
+            str(e),
+        )
+        return None
 
 
 class OpenAIChatModelConnection(BaseChatModelConnection):
