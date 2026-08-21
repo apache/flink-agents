@@ -24,12 +24,15 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test class for {@link ActionStateUtil}. */
 public class ActionStateUtilTest {
+
+    private static final int MAX_PARALLELISM = 128;
 
     @Test
     public void testGenerateKeyConsistency() throws Exception {
@@ -40,8 +43,8 @@ public class ActionStateUtilTest {
         InputEvent inputEvent2 = new InputEvent("same-input");
 
         // Generate keys multiple times
-        String key1 = ActionStateUtil.generateKey(key, 1, action, inputEvent);
-        String key2 = ActionStateUtil.generateKey(key, 1, action, inputEvent2);
+        String key1 = ActionStateUtil.generateKey(key, 1, action, inputEvent, MAX_PARALLELISM);
+        String key2 = ActionStateUtil.generateKey(key, 1, action, inputEvent2, MAX_PARALLELISM);
 
         // Keys should be the same for the same input
         assertEquals(key1, key2);
@@ -56,8 +59,8 @@ public class ActionStateUtilTest {
         InputEvent inputEvent2 = new InputEvent("input2");
 
         // Generate keys
-        String key1 = ActionStateUtil.generateKey(key, 1, action, inputEvent1);
-        String key2 = ActionStateUtil.generateKey(key, 1, action, inputEvent2);
+        String key1 = ActionStateUtil.generateKey(key, 1, action, inputEvent1, MAX_PARALLELISM);
+        String key2 = ActionStateUtil.generateKey(key, 1, action, inputEvent2, MAX_PARALLELISM);
 
         // Keys should be different for different inputs
         assertNotEquals(key1, key2);
@@ -71,7 +74,7 @@ public class ActionStateUtilTest {
         assertThrows(
                 NullPointerException.class,
                 () -> {
-                    ActionStateUtil.generateKey(null, 1, action, inputEvent);
+                    ActionStateUtil.generateKey(null, 1, action, inputEvent, MAX_PARALLELISM);
                 });
     }
 
@@ -83,7 +86,7 @@ public class ActionStateUtilTest {
         assertThrows(
                 NullPointerException.class,
                 () -> {
-                    ActionStateUtil.generateKey(key, 1, null, inputEvent);
+                    ActionStateUtil.generateKey(key, 1, null, inputEvent, MAX_PARALLELISM);
                 });
     }
 
@@ -95,8 +98,22 @@ public class ActionStateUtilTest {
         assertThrows(
                 NullPointerException.class,
                 () -> {
-                    ActionStateUtil.generateKey(key, 1, action, null);
+                    ActionStateUtil.generateKey(key, 1, action, null, MAX_PARALLELISM);
                 });
+    }
+
+    @Test
+    public void testGenerateKeyRejectsNonPositiveMaxParallelism() throws Exception {
+        Object key = "test-key";
+        Action action = new NoOpAction("test-action");
+        InputEvent inputEvent = new InputEvent("test-input");
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ActionStateUtil.generateKey(key, 1, action, inputEvent, 0));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ActionStateUtil.generateKey(key, 1, action, inputEvent, -1));
     }
 
     @Test
@@ -107,18 +124,20 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("test-input");
         long seqNum = 123;
 
-        String generatedKey = ActionStateUtil.generateKey(key, seqNum, action, inputEvent);
+        String generatedKey =
+                ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
 
         // Parse the generated key
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
         // Verify the parsed components
-        assertEquals(4, parsedParts.size());
-        assertEquals(key.toString(), parsedParts.get(0));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
-        // The third and fourth parts are UUIDs - just verify they're non-empty
-        assertTrue(parsedParts.get(2).length() > 0);
+        assertEquals(5, parsedParts.size());
+        assertTrue(Integer.parseInt(parsedParts.get(0)) >= 0); // keyGroup
+        assertEquals(key.toString(), parsedParts.get(1));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
+        // The fourth and fifth parts are UUIDs - just verify they're non-empty
         assertTrue(parsedParts.get(3).length() > 0);
+        assertTrue(parsedParts.get(4).length() > 0);
     }
 
     @Test
@@ -129,11 +148,13 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("round-trip-input");
         long seqNum = 456;
 
-        String generatedKey = ActionStateUtil.generateKey(originalKey, seqNum, action, inputEvent);
+        String generatedKey =
+                ActionStateUtil.generateKey(
+                        originalKey, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        assertEquals(originalKey.toString(), parsedParts.get(0));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
+        assertEquals(originalKey.toString(), parsedParts.get(1));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
     }
 
     @Test
@@ -177,11 +198,12 @@ public class ActionStateUtilTest {
         InputEvent inputEvent = new InputEvent("input-with-special@chars");
         long seqNum = 789;
 
-        String generatedKey = ActionStateUtil.generateKey(key, seqNum, action, inputEvent);
+        String generatedKey =
+                ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        assertEquals(key.toString(), parsedParts.get(0));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
+        assertEquals(key.toString(), parsedParts.get(1));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
     }
 
     @Test
@@ -190,18 +212,115 @@ public class ActionStateUtilTest {
         Action action = new NoOpAction("consistency-action");
         InputEvent inputEvent = new InputEvent("consistency-input");
 
-        String key1 = ActionStateUtil.generateKey("key1", 100, action, inputEvent);
-        String key2 = ActionStateUtil.generateKey("key2", 200, action, inputEvent);
+        String key1 = ActionStateUtil.generateKey("key1", 100, action, inputEvent, MAX_PARALLELISM);
+        String key2 = ActionStateUtil.generateKey("key2", 200, action, inputEvent, MAX_PARALLELISM);
 
         List<String> parsed1 = ActionStateUtil.parseKey(key1);
         List<String> parsed2 = ActionStateUtil.parseKey(key2);
 
         // Keys should be different
-        assertNotEquals(parsed1.get(0), parsed2.get(0));
         assertNotEquals(parsed1.get(1), parsed2.get(1));
+        assertNotEquals(parsed1.get(2), parsed2.get(2));
 
         // But event and action UUIDs should be the same (same event and action)
-        assertEquals(parsed1.get(2), parsed2.get(2)); // Event UUID
-        assertEquals(parsed1.get(3), parsed2.get(3)); // Action UUID
+        assertEquals(parsed1.get(3), parsed2.get(3)); // Event UUID
+        assertEquals(parsed1.get(4), parsed2.get(4)); // Action UUID
+    }
+
+    @Test
+    public void testIsKeyRetainedFiltersForeignKeys() throws Exception {
+        Action action = new NoOpAction("owner-action");
+        InputEvent event = new InputEvent("owner-input");
+        String ownedKey = ActionStateUtil.generateKey("A", 1, action, event, MAX_PARALLELISM);
+        String foreignKey = ActionStateUtil.generateKey("B", 1, action, event, MAX_PARALLELISM);
+
+        int ownedKeyGroup = ActionStateUtil.parseKeyGroup(ownedKey);
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> kg == ownedKeyGroup, ownedKey));
+        assertFalse(ActionStateUtil.isKeyRetained(kg -> kg == ownedKeyGroup, foreignKey));
+    }
+
+    @Test
+    public void testIsKeyRetainedKeepsAllKeysWhenNoFilter() throws Exception {
+        Action action = new NoOpAction("no-filter-action");
+        InputEvent event = new InputEvent("no-filter-input");
+        String keyA = ActionStateUtil.generateKey("A", 1, action, event, MAX_PARALLELISM);
+        String keyB = ActionStateUtil.generateKey("B", 1, action, event, MAX_PARALLELISM);
+
+        assertTrue(ActionStateUtil.isKeyRetained(null, keyA));
+        assertTrue(ActionStateUtil.isKeyRetained(null, keyB));
+    }
+
+    @Test
+    public void testIsKeyRetainedKeepsLegacyFormatKeys() {
+        // Records written in the pre-key-group 4-segment format cannot be attributed to a
+        // key-group, so they have UNKNOWN ownership and are retained in every subtask (rather than
+        // dropped) to preserve durable state across a key-group upgrade. A filter that rejects
+        // every key-group still keeps them; lookups reach them via ActionStateUtil.legacyKeyOf.
+        String legacyKey = "test-key_1_event-uuid_action-uuid";
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, legacyKey));
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, "malformed-key"));
+    }
+
+    @Test
+    public void testLegacyKeyOfStripsKeyGroupPrefix() throws Exception {
+        Object key = "legacy-lookup";
+        Action action = new NoOpAction("legacy-action");
+        InputEvent event = new InputEvent("legacy-input");
+        String currentKey = ActionStateUtil.generateKey(key, 3, action, event, MAX_PARALLELISM);
+
+        // The legacy form is the current key without its leading key-group segment, i.e. the
+        // 4-segment businessKey_seqNum_eventUUID_actionUUID that pre-key-group writers produced.
+        List<String> parts = ActionStateUtil.parseKey(currentKey);
+        String expectedLegacy =
+                String.join("_", parts.get(1), parts.get(2), parts.get(3), parts.get(4));
+        assertEquals(expectedLegacy, ActionStateUtil.legacyKeyOf(currentKey));
+        // A key without a separator is returned unchanged.
+        assertEquals("noseparator", ActionStateUtil.legacyKeyOf("noseparator"));
+    }
+
+    @Test
+    public void testIsKeyRetainedKeepsCurrentFormatKeyWithUnparseableKeyGroup() {
+        // A 5-segment key whose key-group segment fails to parse is retained as a fail-safe.
+        assertTrue(
+                ActionStateUtil.isKeyRetained(
+                        kg -> false, "not-a-number_key_1_event-uuid_action-uuid"));
+    }
+
+    @Test
+    public void testMatchesBusinessKeyIsSegmentExact() throws Exception {
+        Action action = new NoOpAction("match-action");
+        InputEvent event = new InputEvent("match-input");
+        // Numeric business key 1 at seqNum 5: a substring match on "_5_" would wrongly
+        // attribute this record to business key 5 via its seqNum segment.
+        String keyOneAtSeqFive = ActionStateUtil.generateKey(1L, 5, action, event, MAX_PARALLELISM);
+
+        assertTrue(ActionStateUtil.matchesBusinessKey(keyOneAtSeqFive, 1L));
+        assertFalse(ActionStateUtil.matchesBusinessKey(keyOneAtSeqFive, 5L));
+        assertFalse(ActionStateUtil.matchesBusinessKey("legacy_1_event-uuid_action-uuid", 1L));
+    }
+
+    @Test
+    public void testMatchesBusinessKeyAndSeqNum() throws Exception {
+        Action action = new NoOpAction("match-action");
+        InputEvent event = new InputEvent("match-input");
+        String stateKey = ActionStateUtil.generateKey("A", 7, action, event, MAX_PARALLELISM);
+
+        assertTrue(ActionStateUtil.matchesBusinessKeyAndSeqNum(stateKey, "A", 7));
+        assertFalse(ActionStateUtil.matchesBusinessKeyAndSeqNum(stateKey, "A", 8));
+        assertFalse(ActionStateUtil.matchesBusinessKeyAndSeqNum(stateKey, "B", 7));
+    }
+
+    @Test
+    public void testMatchesBusinessKeyWithSeqNumFilter() throws Exception {
+        Action action = new NoOpAction("match-action");
+        InputEvent event = new InputEvent("match-input");
+        String keyOneAtSeqFive = ActionStateUtil.generateKey(1L, 5, action, event, MAX_PARALLELISM);
+
+        assertTrue(
+                ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 1L, seq -> seq <= 5));
+        assertFalse(
+                ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 1L, seq -> seq > 5));
+        // Wrong business key never matches, regardless of the seqNum filter.
+        assertFalse(ActionStateUtil.matchesBusinessKeyWithSeqNum(keyOneAtSeqFive, 5L, seq -> true));
     }
 }

@@ -50,6 +50,7 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
@@ -83,6 +84,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -2039,6 +2041,153 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    /**
+     * Regression test: durable-store lookups must use the original typed key, never its string
+     * form. The key-group segment embedded in every action-state record key is derived from the
+     * typed key's hash, so a stringified lookup computes a different key-group at maxParallelism
+     * greater than 1 and every recovery read misses, silently re-executing completed durable calls.
+     * Harness maxParallelism of 1 masks this (all keys collapse to key-group 0), hence the
+     * realistic maxParallelism here.
+     */
+    @Test
+    void testDurableRecoveryHitsCacheWithTypedKeyAtRealisticMaxParallelism() throws Exception {
+        final int maxParallelism = 128;
+        final long key = 1L;
+        // Fixture guard: the regression only manifests when the typed key and its string form
+        // hash to different key-groups.
+        assertThat(KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism))
+                .isNotEqualTo(
+                        KeyGroupRangeAssignment.assignToKeyGroup(
+                                String.valueOf(key), maxParallelism));
+
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+
+        for (int run = 0; run < 2; run++) {
+            try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                    new KeyedOneInputStreamOperatorTestHarness<>(
+                            new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                            (KeySelector<Long, Long>) value -> value,
+                            TypeInformation.of(Long.class),
+                            maxParallelism,
+                            1,
+                            0)) {
+                testHarness.open();
+                ActionExecutionOperator<Long, Object> operator =
+                        (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+                testHarness.processElement(new StreamRecord<>(key));
+                operator.waitInFlightEventsFinished();
+
+                List<StreamRecord<Object>> recordOutput =
+                        (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+                assertThat(recordOutput).hasSize(1);
+                assertThat(recordOutput.get(0).getValue()).isEqualTo(key * 3);
+            }
+        }
+
+        assertThat(TestAgent.DURABLE_CALL_COUNTER.get())
+                .as("Second run must recover from the durable store instead of re-executing")
+                .isEqualTo(1);
+    }
+
+    /**
+     * Regression test for the recovery ownership check: the key-group embedded in a persisted
+     * action-state record key is derived from the original typed key, and after rescaling it must
+     * be accepted by exactly the subtask that Flink assigns that key to. Under the old scheme —
+     * ownership recomputed by hashing the string form of the business key — the true owner (subtask
+     * of Long(1)'s key-group) would have dropped its own record while a foreign subtask retained
+     * it, re-executing completed actions and leaking orphan state.
+     */
+    @Test
+    void testOwnershipFilterAcceptsTypedKeyGroupOnlyOnOwnerSubtask() throws Exception {
+        final int maxParallelism = 128;
+        final int parallelism = 2;
+        final long key = 1L;
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+
+        // Phase 1: run with the typed key so the store holds records whose embedded key-group was
+        // computed from Long(1), not from "1".
+        InMemoryActionStateStore writerStore = new InMemoryActionStateStore(false);
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> writerHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, writerStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class),
+                        maxParallelism,
+                        1,
+                        0)) {
+            writerHarness.open();
+            writerHarness.processElement(new StreamRecord<>(key));
+            ((ActionExecutionOperator<Long, Object>) writerHarness.getOperator())
+                    .waitInFlightEventsFinished();
+        }
+
+        List<String> persistedKeys =
+                writerStore.getKeyedActionStates().values().stream()
+                        .flatMap(states -> states.keySet().stream())
+                        .collect(Collectors.toList());
+        assertThat(persistedKeys).isNotEmpty();
+        int embeddedKeyGroup = ActionStateUtil.parseKeyGroup(persistedKeys.get(0));
+        assertThat(embeddedKeyGroup)
+                .isEqualTo(KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism));
+
+        int ownerSubtask =
+                KeyGroupRangeAssignment.computeOperatorIndexForKeyGroup(
+                        maxParallelism, parallelism, embeddedKeyGroup);
+        int stringDerivedKeyGroup =
+                KeyGroupRangeAssignment.assignToKeyGroup(String.valueOf(key), maxParallelism);
+        // Fixture guard: the string-derived key-group must land on the other subtask, mirroring
+        // the original ownership bug.
+        assertThat(
+                        KeyGroupRangeAssignment.computeOperatorIndexForKeyGroup(
+                                maxParallelism, parallelism, stringDerivedKeyGroup))
+                .isNotEqualTo(ownerSubtask);
+
+        // Phase 2: restart at parallelism 2 and capture the ownership filter each subtask
+        // installs on its store during recovery.
+        FilterCapturingActionStateStore ownerStore = new FilterCapturingActionStateStore();
+        FilterCapturingActionStateStore nonOwnerStore = new FilterCapturingActionStateStore();
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> ownerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory<>(agentPlan, true, ownerStore),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                parallelism,
+                                ownerSubtask);
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> nonOwnerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory<>(
+                                        agentPlan, true, nonOwnerStore),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                parallelism,
+                                1 - ownerSubtask)) {
+            ownerHarness.open();
+            nonOwnerHarness.open();
+
+            assertThat(ownerStore.capturedOwnershipFilter).isNotNull();
+            assertThat(nonOwnerStore.capturedOwnershipFilter).isNotNull();
+
+            assertThat(ownerStore.capturedOwnershipFilter.test(embeddedKeyGroup))
+                    .as("The subtask owning the typed key's key-group must retain the record")
+                    .isTrue();
+            assertThat(nonOwnerStore.capturedOwnershipFilter.test(embeddedKeyGroup))
+                    .as("Every other subtask must drop the record")
+                    .isFalse();
+            assertThat(ownerStore.capturedOwnershipFilter.test(stringDerivedKeyGroup))
+                    .as(
+                            "String-derived key-group must not be owned by the typed key's owner;"
+                                    + " otherwise the original string-hash ownership bug would be"
+                                    + " undetectable")
+                    .isFalse();
+        }
+    }
+
     /** Tests that durableExecute properly handles exceptions thrown by the supplier. */
     @Test
     void testDurableExecuteExceptionHandling() throws Exception {
@@ -2299,6 +2448,7 @@ public class ActionExecutionOperatorTest {
     void testDurableExecuteReconcilableRecoverySuccess() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
         InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        actionStateStore.setMaxParallelism(1);
         long key = 1L;
         long input = 1L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
@@ -2344,6 +2494,7 @@ public class ActionExecutionOperatorTest {
     void testDurableExecuteReconcilableRecoveryException() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
         InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        actionStateStore.setMaxParallelism(1);
         long key = 2L;
         long input = 2L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.EXCEPTION;
@@ -2432,6 +2583,7 @@ public class ActionExecutionOperatorTest {
     void testDurableExecuteRecoveryMixedCompletionOnlyAndReconcilableCalls() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableMixedRecoveryAgentPlan();
         InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        actionStateStore.setMaxParallelism(1);
         long key = 1L;
         long input = 1L;
         TestAgent.MIXED_RECONCILE_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
@@ -3312,6 +3464,24 @@ public class ActionExecutionOperatorTest {
         InputEvent event = new InputEvent(input);
         Action action = agentPlan.getActions().get(actionName);
         return actionStateStore.get(key, 0L, action, event);
+    }
+
+    /**
+     * Records the ownership filter that {@code DurableExecutionManager.handleRecovery} installs on
+     * the store during operator recovery, so tests can assert which key-groups a given subtask
+     * would retain.
+     */
+    private static class FilterCapturingActionStateStore extends InMemoryActionStateStore {
+        private volatile IntPredicate capturedOwnershipFilter;
+
+        private FilterCapturingActionStateStore() {
+            super(false);
+        }
+
+        @Override
+        public void setOwnershipFilter(IntPredicate ownershipFilter) {
+            this.capturedOwnershipFilter = ownershipFilter;
+        }
     }
 
     private static class RecordingActionStateStore extends InMemoryActionStateStore {

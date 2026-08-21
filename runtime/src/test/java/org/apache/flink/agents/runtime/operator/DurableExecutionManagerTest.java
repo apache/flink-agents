@@ -232,7 +232,7 @@ class DurableExecutionManagerTest {
         when(opBackend.getUnionListState(any(ListStateDescriptor.class))).thenReturn(markerState);
         when(markerState.get()).thenReturn(List.of("test-marker"));
 
-        dem.handleRecovery(opBackend);
+        dem.handleRecovery(opBackend, null);
 
         // InMemoryActionStateStore.rebuildState is a no-op (lines 62–64), so state mutation is
         // not observable here — the test verifies the call contract only.

@@ -47,6 +47,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
@@ -65,12 +66,12 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.Backe
  * <p>Lifecycle: instantiated in the operator constructor. {@link
  * #maybeInitActionStateStore(AgentConfiguration)} runs from BOTH the operator's {@code
  * initializeState()} and {@code open()} — recovery requires the store to be configured before
- * {@link #handleRecovery(OperatorStateBackend)} reads from it, and the {@code open()} call ensures
- * the store is also available on the normal (non-recovery) path. The method creates a default
- * Kafka-backed store when one was not pre-injected, and is idempotent on the second call. {@link
- * #handleRecovery(OperatorStateBackend)} runs from the operator's {@code initializeState()} during
- * recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs from the operator's {@code
- * open()}. {@link #close()} closes the underlying store.
+ * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} reads from it, and the {@code open()}
+ * call ensures the store is also available on the normal (non-recovery) path. The method creates a
+ * default Kafka-backed store when one was not pre-injected, and is idempotent on the second call.
+ * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} runs from the operator's {@code
+ * initializeState()} during recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs
+ * from the operator's {@code open()}. {@link #close()} closes the underlying store.
  *
  * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
  * flows via method parameters. In particular, {@link
@@ -124,6 +125,17 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                 LOG.info("Using Fluss as backend of action state store.");
                 actionStateStore = new FlussActionStateStore(config);
             }
+        }
+    }
+
+    /**
+     * Sets the maximum parallelism on the underlying action state store so that key-groups are
+     * computed consistently with Flink's key-group assignment when generating action-state record
+     * keys.
+     */
+    void setMaxParallelism(int maxParallelism) {
+        if (actionStateStore != null) {
+            actionStateStore.setMaxParallelism(maxParallelism);
         }
     }
 
@@ -185,10 +197,20 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * descriptor is re-created here using the same descriptor name — Flink returns the same
      * underlying state. No-op when durable execution is disabled.
      *
+     * <p>UnionListState broadcasts every subtask's recovery marker to all subtasks, so a naive
+     * replay would load the full key set into every subtask's cache, where the foreign keys are
+     * never pruned and stay resident for the whole attempt (the orphan-state leak). {@code
+     * ownershipFilter} restricts the rebuilt cache to key-groups owned by the current subtask; it
+     * is installed on the store just before {@link #rebuildState(List)}.
+     *
      * @param operatorStateBackend the operator state backend used to obtain the recovery-marker
      *     union-list state.
+     * @param ownershipFilter predicate accepting only the key-groups owned by the current subtask;
+     *     {@code null} retains all keys (e.g. for the in-memory/test backends).
      */
-    void handleRecovery(OperatorStateBackend operatorStateBackend) throws Exception {
+    void handleRecovery(
+            OperatorStateBackend operatorStateBackend, @Nullable IntPredicate ownershipFilter)
+            throws Exception {
         if (actionStateStore != null) {
             List<Object> markers = new ArrayList<>();
             ListState<Object> markerState =
@@ -200,6 +222,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                 recoveryMarkers.forEach(markers::add);
             }
             LOG.info("Rebuilding action state from {} recovery markers", markers.size());
+            actionStateStore.setOwnershipFilter(ownershipFilter);
             actionStateStore.rebuildState(markers);
         }
     }
@@ -209,7 +232,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             throws Exception {
         return actionStateStore == null
                 ? null
-                : actionStateStore.get(key.toString(), sequenceNum, action, event);
+                : actionStateStore.get(key, sequenceNum, action, event);
     }
 
     void maybeInitActionState(Object key, long sequenceNum, Action action, Event event)
