@@ -37,6 +37,8 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -148,9 +150,12 @@ class EventAttachmentUtilsTest {
                         Map.of(),
                         new HashMap<>(Map.of("payload", reference)));
 
-        EventAttachmentUtils.loadEventAttachments(event, context);
+        Event actionEvent = EventAttachmentUtils.loadEventAttachments(event, context);
 
-        assertEquals(payload, event.getAttachment("payload"));
+        assertNotSame(event, actionEvent);
+        assertNotSame(event.getAttachments(), actionEvent.getAttachments());
+        assertEquals(payload, actionEvent.getAttachment("payload"));
+        assertSame(reference, event.getAttachment("payload"));
     }
 
     @Test

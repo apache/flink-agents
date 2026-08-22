@@ -22,6 +22,9 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -34,6 +37,12 @@ import java.util.stream.Collectors;
 public final class EventAttachmentUtils {
 
     private static final String ATTACHMENT_ROOT = "__event_attachments__";
+
+    private static final TypeSerializer<Event> EVENT_SERIALIZER_TEMPLATE =
+            TypeInformation.of(Event.class).createSerializer(new SerializerConfigImpl());
+
+    private static final ThreadLocal<TypeSerializer<Event>> EVENT_SERIALIZER =
+            ThreadLocal.withInitial(EVENT_SERIALIZER_TEMPLATE::duplicate);
 
     private EventAttachmentUtils() {}
 
@@ -83,9 +92,10 @@ public final class EventAttachmentUtils {
         }
     }
 
-    /** Loads sensory-memory references in place before a Java action is invoked. */
-    public static void loadEventAttachments(Event event, RunnerContext context) throws Exception {
-        for (Map.Entry<String, Object> entry : event.getAttachments().entrySet()) {
+    /** Returns an action-owned Event copy with sensory-memory references resolved. */
+    public static Event loadEventAttachments(Event event, RunnerContext context) throws Exception {
+        Event actionEvent = EVENT_SERIALIZER.get().copy(event);
+        for (Map.Entry<String, Object> entry : actionEvent.getAttachments().entrySet()) {
             Object value = entry.getValue();
             if (!(value instanceof MemoryRef)) {
                 continue;
@@ -98,8 +108,9 @@ public final class EventAttachmentUtils {
                         "Event attachment does not exist in sensory memory: "
                                 + reference.getPath());
             }
-            event.getAttachments().put(entry.getKey(), attachment.getValue());
+            actionEvent.getAttachments().put(entry.getKey(), attachment.getValue());
         }
+        return actionEvent;
     }
 
     /** Builds the sensory-memory path for one event attachment. */

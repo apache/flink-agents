@@ -39,7 +39,8 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class JavaActionTask extends ActionTask {
 
-    private boolean executionStarted = false;
+    /** Action-owned view with resolved attachments; never serialized into Flink state. */
+    private transient Event invocationEvent;
 
     public JavaActionTask(Object key, Event event, Action action) {
         super(key, event, action);
@@ -55,13 +56,13 @@ public class JavaActionTask extends ActionTask {
                 event,
                 key);
 
-        if (!executionStarted) {
+        if (invocationEvent == null) {
             runnerContext.checkNoPendingEvents();
-            EventAttachmentUtils.loadEventAttachments(event, runnerContext);
-            executionStarted = true;
+            invocationEvent = EventAttachmentUtils.loadEventAttachments(event, runnerContext);
         }
 
         JavaRunnerContextImpl javaRunnerContext = (JavaRunnerContextImpl) runnerContext;
+        Event actionEvent = invocationEvent;
 
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         boolean finished;
@@ -74,7 +75,7 @@ public class JavaActionTask extends ActionTask {
                                     javaRunnerContext.getContinuationContext(),
                                     () -> {
                                         try {
-                                            action.getExec().call(event, runnerContext);
+                                            action.getExec().call(actionEvent, runnerContext);
                                         } catch (Exception e) {
                                             throw new RuntimeException(e);
                                         }
