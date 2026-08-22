@@ -42,6 +42,8 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -51,6 +53,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -80,6 +83,8 @@ import java.util.stream.Collectors;
  * }</pre>
  */
 public class AnthropicChatModelConnection extends BaseChatModelConnection {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AnthropicChatModelConnection.class);
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -221,6 +226,59 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             return true;
         }
         return !PREFILL_UNSUPPORTED_MODELS.contains(effectiveModel);
+    }
+
+    // Models that reject a non-default sampling parameter. Source of truth:
+    // https://platform.claude.com/docs/en/about-claude/models/migration-guide
+    //
+    // The documented rule is that setting temperature, top_p or top_k to any non-default value on
+    // Claude Opus 4.7 or later returns a 400, and the Claude Sonnet 5 release notes carry the same
+    // rule for the Sonnet line while stating it is new for Sonnet-class models. Sending the
+    // provider default, or omitting the parameter, stays acceptable on every model, so the way to
+    // honour this is to drop the parameter rather than to substitute a value.
+    //
+    // This is the third boundary encoded in this class and it lines up with neither of the others.
+    // Structured output starts at the 4.5 generation and prefill rejection at 4.6, while sampling
+    // rejection starts at 4.7. Claude 4.6 therefore rejects a prefill while still accepting a
+    // temperature, so the prefill list above cannot be reused here even though the two overlap.
+    //
+    // Claude Fable 5, Claude Mythos 5 and Claude Mythos Preview are listed without a matching
+    // sentence in the migration guide. That guide records each release's deltas, and these models
+    // succeed Claude Opus 4.8, which already rejects sampling parameters, so there was no delta to
+    // record. They are treated as rejecting because they inherit the constraint, not because a
+    // release note restates it.
+    private static final Set<String> SAMPLING_UNSUPPORTED_MODELS =
+            Set.of(
+                    "claude-opus-4-7",
+                    "claude-opus-4-8",
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-fable-5",
+                    "claude-mythos-5",
+                    "claude-mythos-preview");
+
+    // Names already reported through the warning below, so a rejected temperature is surfaced once
+    // per model instead of on every request.
+    private static final Set<String> SAMPLING_WARNED_MODELS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Whether {@code effectiveModel} accepts a non-default sampling parameter such as {@code
+     * temperature}.
+     *
+     * <p>See the list above for the source of truth and for why it is kept apart from the prefill
+     * and structured-output lists. An unrecognized name reports {@code true}, matching the
+     * documented rule: sampling parameters are the long-standing behaviour and only the listed
+     * names withdraw them. That default carries the same cost as {@link #supportsJsonPrefill}: a
+     * rejecting model this list has not caught up with is sent a temperature and answered with a
+     * 400.
+     */
+    static boolean supportsSamplingParams(String effectiveModel) {
+        // Load-bearing: the list is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null) {
+            return true;
+        }
+        return !SAMPLING_UNSUPPORTED_MODELS.contains(effectiveModel);
     }
 
     /**
@@ -365,9 +423,21 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             builder.maxTokens(((Number) maxTokens).longValue());
         }
 
+        // Dropped rather than clamped on a model that rejects it: the provider accepts an omitted
+        // parameter but answers a non-default one with a 400, and substituting the provider default
+        // would quietly change sampling behaviour instead of leaving it to the provider.
         Object temperature = modelParams.remove("temperature");
         if (temperature instanceof Number) {
-            builder.temperature(((Number) temperature).doubleValue());
+            if (supportsSamplingParams(modelName)) {
+                builder.temperature(((Number) temperature).doubleValue());
+            } else if (SAMPLING_WARNED_MODELS.add(modelName)) {
+                LOG.warn(
+                        "Model {} rejects non-default sampling parameters, so the configured"
+                                + " temperature {} was not sent. Steer the model through its prompt"
+                                + " instead.",
+                        modelName,
+                        temperature);
+            }
         }
 
         @SuppressWarnings("unchecked")
