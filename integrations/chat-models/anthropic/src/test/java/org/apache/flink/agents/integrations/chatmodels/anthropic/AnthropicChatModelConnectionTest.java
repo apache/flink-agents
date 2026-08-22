@@ -578,6 +578,88 @@ class AnthropicChatModelConnectionTest {
         assertPrefillDecisionForModel("claude-opus-4-6", false);
     }
 
+    /**
+     * The models the provider documents as rejecting a non-default sampling parameter, in the order
+     * the connection lists them. Mirroring that order keeps the two lists comparable side by side,
+     * so a name added to one and not the other stands out.
+     */
+    private static Stream<String> samplingUnsupportedModels() {
+        return Stream.of(
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-opus-5",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-mythos-preview");
+    }
+
+    /**
+     * Names that accept a temperature. The two 4.6-generation names are the load-bearing ones: both
+     * reject a prefill, so deriving the sampling rule from the prefill list would strip a
+     * temperature the provider still accepts.
+     */
+    private static Stream<String> samplingSupportedModels() {
+        return Stream.of(
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-opus-4-5",
+                "claude-sonnet-4-5",
+                "claude-sonnet-4-20250514",
+                "claude-3-5-sonnet-latest",
+                "");
+    }
+
+    /** The temperature the built request carries, or empty when it was dropped. */
+    private static Optional<Double> requestTemperature(String model) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        params.put("temperature", 0.1d);
+        return connection()
+                .buildRequest(userMessage(), List.of(), params, null)
+                .params
+                .temperature();
+    }
+
+    @ParameterizedTest
+    @MethodSource("samplingUnsupportedModels")
+    @DisplayName("every model documented as rejecting sampling parameters reports unsupported")
+    void testSamplingUnsupportedModelsReportUnsupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @MethodSource("samplingSupportedModels")
+    @DisplayName("a model outside that list reports sampling supported")
+    void testSamplingSupportedModelsReportSupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("temperature is dropped on a model that rejects sampling parameters")
+    void testTemperatureDroppedOnUnsupportedModel() {
+        assertThat(requestTemperature("claude-opus-4-7")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("temperature is sent on a model that accepts sampling parameters")
+    void testTemperatureSentOnSupportedModel() {
+        assertThat(requestTemperature("claude-sonnet-4-20250514")).contains(0.1d);
+    }
+
+    @Test
+    @DisplayName("a 4.6 model rejects the prefill while keeping its temperature")
+    void testSamplingAndPrefillBoundariesDiffer() {
+        // The two rules draw different lines, and this model sits between them: the provider
+        // withdraws prefilling from 4.6 on but sampling parameters only from 4.7 on. Deriving the
+        // sampling rule from the prefill list would drop the temperature here, where the provider
+        // still accepts it.
+        assertThat(AnthropicChatModelConnection.supportsJsonPrefill("claude-sonnet-4-6")).isFalse();
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams("claude-sonnet-4-6"))
+                .isTrue();
+        assertThat(requestTemperature("claude-sonnet-4-6")).contains(0.1d);
+    }
+
     @Test
     @DisplayName("json_prefill is applied on a structured-output capable model that accepts it")
     void testPrefillAppliedOnStructuredOutputCapableModel() {

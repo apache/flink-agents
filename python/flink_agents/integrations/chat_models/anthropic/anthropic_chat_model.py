@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 import uuid
 from typing import Any, Dict, List, Sequence
 
@@ -31,6 +32,8 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
 )
 from flink_agents.api.tools.tool import Tool, ToolMetadata
+
+logger = logging.getLogger(__name__)
 
 
 def to_anthropic_tool(
@@ -195,6 +198,57 @@ def _supports_json_prefill(effective_model: str | None) -> bool:
     fallback instead.
     """
     return effective_model not in _PREFILL_UNSUPPORTED_MODELS
+
+
+# Models that reject a non-default sampling parameter. Source of truth:
+# https://platform.claude.com/docs/en/about-claude/models/migration-guide
+#
+# The documented rule is that setting temperature, top_p or top_k to any non-default
+# value on Claude Opus 4.7 or later returns a 400, and the Claude Sonnet 5 release notes
+# carry the same rule for the Sonnet line while stating it is new for Sonnet-class
+# models. Sending the provider default, or omitting the parameter, stays acceptable on
+# every model, so the way to honour this is to drop the parameter rather than to
+# substitute a value.
+#
+# This is the third boundary encoded in this module and it lines up with neither of the
+# others. Structured output starts at the 4.5 generation and prefill rejection at 4.6,
+# while sampling rejection starts at 4.7. Claude 4.6 therefore rejects a prefill while
+# still accepting a temperature, so the prefill list above cannot be reused here even
+# though the two overlap.
+#
+# Claude Fable 5, Claude Mythos 5 and Claude Mythos Preview are listed without a
+# matching sentence in the migration guide. That guide records each release's deltas,
+# and these models succeed Claude Opus 4.8, which already rejects sampling parameters,
+# so there was no delta to record. They are treated as rejecting because they inherit
+# the constraint, not because a release note restates it.
+_SAMPLING_UNSUPPORTED_MODELS = frozenset(
+    {
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-mythos-preview",
+    }
+)
+
+# Names already reported through the warning in ``chat``, so a rejected temperature is
+# surfaced once per model instead of on every request.
+_SAMPLING_WARNED_MODELS: set[str] = set()
+
+
+def _supports_sampling_params(effective_model: str | None) -> bool:
+    """Whether ``effective_model`` accepts a non-default sampling parameter.
+
+    See the list above for the source of truth and for why it is kept apart from the
+    prefill and structured-output lists. An unrecognized name reports ``True``, matching
+    the documented rule: sampling parameters are the long-standing behaviour and only
+    the listed names withdraw them. That default carries the same cost as
+    ``_supports_json_prefill``: a rejecting model this list has not caught up with is
+    sent a temperature and answered with a 400.
+    """
+    return effective_model not in _SAMPLING_UNSUPPORTED_MODELS
 
 
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
@@ -380,6 +434,25 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
                 *anthropic_messages,
                 {"role": MessageRole.ASSISTANT.value, "content": "{"},
             ]
+
+        # Dropped rather than clamped on a model that rejects it: the provider
+        # accepts an omitted parameter but answers a non-default one with a 400,
+        # and substituting the provider default would quietly change sampling
+        # behaviour instead of leaving it to the provider.
+        if "temperature" in kwargs and not _supports_sampling_params(
+            kwargs.get("model")
+        ):
+            dropped = kwargs.pop("temperature")
+            model_name = kwargs.get("model")
+            if model_name not in _SAMPLING_WARNED_MODELS:
+                _SAMPLING_WARNED_MODELS.add(model_name)
+                logger.warning(
+                    "Model %s rejects non-default sampling parameters, so the "
+                    "configured temperature %s was not sent. Steer the model through "
+                    "its prompt instead.",
+                    model_name,
+                    dropped,
+                )
 
         message = self.client.messages.create(
             messages=anthropic_messages,
