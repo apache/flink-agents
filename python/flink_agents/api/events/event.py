@@ -270,6 +270,9 @@ class OutputEvent(Event):
     """Event representing a result from agent. By generating an OutputEvent,
     actions can emit output data.
 
+    Attachments are only supported on events passed between actions and cannot
+    be carried by an OutputEvent.
+
     Attributes:
     ----------
     output : Any
@@ -288,6 +291,9 @@ class OutputEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "OutputEvent":
+        if event.attachments:
+            msg = "OutputEvent cannot carry attachments."
+            raise ValueError(msg)
         assert "output" in event.attributes
         result = OutputEvent(output=event.attributes["output"])
         return result.reconstruct_from(event)

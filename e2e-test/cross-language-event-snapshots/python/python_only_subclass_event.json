@@ -5,11 +5,5 @@
     "value": "ping",
     "count": 7
   },
-  "attachments": {
-    "payload": {
-      "@type": "memory_ref",
-      "memory_type": "sensory",
-      "path": "memory.path"
-    }
-  }
+  "attachments": {}
 }

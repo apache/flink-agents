@@ -10,12 +10,6 @@
       }
     } ]
   },
-  "attachments" : {
-    "payload" : {
-      "@type" : "memory_ref",
-      "memory_type" : "sensory",
-      "path" : "memory.path"
-    }
-  },
+  "attachments" : { },
   "type" : "_tool_request_event"
 }

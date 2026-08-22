@@ -8,11 +8,5 @@
       "profile.m_a01": null
     }
   },
-  "attachments": {
-    "payload": {
-      "@type": "memory_ref",
-      "memory_type": "sensory",
-      "path": "memory.path"
-    }
-  }
+  "attachments": {}
 }

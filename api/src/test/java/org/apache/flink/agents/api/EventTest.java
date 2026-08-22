@@ -335,6 +335,21 @@ class EventTest {
     }
 
     @Test
+    void testOutputEventFromEventRejectsAttachments() {
+        Event original =
+                new Event(
+                        UUID.randomUUID(),
+                        OutputEvent.EVENT_TYPE,
+                        Map.of("output", "result"),
+                        Map.of("payload", "attachment"));
+
+        IllegalArgumentException error =
+                assertThrows(IllegalArgumentException.class, () -> OutputEvent.fromEvent(original));
+
+        assertEquals("OutputEvent cannot carry attachments.", error.getMessage());
+    }
+
+    @Test
     void testCustomFactoryReconstructsSameOccurrenceWithoutManualMetadataCopy() {
         UUID upstreamEventId = UUID.randomUUID();
         Event original =

@@ -27,7 +27,8 @@ import java.util.UUID;
 
 /**
  * Event representing a result from agent. By generating an OutputEvent, actions can emit output
- * data.
+ * data. Attachments are only supported on events passed between actions and cannot be carried by an
+ * OutputEvent.
  */
 public class OutputEvent extends Event {
 
@@ -50,8 +51,12 @@ public class OutputEvent extends Event {
      *
      * @param event the base event containing the output data in attributes
      * @return a typed OutputEvent
+     * @throws IllegalArgumentException if the source Event carries attachments
      */
     public static OutputEvent fromEvent(Event event) {
+        if (!event.getAttachments().isEmpty()) {
+            throw new IllegalArgumentException("OutputEvent cannot carry attachments.");
+        }
         return reconstructFrom(event, OutputEvent::new);
     }
 

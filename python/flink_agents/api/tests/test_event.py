@@ -200,6 +200,18 @@ def test_output_event_from_event() -> None:
     assert reconstructed.type == "_output_event"
 
 
+def test_output_event_from_event_rejects_attachments() -> None:
+    """Test OutputEvent.from_event rejects an invalid attached source Event."""
+    base = Event(
+        type="_output_event",
+        attributes={"output": 99},
+        attachments={"payload": "attachment"},
+    )
+
+    with pytest.raises(ValueError, match="OutputEvent cannot carry attachments"):
+        OutputEvent.from_event(base)
+
+
 # ── Unified Event tests ──────────────────────────────────────────────────
 
 
