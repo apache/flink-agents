@@ -15,18 +15,23 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from unittest.mock import MagicMock
 from uuid import uuid4
 
+import pytest
 from pydantic import BaseModel
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
     _TOOL_CALL_CONTEXT,
     _TOOL_REQUEST_EVENT_CONTEXT,
     _clean_llm_response,
+    _generate_structured_output_with_report,
     _get_tool_request_event_context,
     _save_tool_request_event_context,
     _update_tool_call_context,
@@ -207,3 +212,74 @@ def test_save_get_preserves_model_and_prompt_args():
     context = _get_tool_request_event_context(mem, event_id)
     assert context["model"] == "ollama"
     assert context["prompt_args"] == prompt_args
+
+
+_PARSEABLE_CONTENT = '{"result": 42}'
+
+
+def _response(extra_args) -> ChatMessage:
+    return ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content=_PARSEABLE_CONTENT,
+        extra_args=extra_args,
+    )
+
+
+def _parse(ctx, extra_args) -> ChatMessage:
+    return _generate_structured_output_with_report(
+        ctx, _response(extra_args), OutputSchema(output_schema=_Result)
+    )
+
+
+def test_length_finish_reason_rejects_parsing():
+    with pytest.raises(ValueError, match="(?i)truncat") as exc_info:
+        _parse(MagicMock(spec=ExecutionReporter), {"finish_reason": "length"})
+    assert "token" in str(exc_info.value).lower()
+
+
+def test_content_filter_finish_reason_rejects_parsing():
+    # Matches a word unique to the filtering message. Both messages interpolate
+    # the finish reason, so "content_filter" appears in either one and cannot
+    # tell them apart.
+    with pytest.raises(ValueError, match="(?i)withheld"):
+        _parse(MagicMock(spec=ExecutionReporter), {"finish_reason": "content_filter"})
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+def test_rejected_finish_reason_reports_no_parser_execution(finish_reason):
+    ctx = MagicMock(spec=ExecutionReporter)
+
+    with pytest.raises(ValueError):
+        _parse(ctx, {"finish_reason": finish_reason})
+
+    ctx.report_execution_started.assert_not_called()
+    ctx.report_execution_succeeded.assert_not_called()
+    ctx.report_execution_failed.assert_not_called()
+
+
+def test_accepted_finish_reason_reports_parser_execution():
+    # Reports only reach a context that satisfies ExecutionReporter, so this
+    # also pins that the fixture still does. Without it, the assert_not_called
+    # checks above would hold for any context and stop testing the gate.
+    ctx = MagicMock(spec=ExecutionReporter)
+
+    _parse(ctx, {"finish_reason": "stop"})
+
+    ctx.report_execution_started.assert_called_once()
+    ctx.report_execution_succeeded.assert_called_once()
+    ctx.report_execution_failed.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        {"finish_reason": "stop"},
+        {"finish_reason": "tool_calls"},
+        {"finish_reason": "some_vendor_reason"},
+        {},
+    ],
+    ids=["stop", "tool_calls", "unrecognized", "absent"],
+)
+def test_accepted_finish_reason_parses_structured_output(extra_args):
+    response = _parse(MagicMock(spec=ExecutionReporter), extra_args)
+    assert response.extra_args[STRUCTURED_OUTPUT].result == 42
