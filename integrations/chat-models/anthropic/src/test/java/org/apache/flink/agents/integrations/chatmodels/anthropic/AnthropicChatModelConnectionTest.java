@@ -214,7 +214,10 @@ class AnthropicChatModelConnectionTest {
      */
     private static final String CAPABLE_MODEL = "claude-sonnet-4-5";
 
-    /** The connection's own default model, which predates the structured-output cutoff. */
+    /**
+     * A model the provider does not document native structured-output support for, predating the
+     * cutoff.
+     */
     private static final String INCAPABLE_MODEL = "claude-sonnet-4-20250514";
 
     /**
