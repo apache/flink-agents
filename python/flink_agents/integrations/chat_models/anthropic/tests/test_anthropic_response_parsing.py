@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 from typing import Any, Callable, Dict
 from unittest.mock import MagicMock
 
@@ -28,9 +29,11 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
+    _SAMPLING_WARNED_PARAMS,
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
     _supports_json_prefill,
+    _supports_sampling_params,
 )
 
 
@@ -595,3 +598,116 @@ def test_setup_honors_explicit_json_prefill() -> None:
     # unconditionally.
     setup = AnthropicChatModelSetup(connection="conn", json_prefill=True)
     assert setup.model_kwargs["json_prefill"] is True
+
+
+# The models the provider documents as rejecting a non-default sampling parameter, in
+# the order the module lists them. Mirroring that order keeps the two comparable side by
+# side, so a name added to one and not the other stands out.
+_SAMPLING_UNSUPPORTED = [
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+]
+
+# Names that accept sampling parameters. The two 4.6-generation names are the
+# load-bearing ones: both reject a prefill, so deriving the sampling rule from the
+# prefill list would strip a temperature the provider still accepts.
+_SAMPLING_SUPPORTED = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-latest",
+    None,
+]
+
+
+_ABSENT = object()
+
+# The three sampling parameters, spelled out rather than read from the module under test.
+# Reading the production tuple would make a name dropped from it disappear from the comparison
+# below, so the drop would go unnoticed instead of failing an assertion.
+_SAMPLING_PARAM_NAMES = ("temperature", "top_p", "top_k")
+
+
+def _sent_sampling(model: str, **sampling: Any) -> Dict[str, Any]:
+    """Which of the sampling parameters the request reached the client with.
+
+    Each of the three names appears in the result, mapped either to the value the client
+    saw or to ``_ABSENT`` when it was dropped on the way.
+    """
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text=_CONTINUATION)],
+        usage=_usage(),
+    )
+    connection = _connection_returning(message)
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=model,
+        **sampling,
+    )
+    sent = connection.client.messages.create.call_args.kwargs
+    return {param: sent.get(param, _ABSENT) for param in _SAMPLING_PARAM_NAMES}
+
+
+@pytest.mark.parametrize("model", _SAMPLING_UNSUPPORTED)
+def test_sampling_predicate_rejects_unsupported_models(model) -> None:
+    assert _supports_sampling_params(model) is False
+
+
+@pytest.mark.parametrize("model", _SAMPLING_SUPPORTED)
+def test_sampling_predicate_accepts_other_models(model) -> None:
+    assert _supports_sampling_params(model) is True
+
+
+@pytest.mark.parametrize(
+    ("param", "value"), [("temperature", 0.1), ("top_p", 0.9), ("top_k", 5)]
+)
+def test_sampling_param_dropped_on_unsupported_model(param, value) -> None:
+    assert _sent_sampling("claude-opus-4-7", **{param: value})[param] is _ABSENT
+
+
+def test_sampling_params_sent_on_supported_model() -> None:
+    assert _sent_sampling(
+        "claude-sonnet-4-20250514", temperature=0.1, top_p=0.9, top_k=5
+    ) == {"temperature": 0.1, "top_p": 0.9, "top_k": 5}
+
+
+def test_each_dropped_sampling_param_is_reported_once(caplog) -> None:
+    # The bookkeeping behind the warning lives for the life of the process, so a pair
+    # left behind by an earlier test would suppress a warning this test has to observe.
+    model = "claude-mythos-preview"
+    for param in _SAMPLING_PARAM_NAMES:
+        _SAMPLING_WARNED_PARAMS.discard((model, param))
+
+    with caplog.at_level(logging.WARNING):
+        _sent_sampling(model, temperature=0.1)
+        _sent_sampling(model, temperature=0.1)
+        _sent_sampling(model, top_p=0.9)
+
+    # The repeat stays silent, but a different parameter is a different fact about the
+    # request and has to be reported on its own.
+    warnings = [record.getMessage() for record in caplog.records]
+    assert len(warnings) == 2
+    assert "temperature" in warnings[0]
+    assert "top_p" in warnings[1]
+
+
+def test_sampling_and_prefill_boundaries_differ() -> None:
+    # The two rules draw different lines, and this model sits between them: the provider
+    # withdraws prefilling from 4.6 on but sampling parameters only from 4.7 on.
+    # Deriving the sampling rule from the prefill list would drop the temperature here,
+    # where the provider still accepts it.
+    assert _supports_json_prefill("claude-sonnet-4-6") is False
+    assert _supports_sampling_params("claude-sonnet-4-6") is True
+    assert _sent_sampling("claude-sonnet-4-6", temperature=0.1)["temperature"] == 0.1

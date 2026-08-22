@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
 import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
@@ -52,8 +53,10 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
 
 /**
  * Unit tests for {@link AnthropicChatModelConnection}'s request construction, its native
@@ -626,6 +629,177 @@ class AnthropicChatModelConnectionTest {
     @DisplayName("json_prefill is suppressed on a model that rejects prefilling")
     void testPrefillSuppressedOnUnsupportedModel() {
         assertPrefillDecisionForModel("claude-opus-4-6", false);
+    }
+
+    /**
+     * The models the provider documents as rejecting a non-default sampling parameter, in the order
+     * the connection lists them. Mirroring that order keeps the two lists comparable side by side,
+     * so a name added to one and not the other stands out.
+     */
+    private static Stream<String> samplingUnsupportedModels() {
+        return Stream.of(
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-opus-5",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-mythos-preview");
+    }
+
+    /**
+     * Names that accept a temperature. The two 4.6-generation names are the load-bearing ones: both
+     * reject a prefill, so deriving the sampling rule from the prefill list would strip a
+     * temperature the provider still accepts.
+     */
+    private static Stream<String> samplingSupportedModels() {
+        return Stream.of(
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-opus-4-5",
+                "claude-sonnet-4-5",
+                "claude-sonnet-4-20250514",
+                "claude-3-5-sonnet-latest",
+                "");
+    }
+
+    /**
+     * Builds a request for {@code model} carrying each supplied sampling parameter, so the caller
+     * can read back which of them survived. {@code temperature} is a top-level parameter while
+     * {@code top_p} and {@code top_k} travel in {@code additional_kwargs}, and a null argument
+     * leaves that parameter out of the request entirely.
+     */
+    private static MessageCreateParams samplingRequest(
+            String model, Double temperature, Double topP, Long topK) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        if (temperature != null) {
+            params.put("temperature", temperature);
+        }
+        Map<String, Object> additionalKwargs = new HashMap<>();
+        if (topP != null) {
+            additionalKwargs.put("top_p", topP);
+        }
+        if (topK != null) {
+            additionalKwargs.put("top_k", topK);
+        }
+        params.put("additional_kwargs", additionalKwargs);
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    /**
+     * Builds a request for {@code model} whose temperature arrives through {@code
+     * additional_kwargs}, the second route the parameter can reach the request body by.
+     */
+    private static MessageCreateParams kwargsTemperatureRequest(String model) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        params.put("additional_kwargs", Map.of("temperature", 0.5d));
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    @ParameterizedTest
+    @MethodSource("samplingUnsupportedModels")
+    @DisplayName("every model documented as rejecting sampling parameters reports unsupported")
+    void testSamplingUnsupportedModelsReportUnsupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @MethodSource("samplingSupportedModels")
+    @DisplayName("a model outside that list reports sampling supported")
+    void testSamplingSupportedModelsReportSupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("temperature is dropped on a model that rejects sampling parameters")
+    void testTemperatureDroppedOnUnsupportedModel() {
+        assertThat(samplingRequest("claude-opus-4-7", 0.1d, null, null).temperature()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("top_p is dropped on a model that rejects sampling parameters")
+    void testTopPDroppedOnUnsupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-opus-4-7", null, 0.9d, null);
+
+        assertThat(params.topP()).isEmpty();
+        // An additional_kwargs key with no case of its own reaches the body as a raw property, so
+        // an empty typed field is not on its own proof the parameter was left off the request.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("top_p");
+    }
+
+    @Test
+    @DisplayName("top_k is dropped on a model that rejects sampling parameters")
+    void testTopKDroppedOnUnsupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-opus-4-7", null, null, 5L);
+
+        assertThat(params.topK()).isEmpty();
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("top_k");
+    }
+
+    @Test
+    @DisplayName("all three sampling parameters are sent on a model that accepts them")
+    void testSamplingParamsSentOnSupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-sonnet-4-20250514", 0.1d, 0.9d, 5L);
+
+        assertThat(params.temperature()).contains(0.1d);
+        assertThat(params.topP()).contains(0.9d);
+        assertThat(params.topK()).contains(5L);
+    }
+
+    @Test
+    @DisplayName("temperature supplied through additional_kwargs is dropped on a rejecting model")
+    void testKwargsTemperatureDroppedOnUnsupportedModel() {
+        MessageCreateParams params = kwargsTemperatureRequest("claude-opus-4-7");
+
+        assertThat(params.temperature()).isEmpty();
+        // Without a case of its own the key falls to the default branch and reaches the body as a
+        // raw property, which serializes to the same "temperature" field the typed setter writes.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("temperature");
+    }
+
+    @Test
+    @DisplayName("temperature supplied through additional_kwargs is sent on an accepting model")
+    void testKwargsTemperatureSentOnSupportedModel() {
+        assertThat(kwargsTemperatureRequest("claude-sonnet-4-20250514").temperature())
+                .contains(0.5d);
+    }
+
+    @Test
+    @DisplayName(
+            "a dropped sampling parameter owes one warning naming the model, parameter and value")
+    void testDroppedSamplingParamOwesOneWarningPerParameter() {
+        // A name no other test asks a warning for, since the bookkeeping behind it lives for the
+        // life of the JVM and a pair already reported would answer empty here.
+        String model = "claude-mythos-preview";
+
+        Optional<String> first =
+                AnthropicChatModelConnection.samplingWarning(model, "temperature", 0.1d);
+        Optional<String> repeat =
+                AnthropicChatModelConnection.samplingWarning(model, "temperature", 0.1d);
+        Optional<String> other = AnthropicChatModelConnection.samplingWarning(model, "top_p", 0.9d);
+
+        // The message has to identify which request parameter went missing and what it held,
+        // because that is the only trace the dropped value leaves.
+        assertThat(first).get(as(STRING)).contains(model, "temperature", "0.1");
+        // The repeat is silent, but a different parameter is a different fact about the request
+        // and owes a report of its own.
+        assertThat(repeat).isEmpty();
+        assertThat(other).get(as(STRING)).contains(model, "top_p", "0.9");
+    }
+
+    @Test
+    @DisplayName("a 4.6 model rejects the prefill while keeping its sampling parameters")
+    void testSamplingAndPrefillBoundariesDiffer() {
+        // The two rules draw different lines, and this model sits between them: the provider
+        // withdraws prefilling from 4.6 on but sampling parameters only from 4.7 on. Deriving the
+        // sampling rule from the prefill list would drop the temperature here, where the provider
+        // still accepts it.
+        assertThat(AnthropicChatModelConnection.supportsJsonPrefill("claude-sonnet-4-6")).isFalse();
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams("claude-sonnet-4-6"))
+                .isTrue();
+        assertThat(samplingRequest("claude-sonnet-4-6", 0.1d, null, null).temperature())
+                .contains(0.1d);
     }
 
     @Test

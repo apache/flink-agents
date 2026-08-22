@@ -48,8 +48,9 @@ import java.util.Optional;
  *   <li><b>strict_tools</b> (optional): When true, tool calls adhere strictly to the JSON schema.
  *       (default: false)
  *   <li><b>tools</b> (optional): List of tool names available for the model to use
- *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences).
- *       An output_config supplied here takes precedence over one derived from an output schema.
+ *   <li><b>additional_kwargs</b> (optional): Additional parameters (temperature, top_k, top_p,
+ *       stop_sequences). A temperature supplied here takes precedence over the top-level one, and
+ *       an output_config supplied here takes precedence over one derived from an output schema.
  * </ul>
  *
  * <p>Example usage:

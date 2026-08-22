@@ -42,6 +42,8 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -51,6 +53,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
@@ -80,6 +83,8 @@ import java.util.stream.Collectors;
  * }</pre>
  */
 public class AnthropicChatModelConnection extends BaseChatModelConnection {
+
+    private static final Logger LOG = LoggerFactory.getLogger(AnthropicChatModelConnection.class);
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
@@ -221,6 +226,106 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             return true;
         }
         return !PREFILL_UNSUPPORTED_MODELS.contains(effectiveModel);
+    }
+
+    // Models that reject a non-default sampling parameter. Source of truth:
+    // https://platform.claude.com/docs/en/about-claude/models/migration-guide
+    //
+    // The documented rule is that setting temperature, top_p or top_k to any non-default value on
+    // Claude Opus 4.7 or later returns a 400, and the Claude Sonnet 5 release notes carry the same
+    // rule for the Sonnet line while stating it is new for Sonnet-class models. Sending the
+    // provider default, or omitting the parameter, stays acceptable on every model, so the way to
+    // honour this is to drop the parameter rather than to substitute a value.
+    //
+    // This is the third boundary encoded in this class and it lines up with neither of the others.
+    // Structured output starts at the 4.5 generation and prefill rejection at 4.6, while sampling
+    // rejection starts at 4.7. Claude 4.6 therefore rejects a prefill while still accepting a
+    // temperature, so the prefill list above cannot be reused here even though the two overlap.
+    //
+    // Claude Fable 5, Claude Mythos 5 and Claude Mythos Preview are listed without a matching
+    // sentence in the migration guide. That guide records each release's deltas, and these models
+    // succeed Claude Opus 4.8, which already rejects sampling parameters, so there was no delta to
+    // record. They are treated as rejecting because they inherit the constraint, not because a
+    // release note restates it.
+    private static final Set<String> SAMPLING_UNSUPPORTED_MODELS =
+            Set.of(
+                    "claude-opus-4-7",
+                    "claude-opus-4-8",
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-fable-5",
+                    "claude-mythos-5",
+                    "claude-mythos-preview");
+
+    // The {model name, parameter name} pairs already reported through the warning in
+    // sendSamplingParam, so a rejected sampling parameter is surfaced once per model and parameter
+    // instead of on every request. The parameter belongs in the key because a model withdraws three
+    // of them at once: keying on the name alone would report whichever was dropped first and leave
+    // every later one silent.
+    private static final Set<List<String>> SAMPLING_WARNED_PARAMS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Whether {@code effectiveModel} accepts non-default sampling parameters, meaning {@code
+     * temperature}, {@code top_p} and {@code top_k}.
+     *
+     * <p>See the list above for the source of truth and for why it is kept apart from the prefill
+     * and structured-output lists. An unrecognized name reports {@code true}, matching the
+     * documented rule: sampling parameters are the long-standing behaviour and only the listed
+     * names withdraw them. That default carries the same cost as {@link #supportsJsonPrefill}: a
+     * rejecting model this list has not caught up with is sent a sampling parameter and answered
+     * with a 400.
+     */
+    static boolean supportsSamplingParams(String effectiveModel) {
+        // Load-bearing: the list is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null) {
+            return true;
+        }
+        return !SAMPLING_UNSUPPORTED_MODELS.contains(effectiveModel);
+    }
+
+    /**
+     * Whether the sampling parameter {@code param}, carrying {@code value}, may be put on a request
+     * for {@code effectiveModel}, warning the first time it may not.
+     *
+     * <p>A rejected parameter is dropped rather than clamped: the provider accepts an omitted
+     * parameter but answers a non-default one with a 400, and substituting the provider default
+     * would quietly change sampling behaviour instead of leaving it to the provider.
+     */
+    private static boolean sendSamplingParam(String effectiveModel, String param, Object value) {
+        if (supportsSamplingParams(effectiveModel)) {
+            return true;
+        }
+        samplingWarning(effectiveModel, param, value).ifPresent(LOG::warn);
+        return false;
+    }
+
+    /**
+     * The warning owed for dropping {@code param}, which carried {@code value}, on {@code
+     * effectiveModel}: the message on the first call for that model and parameter, and empty on
+     * every call after.
+     *
+     * <p>The message is owed against the pair rather than against the model name alone. A model
+     * withdraws three sampling parameters at once, so a debt held against the name would be settled
+     * by whichever parameter happened to be dropped first, leaving every later one dropped in
+     * silence.
+     *
+     * <p>Building the message here rather than at the call site keeps it on the same side of the
+     * once-per-pair decision as the decision itself, so there is no arrangement of the caller that
+     * reports a parameter on every request.
+     *
+     * <p>{@code effectiveModel} must not be null, which holds because only a name on the list above
+     * ever reaches this method.
+     */
+    static Optional<String> samplingWarning(String effectiveModel, String param, Object value) {
+        if (!SAMPLING_WARNED_PARAMS.add(List.of(effectiveModel, param))) {
+            return Optional.empty();
+        }
+        return Optional.of(
+                String.format(
+                        "Model %s rejects non-default sampling parameters, so the configured %s %s"
+                                + " was not sent. Steer the model through its prompt instead.",
+                        effectiveModel, param, value));
     }
 
     /**
@@ -366,7 +471,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
 
         Object temperature = modelParams.remove("temperature");
-        if (temperature instanceof Number) {
+        if (temperature instanceof Number
+                && sendSamplingParam(modelName, "temperature", temperature)) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
@@ -374,7 +480,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         Map<String, Object> additionalKwargs =
                 (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
-            applyAdditionalKwargs(builder, additionalKwargs);
+            applyAdditionalKwargs(builder, additionalKwargs, modelName);
         }
 
         // Read here rather than inside the native structured-output branch below because it governs
@@ -687,20 +793,29 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     }
 
     private void applyAdditionalKwargs(
-            MessageCreateParams.Builder builder, Map<String, Object> kwargs) {
+            MessageCreateParams.Builder builder, Map<String, Object> kwargs, String modelName) {
         for (Map.Entry<String, Object> entry : kwargs.entrySet()) {
             String key = entry.getKey();
             Object value = entry.getValue();
 
             switch (key) {
                 case "top_k":
-                    if (value instanceof Number) {
+                    if (value instanceof Number && sendSamplingParam(modelName, key, value)) {
                         builder.topK(((Number) value).longValue());
                     }
                     break;
                 case "top_p":
-                    if (value instanceof Number) {
+                    if (value instanceof Number && sendSamplingParam(modelName, key, value)) {
                         builder.topP(((Number) value).doubleValue());
+                    }
+                    break;
+                case "temperature":
+                    // The parameter the top-level "temperature" above also handles, reaching the
+                    // request by a second route. Without a case of its own it falls to the default
+                    // branch and goes onto the body ungated, which the same models answer with a
+                    // 400.
+                    if (value instanceof Number && sendSamplingParam(modelName, key, value)) {
+                        builder.temperature(((Number) value).doubleValue());
                     }
                     break;
                 case "stop_sequences":
