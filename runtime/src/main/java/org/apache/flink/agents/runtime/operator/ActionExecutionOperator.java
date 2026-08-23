@@ -39,6 +39,8 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
@@ -120,6 +122,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient OperatorStateManager stateManager;
 
+    private transient TypeSerializer<Event> eventSerializer;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -162,6 +166,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
+
+        eventSerializer =
+                TypeInformation.of(Event.class)
+                        .createSerializer(getExecutionConfig().getSerializerConfig());
 
         stateManager.initializeKeyedStates(getRuntimeContext(), agentPlan.getConfig());
         stateManager.initializeOperatorStates(getOperatorStateBackend());
@@ -446,6 +454,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
             ActionTask.ActionTaskResult actionTaskResult;
             try {
+                if (actionTask instanceof JavaActionTask) {
+                    ((JavaActionTask) actionTask).setEventSerializer(eventSerializer);
+                }
                 actionTaskResult =
                         actionTask.invoke(
                                 getRuntimeContext().getUserCodeClassLoader(),

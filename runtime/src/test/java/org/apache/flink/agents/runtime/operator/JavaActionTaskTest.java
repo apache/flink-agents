@@ -34,6 +34,9 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.ForTestMemoryMapState;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -60,6 +63,7 @@ public class JavaActionTaskTest {
     private DurableExecutionManager durableExecutionManager;
     private JavaRunnerContextImpl runnerContext;
     private Action action;
+    private TypeSerializer<Event> eventSerializer;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -69,6 +73,9 @@ public class JavaActionTaskTest {
         durableExecutionManager = new DurableExecutionManager(new InMemoryActionStateStore(false));
         runnerContext = createContext();
         action = createAction();
+        eventSerializer =
+                TypeInformation.of(Event.class)
+                        .createSerializer(new ExecutionConfig().getSerializerConfig());
     }
 
     @AfterEach
@@ -97,6 +104,7 @@ public class JavaActionTaskTest {
         runtimeEvent.setAttachment("payload", reference);
         JavaActionTask task = new JavaActionTask(KEY, runtimeEvent, action);
         task.setRunnerContext(runnerContext);
+        task.setEventSerializer(eventSerializer);
         durableExecutionManager.maybeInitActionState(KEY, SEQUENCE_NUMBER, action, runtimeEvent);
         ActionState actionState = getPersistedState(runtimeEvent);
         durableExecutionManager.setupDurableExecutionContext(task, actionState, SEQUENCE_NUMBER);
@@ -105,6 +113,7 @@ public class JavaActionTaskTest {
 
         ActionState persistedState = getPersistedState(runtimeEvent);
         assertThat(invokedEvent).isInstanceOf(InputEvent.class).isNotSameAs(runtimeEvent);
+        assertThat(((InputEvent) invokedEvent).getInput()).isEqualTo(1L);
         assertThat(invokedAttachment).isSameAs(payload);
         assertThat(persistedState.getCallResultCount()).isOne();
         assertThat(persistedState.getTaskEvent().getAttachment("payload")).isSameAs(reference);

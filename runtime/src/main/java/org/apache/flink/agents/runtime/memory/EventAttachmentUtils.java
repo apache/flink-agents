@@ -22,14 +22,13 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.api.common.serialization.SerializerConfigImpl;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -37,12 +36,6 @@ import java.util.stream.Collectors;
 public final class EventAttachmentUtils {
 
     private static final String ATTACHMENT_ROOT = "__event_attachments__";
-
-    private static final TypeSerializer<Event> EVENT_SERIALIZER_TEMPLATE =
-            TypeInformation.of(Event.class).createSerializer(new SerializerConfigImpl());
-
-    private static final ThreadLocal<TypeSerializer<Event>> EVENT_SERIALIZER =
-            ThreadLocal.withInitial(EVENT_SERIALIZER_TEMPLATE::duplicate);
 
     private EventAttachmentUtils() {}
 
@@ -92,9 +85,21 @@ public final class EventAttachmentUtils {
         }
     }
 
-    /** Returns an action-owned Event copy with sensory-memory references resolved. */
-    public static Event loadEventAttachments(Event event, RunnerContext context) throws Exception {
-        Event actionEvent = EVENT_SERIALIZER.get().copy(event);
+    /** Returns an Event with sensory-memory references resolved on a copy when necessary. */
+    public static Event loadEventAttachments(
+            Event event, RunnerContext context, TypeSerializer<Event> eventSerializer)
+            throws Exception {
+        boolean requiresResolution =
+                event.getAttachments().values().stream().anyMatch(MemoryRef.class::isInstance);
+        if (!requiresResolution) {
+            return event;
+        }
+
+        Event actionEvent =
+                Objects.requireNonNull(
+                                eventSerializer,
+                                "Event serializer is required to resolve attachment references.")
+                        .copy(event);
         for (Map.Entry<String, Object> entry : actionEvent.getAttachments().entrySet()) {
             Object value = entry.getValue();
             if (!(value instanceof MemoryRef)) {

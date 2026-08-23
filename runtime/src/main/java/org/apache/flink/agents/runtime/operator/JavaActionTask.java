@@ -23,6 +23,7 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 
 import java.util.Collections;
 
@@ -39,12 +40,18 @@ import static org.apache.flink.util.Preconditions.checkState;
  */
 public class JavaActionTask extends ActionTask {
 
-    /** Action-owned view with resolved attachments; never serialized into Flink state. */
+    /** Event passed to the action, copied when attachment references need resolution. */
     private transient Event invocationEvent;
+
+    private transient TypeSerializer<Event> eventSerializer;
 
     public JavaActionTask(Object key, Event event, Action action) {
         super(key, event, action);
         checkState(action.getExec() instanceof JavaFunction);
+    }
+
+    void setEventSerializer(TypeSerializer<Event> eventSerializer) {
+        this.eventSerializer = eventSerializer;
     }
 
     @Override
@@ -58,7 +65,9 @@ public class JavaActionTask extends ActionTask {
 
         if (invocationEvent == null) {
             runnerContext.checkNoPendingEvents();
-            invocationEvent = EventAttachmentUtils.loadEventAttachments(event, runnerContext);
+            invocationEvent =
+                    EventAttachmentUtils.loadEventAttachments(
+                            event, runnerContext, eventSerializer);
         }
 
         JavaRunnerContextImpl javaRunnerContext = (JavaRunnerContextImpl) runnerContext;

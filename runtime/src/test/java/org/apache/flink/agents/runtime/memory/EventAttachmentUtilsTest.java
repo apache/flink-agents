@@ -28,6 +28,9 @@ import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.api.common.ExecutionConfig;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -46,6 +49,7 @@ class EventAttachmentUtilsTest {
 
     private MemoryObject sensoryMemory;
     private RunnerContext context;
+    private TypeSerializer<Event> eventSerializer;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -56,6 +60,9 @@ class EventAttachmentUtilsTest {
                         MemoryObjectImpl.ROOT_KEY,
                         new LinkedList<>());
         context = new MockRunnerContext(sensoryMemory);
+        eventSerializer =
+                TypeInformation.of(Event.class)
+                        .createSerializer(new ExecutionConfig().getSerializerConfig());
     }
 
     @Test
@@ -150,12 +157,24 @@ class EventAttachmentUtilsTest {
                         Map.of(),
                         new HashMap<>(Map.of("payload", reference)));
 
-        Event actionEvent = EventAttachmentUtils.loadEventAttachments(event, context);
+        Event actionEvent =
+                EventAttachmentUtils.loadEventAttachments(event, context, eventSerializer);
 
         assertNotSame(event, actionEvent);
         assertNotSame(event.getAttachments(), actionEvent.getAttachments());
         assertEquals(payload, actionEvent.getAttachment("payload"));
         assertSame(reference, event.getAttachment("payload"));
+    }
+
+    @Test
+    void returnsOriginalEventWhenNoReferencesNeedResolution() throws Exception {
+        Event event = new Event("AttachmentStep", Map.of("value", "original"));
+        event.setAttachment("payload", Map.of("value", "inline"));
+
+        Event actionEvent =
+                EventAttachmentUtils.loadEventAttachments(event, context, eventSerializer);
+
+        assertSame(event, actionEvent);
     }
 
     @Test
