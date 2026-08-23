@@ -15,10 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict
+from typing import Any, Callable, Dict
 from unittest.mock import MagicMock
 
 import pytest
+from anthropic import transform_schema
 from anthropic.types import Message, TextBlock, ToolUseBlock, Usage
 from pydantic import BaseModel
 from pyflink.common.typeinfo import Types
@@ -162,6 +163,22 @@ class _Answer(BaseModel):
     verdict: str
 
 
+class _Unrenderable(BaseModel):
+    """A schema carrying a member that no JSON Schema can express."""
+
+    cb: Callable[[int], int]
+
+
+class _FieldLess(BaseModel):
+    """A schema declaring no fields, so it constrains nothing."""
+
+
+class _Labelled(BaseModel):
+    """A schema whose only member is a free-form map, a legitimate constraint."""
+
+    labels: Dict[str, str]
+
+
 # A model the provider documents native structured-output support for.
 #
 # Deliberately a 4.5-generation name, which is the only generation that is both
@@ -240,6 +257,33 @@ def test_native_output_config_applied_on_capable_model(model) -> None:
     assert set(output_config["format"]["schema"]["properties"]) == {"verdict"}
 
 
+def test_unrenderable_schema_raises_naming_the_model() -> None:
+    with pytest.raises(TypeError, match="_Unrenderable cannot be rendered"):
+        _request_kwargs(
+            model=_CAPABLE_MODEL,
+            output_schema=OutputSchema(output_schema=_Unrenderable),
+        )
+
+
+def test_field_less_schema_raises_naming_the_model() -> None:
+    with pytest.raises(TypeError, match="_FieldLess renders to a JSON Schema"):
+        _request_kwargs(
+            model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_FieldLess)
+        )
+
+
+def test_map_member_schema_is_accepted_and_sent_whole() -> None:
+    # This renderer rewrites a map member into an object with an empty properties,
+    # which is exactly the shape a field-less model produces. Checking the renderer's
+    # output rather than the model's would therefore reject every map-typed member.
+    output_config = _request_kwargs(
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Labelled)
+    )["output_config"]
+
+    assert output_config["format"]["schema"] == transform_schema(_Labelled)
+    assert output_config["format"]["schema"]["properties"]["labels"]["properties"] == {}
+
+
 def test_native_output_config_not_applied_on_incapable_model() -> None:
     assert "output_config" not in _request_kwargs(
         model=_INCAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Answer)
@@ -270,6 +314,22 @@ def test_caller_output_config_wins_over_schema() -> None:
     sent = _request_kwargs(
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=_Answer),
+        output_config=caller_config,
+    )["output_config"]
+
+    assert sent == caller_config
+
+
+def test_caller_output_config_wins_over_a_schema_that_cannot_constrain() -> None:
+    # The schema is rendered only when this branch will actually send the result. A
+    # render placed before the caller's value is honoured would refuse a request the
+    # caller had already steered away from the derived config, on the strength of a
+    # schema nothing was going to use.
+    caller_config = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+
+    sent = _request_kwargs(
+        model=_CAPABLE_MODEL,
+        output_schema=OutputSchema(output_schema=_FieldLess),
         output_config=caller_config,
     )["output_config"]
 

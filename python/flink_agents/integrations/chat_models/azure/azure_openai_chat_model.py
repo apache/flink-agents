@@ -29,7 +29,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -93,12 +93,14 @@ _MIN_STRUCTURED_OUTPUT_API_VERSION = "2024-08-01"
 _API_VERSION_DATE_PREFIX = re.compile(r"^\d{4}-\d{2}-\d{2}", re.ASCII)
 
 
-def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
-    """Build the ``response_format`` for a native structured-output request.
+def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
 
-    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
-    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
-    fallback.
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the caller-conflict check needs to know
+    whether a schema will be sent, and under what name, before anything is rendered.
     """
     if output_schema is None:
         return None
@@ -107,11 +109,28 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     )
     if not (isinstance(model, type) and issubclass(model, BaseModel)):
         return None
+    return model
+
+
+def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
+    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
+    fallback.
+
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, or renders to a
+    document that constrains nothing. Such a request would come back unconstrained and
+    be mistaken for a schema-conforming response.
+    """
+    model = _native_output_model(output_schema)
+    if model is None:
+        return None
     return {
         "type": "json_schema",
         "json_schema": {
             "name": model.__name__,
-            "schema": to_strict_json_schema(model),
+            "schema": render_output_schema(model, to_strict_json_schema),
             "strict": True,
         },
     }
@@ -302,22 +321,27 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             and self.supports_native_structured_output(model_of_azure_deployment)
             and self._api_version_supports_structured_output()
         ):
+            native_model = _native_output_model(output_schema)
+            # Tested before the schema is rendered. A caller who supplies both a schema
+            # and a response_format has a conflict to resolve whatever the schema turns
+            # out to render to, and reporting a render failure instead would describe
+            # the wrong problem. The name is read off the model class, so this needs no
+            # rendered document.
+            caller_response_format = (
+                "response_format" in kwargs or "response_format" in additional_kwargs
+            )
+            if native_model is not None and caller_response_format:
+                msg = (
+                    f"The {native_model.__name__} output schema "
+                    f"is sent as response_format on deployment "
+                    f"'{azure_deployment}', so response_format must not also be "
+                    f"passed as a kwarg or in additional_kwargs. Remove that "
+                    f"value, or omit output_schema to set response_format "
+                    f"directly."
+                )
+                raise ValueError(msg)
             response_format = _native_response_format(output_schema)
             if response_format is not None:
-                caller_response_format = (
-                    "response_format" in kwargs
-                    or "response_format" in additional_kwargs
-                )
-                if caller_response_format:
-                    msg = (
-                        f"The {response_format['json_schema']['name']} output schema "
-                        f"is sent as response_format on deployment "
-                        f"'{azure_deployment}', so response_format must not also be "
-                        f"passed as a kwarg or in additional_kwargs. Remove that "
-                        f"value, or omit output_schema to set response_format "
-                        f"directly."
-                    )
-                    raise ValueError(msg)
                 kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(

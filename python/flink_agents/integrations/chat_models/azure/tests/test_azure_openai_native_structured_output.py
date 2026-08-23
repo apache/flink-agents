@@ -15,10 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 import pytest
+from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel
 from pyflink.common.typeinfo import Types
 
@@ -46,6 +47,22 @@ class Person(BaseModel):
 
     name: str
     age: int
+
+
+class Unrenderable(BaseModel):
+    """A schema carrying a member that no JSON Schema can express."""
+
+    cb: Callable[[int], int]
+
+
+class FieldLess(BaseModel):
+    """A schema declaring no fields, so it constrains nothing."""
+
+
+class Labelled(BaseModel):
+    """A schema whose only member is a free-form map, a legitimate constraint."""
+
+    labels: dict[str, str]
 
 
 ROW_TYPE = Types.ROW_NAMED(["name"], [Types.STRING()])
@@ -322,6 +339,23 @@ def test_caller_response_format_conflicts_with_native_schema(
     assert "Person" in str(excinfo.value)
 
 
+def test_caller_response_format_conflict_precedes_the_schema_render() -> None:
+    """A schema that cannot be rendered still reports the conflict, not the render.
+
+    The conflict stands whatever the schema would have rendered to, and it names the
+    two inputs the caller has to choose between. Rendering first would report a
+    different problem, on a value this branch was never going to send.
+    """
+    with pytest.raises(ValueError, match="Unrenderable") as excinfo:
+        _chat_with_caller_response_format(
+            _connection(),
+            model_of_azure_deployment="gpt-4o-mini",
+            in_additional_kwargs=False,
+            schema=Unrenderable,
+        )
+    assert "response_format must not also be passed" in str(excinfo.value)
+
+
 @pytest.mark.parametrize("in_additional_kwargs", [True, False])
 @pytest.mark.parametrize(
     ("api_version", "model_of_azure_deployment", "schema"),
@@ -430,3 +464,32 @@ def test_capability_predicate_reads_no_instance_state() -> None:
         AzureOpenAIChatModelConnection
     )
     assert uninitialized.supports_native_structured_output("gpt-5") is True
+
+
+def _chat_with_schema(conn: AzureOpenAIChatModelConnection, schema: Any) -> None:
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=DEPLOYMENT,
+        model_of_azure_deployment="gpt-4o-mini",
+        output_schema=OutputSchema(output_schema=schema),
+    )
+
+
+def test_unrenderable_schema_raises_naming_the_model() -> None:
+    """A schema that cannot be rendered fails here rather than at the provider."""
+    with pytest.raises(TypeError, match="Unrenderable cannot be rendered"):
+        _chat_with_schema(_connection(), Unrenderable)
+
+
+def test_field_less_schema_raises_naming_the_model() -> None:
+    """A schema declaring no fields would leave the response unconstrained."""
+    with pytest.raises(TypeError, match="FieldLess renders to a JSON Schema"):
+        _chat_with_schema(_connection(), FieldLess)
+
+
+def test_map_member_schema_is_accepted_and_sent_whole() -> None:
+    """A free-form map is a legitimate constraint and reaches the request intact."""
+    conn = _connection()
+    _chat_with_schema(conn, Labelled)
+    response_format = _create_call_kwargs(conn)["response_format"]
+    assert response_format["json_schema"]["schema"] == to_strict_json_schema(Labelled)

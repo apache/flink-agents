@@ -24,7 +24,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -207,6 +207,10 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     Anthropic's format object carries only the schema and its type, so it shares no
     shape with the providers that nest the schema under a named, strict
     ``json_schema`` object and is built here rather than in a shared helper.
+
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, or renders to a
+    document that constrains nothing. Such a request would come back unconstrained and
+    be mistaken for a schema-conforming response.
     """
     if output_schema is None:
         return None
@@ -215,7 +219,12 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     )
     if not (isinstance(model, type) and issubclass(model, BaseModel)):
         return None
-    return {"format": {"type": "json_schema", "schema": transform_schema(model)}}
+    return {
+        "format": {
+            "type": "json_schema",
+            "schema": render_output_schema(model, transform_schema),
+        }
+    }
 
 
 class AnthropicChatModelConnection(BaseChatModelConnection):
@@ -345,13 +354,19 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         if output_schema is not None and self.supports_native_structured_output(
             kwargs.get("model")
         ):
-            output_config = _native_output_config(output_schema)
             # An output_config already in kwargs is the caller being explicit about the
             # exact parameter this branch writes, so it is left alone and the schema
             # keeps the prompt-engineering fallback. Writing over it would drop the
             # caller's value with no error and no other trace.
-            if output_config is not None and "output_config" not in kwargs:
-                kwargs["output_config"] = output_config
+            #
+            # The schema is rendered inside that test rather than before it, because
+            # rendering rejects a schema that cannot constrain the response. Rendering
+            # one whose result this branch is about to discard would fail a request the
+            # caller had already steered away from the derived config.
+            if "output_config" not in kwargs:
+                output_config = _native_output_config(output_schema)
+                if output_config is not None:
+                    kwargs["output_config"] = output_config
 
         # JSON prefill appends a prefilled assistant "{" message to steer the model
         # into emitting a JSON document. It applies only when the request carries none
