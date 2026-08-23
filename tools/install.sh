@@ -1022,9 +1022,20 @@ reconcile_plan_after_edit() {
 # Quote a value for safe re-sourcing by the parent shell via single-quoted
 # assignment. Any embedded single quotes are escaped by closing/reopening
 # the quoted string.
+#
+# Implementation note: the escape is supplied through a variable rather than
+# written inline. Written inline as ${v//\'/\'\\\'\'}, bash 3.2 (macOS
+# /bin/bash) emits 'it\'\\'\'s' where the intended output is 'it'\''s'. The
+# 3.2 form is not valid shell, so sourcing the dumped state file fails with
+# "unexpected EOF while looking for matching `'" and the value is lost.
+# Held in escaped_quote the escape reaches the output untouched: 3.2.57 and
+# 5.3.15 emit identical bytes. Keep escaped_quote at a single backslash;
+# with two, they stop matching.
+# tools/test/unit/edit_plan_quote.bats pins this under a real bash 3.x.
 edit_plan_quote() {
     local v="$1"
-    printf "'%s'" "${v//\'/\'\\\'\'}"
+    local escaped_quote="'\\''"
+    printf "'%s'" "${v//\'/$escaped_quote}"
 }
 
 # Write the subset of plan variables we may have modified to a sourceable
