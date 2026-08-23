@@ -359,7 +359,11 @@ remove_submission_pid() {
             remaining_pids+=("$pid")
         fi
     done
-    SUBMISSION_PIDS=("${remaining_pids[@]}")
+    # Rebuild with the `+` form: on bash 4.3 and older "${arr[@]}" on an empty
+    # array is an unbound-variable error under `set -u`, and "${arr[@]:-}" would
+    # rebuild one empty-string element instead of nothing. The `:-` in the loop
+    # above is correct: its empty iteration is dropped by the `-n` guard.
+    SUBMISSION_PIDS=("${remaining_pids[@]+"${remaining_pids[@]}"}")
 }
 
 start_attached_java_submission() {
