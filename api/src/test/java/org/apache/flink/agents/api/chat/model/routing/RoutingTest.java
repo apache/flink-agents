@@ -276,6 +276,155 @@ class RoutingTest {
     }
 
     @Test
+    void strategiesLlmRequiresJudgeModel() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm(""))
+                                .defaultModel("small")
+                                .build());
+    }
+
+    @Test
+    void llmJudgeRouteIsFrameworkManaged() {
+        LlmJudgeRoutingStrategy judge =
+                new LlmJudgeRoutingStrategy(
+                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
+        assertThrows(UnsupportedOperationException.class, () -> judge.route(null));
+    }
+
+    @Test
+    void llmJudgeParseVerdictAcceptsOnlyCandidates() {
+        LlmJudgeRoutingStrategy judge =
+                new LlmJudgeRoutingStrategy(
+                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
+        java.util.List<String> candidates = java.util.List.of("small", "big");
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.of("big"),
+                judge.parseVerdict("{\"model\": \"big\"}", candidates));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.of("small"), judge.parseVerdict("  small  ", candidates));
+        // several DISTINCT candidates in JSON form is ambiguous (verdict-first and
+        // reasoning-first shapes are mirror images): abstain rather than guess an order
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.empty(),
+                judge.parseVerdict(
+                        "Not {\"model\": \"small\"} — this needs SQL: {\"model\": \"big\"}",
+                        candidates));
+        // repeating the SAME candidate stays unambiguous
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.of("big"),
+                judge.parseVerdict(
+                        "{\"model\": \"big\"} — yes, {\"model\": \"big\"}.", candidates));
+        // a chatty judge may quote the format contract before answering; scan all matches
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.of("big"),
+                judge.parseVerdict(
+                        "The format {\"model\": \"<candidate name>\"} means I pick one."
+                                + " {\"model\": \"big\"}",
+                        candidates));
+        // a verdict naming a non-candidate abstains rather than guessing
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.empty(),
+                judge.parseVerdict("{\"model\": \"gpt-attacker\"}", candidates));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.empty(),
+                judge.parseVerdict("use whichever is cheapest", candidates));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                java.util.Optional.empty(), judge.parseVerdict(null, candidates));
+    }
+
+    @Test
+    void llmJudgeMessagesIncludePromptArgs() {
+        // The framework's canonical request shape may carry content in promptArgs with an empty
+        // user message (a setup-bound Prompt renders it later); the judge must still see it.
+        LlmJudgeRoutingStrategy judge =
+                new LlmJudgeRoutingStrategy(
+                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
+        RoutingContext ctx =
+                new RoutingContext(
+                        java.util.UUID.randomUUID(),
+                        "router",
+                        java.util.List.of(
+                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
+                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
+                                        "")),
+                        Map.of("input", "write some sql for active users"),
+                        java.util.List.of(new RoutingCandidate("small", "cheap")));
+        String userMessage = judge.buildJudgeMessages(ctx).get(1).getContent();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                userMessage.contains("write some sql for active users"));
+    }
+
+    @Test
+    void builderRejectsEmptyJudgeTemplate() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge", ""))
+                                .defaultModel("small")
+                                .build());
+    }
+
+    @Test
+    void llmJudgeTemplateSubstitutesCandidatesAndRejectsEmpty() {
+        LlmJudgeRoutingStrategy judge =
+                new LlmJudgeRoutingStrategy(
+                        Map.of(
+                                LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge",
+                                LlmJudgeRoutingStrategy.ARG_PROMPT_TEMPLATE,
+                                        "Pick from:\n{candidates}Reply {\"model\": \"...\"}"));
+        RoutingContext ctx =
+                new RoutingContext(
+                        java.util.UUID.randomUUID(),
+                        "router",
+                        java.util.List.of(
+                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
+                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
+                                        "hi")),
+                        Map.of(),
+                        java.util.List.of(new RoutingCandidate("small", "cheap")));
+        String system = judge.buildJudgeMessages(ctx).get(0).getContent();
+        org.junit.jupiter.api.Assertions.assertTrue(system.contains("- small: cheap"));
+        org.junit.jupiter.api.Assertions.assertFalse(system.contains("{candidates}"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new LlmJudgeRoutingStrategy(
+                                Map.of(
+                                        LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge",
+                                        LlmJudgeRoutingStrategy.ARG_PROMPT_TEMPLATE, "")));
+    }
+
+    @Test
+    void llmJudgeMessagesCarryCandidatesAndVerdictContract() {
+        LlmJudgeRoutingStrategy judge =
+                new LlmJudgeRoutingStrategy(
+                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
+        RoutingContext ctx =
+                new RoutingContext(
+                        java.util.UUID.randomUUID(),
+                        "router",
+                        java.util.List.of(
+                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
+                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
+                                        "write some sql")),
+                        Map.of(),
+                        java.util.List.of(
+                                new RoutingCandidate("small", "cheap chit-chat"),
+                                new RoutingCandidate("big", "code and sql")));
+        var messages = judge.buildJudgeMessages(ctx);
+        org.junit.jupiter.api.Assertions.assertEquals(2, messages.size());
+        String system = messages.get(0).getContent();
+        org.junit.jupiter.api.Assertions.assertTrue(system.contains("big: code and sql"));
+        org.junit.jupiter.api.Assertions.assertTrue(system.contains("{\"model\""));
+        org.junit.jupiter.api.Assertions.assertEquals(
+                "write some sql", messages.get(1).getContent());
+    }
+
+    @Test
     void builderRejectsInvalidRulePattern() {
         // A malformed regex must fail at build() like a typo'd key: an invalid pattern is never
         // cached by the resource cache, so it would otherwise re-throw on every routed request.

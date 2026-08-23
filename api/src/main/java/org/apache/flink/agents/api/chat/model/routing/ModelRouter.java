@@ -84,14 +84,25 @@ public class ModelRouter extends Resource {
         }
         this.fallbackEnabled =
                 Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
-        String strategyClazz = descriptor.getArgument("strategy_clazz");
+        String strategyClazz = descriptor.getArgument(STRATEGY_CLAZZ_KEY);
         Map<String, Object> strategyArgs =
-                descriptor.getArgument("strategy_args", Collections.emptyMap());
+                descriptor.getArgument(STRATEGY_ARGS_KEY, Collections.emptyMap());
         this.strategy = instantiateStrategy(strategyClazz, strategyArgs);
     }
 
+    /** Descriptor key carrying the strategy class name. */
+    public static final String STRATEGY_CLAZZ_KEY = "strategy_clazz";
+
+    /** Descriptor key carrying the strategy construction arguments. */
+    public static final String STRATEGY_ARGS_KEY = "strategy_args";
+
+    /**
+     * The strategy instantiation contract (Map-arg constructor, then no-arg, via the thread context
+     * classloader). Public so plan-time validation constructs strategies exactly as the runtime
+     * does — divergence here is what turns validation into a no-op.
+     */
     @SuppressWarnings("unchecked")
-    private static RoutingStrategy instantiateStrategy(String clazz, Map<String, Object> args)
+    public static RoutingStrategy instantiateStrategy(String clazz, Map<String, Object> args)
             throws Exception {
         if (clazz == null || clazz.isEmpty()) {
             throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
@@ -108,6 +119,14 @@ public class ModelRouter extends Resource {
     /** Run the strategy for the given context. */
     public RoutingDecision route(RoutingContext context) throws Exception {
         return strategy.route(context);
+    }
+
+    /**
+     * The configured strategy instance. Exposed so the engine can detect framework-managed
+     * strategies (e.g. {@link LlmJudgeRoutingStrategy}) and execute them on its own paths.
+     */
+    public RoutingStrategy getStrategy() {
+        return strategy;
     }
 
     public List<RoutingCandidate> getCandidates() {
@@ -242,6 +261,13 @@ public class ModelRouter extends Resource {
                     }
                 }
             }
+            // The judge model is resolved at request time (resources may be registered in any
+            // order), but a structurally invalid configuration should still fail at build().
+            if (LlmJudgeRoutingStrategy.class.getName().equals(strategy.getClazz())) {
+                // Single source of truth: the strategy constructor owns its argument rules;
+                // constructing (and discarding) one here surfaces them at the call site.
+                new LlmJudgeRoutingStrategy(strategy.getArguments());
+            }
             Map<String, Object> args = new HashMap<>();
             args.put("candidates", new ArrayList<>(candidates));
             if (!descriptions.isEmpty()) {
@@ -251,8 +277,8 @@ public class ModelRouter extends Resource {
                 args.put("default_model", defaultModel);
             }
             args.put("fallback", fallback);
-            args.put("strategy_clazz", strategy.getClazz());
-            args.put("strategy_args", strategy.getArguments());
+            args.put(STRATEGY_CLAZZ_KEY, strategy.getClazz());
+            args.put(STRATEGY_ARGS_KEY, strategy.getArguments());
             return new ResourceDescriptor(ModelRouter.class.getName(), args);
         }
     }

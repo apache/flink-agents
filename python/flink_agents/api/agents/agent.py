@@ -165,6 +165,14 @@ class Agent(ABC):
         Agent
             The agent to add the resource.
         """
+        if resource_type == ResourceType.MODEL_ROUTER:
+            msg = (
+                "MODEL_ROUTER resources cannot be registered from Python yet: "
+                "model routing currently executes on the Java side only (the "
+                "enum member exists so Java plans containing routers "
+                "deserialize). Python-side routing is a planned follow-up."
+            )
+            raise NotImplementedError(msg)
         if name in self._resources[resource_type]:
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)

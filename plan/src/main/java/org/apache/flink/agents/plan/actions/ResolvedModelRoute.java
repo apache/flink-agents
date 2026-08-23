@@ -116,7 +116,7 @@ final class ResolvedModelRoute {
         routing.put("final_model", finalModel);
         routing.put("candidates", new ArrayList<>(this.candidates));
         routing.put(
-                "decision_source",
+                org.apache.flink.agents.api.event.ModelRoutingEvent.DECISION_SOURCE_KEY,
                 fallbackAttempted ? ModelRoutingEvent.SOURCE_FALLBACK : this.decisionSource);
         routing.put("fallback_enabled", this.fallbackEnabled);
         routing.put("fallback_attempted", fallbackAttempted);

@@ -33,8 +33,8 @@ import java.util.UUID;
  *
  * <p>v1 exposes the request id, the request messages, prompt args, and the router's candidates
  * (name + description). It intentionally does <b>not</b> expose a chat-invocation API, so a
- * strategy cannot make a hidden synchronous model call; observable LLM-as-router is a
- * framework-managed follow-up.
+ * strategy cannot make a hidden synchronous model call; observable LLM-as-router is provided by the
+ * framework-managed {@link LlmJudgeRoutingStrategy} instead.
  *
  * <p>The isolation boundary is deliberate and one level deep: the message list, each message's
  * tool-call maps and extra args, and the prompt-args map are defensive copies, but values

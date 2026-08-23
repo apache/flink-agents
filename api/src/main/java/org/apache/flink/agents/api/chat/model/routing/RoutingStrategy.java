@@ -25,9 +25,10 @@ import java.io.Serializable;
  * RoutingDecision} (a chosen candidate, or {@link RoutingDecision#abstain()} to defer to the
  * router's default model).
  *
- * <p>v1 strategies are <b>pure selection logic</b>: they must not invoke chat models or other
- * external systems inside {@code route()}. LLM-as-router (a judge model call) is a follow-up that
- * the framework will run on the observable, durable chat path — not hidden inside a strategy.
+ * <p>Strategies are <b>pure selection logic</b>: they must not invoke chat models or other external
+ * systems inside {@code route()}. LLM-as-router is available as the framework-managed {@link
+ * LlmJudgeRoutingStrategy} (via {@code Strategies.llm(...)}): the engine runs the judge call on the
+ * observable, durable chat path — never hidden inside a strategy.
  *
  * <p>The deployable shape of a custom strategy is a named class (or descriptor) that serializes
  * with the agent plan to the TaskManagers; a lambda is a local convenience and must be

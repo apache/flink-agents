@@ -411,6 +411,42 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
     assert list(restored.actions) == ["first", "second"]
 
 
+def test_python_can_deserialize_plan_with_java_llm_judge_router() -> None:
+    """Same as above, but the router carries the v2 LLM-judge strategy arguments
+    (strategy_clazz + judge_model): a mixed job with a Java judge router must still
+    deserialize on the Python side even though Python cannot register routers.
+    """
+    provider = JavaResourceProvider(
+        name="router",
+        type=ResourceType.MODEL_ROUTER,
+        descriptor=ResourceDescriptor(
+            target_module="java",
+            target_clazz=(
+                "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
+            ),
+            arguments={
+                "candidates": ["small", "big"],
+                "default_model": "small",
+                "strategy_clazz": (
+                    "org.apache.flink.agents.api.chat.model.routing."
+                    "LlmJudgeRoutingStrategy"
+                ),
+                "strategy_args": {"judge_model": "judge"},
+            },
+        ),
+    )
+    plan = AgentPlan(
+        actions={},
+        resource_providers={ResourceType.MODEL_ROUTER: {"router": provider}},
+    )
+    restored = AgentPlan.model_validate_json(plan.model_dump_json())
+    assert ResourceType.MODEL_ROUTER in restored.resource_providers
+    args = restored.resource_providers[ResourceType.MODEL_ROUTER][
+        "router"
+    ].descriptor.arguments
+    assert args["strategy_args"]["judge_model"] == "judge"
+
+
 def test_python_can_deserialize_plan_with_java_model_router() -> None:
     """A Java agent may declare a MODEL_ROUTER resource (Java-side in-chat routing).
 

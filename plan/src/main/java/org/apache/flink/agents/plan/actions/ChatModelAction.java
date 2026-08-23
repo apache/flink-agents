@@ -379,18 +379,8 @@ public class ChatModelAction {
             throws Exception {
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
-        int numRetries = 0;
-        int retryWaitIntervalSec = 0;
-        if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
-            numRetries =
-                    ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES) > 0
-                            ? ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES)
-                            : 0;
-            retryWaitIntervalSec =
-                    ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) > 0
-                            ? ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
-                            : 0;
-        }
+        int numRetries = ChatModelInvoker.configuredRetries(ctx, strategy);
+        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx, strategy);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -522,7 +512,7 @@ public class ChatModelAction {
      * Totals over a completed request are unchanged; requests that ultimately fail now contribute
      * their retry counts where they previously did not.
      */
-    private static void recordAttemptRetryStats(
+    static void recordAttemptRetryStats(
             RunnerContext ctx,
             UUID initialRequestId,
             BaseChatModelSetup chatModel,
@@ -607,6 +597,14 @@ public class ChatModelAction {
                             event.getPromptArgs(),
                             ctx);
         } catch (Exception e) {
+            // Cancellation is never a routing failure to ignore — from either routing path:
+            // the judge path re-sets the interrupt flag before rethrowing, and a blocking
+            // custom strategy surfaces the raw InterruptedException with the flag cleared, so
+            // check both. Let the action loop stop instead of dropping the request.
+            if (ModelRoutingResolver.containsInterrupt(e)
+                    || Thread.currentThread().isInterrupted()) {
+                throw e;
+            }
             // A routing-strategy failure honors the same error-handling strategy as the chat
             // call itself: under IGNORE the request is dropped with a warning instead of killing
             // the job. (Retries are not applied to the decision; strategies that perform I/O are

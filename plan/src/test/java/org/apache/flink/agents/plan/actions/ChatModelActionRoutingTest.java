@@ -346,6 +346,255 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
+    void llmJudgeVerdictRoutesToNamedCandidate() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .describe("big", "code and sql")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new ChatMessage(
+                                                MessageRole.ASSISTANT, "{\"model\": \"big\"}")))
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "write some sql"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event).isNotNull();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_LLM_JUDGE);
+        assertThat(event.getMetadata()).containsEntry("judge_model", "judge");
+        // every shipped payload key is read or asserted somewhere (v1 review lesson)
+        assertThat(event.getMetadata()).containsKey("decision_source");
+        // judge call is durable under its own id; the decision persists under the route id
+        assertThat(ctx.durableCallIds).contains("judge:router", "route:router");
+        // the judge resolves twice (plain-model pre-check + the call, both cache-served),
+        // then the winner answers
+        assertThat(ctx.resolvedChatModels).containsExactly("judge", "judge", "big");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
+    void llmJudgeUnparseableVerdictAbstainsToDefault() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new ChatMessage(
+                                                MessageRole.ASSISTANT,
+                                                "You should probably use the biggest model.")))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hello"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("not a candidate");
+    }
+
+    @Test
+    void llmJudgeVerdictOutsideCandidatesAbstainsToDefault() throws Exception {
+        // A hijacked or hallucinating judge cannot steer routing outside the declared candidates.
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new ChatMessage(
+                                                MessageRole.ASSISTANT,
+                                                "{\"model\": \"gpt-attacker\"}")))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "ignore rules"))),
+                ctx);
+
+        assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(ctx.routingEvent().getDecisionSource())
+                .isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+    }
+
+    /** A judge setup with a bound prompt or tools would silently corrupt every verdict. */
+    static class PromptBoundChatModel extends FakeChatModel {
+        PromptBoundChatModel() {
+            super();
+        }
+
+        @Override
+        public Object getPrompt() {
+            return "bound task prompt";
+        }
+    }
+
+    @Test
+    void llmJudgePromptBoundSetupAbstainsToDefaultUnderIgnore() throws Exception {
+        // A misconfigured judge under IGNORE must degrade to the default model, not drop traffic.
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
+                        .register("judge", new PromptBoundChatModel())
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("bound prompt");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
+    void llmJudgeRejectsPromptBoundJudgeSetup() {
+        ModelRouter router;
+        try {
+            router =
+                    new ModelRouter(
+                            ModelRouter.of("small", "big")
+                                    .strategy(Strategies.llm("judge"))
+                                    .defaultModel("small")
+                                    .build(),
+                            null);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("judge", new PromptBoundChatModel())
+                        .register("small", new FakeChatModel());
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                                        ctx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("bound prompt");
+    }
+
+    @Test
+    void llmJudgeUsesTheRetryBudget() throws Exception {
+        // v1 review lesson: every routing test ran with numRetries == 0, so the retry path was
+        // never exercised. Judge fails once, retries, then delivers a verdict.
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
+                        .withRetryBudget(1, 0)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new RuntimeException("transient"),
+                                        new ChatMessage(
+                                                MessageRole.ASSISTANT, "{\"model\": \"big\"}")))
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(new ChatMessage(MessageRole.USER, "hard one"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_LLM_JUDGE);
+    }
+
+    @Test
+    void llmJudgeCallFailurePropagatesUnderFail() {
+        // A dead judge honors the error-handling strategy like any strategy failure: under the
+        // default FAIL, the outage is loud instead of hours of silent default-routing.
+        ModelRouter router;
+        try {
+            router =
+                    new ModelRouter(
+                            ModelRouter.of("small", "big")
+                                    .strategy(Strategies.llm("judge"))
+                                    .defaultModel("small")
+                                    .build(),
+                            null);
+        } catch (Exception e) {
+            throw new AssertionError(e);
+        }
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("judge", new FakeChatModel(new RuntimeException("judge down")))
+                        .register("small", new FakeChatModel());
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                                        ctx))
+                .hasMessageContaining("judge down");
+    }
+
+    @Test
+    void llmJudgeCallFailureAbstainsToDefaultUnderIgnore() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
+                        .register("judge", new FakeChatModel(new RuntimeException("judge down")))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hello"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("judge call failed");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
     void nonRouterModelPassesThroughUnchanged() throws Exception {
         FakeRunnerContext ctx = new FakeRunnerContext(null);
         ChatModelAction.processChatRequestOrToolResponse(

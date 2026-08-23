@@ -47,6 +47,35 @@ public final class Strategies {
     }
 
     /**
+     * LLM-as-judge routing (framework-managed): a judge chat model — registered like any other
+     * {@code CHAT_MODEL} resource — reads the request and picks one candidate. The engine executes
+     * the judge call on its durable, metered, observable chat path; the verdict is constrained to
+     * candidate names. An unparseable or non-candidate verdict abstains to the router's default
+     * model; a judge call that exhausts its retries honors the request's error-handling strategy
+     * ({@code FAIL} surfaces it, {@code IGNORE} abstains with the cause recorded). The judge must
+     * be a plain chat model — no bound prompt or tools. Candidate {@code describe(...)}
+     * descriptions become the judge's decision criteria.
+     */
+    public static RoutingStrategyDescriptor llm(String judgeModel) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, judgeModel);
+        return new RoutingStrategyDescriptor(LlmJudgeRoutingStrategy.class.getName(), args);
+    }
+
+    /**
+     * Like {@link #llm(String)}, with a custom judge system prompt. The template may contain a
+     * {@code {candidates}} placeholder, replaced with the candidate list (names + descriptions).
+     * The template owns the verdict contract: the judge must still reply {@code {"model":
+     * "<candidate name>"}} (or exactly a candidate name) to be parsed.
+     */
+    public static RoutingStrategyDescriptor llm(String judgeModel, String promptTemplate) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, judgeModel);
+        args.put(LlmJudgeRoutingStrategy.ARG_PROMPT_TEMPLATE, promptTemplate);
+        return new RoutingStrategyDescriptor(LlmJudgeRoutingStrategy.class.getName(), args);
+    }
+
+    /**
      * A custom strategy referenced by class. The class must be a {@link RoutingStrategy} with
      * either a {@code (Map<String,Object>)} constructor or a no-arg constructor. This is the
      * deployable shape for custom routing.
