@@ -244,10 +244,38 @@ class BaseChatModelConnection(Resource, ABC):
             unconstrained response. This is framework-level execution metadata, and
             every implementation must declare it as a named parameter rather than let
             it fall into ``**kwargs``: ``**kwargs`` is forwarded to the provider SDK,
-            so a schema landing there would reach the request body. Implementations
-            without a native structured-output translation reject a non-``None`` value
-            via ``_reject_unsupported_output_schema``, so a caller that wants the
-            prompt-engineering fallback must pass ``None``.
+            so a schema landing there would reach the request body.
+
+            An ``OutputSchema`` wraps either a ``BaseModel`` subclass or a
+            ``RowTypeInfo``. No implementation translates a ``RowTypeInfo`` natively,
+            and what follows differs by implementation: one that translates a
+            ``BaseModel`` natively skips the ``RowTypeInfo`` and leaves the request
+            unchanged, so the caller keeps the prompt-engineering fallback; one with
+            no native translation at all rejects it, as described below. The skip is a
+            deliberate, permanent fallback, not a translation still to be written.
+
+            A ``BaseModel`` subclass is refused with a ``TypeError`` naming the schema
+            class and chaining the underlying error as its cause, both when it has no
+            JSON Schema at all and when it has one that this provider's renderer will
+            not accept. The second outcome is per-provider: a model with an untyped
+            member renders under Pydantic, and one provider's renderer takes it while
+            another refuses it. Neither is raised unless the request was going to
+            carry a native schema, since an implementation renders only once it has
+            decided to send one — so an unrenderable schema reports nothing when the
+            effective model is not one the implementation calls natively capable, or
+            when some other condition has already ruled the native branch out.
+
+            A ``BaseModel`` subclass that renders but declares no fields is sent as
+            rendered, leaving the receiving provider to accept or refuse it. It is
+            refused only where the rendered document is itself the deliverable, as on
+            the ReAct prompt path, which pastes it into the instruction prompt.
+
+            An implementation with no native structured-output translation at all is a
+            separate case, not the ``RowTypeInfo`` skip above: it rejects *every*
+            non-``None`` schema, ``RowTypeInfo`` included, via
+            ``_reject_unsupported_output_schema``, because it could otherwise only
+            drop the schema silently. A caller that wants the prompt-engineering
+            fallback from such an implementation must pass ``None``.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
