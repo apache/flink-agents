@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * A framework resource that <b>selects</b> a concrete chat model for a request. It does not call
@@ -205,17 +207,37 @@ public class ModelRouter extends Resource {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
-            // Rule keys are candidate names; validate here, where both lists are in hand, so a
-            // typo fails at the registration call site instead of throwing per record at runtime.
+            // Rule keys are candidate names and rule values are regex patterns; validate both
+            // here, where the full map is in hand, so a typo fails at the registration call site
+            // instead of throwing per record at runtime (an invalid pattern is never cached by
+            // the resource cache, so it would otherwise re-throw on every routed request).
             if (RuleBasedRoutingStrategy.class.getName().equals(strategy.getClazz())) {
                 Object rules = strategy.getArguments().get("rules");
                 if (rules instanceof Map) {
-                    for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
-                        if (!candidates.contains(String.valueOf(ruleKey))) {
+                    for (Map.Entry<?, ?> rule : ((Map<?, ?>) rules).entrySet()) {
+                        if (!candidates.contains(String.valueOf(rule.getKey()))) {
                             throw new IllegalArgumentException(
                                     String.format(
                                             "Routing rule key '%s' is not one of the candidates %s.",
-                                            ruleKey, candidates));
+                                            rule.getKey(), candidates));
+                        }
+                        if (!(rule.getValue() instanceof String)) {
+                            throw new IllegalArgumentException(
+                                    String.format(
+                                            "Routing rule pattern for candidate '%s' must be a non-null String, got %s.",
+                                            rule.getKey(),
+                                            rule.getValue() == null
+                                                    ? "null"
+                                                    : rule.getValue().getClass().getSimpleName()));
+                        }
+                        try {
+                            Pattern.compile((String) rule.getValue());
+                        } catch (PatternSyntaxException e) {
+                            throw new IllegalArgumentException(
+                                    String.format(
+                                            "Routing rule pattern '%s' for candidate '%s' is not a valid regex.",
+                                            rule.getValue(), rule.getKey()),
+                                    e);
                         }
                     }
                 }

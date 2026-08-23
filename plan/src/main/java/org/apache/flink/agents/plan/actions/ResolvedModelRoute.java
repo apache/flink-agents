@@ -113,7 +113,6 @@ final class ResolvedModelRoute {
         Map<String, Object> routing = new LinkedHashMap<>();
         routing.put("router", this.requestedModel);
         routing.put("selected_model", this.selectedModel);
-        routing.put("initial_selected_model", this.selectedModel);
         routing.put("final_model", finalModel);
         routing.put("candidates", new ArrayList<>(this.candidates));
         routing.put(

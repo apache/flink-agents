@@ -276,6 +276,35 @@ class RoutingTest {
     }
 
     @Test
+    void builderRejectsInvalidRulePattern() {
+        // A malformed regex must fail at build() like a typo'd key: an invalid pattern is never
+        // cached by the resource cache, so it would otherwise re-throw on every routed request.
+        IllegalArgumentException e =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                ModelRouter.of("small", "big")
+                                        .strategy(
+                                                Strategies.rules(Map.of("big", "\\b(code|sql\\b")))
+                                        .defaultModel("small")
+                                        .build());
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("not a valid regex"));
+    }
+
+    @Test
+    void builderRejectsNullRuleValue() {
+        Map<String, String> rules = new HashMap<>();
+        rules.put("big", null);
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(rules))
+                                .defaultModel("small")
+                                .build());
+    }
+
+    @Test
     void ruleStrategyRejectsNullRuleValue() {
         Map<String, Object> rules = new HashMap<>();
         rules.put("big", null);
