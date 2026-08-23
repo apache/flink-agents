@@ -17,13 +17,16 @@
 # limitations under the License.
 ################################################################################
 
-# Bash 4+ is required: bash 3.2 (macOS default) does not trigger `set -e`
-# on `[[ ]]` failures or fire the ERR trap on them, which means many
-# substring assertions in this suite would silently pass on bash 3.2.
-# Force a clean failure here rather than mislead developers.
-if [ -z "${BASH_VERSION:-}" ] || [ "${BASH_VERSION%%.*}" -lt 4 ]; then
-    echo "ERROR: bash >= 4 required (detected: ${BASH_VERSION:-unknown})." >&2
-    echo "macOS ships bash 3.2 at /bin/bash; install bash 4+ via Homebrew:" >&2
+# Bash 4.1 or newer is required: on older bash, `set -e` does not trigger on a
+# failing `[[ ]]` and the ERR trap does not fire for it, so many of the substring
+# assertions in this suite would silently pass. That changed in 4.1, so 4.0 is
+# rejected as well; macOS ships 3.2 at /bin/bash. Force a clean failure here
+# rather than mislead developers.
+# The empty-BASH_VERSION test must stay first: it short-circuits, so the
+# arithmetic is never evaluated under a shell that has no BASH_VERSINFO.
+if [ -z "${BASH_VERSION:-}" ] || (( 10 * BASH_VERSINFO[0] + BASH_VERSINFO[1] < 41 )); then
+    echo "ERROR: bash >= 4.1 required (detected: ${BASH_VERSION:-unknown})." >&2
+    echo "macOS ships bash 3.2 at /bin/bash; install bash 4.1+ via Homebrew:" >&2
     echo "    brew install bash" >&2
     echo "Then run with the new bash, e.g.:" >&2
     echo "    /opt/homebrew/bin/bash $0" >&2

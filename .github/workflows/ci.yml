@@ -62,7 +62,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Install bash 4+ (macOS)
+      - name: Install bash 4.1+ (macOS)
         if: runner.os == 'macOS'
         run: brew install bash
       - name: Run tools script tests

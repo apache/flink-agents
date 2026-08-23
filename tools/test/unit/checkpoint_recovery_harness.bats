@@ -417,7 +417,7 @@ EOF
 # The `|| false` after each [[ ]] is load-bearing, not decoration. errexit in bash
 # 3.2, the interpreter macOS supplies and bats takes test bodies from, does not
 # apply to [[ ]], so a bare [[ ]] assertion cannot fail a test there — it only
-# fails from bash 4 on. Chaining a simple command onto it restores the check.
+# fails from bash 4.1 on. Chaining a simple command onto it restores the check.
 # ---------------------------------------------------------------------------
 
 @test "prepare_work_dirs: writes a trigger file the source will read" {
