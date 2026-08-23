@@ -86,8 +86,11 @@ public interface ActionStateStore extends AutoCloseable {
      * the recovery trade-off of advancing beyond that boundary.
      *
      * <p>The current durable stores encode raw Flink keys using an unescaped {@code _} separator.
-     * Flink keys containing {@code _} therefore cannot be parsed safely during pruning and are
-     * retained in both the in-memory cache and backend storage.
+     * Flink keys containing {@code _} therefore cannot be parsed safely during pruning or
+     * divergence cleanup. Affected entries remain in the in-memory cache, so stale higher-sequence
+     * state may survive a detected divergence. Kafka pruning also retains their topic records and
+     * emits no tombstones. The Fluss log is append-only and its physical cleanup always relies on
+     * Fluss retention configuration.
      *
      * @param key the key whose state should be pruned
      * @param seqNum the sequence number up to which the state should be pruned

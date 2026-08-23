@@ -170,7 +170,7 @@ The eight `memory.generate-event*` options have no raw `ConfigOption` default. W
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
 | `actionStateStoreBackend`    | (none)           | String  | The backend for action state store. Supported values: `"kafka"`, `"fluss"`.              |
 
-Durable action state stores currently join raw Flink keys and other key parts with an unescaped `_`. Flink keys containing `_` cannot be parsed safely during pruning, so both Kafka and Fluss retain their state in memory and backend storage. Kafka also emits no tombstones for those keys.
+Durable action state stores currently join raw Flink keys and other key parts with an unescaped `_`. Flink keys containing `_` cannot be parsed safely during pruning or divergence cleanup. Both backends retain the affected in-memory entries, so stale higher-sequence state may survive a detected divergence. Kafka also retains the corresponding topic records and emits no tombstones for these keys. The Fluss log is append-only, so its physical cleanup always relies on Fluss retention configuration.
 
 #### Kafka-based Action State Store
 
