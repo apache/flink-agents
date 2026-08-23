@@ -275,9 +275,9 @@ public final class SkillMaterializer {
         conn.setConnectTimeout(timeoutMs);
         conn.setReadTimeout(timeoutMs);
         conn.setRequestMethod("GET");
-        // HttpURLConnection follows same-protocol redirects but leaves cross-protocol redirects
-        // unfollowed. Any future HTTP client must preserve that restriction.
-        conn.setInstanceFollowRedirects(true);
+        // Preserve the inherited redirect setting so deployments can disable redirects globally.
+        // When enabled, HttpURLConnection follows same-protocol redirects but leaves
+        // cross-protocol redirects unfollowed. Any future HTTP client must preserve both rules.
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
         try {
             int responseCode = conn.getResponseCode();

@@ -31,6 +31,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
+import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -181,6 +182,44 @@ class SkillMaterializerTest {
             assertTrue(ex.getMessage().contains("unsupported redirect"));
             assertTrue(ex.getMessage().contains("https://example.com/skills.zip"));
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void respectsJvmWideDisabledRedirects() throws IOException {
+        byte[] body = "redirected-zip-bytes".getBytes(StandardCharsets.UTF_8);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress().getPort();
+        String baseUrl = "http://127.0.0.1:" + port;
+        server.createContext(
+                "/redirect",
+                exchange -> {
+                    exchange.getResponseHeaders().add("Location", baseUrl + "/skills.zip");
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.createContext(
+                "/skills.zip",
+                exchange -> {
+                    exchange.sendResponseHeaders(200, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+
+        boolean redirectsOriginallyEnabled = HttpURLConnection.getFollowRedirects();
+        HttpURLConnection.setFollowRedirects(false);
+        try {
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            baseUrl + "/redirect", 5_000, true));
+            assertTrue(ex.getMessage().contains("unsupported redirect"));
+        } finally {
+            HttpURLConnection.setFollowRedirects(redirectsOriginallyEnabled);
             server.stop(0);
         }
     }
