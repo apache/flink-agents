@@ -30,6 +30,8 @@ import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
+import org.apache.flink.agents.api.chat.model.routing.LlmJudgeRoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -110,6 +112,7 @@ public class AgentPlan implements Serializable {
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
+        validateLlmJudgeReferences();
     }
 
     public AgentPlan(
@@ -128,6 +131,7 @@ public class AgentPlan implements Serializable {
         this.resourceProviders = resourceProviders;
         this.config = config;
         this.agentName = agentName;
+        validateLlmJudgeReferences();
     }
 
     /**
@@ -153,6 +157,7 @@ public class AgentPlan implements Serializable {
         extractResourceProvidersFromAgent(agent);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.agentName = agentName != null ? agentName : defaultAgentName(agent);
+        validateLlmJudgeReferences();
     }
 
     public Map<String, Action> getActions() {
@@ -688,6 +693,79 @@ public class AgentPlan implements Serializable {
                             provider.getName(),
                             ResourceType.CHAT_MODEL,
                             ResourceType.MODEL_ROUTER));
+        }
+    }
+
+    /**
+     * An LLM-judge router references its judge chat model by name, resolved at request time. A
+     * typo'd judge name would not fail the job: every judge call would fail and abstain to the
+     * default model, silently disabling routing. All resources are known here, so fail at
+     * plan-construction time instead (cf. {@link #checkNoRouterModelNameClash}).
+     */
+    private void validateLlmJudgeReferences() {
+        if (resourceProviders == null) {
+            return;
+        }
+        Map<String, ResourceProvider> routers = resourceProviders.get(ResourceType.MODEL_ROUTER);
+        if (routers == null) {
+            return;
+        }
+        Map<String, ResourceProvider> chatModels =
+                resourceProviders.getOrDefault(ResourceType.CHAT_MODEL, Collections.emptyMap());
+        for (ResourceProvider provider : routers.values()) {
+            if (!(provider instanceof JavaResourceProvider)) {
+                continue;
+            }
+            ResourceDescriptor descriptor = ((JavaResourceProvider) provider).getDescriptor();
+            if (descriptor == null || descriptor.getInitialArguments() == null) {
+                continue;
+            }
+            // Runtime parity: the resolver dispatches on the *instantiated* strategy
+            // (instanceof + getJudgeModel()), so validation instantiates the same way —
+            // subclasses with their own constructors or overrides are judged by what they
+            // actually return, not by raw descriptor args. Anything that cannot be instantiated
+            // here is left for the runtime's own instantiation error.
+            LlmJudgeRoutingStrategy judge =
+                    instantiateIfLlmJudge(
+                            descriptor.getArgument(ModelRouter.STRATEGY_CLAZZ_KEY),
+                            descriptor.getArgument(
+                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()));
+            if (judge == null) {
+                continue;
+            }
+            String judgeModel = judge.getJudgeModel();
+            if (judgeModel == null || !chatModels.containsKey(judgeModel)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' uses Strategies.llm with judge model '%s', but no"
+                                        + " CHAT_MODEL resource with that name is registered.",
+                                provider.getName(), judgeModel));
+            }
+        }
+    }
+
+    private static LlmJudgeRoutingStrategy instantiateIfLlmJudge(
+            String strategyClazz, Map<String, Object> strategyArgs) {
+        if (strategyClazz == null) {
+            return null;
+        }
+        try {
+            // Gate BEFORE constructing: plan construction must not run arbitrary custom-strategy
+            // constructors (or their static initializers — hence initialize=false); only classes
+            // that opted into judge semantics are instantiated, and those via the runtime's own
+            // contract (ModelRouter.instantiateStrategy) so validation judges exactly the object
+            // the runtime will use. Anything that fails to construct here is left to the
+            // runtime's own, louder error.
+            Class<?> clazz =
+                    Class.forName(
+                            strategyClazz, false, Thread.currentThread().getContextClassLoader());
+            if (!LlmJudgeRoutingStrategy.class.isAssignableFrom(clazz)) {
+                return null;
+            }
+            return (LlmJudgeRoutingStrategy)
+                    ModelRouter.instantiateStrategy(strategyClazz, strategyArgs);
+        } catch (Exception | LinkageError notInstantiableHere) {
+            return null;
         }
     }
 
