@@ -47,24 +47,28 @@ final class LocalUrls {
      * <p>Absolute hierarchical {@code file:} URLs keep their existing {@code new File(uri)}
      * behavior. Non-{@code file} URLs are rejected explicitly.
      *
-     * @throws IOException if the URL is not a {@code file:} URL, or is a malformed URI.
+     * @throws IOException if the URL is not a {@code file:} URL, is a malformed URI, or cannot be
+     *     represented as a local {@link File}.
      */
     static File toLocalFile(URL url) throws IOException {
         if (!"file".equals(url.getProtocol())) {
             throw new IOException("Not a local file URL: " + url);
         }
-        final URI uri;
         try {
-            uri = url.toURI();
-        } catch (URISyntaxException e) {
+            URI uri = url.toURI();
+            if (uri.isOpaque()) {
+                // Relative file: URL (e.g. file:../../flink/usrlib/job.jar). new File(URI)
+                // rejects opaque URIs, so resolve the decoded scheme-specific part relative to
+                // the working directory, which is exactly how a relative File is interpreted.
+                return new File(uri.getSchemeSpecificPart());
+            }
+            return new File(uri);
+        } catch (URISyntaxException | IllegalArgumentException e) {
+            // URISyntaxException: url.toURI() rejected the URL. IllegalArgumentException:
+            // new File(URI) cannot represent this file: URL as a local path, e.g. one carrying an
+            // authority component like file://host/share/job.jar. Callers only catch IOException,
+            // so wrap both so such a URL is skipped rather than escaping unchecked.
             throw new IOException("Malformed file URL: " + url, e);
         }
-        if (uri.isOpaque()) {
-            // Relative file: URL (e.g. file:../../flink/usrlib/job.jar). new File(URI) rejects
-            // opaque URIs, so resolve the decoded scheme-specific part relative to the working
-            // directory, which is exactly how a relative File is interpreted.
-            return new File(uri.getSchemeSpecificPart());
-        }
-        return new File(uri);
     }
 }

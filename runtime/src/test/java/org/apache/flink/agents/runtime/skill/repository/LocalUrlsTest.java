@@ -65,4 +65,17 @@ class LocalUrlsTest {
                 ex.getMessage().contains("Not a local file URL"),
                 "expected 'Not a local file URL' in message, got: " + ex.getMessage());
     }
+
+    @Test
+    void wrapsFileUrlWithAuthorityAsIoException() throws IOException {
+        // file://host/share/job.jar is hierarchical (not opaque) but new File(URI) rejects it with
+        // "URI has an authority component". Callers only catch IOException, so it must be wrapped
+        // rather than escaping as an unchecked IllegalArgumentException.
+        URL authorityUrl = new URL("file://host/share/job.jar");
+        IOException ex = assertThrows(IOException.class, () -> LocalUrls.toLocalFile(authorityUrl));
+        assertTrue(
+                ex.getCause() instanceof IllegalArgumentException,
+                "expected the IllegalArgumentException from new File(URI) as cause, got: "
+                        + ex.getCause());
+    }
 }
