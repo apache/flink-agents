@@ -168,10 +168,10 @@ public class KafkaActionStateStoreTest {
     @Test
     void testGetRetainsUnparseableKey() throws Exception {
         String flinkKey = "user_123";
-        String stateKey = ActionStateUtil.generateKey(flinkKey, 1L, testAction, testEvent);
+        String stateKey = ActionStateUtil.generateKey(flinkKey, 3L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
 
-        assertThat(actionStateStore.get(flinkKey, 2L, testAction, testEvent)).isNull();
+        assertThat(actionStateStore.get(flinkKey, 1L, testAction, testEvent)).isNull();
         assertThat(actionStates).containsKey(stateKey);
     }
 
