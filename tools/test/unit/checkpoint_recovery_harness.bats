@@ -238,8 +238,8 @@ setup() {
     REST_STUB_BODY=""
     run wait_for_rest "stub" "/stub" "int:counts.total" "int:counts.completed" "ge:99" 3
     [ "$status" -eq 1 ]
-    [[ "$output" == *"never parsed"* ]]
-    [[ "$output" == *"NOT evidence"* ]]
+    [[ "$output" == *"never parsed"* ]] || false
+    [[ "$output" == *"NOT evidence"* ]] || false
 }
 
 @test "wait_for_rest: probe readable but target not blames the field name" {
@@ -247,9 +247,9 @@ setup() {
     REST_STUB_BODY="$(fixture_checkpoints)"
     run wait_for_rest "stub" "/stub" "int:counts.total" "int:counts.completedx" "ge:1" 3
     [ "$status" -eq 1 ]
-    [[ "$output" == *"so the endpoint is right"* ]]
-    [[ "$output" == *"never parsed 'counts.completedx'"* ]]
-    [[ "$output" == *"NOT evidence"* ]]
+    [[ "$output" == *"so the endpoint is right"* ]] || false
+    [[ "$output" == *"never parsed 'counts.completedx'"* ]] || false
+    [[ "$output" == *"NOT evidence"* ]] || false
 }
 
 @test "wait_for_rest: a genuinely false condition reports the observed value" {
@@ -257,10 +257,10 @@ setup() {
     REST_STUB_BODY="$(fixture_checkpoints)"
     run wait_for_rest "stub" "/stub" "int:counts.total" "int:counts.completed" "ge:99" 3
     [ "$status" -eq 1 ]
-    [[ "$output" == *"was last '6'"* ]]
+    [[ "$output" == *"was last '6'"* ]] || false
     # A condition that really was evaluated and really was false must not carry
     # the disclaimer, or the disclaimer stops meaning anything.
-    [[ "$output" != *"NOT evidence"* ]]
+    [[ "$output" != *"NOT evidence"* ]] || false
 }
 
 @test "wait_for_rest: target observed but probe missing still reports the value" {
@@ -271,10 +271,10 @@ setup() {
     REST_STUB_BODY='{"counts":{"completed":6}}'
     run wait_for_rest "stub" "/stub" "int:counts.total" "int:counts.completed" "ge:99" 3
     [ "$status" -eq 1 ]
-    [[ "$output" == *"was last '6'"* ]]
-    [[ "$output" != *"NOT evidence"* ]]
+    [[ "$output" == *"was last '6'"* ]] || false
+    [[ "$output" != *"NOT evidence"* ]] || false
     # ...while still saying the response was not fully as expected.
-    [[ "$output" == *"only partly as expected"* ]]
+    [[ "$output" == *"only partly as expected"* ]] || false
 }
 
 @test "wait_for_rest: an uncomparable value stops the wait instead of spinning" {
@@ -282,7 +282,7 @@ setup() {
     REST_STUB_BODY="$(fixture_job_running)"
     run wait_for_rest "stub" "/stub" "str:state" "str:state" "ge:3" 6
     [ "$status" -eq 1 ]
-    [[ "$output" == *"cannot be evaluated"* ]]
+    [[ "$output" == *"cannot be evaluated"* ]] || false
 }
 
 @test "wait_for_rest: a slow endpoint does not multiply the budget" {
@@ -319,16 +319,16 @@ setup() {
 @test "wait_for_file: an absent file times out without inventing a twin" {
     run wait_for_file "stub" "$BATS_TEST_TMPDIR/verdict.json" 2
     [ "$status" -eq 1 ]
-    [[ "$output" == *"did not appear"* ]]
-    [[ "$output" != *"leftover"* ]]
+    [[ "$output" == *"did not appear"* ]] || false
+    [[ "$output" != *"leftover"* ]] || false
 }
 
 @test "wait_for_file: a leftover .tmp twin is reported and never accepted" {
     : > "$BATS_TEST_TMPDIR/verdict.json.tmp"
     run wait_for_file "stub" "$BATS_TEST_TMPDIR/verdict.json" 2
     [ "$status" -eq 1 ]
-    [[ "$output" == *"leftover"* ]]
-    [[ "$output" == *"verdict.json.tmp"* ]]
+    [[ "$output" == *"leftover"* ]] || false
+    [[ "$output" == *"verdict.json.tmp"* ]] || false
 }
 
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ setup() {
 
     run prepare_python_venv
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Reusing Python venv"* ]]
+    [[ "$output" == *"Reusing Python venv"* ]] || false
 }
 
 @test "prepare_python_venv: a non-empty directory that is not a venv is refused" {
@@ -362,7 +362,7 @@ setup() {
 
     run prepare_python_venv
     [ "$status" -eq 1 ]
-    [[ "$output" == *"not an empty directory or a valid venv"* ]]
+    [[ "$output" == *"not an empty directory or a valid venv"* ]] || false
 }
 
 @test "prepare_python_venv: creating one targets VENV_DIR with the configured interpreter" {
@@ -386,7 +386,7 @@ EOF
 
     run install_built_python_package
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Python wheel not found"* ]]
+    [[ "$output" == *"Python wheel not found"* ]] || false
 }
 
 # A jar carrying a different version has a different filename, so copying the
@@ -683,7 +683,7 @@ file_mode() {
     REST_STUB_BODY="$(fixture_jobmanager_config | sed '/restart-strategy.type/d')"
     run assert_effective_config
     [ "$status" -eq 1 ]
-    [[ "$output" == *"absent from the cluster configuration"* ]]
+    [[ "$output" == *"absent from the cluster configuration"* ]] || false
 
     # Recorded, not just reported: the recorded FAIL is what makes the script
     # exit non-zero. `run` uses a subshell, so assert again in this one.
@@ -697,7 +697,7 @@ file_mode() {
     REST_STUB_BODY="$(fixture_jobmanager_config | sed 's/"fixed-delay"/"disable"/')"
     run assert_effective_config
     [ "$status" -eq 1 ]
-    [[ "$output" == *"restart-strategy.type is 'disable', expected 'fixed-delay'"* ]]
+    [[ "$output" == *"restart-strategy.type is 'disable', expected 'fixed-delay'"* ]] || false
 }
 
 @test "assert_effective_config: an unreachable endpoint fails" {
@@ -705,7 +705,7 @@ file_mode() {
     REST_STUB_BODY=""
     run assert_effective_config
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Could not read"* ]]
+    [[ "$output" == *"Could not read"* ]] || false
 }
 
 # ---------------------------------------------------------------------------
@@ -727,7 +727,7 @@ file_mode() {
     REST_STUB_BODY=""
     run assert_checkpointing_enabled
     [ "$status" -eq 1 ]
-    [[ "$output" == *"checkpointing is off"* ]]
+    [[ "$output" == *"checkpointing is off"* ]] || false
 }
 
 @test "assert_checkpointing_enabled: a different interval fails" {
@@ -735,7 +735,7 @@ file_mode() {
     REST_STUB_BODY="$(fixture_checkpoint_config | sed 's/"interval":5000/"interval":180000/')"
     run assert_checkpointing_enabled
     [ "$status" -eq 1 ]
-    [[ "$output" == *"180000ms, expected 5000ms"* ]]
+    [[ "$output" == *"180000ms, expected 5000ms"* ]] || false
 }
 
 @test "assert_checkpointing_enabled: overlapping checkpoints warn about the gate" {
@@ -743,7 +743,7 @@ file_mode() {
     REST_STUB_BODY="$(fixture_checkpoint_config | sed 's/"max_concurrent":1/"max_concurrent":3/')"
     run assert_checkpointing_enabled
     [ "$status" -eq 0 ]
-    [[ "$output" == *"weaker than intended"* ]]
+    [[ "$output" == *"weaker than intended"* ]] || false
 }
 
 # ---------------------------------------------------------------------------
@@ -769,7 +769,7 @@ verdict_setup() {
     verdict_setup
     run assert_verdict
     [ "$status" -eq 1 ]
-    [[ "$output" == *"nothing was verified"* ]]
+    [[ "$output" == *"nothing was verified"* ]] || false
 }
 
 @test "assert_verdict: a fail verdict fails and is recorded" {
@@ -777,7 +777,7 @@ verdict_setup() {
     printf '%s' '{"verdict":"fail","blob_observed_type":"NoneType"}' > "$VERDICT_DIR/verdict.json"
     run assert_verdict
     [ "$status" -eq 1 ]
-    [[ "$output" == *"the job reported 'fail'"* ]]
+    [[ "$output" == *"the job reported 'fail'"* ]] || false
 
     assert_verdict || true
     [ "${RESULT_STATES[0]}" = "FAIL" ]
@@ -798,7 +798,7 @@ verdict_setup() {
     printf '%s' '{"restored_blob":true}' > "$VERDICT_DIR/verdict.json"
     run assert_verdict
     [ "$status" -eq 1 ]
-    [[ "$output" == *"disagree about the verdict format"* ]]
+    [[ "$output" == *"disagree about the verdict format"* ]] || false
 }
 
 @test "assert_verdict: an unparsable verdict file fails" {
@@ -813,7 +813,7 @@ verdict_setup() {
     printf '%s' '{"verdict":"pass"}' > "$VERDICT_DIR/verdict.json.tmp"
     run assert_verdict
     [ "$status" -eq 1 ]
-    [[ "$output" == *"leftover"* ]]
+    [[ "$output" == *"leftover"* ]] || false
 }
 
 @test "assert_verdict: a job that died without a verdict fails fast" {
@@ -847,7 +847,7 @@ payload_budget_setup() {
     run assert_handshake_budget
     [ "$status" -eq 0 ]
     # The deadline is read from the payload module rather than restated here.
-    [[ "$output" == *"240s"* ]]
+    [[ "$output" == *"240s"* ]] || false
 }
 
 @test "assert_handshake_budget: a budget that fits nominally but not in wall clock is rejected" {
@@ -860,8 +860,8 @@ payload_budget_setup() {
     CHECKPOINT_TIMEOUT=45 TM_GONE_TIMEOUT=60 TM_UP_TIMEOUT=45 RESTORE_TIMEOUT=45
     run assert_handshake_budget
     [ "$status" -eq 1 ]
-    [[ "$output" == *"could take up to"* ]]
-    [[ "$output" == *"exceeds"* ]]
+    [[ "$output" == *"could take up to"* ]] || false
+    [[ "$output" == *"exceeds"* ]] || false
 }
 
 @test "assert_handshake_budget: a grossly inflated budget is rejected" {
@@ -907,7 +907,7 @@ payload_budget_setup() {
     HANDSHAKE_DEADLINE_AT=$((SECONDS - 1))
     run charged_timeout "step" 30
     [ "$status" -eq 1 ]
-    [[ "$output" == *"elapsed before this step began"* ]]
+    [[ "$output" == *"elapsed before this step began"* ]] || false
 }
 
 @test "handshake_budget_left: never reports a negative remainder" {
@@ -987,7 +987,7 @@ run_cleanup_with_exit() {  # $1 = exit code, $2 = recorded state ("" for none),
     RESULT_STATES=()
     run print_summary
     [ "$status" -eq 1 ]
-    [[ "$output" == *"nothing was verified"* ]]
+    [[ "$output" == *"nothing was verified"* ]] || false
 }
 
 @test "print_summary: any recorded FAIL exits non-zero" {

@@ -40,7 +40,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Warning: cannot validate cached Apache RAT JAR"* ]]
+    [[ "$output" == *"Warning: cannot validate cached Apache RAT JAR"* ]] || false
     [ -f "$rat_jar" ]
 }
 
@@ -52,7 +52,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"is invalid"* ]]
+    [[ "$output" == *"is invalid"* ]] || false
     [ ! -f "$rat_jar" ]
 }
 
@@ -64,7 +64,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"is invalid"* ]]
+    [[ "$output" == *"is invalid"* ]] || false
     [ ! -f "$rat_jar" ]
 }
 
@@ -86,7 +86,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Failed to download Apache RAT"* ]]
+    [[ "$output" == *"Failed to download Apache RAT"* ]] || false
     [ ! -e "${rat_jar}.part" ]
     [ ! -e "$rat_jar" ]
 }
@@ -100,9 +100,9 @@ setup() {
 
     [ -f "$rat_jar" ]
     run cat "$SHIM_CALLS/curl.log"
-    [[ "$output" == *"--fail"* ]]
-    [[ "$output" == *"--show-error"* ]]
-    [[ "$output" == *"--location"* ]]
+    [[ "$output" == *"--fail"* ]] || false
+    [[ "$output" == *"--show-error"* ]] || false
+    [[ "$output" == *"--location"* ]] || false
     [ "$(shim_call_count unzip)" = "1" ]
 }
 
@@ -114,7 +114,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Cannot validate the downloaded Apache RAT JAR"* ]]
+    [[ "$output" == *"Cannot validate the downloaded Apache RAT JAR"* ]] || false
     [ ! -e "$rat_jar" ]
     [ ! -e "${rat_jar}.part" ]
 }
@@ -139,7 +139,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"is invalid"* ]]
+    [[ "$output" == *"is invalid"* ]] || false
     [ ! -f "$rat_jar" ]
 }
 
@@ -151,7 +151,7 @@ setup() {
     run acquire_rat_jar
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"is invalid"* ]]
+    [[ "$output" == *"is invalid"* ]] || false
     [ ! -f "$rat_jar" ]
 }
 

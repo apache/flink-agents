@@ -49,7 +49,7 @@ setup() {
 @test "parse_args: --python without arg dies" {
     run parse_args --python
     [ "$status" -ne 0 ]
-    [[ "$output" == *"--python requires a path argument"* ]]
+    [[ "$output" == *"--python requires a path argument"* ]] || false
 }
 
 @test "parse_args: --help sets HELP=1" {
@@ -65,7 +65,7 @@ setup() {
 @test "parse_args: unknown flag warns but does not die" {
     run parse_args --no-such-flag
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Unknown option: --no-such-flag"* ]]
+    [[ "$output" == *"Unknown option: --no-such-flag"* ]] || false
 }
 
 @test "parse_args: combined flags all apply" {

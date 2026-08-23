@@ -94,5 +94,5 @@ esac
     unset WSL_DISTRO_NAME
     run detect_os_or_die
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Unsupported operating system"* ]]
+    [[ "$output" == *"Unsupported operating system"* ]] || false
 }

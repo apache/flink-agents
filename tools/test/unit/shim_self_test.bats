@@ -34,7 +34,7 @@ setup() {
 @test "PATH shim is preferred over real binary" {
     shim_bin curl
     run command -v curl
-    [[ "$output" == "$BATS_TEST_TMPDIR/bin/curl" ]]
+    [[ "$output" == "$BATS_TEST_TMPDIR/bin/curl" ]] || false
 }
 
 @test "shim_bin_missing makes command -v report missing" {
