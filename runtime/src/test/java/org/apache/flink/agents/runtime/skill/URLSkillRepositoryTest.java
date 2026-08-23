@@ -31,6 +31,7 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -89,7 +90,9 @@ class URLSkillRepositoryTest {
             int port = server.getAddress().getPort();
             URLSkillRepository repo =
                     new URLSkillRepository(
-                            "http://127.0.0.1:" + port + "/skills.zip", sha256(body), true);
+                            "http://127.0.0.1:" + port + "/skills.zip",
+                            sha256(body).toUpperCase(Locale.ROOT),
+                            true);
             assertEquals(
                     List.of("github", "nano-banana-pro"),
                     repo.getSkills().stream()

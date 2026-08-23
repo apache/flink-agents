@@ -37,7 +37,7 @@ class TestSkillsFactories:
         ]
 
     def test_from_url_with_sha256_emits_integrity_param(self) -> None:
-        digest = "a" * 64
+        digest = "A" * 64
         s = Skills.from_url_with_sha256("https://example.com/x.zip", digest)
         assert s.sources == [
             SkillSourceSpec(

@@ -53,7 +53,7 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlWithSha256EmitsIntegrityParam() {
-        String digest = "a".repeat(64);
+        String digest = "A".repeat(64);
         Skills skills = Skills.fromUrlWithSha256("https://example.com/x.zip", digest);
         assertEquals(
                 List.of(

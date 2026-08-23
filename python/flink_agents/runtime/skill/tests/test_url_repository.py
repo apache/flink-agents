@@ -80,7 +80,7 @@ def zip_server(skills_zip_path: Path) -> "tuple[str, type[_ZipHandler]]":
 class TestURLSkillRepository:
     def test_load_from_url(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, _handler = zip_server
-        digest = hashlib.sha256(_handler.zip_bytes).hexdigest()
+        digest = hashlib.sha256(_handler.zip_bytes).hexdigest().upper()
         repo = URLSkillRepository(url, sha256=digest, allow_insecure_http=True)
 
         skills = repo.get_skills()
