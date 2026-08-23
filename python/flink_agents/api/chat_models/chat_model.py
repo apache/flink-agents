@@ -218,7 +218,7 @@ class BaseChatModelConnection(Resource, ABC):
                 cleaned = pat.sub("", cleaned)
 
         if not reasoning_chunks:
-            return content, None
+            return cleaned, None
 
         reasoning = "\n\n".join(reasoning_chunks)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
