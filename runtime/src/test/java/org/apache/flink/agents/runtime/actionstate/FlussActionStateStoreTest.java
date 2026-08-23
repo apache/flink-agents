@@ -132,6 +132,26 @@ public class FlussActionStateStoreTest {
         assertThat(actionStates).containsKey(stateKey);
     }
 
+    @Test
+    void testPruneStateDoesNotPruneOtherKeysWithMatchingPrefix() throws Exception {
+        String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        actionStates.put(otherKeyState, testActionState);
+
+        store.pruneState("a_1", 10L);
+
+        assertThat(actionStates).containsKey(otherKeyState);
+    }
+
+    @Test
+    void testGetDoesNotEvictOtherKeysWithMatchingPrefix() throws Exception {
+        String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        actionStates.put(otherKeyState, testActionState);
+
+        assertThat(store.get("a_1", 0L, testAction, testEvent)).isNull();
+
+        assertThat(actionStates).containsKey(otherKeyState);
+    }
+
     // ==================== rebuildState tests ====================
 
     @Test

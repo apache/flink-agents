@@ -216,12 +216,12 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = generateKey(key, seqNum, action, event);
-        String keyPrefix = key.toString() + "_";
+        String keyStr = key.toString();
 
-        boolean hasDivergence = checkDivergence(key.toString(), seqNum);
+        boolean hasDivergence = checkDivergence(keyStr, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
-            removeStateEntries(keyPrefix, stateSeqNum -> stateSeqNum > seqNum);
+            removeStateEntries(keyStr, stateSeqNum -> stateSeqNum > seqNum);
         }
 
         ActionState state = actionStates.get(stateKey);
@@ -237,10 +237,11 @@ public class FlussActionStateStore implements ActionStateStore {
     }
 
     /**
-     * Removes cached state entries whose key starts with {@code keyPrefix} and whose parsed
-     * sequence number satisfies {@code seqNumFilter}.
+     * Removes cached state entries belonging to {@code key} whose parsed sequence number satisfies
+     * {@code seqNumFilter}.
      */
-    private void removeStateEntries(String keyPrefix, LongPredicate seqNumFilter) {
+    private void removeStateEntries(String key, LongPredicate seqNumFilter) {
+        String keyPrefix = key + "_";
         actionStates
                 .entrySet()
                 .removeIf(
@@ -250,10 +251,11 @@ public class FlussActionStateStore implements ActionStateStore {
                             }
                             try {
                                 List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                if (parts.size() >= 2) {
-                                    long stateSeqNum = Long.parseLong(parts.get(1));
-                                    return seqNumFilter.test(stateSeqNum);
+                                if (!parts.get(0).equals(key)) {
+                                    return false;
                                 }
+                                long stateSeqNum = Long.parseLong(parts.get(1));
+                                return seqNumFilter.test(stateSeqNum);
                             } catch (Exception e) {
                                 LOG.warn("Failed to parse state key: {}", entry.getKey(), e);
                             }
@@ -486,7 +488,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning in-memory state for key: {} up to seqNum: {}", key, seqNum);
-        removeStateEntries(key.toString() + "_", stateSeqNum -> stateSeqNum <= seqNum);
+        removeStateEntries(key.toString(), stateSeqNum -> stateSeqNum <= seqNum);
     }
 
     @Override
