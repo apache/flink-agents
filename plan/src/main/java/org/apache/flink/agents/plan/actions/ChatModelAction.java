@@ -97,6 +97,9 @@ public class ChatModelAction {
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
     private static final String TOTAL_RETRY_COUNT = "totalRetryCount";
     private static final String TOTAL_RETRY_WAIT_SEC = "totalRetryWaitSec";
+    private static final String FINISH_REASON = "finish_reason";
+    private static final String TRUNCATED_FINISH_REASON = "length";
+    private static final String CONTENT_FILTERED_FINISH_REASON = "content_filter";
 
     private static final ObjectMapper mapper = new ObjectMapper();
 
@@ -337,7 +340,7 @@ public class ChatModelAction {
             throw new RuntimeException(
                     String.format("Unsupported output schema %s.", outputSchema));
         }
-        Map<String, Object> extraArgs = new HashMap<>();
+        Map<String, Object> extraArgs = new HashMap<>(response.getExtraArgs());
         extraArgs.put(STRUCTURED_OUTPUT, structuredOutput);
         return new ChatMessage(response.getRole(), output, extraArgs);
     }
@@ -576,8 +579,40 @@ public class ChatModelAction {
         return routing;
     }
 
+    /**
+     * Rejects a response the provider did not finish emitting. A finish reason reporting the
+     * content as cut off by the token budget or withheld by content filtering raises {@link
+     * IllegalStateException}; any other reason, and an absent one, are accepted.
+     */
+    private static void rejectIncompleteResponse(ChatMessage response) {
+        Object finishReason = response.getExtraArgs().get(FINISH_REASON);
+        if (TRUNCATED_FINISH_REASON.equals(finishReason)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "ChatModel response is truncated (finish_reason='%s'): it"
+                                    + " exhausted the completion token budget before the model"
+                                    + " finished, so the content is incomplete and cannot yield"
+                                    + " structured output. Raise the model's max output tokens,"
+                                    + " or ask for a smaller output.",
+                            finishReason));
+        }
+        if (CONTENT_FILTERED_FINISH_REASON.equals(finishReason)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "ChatModel response was withheld by the provider's content"
+                                    + " filter (finish_reason='%s'), so the content is incomplete"
+                                    + " and cannot yield structured output. Adjust the prompt or"
+                                    + " the provider's content filtering configuration.",
+                            finishReason));
+        }
+    }
+
     static ChatMessage generateStructuredOutputWithReport(
             RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
+        // Precedes the start report: when this rejects, parsing is never attempted, so there is no
+        // parser execution to report.
+        rejectIncompleteResponse(response);
+
         ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
         try {
             ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
