@@ -67,25 +67,25 @@ class OutputSchema(BaseModel):
         return self
 
 
-def render_output_schema(
+def render_provider_output_schema(
     model: type[BaseModel], render: Callable[[type[BaseModel]], dict[str, Any]]
 ) -> dict[str, Any]:
-    """Render an output schema, refusing one that cannot constrain the response.
-
-    Whether a model expresses a constraint is a property of the model, not of a
-    provider's wire format, so the check runs against the model's own JSON Schema
-    and only the returned document comes from ``render``. That keeps the check
-    independent of how any SDK normalizes a schema: one renderer rewrites every
-    map-typed member into an empty object, which is indistinguishable from a model
-    that declares no fields at all.
+    """Render an output schema for a provider, reporting a render failure clearly.
 
     The renderer is supplied by the caller because each chat model translates a
     schema with its own vendor renderer, and this module may not depend on any of
-    them. Both renders can fail, and they fail for different reasons: the model's
-    own render rejects a model that has no JSON Schema at all, while a vendor
-    renderer additionally rejects models it will not accept, such as one carrying
-    an untyped member that renders to a document with no ``type``. Neither wrapper
-    is therefore removable.
+    them. The model's own render runs first so that a model no JSON Schema can
+    express is reported as exactly that: a vendor renderer renders the model
+    itself, so it would otherwise surface the same failure worded as a translation
+    failure. The vendor render is wrapped in turn because it rejects models the
+    model's own render accepts, such as one carrying an untyped member that renders
+    to a document with no ``type``.
+
+    A schema that renders but declares no fields is returned as rendered. Whether
+    such a document is usable is the receiving provider's to judge, and refusing it
+    here would fail a request that succeeds today. Callers whose deliverable is the
+    rendered document itself have no provider to defer to and use
+    ``render_constraining_output_schema`` instead.
 
     Args:
         model: The model class describing the shape the response must take.
@@ -95,10 +95,51 @@ def render_output_schema(
         The document ``render`` produced.
 
     Raises:
-        TypeError: If ``model`` has no JSON Schema, if it renders to one containing
-            an object that declares no properties and so constrains nothing, or if
-            ``render`` fails or returns something other than a document.
+        TypeError: If ``model`` has no JSON Schema, or if ``render`` fails or returns
+            something other than a document.
     """
+    return _render_output_schema(model, render, reject_unconstrained=False)
+
+
+def render_constraining_output_schema(
+    model: type[BaseModel], render: Callable[[type[BaseModel]], dict[str, Any]]
+) -> dict[str, Any]:
+    """Render an output schema, refusing one that cannot constrain the response.
+
+    For a caller that consumes the rendered document itself rather than sending it
+    to a provider, such as one pasting it into an instruction prompt. A document
+    describing an object with no fields instructs the model to match nothing, and
+    every response then satisfies it.
+
+    Whether a model expresses a constraint is a property of the model, not of a
+    provider's wire format, so the check runs against the model's own JSON Schema
+    and only the returned document comes from ``render``. That keeps the check
+    independent of how any SDK normalizes a schema: one renderer rewrites every
+    map-typed member into an empty object, which is indistinguishable from a model
+    that declares no fields at all.
+
+    Args:
+        model: The model class describing the shape the response must take.
+        render: Renders ``model`` in the wire format the caller expects.
+
+    Returns:
+        The document ``render`` produced.
+
+    Raises:
+        TypeError: Everything ``render_provider_output_schema`` raises, and
+            additionally if ``model`` renders to a JSON Schema containing an object
+            that declares no properties and so constrains nothing.
+    """
+    return _render_output_schema(model, render, reject_unconstrained=True)
+
+
+def _render_output_schema(
+    model: type[BaseModel],
+    render: Callable[[type[BaseModel]], dict[str, Any]],
+    *,
+    reject_unconstrained: bool,
+) -> dict[str, Any]:
+    """Back the two public renderers, which differ only in the emptiness check."""
     try:
         document = model.model_json_schema()
     except Exception as e:
@@ -110,10 +151,11 @@ def render_output_schema(
         )
         raise TypeError(msg) from e
 
-    defs = document.get("$defs")
-    _reject_empty_objects(
-        document, "$", defs if isinstance(defs, dict) else {}, set(), model
-    )
+    if reject_unconstrained:
+        defs = document.get("$defs")
+        _reject_empty_objects(
+            document, "$", defs if isinstance(defs, dict) else {}, set(), model
+        )
 
     try:
         schema = render(model)

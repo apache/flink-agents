@@ -59,6 +59,18 @@ class FieldLess(BaseModel):
     """A schema declaring no fields, so it constrains nothing."""
 
 
+class NestsFieldLess(BaseModel):
+    """A field-less schema one level down, reached through a ``$ref``."""
+
+    inner: FieldLess
+
+
+class MapsToFieldLess(BaseModel):
+    """A field-less schema reached through a map's ``additionalProperties``."""
+
+    m: dict[str, FieldLess]
+
+
 class Labelled(BaseModel):
     """A schema whose only member is a free-form map, a legitimate constraint."""
 
@@ -481,10 +493,19 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
         _chat_with_schema(_connection(), Unrenderable)
 
 
-def test_field_less_schema_raises_naming_the_model() -> None:
-    """A schema declaring no fields would leave the response unconstrained."""
-    with pytest.raises(TypeError, match="FieldLess renders to a JSON Schema"):
-        _chat_with_schema(_connection(), FieldLess)
+@pytest.mark.parametrize("schema", [FieldLess, NestsFieldLess, MapsToFieldLess])
+def test_field_less_schema_is_accepted_and_sent_whole(schema: type[BaseModel]) -> None:
+    """A schema declaring no fields renders, so the provider decides on it, not us.
+
+    Fails if a check for a schema that renders but constrains nothing is ever added
+    back here: the provider accepts these documents, and refusing one would fail a
+    request that works today. The nested cases are the ones a root-only check would
+    still let through, so they pin the whole document rather than its top level.
+    """
+    conn = _connection()
+    _chat_with_schema(conn, schema)
+    response_format = _create_call_kwargs(conn)["response_format"]
+    assert response_format["json_schema"]["schema"] == to_strict_json_schema(schema)
 
 
 def test_map_member_schema_is_accepted_and_sent_whole() -> None:

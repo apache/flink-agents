@@ -173,6 +173,18 @@ class _FieldLess(BaseModel):
     """A schema declaring no fields, so it constrains nothing."""
 
 
+class _NestsFieldLess(BaseModel):
+    """A field-less schema one level down, reached through a ``$ref``."""
+
+    inner: _FieldLess
+
+
+class _MapsToFieldLess(BaseModel):
+    """A field-less schema reached through a map's ``additionalProperties``."""
+
+    m: Dict[str, _FieldLess]
+
+
 class _Labelled(BaseModel):
     """A schema whose only member is a free-form map, a legitimate constraint."""
 
@@ -265,11 +277,18 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
         )
 
 
-def test_field_less_schema_raises_naming_the_model() -> None:
-    with pytest.raises(TypeError, match="_FieldLess renders to a JSON Schema"):
-        _request_kwargs(
-            model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_FieldLess)
-        )
+@pytest.mark.parametrize("schema", [_FieldLess, _NestsFieldLess, _MapsToFieldLess])
+def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
+    # A schema declaring no fields renders, so the provider decides on it, not this
+    # connection. Fails if a check for a schema that renders but constrains nothing is
+    # ever added back here, which would refuse a request that works today. The nested
+    # cases are the ones a root-only check would still let through, so they pin the
+    # whole document rather than its top level.
+    output_config = _request_kwargs(
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=schema)
+    )["output_config"]
+
+    assert output_config["format"]["schema"] == transform_schema(schema)
 
 
 def test_map_member_schema_is_accepted_and_sent_whole() -> None:
@@ -320,7 +339,7 @@ def test_caller_output_config_wins_over_schema() -> None:
     assert sent == caller_config
 
 
-def test_caller_output_config_wins_over_a_schema_that_cannot_constrain() -> None:
+def test_caller_output_config_wins_over_a_schema_that_cannot_be_rendered() -> None:
     # The schema is rendered only when this branch will actually send the result. A
     # render placed before the caller's value is honoured would refuse a request the
     # caller had already steered away from the derived config, on the strength of a
@@ -329,7 +348,7 @@ def test_caller_output_config_wins_over_a_schema_that_cannot_constrain() -> None
 
     sent = _request_kwargs(
         model=_CAPABLE_MODEL,
-        output_schema=OutputSchema(output_schema=_FieldLess),
+        output_schema=OutputSchema(output_schema=_Unrenderable),
         output_config=caller_config,
     )["output_config"]
 

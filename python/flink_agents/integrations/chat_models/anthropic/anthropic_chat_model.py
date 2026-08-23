@@ -24,7 +24,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import OutputSchema, render_provider_output_schema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -208,9 +208,11 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     shape with the providers that nest the schema under a named, strict
     ``json_schema`` object and is built here rather than in a shared helper.
 
-    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, or renders to a
-    document that constrains nothing. Such a request would come back unconstrained and
-    be mistaken for a schema-conforming response.
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, naming the
+    schema class rather than letting the renderer's own error, which names only its
+    internals, surface from a request the provider never sees. A schema that renders
+    but declares no fields is sent as it is, leaving the provider to accept or refuse
+    the document it receives.
     """
     if output_schema is None:
         return None
@@ -222,7 +224,7 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     return {
         "format": {
             "type": "json_schema",
-            "schema": render_output_schema(model, transform_schema),
+            "schema": render_provider_output_schema(model, transform_schema),
         }
     }
 
@@ -360,9 +362,9 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             # caller's value with no error and no other trace.
             #
             # The schema is rendered inside that test rather than before it, because
-            # rendering rejects a schema that cannot constrain the response. Rendering
-            # one whose result this branch is about to discard would fail a request the
-            # caller had already steered away from the derived config.
+            # rendering raises on a schema it cannot express. Rendering one whose
+            # result this branch is about to discard would fail a request the caller
+            # had already steered away from the derived config.
             if "output_config" not in kwargs:
                 output_config = _native_output_config(output_schema)
                 if output_config is not None:

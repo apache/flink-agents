@@ -29,7 +29,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import OutputSchema, render_provider_output_schema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -119,9 +119,11 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
     fallback.
 
-    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, or renders to a
-    document that constrains nothing. Such a request would come back unconstrained and
-    be mistaken for a schema-conforming response.
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, naming the
+    schema class rather than letting the renderer's own error, which names only its
+    internals, surface from a request the provider never sees. A schema that renders
+    but declares no fields is sent as it is, leaving the provider to accept or refuse
+    the document it receives.
     """
     model = _native_output_model(output_schema)
     if model is None:
@@ -130,7 +132,7 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
         "type": "json_schema",
         "json_schema": {
             "name": model.__name__,
-            "schema": render_output_schema(model, to_strict_json_schema),
+            "schema": render_provider_output_schema(model, to_strict_json_schema),
             "strict": True,
         },
     }

@@ -93,13 +93,17 @@ public class OutputSchema {
      * member yields an object with no properties and genuinely constrains nothing. Declare the
      * member as a concrete type, or give the base the fields every subtype shares.
      *
+     * <p>Package-private: the rendered document is the deliverable only on the ReAct prompt path,
+     * which lives in this package. A connection sends its document to a provider that judges it,
+     * and refusing one there would fail a request the provider accepts.
+     *
      * @param schema the rendered JSON Schema to inspect.
      * @param schemaName the name of the schema, quoted in the error to identify the offending
      *     class.
      * @throws IllegalArgumentException if any object at or below {@code schema} carries a {@code
      *     properties} member that is present and empty.
      */
-    public static void rejectUnconstrainedSchema(JsonNode schema, String schemaName) {
+    static void rejectUnconstrainedSchema(JsonNode schema, String schemaName) {
         rejectEmptyObjects(schema, "$", schemaName);
     }
 

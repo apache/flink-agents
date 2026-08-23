@@ -24,7 +24,10 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import RowTypeInfo
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    render_constraining_output_schema,
+)
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -135,7 +138,7 @@ class ReActAgent(Agent):
 
         if output_schema:
             if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
-                json_schema = render_output_schema(
+                json_schema = render_constraining_output_schema(
                     output_schema, lambda model: model.model_json_schema()
                 )
             elif isinstance(output_schema, RowTypeInfo):
