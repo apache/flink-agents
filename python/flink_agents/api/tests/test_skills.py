@@ -71,6 +71,14 @@ class TestSkillsFactories:
         with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
             Skills.from_url("ftp://example.com/x.zip")
 
+    @pytest.mark.parametrize(
+        "url",
+        ["https://exa mple.com/x.zip", "https://example.com/%invalid"],
+    )
+    def test_from_url_rejects_malformed_url(self, url: str) -> None:
+        with pytest.raises(ValueError, match="Invalid skill URL"):
+            Skills.from_url(url)
+
     def test_from_package_single_pair(self) -> None:
         s = Skills.from_package(("my_pkg", "skills"))
         assert s.sources == [

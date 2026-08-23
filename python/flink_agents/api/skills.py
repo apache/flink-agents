@@ -66,6 +66,9 @@ from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
 
+_INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+
 
 class SkillSourceSpec(BaseModel):
     """One entry in :attr:`Skills.sources`.
@@ -178,7 +181,14 @@ class Skills(SerializableResource):
         if not isinstance(url, str):
             msg = "skill URL must be a string"
             raise TypeError(msg)
-        parsed = urlparse(url)
+        try:
+            parsed = urlparse(url)
+        except ValueError as exc:
+            msg = f"Invalid skill URL: {url}"
+            raise ValueError(msg) from exc
+        if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
+            msg = f"Invalid skill URL: {url}"
+            raise ValueError(msg)
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https"}:
             msg = f"Only HTTP(S) skill URLs are supported: {url}"
