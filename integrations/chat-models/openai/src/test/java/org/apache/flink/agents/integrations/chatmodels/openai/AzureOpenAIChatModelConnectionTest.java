@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.openai.errors.BadRequestException;
 import com.openai.models.ChatModel;
@@ -82,6 +84,40 @@ class AzureOpenAIChatModelConnectionTest {
     public static class Person {
         public String name;
         public int age;
+    }
+
+    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member. */
+    public static class Owner {
+        public String name;
+        public Pet pet;
+    }
+
+    /** The JSON Schema the request carries, as the SDK holds it on the response format. */
+    private static String nativeSchemaPayload(ChatCompletionCreateParams params) {
+        return params.responseFormat()
+                .orElseThrow()
+                .asJsonSchema()
+                .jsonSchema()
+                ._schema()
+                .toString();
     }
 
     private static AzureOpenAIChatModelConnection connection(String apiVersion) {
@@ -270,6 +306,27 @@ class AzureOpenAIChatModelConnectionTest {
         // equal to the class name.
         assertThat(jsonSchema.jsonSchema().name()).contains("Person");
         assertThat(jsonSchema.jsonSchema().strict()).contains(true);
+        // Asserting the members rather than only the flags: a schema declaring no properties
+        // would satisfy strict() and the derived name while constraining nothing at all.
+        assertThat(nativeSchemaPayload(request))
+                .contains("name={type=string}")
+                .contains("age={type=integer}");
+    }
+
+    @Test
+    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    void testPolymorphicMemberSchemaIsSent() {
+        // Jackson renders this member as an object declaring no properties, while the SDK derives
+        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // a request that works.
+        ChatCompletionCreateParams request =
+                connection()
+                        .buildRequest(userMessage(), List.of(), params("gpt-4o-mini"), Owner.class);
+
+        assertThat(nativeSchemaPayload(request))
+                .contains("bark={type=string}")
+                .contains("meow={type=string}")
+                .contains("kind={const=dog}");
     }
 
     @Test

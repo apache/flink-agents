@@ -18,10 +18,15 @@
 
 package org.apache.flink.agents.api.agents;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -32,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Map;
 import java.util.function.Function;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -127,6 +133,100 @@ public class ReActAgentTest {
                 .hasMessageContaining("WithRows")
                 .hasMessageContaining("at path $.rows has no properties");
     }
+
+    @Test
+    @DisplayName("An agent built on an unrenderable schema names the offending path, unwrapped")
+    public void testAgentRejectsUnrenderableSchemaByPath() {
+        // The path is what identifies the offending member, so it has to survive to the message the
+        // caller reads. A catch that also covers the check would bury it one getCause() down.
+        assertThatThrownBy(() -> agentWithSchema(WithNestedCallback.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("WithNestedCallback")
+                .hasMessageContaining("$.inner.callback")
+                // No cause: a schema that renders but constrains nothing is not a render
+                // failure, and a wrapper over the check would relabel it as one.
+                .hasNoCause();
+    }
+
+    @Test
+    @DisplayName("An agent built on a schema Jackson cannot render reports it with the cause kept")
+    public void testAgentRejectsSchemaThatCannotRender() {
+        assertThatThrownBy(() -> agentWithSchema(FieldLess.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("FieldLess")
+                .hasMessageContaining("cannot be rendered as a JSON Schema")
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("An agent built on a free-form map member still prompts with the full schema")
+    public void testAgentAcceptsMapMemberSchema() {
+        assertThat(schemaPromptOf(agentWithSchema(WithMap.class)))
+                .contains("\"count\":{\"type\":\"integer\"}")
+                .contains("\"entries\":{\"type\":\"object\"}");
+    }
+
+    @Test
+    @DisplayName("An agent built on a renderable schema prompts with the schema it always did")
+    public void testAgentAcceptsRenderableSchema() {
+        assertThat(schemaPromptOf(agentWithSchema(WithCount.class)))
+                .contains(
+                        "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}}");
+    }
+
+    @Test
+    @DisplayName("An agent built on a polymorphic member with a field-less base is rejected")
+    public void testAgentRejectsPolymorphicMemberWithFieldLessBase() {
+        // The generator renders the declared type rather than its subtypes, so a base declaring no
+        // fields of its own reaches the prompt as an object that constrains nothing. Giving the
+        // base a single shared field flips this to accepted, so it is the field-less form that is
+        // pinned here.
+        assertThatThrownBy(() -> agentWithSchema(Owner.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Owner")
+                .hasMessageContaining("$.pet");
+    }
+
+    private static ReActAgent agentWithSchema(Class<?> outputSchema) {
+        return new ReActAgent(
+                ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build(),
+                null,
+                outputSchema);
+    }
+
+    private static String schemaPromptOf(ReActAgent agent) {
+        Prompt schemaPrompt =
+                (Prompt)
+                        agent.getResources().get(ResourceType.PROMPT).get("_default_schema_prompt");
+        return schemaPrompt.formatString(Map.of());
+    }
+
+    /** A polymorphic base declaring no fields of its own, so it renders to an empty object. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member whose base declares no fields. */
+    public static class Owner {
+        public String name;
+        public Pet pet;
+    }
+
+    /** A class with no members at all, which Jackson refuses to render rather than rendering. */
+    public static class FieldLess {}
 
     private static JsonNode renderSchema(Class<?> pojo) throws JsonMappingException {
         return new ObjectMapper().generateJsonSchema(pojo).getSchemaNode();

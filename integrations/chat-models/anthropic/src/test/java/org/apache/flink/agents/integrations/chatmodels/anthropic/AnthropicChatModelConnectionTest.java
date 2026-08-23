@@ -24,6 +24,8 @@ import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlock;
 import com.anthropic.models.messages.Usage;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -263,6 +265,30 @@ class AnthropicChatModelConnectionTest {
         public String verdict;
     }
 
+    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member. */
+    public static class Owner {
+        public String verdict;
+        public Pet pet;
+    }
+
     private static Map<String, Object> paramsWithModel(String model, Object jsonPrefill) {
         Map<String, Object> params = params(jsonPrefill);
         params.put("model", model);
@@ -289,6 +315,15 @@ class AnthropicChatModelConnectionTest {
                 .map(schema -> schema.get("properties"))
                 .map(properties -> MAPPER.convertValue(properties, MAP_TYPE).keySet())
                 .orElse(Set.of());
+    }
+
+    /** The JSON Schema the request carries, as the SDK holds it on the output config. */
+    private static String nativeSchemaPayload(AnthropicChatModelConnection.BuiltRequest built) {
+        return built.params
+                .outputConfig()
+                .flatMap(OutputConfig::format)
+                .map(format -> format.schema()._additionalProperties().toString())
+                .orElseThrow();
     }
 
     @ParameterizedTest
@@ -380,6 +415,18 @@ class AnthropicChatModelConnectionTest {
                 .isEqualTo(connection().supportsNativeStructuredOutput(INCAPABLE_MODEL));
         assertThat(configuredCapable.supportsNativeStructuredOutput(CAPABLE_MODEL))
                 .isEqualTo(connection().supportsNativeStructuredOutput(CAPABLE_MODEL));
+    }
+
+    @Test
+    @DisplayName("a polymorphic member is sent as the discriminated union the SDK derives")
+    void testPolymorphicMemberSchemaIsSent() {
+        // Jackson renders this member as an object declaring no properties, while the SDK derives
+        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // a request that works.
+        assertThat(nativeSchemaPayload(build(CAPABLE_MODEL, Owner.class, null)))
+                .contains("bark={type=string}")
+                .contains("meow={type=string}")
+                .contains("kind={const=dog}");
     }
 
     @Test
