@@ -147,6 +147,20 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void rejectsPlainHttpStructuredSkillUrlDuringLoading(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("plain_http_structured_skill.yaml");
+        Files.writeString(
+                file,
+                "skills:\n"
+                        + "  - name: invalid\n"
+                        + "    url_sources:\n"
+                        + "      - url: http://example.com/skills.zip\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .hasMessageContaining("Plain HTTP skill URLs are disabled by default");
+    }
+
+    @Test
     void rejectsMalformedSkillDigestDuringLoading(@TempDir Path tmp) throws Exception {
         Path file = tmp.resolve("malformed_skill_digest.yaml");
         Files.writeString(

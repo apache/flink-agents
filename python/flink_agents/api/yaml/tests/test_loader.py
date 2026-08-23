@@ -478,6 +478,21 @@ def test_build_agents_rejects_plain_http_skill_url_during_loading(
         build_agents(path)
 
 
+def test_build_agents_rejects_plain_http_structured_skill_url_during_loading(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "plain_http_structured_skill.yaml"
+    path.write_text(
+        "skills:\n"
+        "  - name: invalid\n"
+        "    url_sources:\n"
+        "      - url: http://example.com/skills.zip\n"
+    )
+
+    with pytest.raises(ValueError, match="Plain HTTP skill URLs are disabled"):
+        build_agents(path)
+
+
 def test_build_agents_rejects_malformed_skill_digest_during_loading(
     tmp_path: Path,
 ) -> None:
