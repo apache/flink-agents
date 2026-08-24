@@ -256,8 +256,10 @@ public class FlussActionStateStore implements ActionStateStore {
                                 }
                                 long stateSeqNum = Long.parseLong(parts.get(1));
                                 return seqNumFilter.test(stateSeqNum);
-                            } catch (Exception e) {
-                                LOG.warn("Failed to parse state key: {}", entry.getKey(), e);
+                            } catch (Exception ignored) {
+                                LOG.debug(
+                                        "Retaining unparseable state key during cleanup: {}",
+                                        entry.getKey());
                             }
                             return false;
                         });
