@@ -232,6 +232,16 @@ public class FlussActionStateStore implements ActionStateStore {
     private boolean checkDivergence(String key, long seqNum) {
         return actionStates.keySet().stream()
                         .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
+                        .filter(
+                                stateKey -> {
+                                    try {
+                                        List<String> parts = ActionStateUtil.parseKey(stateKey);
+                                        return parts.get(0).equals(key)
+                                                && Long.parseLong(parts.get(1)) == seqNum;
+                                    } catch (IllegalArgumentException ignored) {
+                                        return false;
+                                    }
+                                })
                         .count()
                 > 1;
     }

@@ -186,6 +186,20 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testGetDoesNotTreatOtherKeyPrefixAsDivergence() throws Exception {
+        String currentState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        String futureState = ActionStateUtil.generateKey("a", 2L, testAction, testEvent);
+        String collidingState = ActionStateUtil.generateKey("a_1", 0L, testAction, testEvent);
+        actionStates.put(currentState, testActionState);
+        actionStates.put(futureState, testActionState);
+        actionStates.put(collidingState, testActionState);
+
+        assertThat(actionStateStore.get("a", 1L, testAction, testEvent)).isEqualTo(testActionState);
+
+        assertThat(actionStates).containsKey(futureState);
+    }
+
+    @Test
     void testRecoveryMarker() throws Exception {
         // Test getting initial recovery marker
         Object initialMarker = actionStateStore.getRecoveryMarker();
