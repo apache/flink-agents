@@ -73,7 +73,11 @@ class TestSkillsFactories:
 
     @pytest.mark.parametrize(
         "url",
-        ["https://exa mple.com/x.zip", "https://example.com/%invalid"],
+        [
+            "https://exa mple.com/x.zip",
+            "https://example.com/%invalid",
+            "https://[::1/x.zip",
+        ],
     )
     def test_from_url_rejects_malformed_url(self, url: str) -> None:
         with pytest.raises(ValueError, match="Invalid skill URL"):

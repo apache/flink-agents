@@ -108,6 +108,14 @@ class SkillsResourceTest {
     }
 
     @Test
+    void fromUrlRejectsMalformedUrl() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class, () -> Skills.fromUrl("https://[::1/x.zip"));
+        assertEquals("Invalid skill URL: https://[::1/x.zip", ex.getMessage());
+    }
+
+    @Test
     void fromClasspathEmitsClasspathScheme() {
         Skills skills = Skills.fromClasspath("skills");
         assertEquals(
