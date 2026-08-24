@@ -100,6 +100,19 @@ public class ActionStateKeyPartitionerTest {
     }
 
     @Test
+    void testSameKeyContainingSeparatorUsesConsistentPartition() {
+        String key1 = "user_123_1_action1_event1";
+        String key2 = "user_123_2_action2_event2";
+
+        int partition1 =
+                partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
+        int partition2 =
+                partitioner.partition(TEST_TOPIC, key2, key2.getBytes(), null, null, cluster);
+
+        assertEquals(partition1, partition2);
+    }
+
+    @Test
     void testNullKeyThrowsException() {
         IllegalArgumentException exception =
                 assertThrows(
@@ -155,15 +168,16 @@ public class ActionStateKeyPartitionerTest {
     }
 
     @Test
-    void testEmptyFirstKeyPartThrowException() {
-        String invalidKey = "_1_action_event";
-        IllegalArgumentException exception =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () ->
-                                partitioner.partition(
-                                        TEST_TOPIC, invalidKey, null, null, null, cluster));
-        assertEquals("First part of the key cannot be empty", exception.getMessage());
+    void testKeyStartingWithSeparatorUsesConsistentPartition() {
+        String key1 = "_user_1_action_event";
+        String key2 = "_user_2_action_event";
+
+        int partition1 =
+                partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
+        int partition2 =
+                partitioner.partition(TEST_TOPIC, key2, key2.getBytes(), null, null, cluster);
+
+        assertEquals(partition1, partition2);
     }
 
     @Test

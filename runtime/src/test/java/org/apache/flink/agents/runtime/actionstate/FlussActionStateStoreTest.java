@@ -122,14 +122,24 @@ public class FlussActionStateStoreTest {
     }
 
     @Test
-    void testPruneStateRetainsKeyContainingUnderscore() throws Exception {
+    void testPruneStateSupportsKeysContainingUnderscore() throws Exception {
         String agentKey = "user_123";
         String stateKey = ActionStateUtil.generateKey(agentKey, 1L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
 
         store.pruneState(agentKey, 1L);
 
-        assertThat(actionStates).containsKey(stateKey);
+        assertThat(actionStates).doesNotContainKey(stateKey);
+    }
+
+    @Test
+    void testGetCleansFutureStateForKeyContainingUnderscore() throws Exception {
+        String flinkKey = "user_123";
+        String stateKey = ActionStateUtil.generateKey(flinkKey, 3L, testAction, testEvent);
+        actionStates.put(stateKey, testActionState);
+
+        assertThat(store.get(flinkKey, 1L, testAction, testEvent)).isNull();
+        assertThat(actionStates).doesNotContainKey(stateKey);
     }
 
     @Test

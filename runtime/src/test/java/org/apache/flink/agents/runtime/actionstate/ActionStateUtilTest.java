@@ -137,6 +137,31 @@ public class ActionStateUtilTest {
     }
 
     @Test
+    public void testParseKeyRoundTripWithSeparatorInFlinkKey() throws Exception {
+        Object originalKey = "_user_123_with_separator_";
+        Action action = new NoOpAction("round-trip-action");
+        InputEvent inputEvent = new InputEvent("round-trip-input");
+        long seqNum = 456;
+
+        String generatedKey = ActionStateUtil.generateKey(originalKey, seqNum, action, inputEvent);
+        List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
+
+        assertEquals(originalKey.toString(), parsedParts.get(0));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
+    }
+
+    @Test
+    public void testParsePreviouslyGeneratedKeyWithSeparatorInFlinkKey() {
+        String eventId = "00000000-0000-0000-0000-000000000001";
+        String actionId = "00000000-0000-0000-0000-000000000002";
+        String persistedKey = "user_123_456_" + eventId + "_" + actionId;
+
+        assertEquals(
+                List.of("user_123", "456", eventId, actionId),
+                ActionStateUtil.parseKey(persistedKey));
+    }
+
+    @Test
     public void testParseKeyWithNullInput() {
         assertThrows(
                 NullPointerException.class,
@@ -152,13 +177,6 @@ public class ActionStateUtilTest {
                 IllegalArgumentException.class,
                 () -> {
                     ActionStateUtil.parseKey("only_three_parts");
-                });
-
-        // Test with too many parts
-        assertThrows(
-                IllegalArgumentException.class,
-                () -> {
-                    ActionStateUtil.parseKey("one_two_three_four_five_six");
                 });
 
         // Test with empty string

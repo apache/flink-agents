@@ -166,13 +166,13 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
-    void testGetRetainsUnparseableKey() throws Exception {
+    void testGetCleansFutureStateForKeyContainingUnderscore() throws Exception {
         String flinkKey = "user_123";
         String stateKey = ActionStateUtil.generateKey(flinkKey, 3L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
 
         assertThat(actionStateStore.get(flinkKey, 1L, testAction, testEvent)).isNull();
-        assertThat(actionStates).containsKey(stateKey);
+        assertThat(actionStates).doesNotContainKey(stateKey);
     }
 
     @Test
@@ -364,21 +364,19 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
-    void testPruneStateSkipsUnparseableKeys() throws Exception {
-        // Arrange - a Flink key that itself contains the "_" separator (e.g. "user_123")
-        // produces a state key with 5 "_"-separated parts once seqNum and the two UUIDs are
-        // appended, which ActionStateUtil.parseKey cannot split into exactly 4 parts
+    void testPruneStateSupportsKeysContainingUnderscore() throws Exception {
         actionStateStore = tombstoneEnabledStore(actionStates, mockProducer);
         String agentKey = "user_123";
         String stateKey = ActionStateUtil.generateKey(agentKey, 1L, testAction, testEvent);
         actionStates.put(stateKey, testActionState);
 
-        // Act - should not throw despite the unparseable key
         actionStateStore.pruneState(agentKey, 10L);
 
-        // Assert - the unparseable entry is retained, and no tombstone was sent for it
-        assertThat(actionStates).containsKey(stateKey);
-        assertThat(mockProducer.history()).isEmpty();
+        assertThat(actionStates).doesNotContainKey(stateKey);
+        assertThat(mockProducer.history())
+                .extracting(ProducerRecord::key)
+                .containsExactly(stateKey);
+        assertThat(mockProducer.history()).extracting(ProducerRecord::value).containsOnlyNulls();
     }
 
     @Test

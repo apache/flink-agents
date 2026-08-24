@@ -45,10 +45,9 @@ public class ActionStateKeyPartitioner implements Partitioner {
             throw new IllegalArgumentException("Key format is invalid");
         }
 
-        if ("".equalsIgnoreCase(keyParts[0])) {
-            throw new IllegalArgumentException("First part of the key cannot be empty");
-        }
-
+        // Preserve the existing first-segment partitioning for compatibility with records already
+        // in the topic. Keys beginning with '_' previously could not be written; accepting the
+        // empty first segment makes them usable without moving any existing records.
         return MathUtils.murmurHash(keyParts[0].hashCode()) % numPartitions;
     }
 

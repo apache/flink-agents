@@ -55,11 +55,23 @@ public class ActionStateUtil {
                 generateUUIDForAction(action));
     }
 
+    /**
+     * Parses an action-state key from its fixed sequence/event/action suffix. The Flink key itself
+     * may contain the separator.
+     */
     public static List<String> parseKey(String key) {
         Preconditions.checkNotNull(key, "key cannot be null.");
-        String[] parts = key.split(KEY_SEPARATOR);
-        Preconditions.checkArgument(parts.length == 4, "Invalid key format.");
-        return List.of(parts);
+
+        int actionSeparator = key.lastIndexOf(KEY_SEPARATOR);
+        int eventSeparator = key.lastIndexOf(KEY_SEPARATOR, actionSeparator - 1);
+        int sequenceSeparator = key.lastIndexOf(KEY_SEPARATOR, eventSeparator - 1);
+        Preconditions.checkArgument(sequenceSeparator >= 0, "Invalid key format.");
+
+        return List.of(
+                key.substring(0, sequenceSeparator),
+                key.substring(sequenceSeparator + 1, eventSeparator),
+                key.substring(eventSeparator + 1, actionSeparator),
+                key.substring(actionSeparator + 1));
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {

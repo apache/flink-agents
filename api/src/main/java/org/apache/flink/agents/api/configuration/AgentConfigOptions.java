@@ -90,11 +90,6 @@ public class AgentConfigOptions {
      * written after that restore point, erasing action state the replay still needs and causing
      * already completed actions to re-execute. Enable only if the job never restores from earlier
      * checkpoints or savepoints, or if re-executing actions is acceptable.
-     *
-     * <p>Also note: a Flink key that itself contains the {@code _} character (e.g. {@code
-     * user_123}) cannot be parsed safely during pruning or divergence cleanup. Its cached state is
-     * retained, so stale higher-sequence state may survive a detected divergence. Pruning also
-     * emits no tombstones for that key, so its Kafka topic records remain.
      */
     public static final ConfigOption<Boolean> KAFKA_ACTION_STATE_TOMBSTONE_ENABLED =
             new ConfigOption<>("kafkaActionStateTombstoneEnabled", Boolean.class, false);
