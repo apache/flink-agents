@@ -176,6 +176,22 @@ class YamlLoaderBuildAgentsTest {
     }
 
     @Test
+    void rejectsNullAllowInsecureHttpDuringLoading(@TempDir Path tmp) throws Exception {
+        Path file = tmp.resolve("null_allow_insecure_http.yaml");
+        Files.writeString(
+                file,
+                "skills:\n"
+                        + "  - name: invalid\n"
+                        + "    url_sources:\n"
+                        + "      - url: https://example.com/skills.zip\n"
+                        + "        allow_insecure_http: null\n");
+
+        assertThatThrownBy(() -> YamlLoader.buildAgents(file))
+                .rootCause()
+                .hasMessageContaining("allow_insecure_http");
+    }
+
+    @Test
     void actionDefaultsToPython(@TempDir Path tmp) throws Exception {
         // Action with no `type:` field defaults to Python (host-neutral default — matches the
         // Python loader so the same YAML behaves identically on either side).

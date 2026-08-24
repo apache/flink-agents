@@ -32,6 +32,7 @@ from flink_agents.api.yaml.specs import (
     PromptSpec,
     SkillsSpec,
     ToolSpec,
+    UrlSkillSpec,
     YamlAgentsDocument,
     export,
 )
@@ -366,6 +367,13 @@ def test_skills_spec_with_urls_classpath_package() -> None:
     assert len(spec.package) == 1
     assert spec.package[0].package == "my_pkg"
     assert spec.package[0].resource == "skills/"
+
+
+def test_url_skill_spec_rejects_null_allow_insecure_http() -> None:
+    with pytest.raises(ValidationError):
+        UrlSkillSpec.model_validate(
+            {"url": "https://x/skills.zip", "allow_insecure_http": None}
+        )
 
 
 def test_skills_spec_forbids_extras() -> None:
