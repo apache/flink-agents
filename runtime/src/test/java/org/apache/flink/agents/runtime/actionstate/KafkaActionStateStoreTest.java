@@ -176,6 +176,16 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testGetDoesNotEvictOtherKeysWithMatchingPrefix() throws Exception {
+        String otherKeyState = ActionStateUtil.generateKey("a", 1L, testAction, testEvent);
+        actionStates.put(otherKeyState, testActionState);
+
+        assertThat(actionStateStore.get("a_1", 0L, testAction, testEvent)).isNull();
+
+        assertThat(actionStates).containsKey(otherKeyState);
+    }
+
+    @Test
     void testRecoveryMarker() throws Exception {
         // Test getting initial recovery marker
         Object initialMarker = actionStateStore.getRecoveryMarker();

@@ -157,6 +157,7 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = generateKey(key, seqNum, action, event);
+        String keyStr = key.toString();
 
         LOG.debug(
                 "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",
@@ -165,7 +166,7 @@ public class KafkaActionStateStore implements ActionStateStore {
                 stateKey,
                 actionStates.keySet());
 
-        boolean hasDivergence = checkDivergence(key.toString(), seqNum);
+        boolean hasDivergence = checkDivergence(keyStr, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
             actionStates
@@ -175,7 +176,7 @@ public class KafkaActionStateStore implements ActionStateStore {
                                 // Extract key and sequence number from the state key
                                 try {
                                     List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                    if (parts.size() >= 2) {
+                                    if (parts.get(0).equals(keyStr)) {
                                         long stateSeqNum = Long.parseLong(parts.get(1));
                                         // clean up any states with sequence number greater than
                                         // the requested seqNum
