@@ -291,6 +291,14 @@ public class ContinuationActionExecutor {
      * running are cancelled and finalized as timeout failures; {@code cancel(true)} is attempted
      * only for unfinished futures, and a future that completes between the check and cancel stays
      * non-cancelled and is collected as a normal outcome.
+     *
+     * <p>Queued-but-unstarted slots are cancelled too. Unlike Python's {@code
+     * ThreadPoolExecutor.Future.cancel}, {@link CompletableFuture#cancel} cannot contractually
+     * retract a supplier already handed to the executor: skipping it is a best-effort effect of
+     * common JVM implementations, not a guarantee. Correctness therefore never depends on the
+     * cancel taking effect — whether the supplier actually ran is decided when recovery sees the
+     * {@code started} flag — but on JVMs that do skip cancelled suppliers this avoids executing
+     * the tool after the batch already timed out, only to discard its result.
      */
     private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
             CompletableFuture<Outcome<T>>[] futures,
@@ -299,7 +307,7 @@ public class ContinuationActionExecutor {
         List<Outcome<T>> results = new ArrayList<>(futures.length);
         for (int i = 0; i < futures.length; i++) {
             CompletableFuture<Outcome<T>> future = futures[i];
-            if (started.get(i) == 0 || future == null) {
+            if (future == null) {
                 results.add(Outcome.failure(timeoutException));
                 continue;
             }

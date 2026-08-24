@@ -506,7 +506,7 @@ public class AsyncExecutionTest {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 200L);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -536,10 +536,74 @@ public class AsyncExecutionTest {
                 output.contains("execute failed") || output.toLowerCase().contains("timed out"),
                 "Slow tool should fail when the batch deadline elapses: " + output);
         Assertions.assertFalse(
-                Pattern.compile("call=2.*sleep_ms=800.*start=\\d+,end=\\d+", Pattern.DOTALL)
+                Pattern.compile("call=2.*sleep_ms=150.*start=\\d+,end=\\d+", Pattern.DOTALL)
                         .matcher(output)
                         .find(),
                 "Slow tool should not report a successful timed result: " + output);
+    }
+
+    /**
+     * Drives the production batch timeout path with a queued-but-unstarted slot, which {@link
+     * #testToolCallBatchTimeoutKeepsCompletedOutcomes()} cannot reach: both of its calls start
+     * because parallelism never exceeds the pool size. Here {@code num-async-threads = 1} is below
+     * {@code tool-call.parallelism = 2}, so while one slow tool holds the only worker past the
+     * deadline the second slot sits in the pool queue, and the timeout collector must cancel it in
+     * runtime/src/main/java21 ContinuationActionExecutor. Both slots are reported as timeout
+     * failures; whether the cancelled supplier is skipped by the JVM is an implementation detail
+     * the unit tests cover, not this e2e.
+     */
+    @Test
+    public void testToolCallBatchTimeoutCancelsQueuedButUnstartedSlots() throws Exception {
+        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
+        int javaVersion = Runtime.version().feature();
+        if (!continuationSupported || javaVersion < 21) {
+            System.out.println(
+                    "Skipping queued-slot batch timeout e2e: requires JDK 21+ Continuation execution");
+            return;
+        }
+
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<AsyncExecutionAgent.AsyncRequest> inputStream =
+                env.fromElements(new AsyncExecutionAgent.AsyncRequest(1, "tool-batch-queued-slot"));
+
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
+        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
+        // One pool thread under the parallelism budget keeps the second slot queued.
+        agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
+
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(
+                                inputStream, new AsyncExecutionAgent.AsyncRequestKeySelector())
+                        .apply(new AsyncExecutionAgent.ToolBatchQueuedSlotAgent())
+                        .toDataStream();
+
+        CloseableIterator<Object> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<String> outputList = new ArrayList<>();
+        while (results.hasNext()) {
+            outputList.add(results.next().toString());
+        }
+        results.close();
+
+        Assertions.assertEquals(1, outputList.size());
+        String output = outputList.get(0);
+
+        Assertions.assertTrue(
+                output.contains("execute failed") || output.toLowerCase().contains("timed out"),
+                "Both the running and the queued slow tool should fail at the batch deadline: "
+                        + output);
+        Assertions.assertFalse(
+                Pattern.compile("call=[12].*sleep_ms=150.*start=\\d+,end=\\d+", Pattern.DOTALL)
+                        .matcher(output)
+                        .find(),
+                "Neither slow tool should report a successful timed result: " + output);
     }
 
     /**

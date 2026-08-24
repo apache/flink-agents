@@ -318,7 +318,7 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
             )
         except _BatchTimeoutError as exception:
             executed = _collect_sliding_window_outcomes_on_timeout(
-                batch_futures, started, exception
+                batch_futures, exception
             )
         return self._ctx._finalize_batch_execution(
             self._calls, plan, started, executed
@@ -398,12 +398,11 @@ def _execute_sliding_window_batch(
 
 def _collect_sliding_window_outcomes_on_timeout(
     futures: list[Any | None],
-    started: list[bool],
     timeout_exception: BaseException,
 ) -> list[Outcome]:
     outcomes = []
-    for is_started, future in zip(started, futures, strict=True):
-        if not is_started or future is None:
+    for future in futures:
+        if future is None:
             outcomes.append(Outcome.failure(timeout_exception))
             continue
         if not future.done():
@@ -425,23 +424,6 @@ def _collect_outcomes(futures: list[Any]) -> list[Outcome]:
             outcomes.append(Outcome.success(future.result()))
         except Exception as e:  # noqa: PERF203
             outcomes.append(Outcome.failure(e))
-    return outcomes
-
-
-def _collect_outcomes_on_timeout(
-    futures: list[Any], timeout_exception: TimeoutError
-) -> list[Outcome]:
-    outcomes = []
-    for future in futures:
-        if not future.done():
-            future.cancel()
-        if future.done() and not future.cancelled():
-            try:
-                outcomes.append(Outcome.success(future.result()))
-            except Exception as e:
-                outcomes.append(Outcome.failure(e))
-        else:
-            outcomes.append(Outcome.failure(timeout_exception))
     return outcomes
 
 

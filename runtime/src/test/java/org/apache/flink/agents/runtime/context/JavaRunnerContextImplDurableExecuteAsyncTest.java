@@ -476,7 +476,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
         ((Configuration) context.getConfig()).set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4);
         Callable<String> slow =
                 () -> {
-                    Thread.sleep(300);
+                    Thread.sleep(150);
                     return "slow";
                 };
         TestDurableCallable<String> first =
@@ -503,6 +503,18 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
                         + third.getCallCount()
                         + fourth.getCallCount();
         assertEquals(2, totalCalls);
+        // The queued-but-unstarted slots were cancelled, so even after the two running
+        // workers finish and free their pool threads, the queued tool bodies never
+        // execute and get discarded before recovery re-runs them. Relies on the JVM
+        // skipping suppliers of cancelled CompletableFuture.supplyAsync tasks, which
+        // holds on OpenJDK but is not a spec guarantee.
+        Thread.sleep(200);
+        assertEquals(
+                2,
+                first.getCallCount()
+                        + second.getCallCount()
+                        + third.getCallCount()
+                        + fourth.getCallCount());
         List<CallResult> persisted =
                 context.getDurableExecutionContext().getActionState().getCallResults();
         // Started slots are persisted as timeout failures; the queued-but-never-started slots stay
@@ -721,7 +733,7 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
             List<Outcome<T>> results = new java.util.ArrayList<>(futures.size());
             for (int i = 0; i < futures.size(); i++) {
                 CompletableFuture<Outcome<T>> future = futures.get(i);
-                if (started.get(i) == 0 || future == null) {
+                if (future == null) {
                     results.add(Outcome.failure(timeoutException));
                     continue;
                 }

@@ -911,9 +911,15 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_sl
     # deterministically "started but unfinished" until the deadline, while the two
     # queued suppliers never begin.
     release = threading.Event()
+    executions: list[str] = []
 
     def blocking_call(value: str) -> str:
+        executions.append(value)
         release.wait(5)
+        return value
+
+    def queued_call(value: str) -> str:
+        executions.append(value)
         return value
 
     try:
@@ -922,14 +928,17 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_sl
                 [
                     _durable_call(blocking_call, "one"),
                     _durable_call(blocking_call, "two"),
-                    _durable_call(blocking_call, "three"),
-                    _durable_call(blocking_call, "four"),
+                    _durable_call(queued_call, "three"),
+                    _durable_call(queued_call, "four"),
                 ]
             )
         )
     finally:
         release.set()
         _close_runner_context(ctx)
+        # Give the pool a chance to pick up any work item that escaped
+        # cancellation; a retracted item stays absent from executions.
+        time.sleep(0.1)
 
     assert all(outcome.is_failure() for outcome in outcomes)
     statuses = [result.status for result in j_runner_context.call_results]
@@ -938,6 +947,9 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_sl
     # replaying a false failure.
     assert statuses.count("FAILED") == 2
     assert statuses.count("PENDING") == 2
+    # The queued suppliers were cancelled before running, so the tool bodies
+    # must never execute and get thrown away before recovery re-runs them.
+    assert sorted(executions) == ["one", "two"]
     assert j_runner_context.current_call_index == 4
 
 

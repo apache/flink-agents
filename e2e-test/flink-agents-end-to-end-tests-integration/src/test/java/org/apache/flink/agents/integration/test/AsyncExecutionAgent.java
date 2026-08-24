@@ -230,7 +230,7 @@ public class AsyncExecutionAgent {
                     "",
                     List.of(
                             timeoutToolCallWithSleep("call-1", requestId, 1, 0),
-                            timeoutToolCallWithSleep("call-2", requestId, 2, 800)));
+                            timeoutToolCallWithSleep("call-2", requestId, 2, 150)));
         }
     }
 
@@ -334,6 +334,118 @@ public class AsyncExecutionAgent {
     /** Chat model setup for max-parallelism in-flight e2e tests. */
     public static class ToolBatchMaxParallelismChatModel extends BaseChatModelSetup {
         public ToolBatchMaxParallelismChatModel(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
+    /**
+     * Chat connection that issues two slow tool calls, so a pool smaller than the batch parallelism
+     * keeps the second slot queued while the first holds the only worker past the batch deadline.
+     */
+    public static class ToolBatchQueuedSlotChatConnection extends BaseChatModelConnection {
+        public ToolBatchQueuedSlotChatConnection(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            ChatMessage lastMessage = messages.get(messages.size() - 1);
+            if (lastMessage.getRole() == MessageRole.TOOL) {
+                StringBuilder aggregated = new StringBuilder();
+                for (ChatMessage message : messages) {
+                    if (message.getRole() == MessageRole.TOOL) {
+                        if (aggregated.length() > 0) {
+                            aggregated.append('|');
+                        }
+                        aggregated.append(message.getContent());
+                    }
+                }
+                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+            }
+
+            String requestId = lastMessage.getContent();
+            return new ChatMessage(
+                    MessageRole.ASSISTANT,
+                    "",
+                    List.of(
+                            timeoutToolCallWithSleep("call-1", requestId, 1, 150),
+                            timeoutToolCallWithSleep("call-2", requestId, 2, 150)));
+        }
+    }
+
+    /**
+     * Agent that drives a two-tool batch against a pool with fewer threads than the parallelism
+     * budget, so one slot starts while the other stays queued when the batch deadline elapses.
+     */
+    public static class ToolBatchQueuedSlotAgent extends Agent {
+        @ChatModelConnection
+        public static ResourceDescriptor toolBatchQueuedSlotChatConnection() {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ToolBatchQueuedSlotChatConnection.class.getName())
+                    .build();
+        }
+
+        @ChatModelSetup
+        public static ResourceDescriptor toolBatchQueuedSlotChatModel() {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ToolBatchQueuedSlotChatModel.class.getName())
+                    .addInitialArgument("connection", "toolBatchQueuedSlotChatConnection")
+                    .addInitialArgument("model", "test-model")
+                    .addInitialArgument("tools", List.of("timed_tool_with_sleep"))
+                    .build();
+        }
+
+        @org.apache.flink.agents.api.annotation.Tool(
+                description = "Records timing for a tool call with configurable sleep.")
+        public static String timed_tool_with_sleep(
+                @ToolParam(name = "request_id") String requestId,
+                @ToolParam(name = "call_index") String callIndex,
+                @ToolParam(name = "sleep_ms") Integer sleepMs) {
+            long start = System.currentTimeMillis();
+            int sleepMillis = sleepMs != null ? sleepMs : 0;
+            if (sleepMillis > 0) {
+                try {
+                    Thread.sleep(sleepMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            long end = System.currentTimeMillis();
+            return String.format(
+                    "request=%s,call=%s,sleep_ms=%d,start=%d,end=%d",
+                    requestId, callIndex, sleepMillis, start, end);
+        }
+
+        @Action(EventType.InputEvent)
+        public static void requestTools(Event event, RunnerContext ctx) {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+            AsyncRequest request = (AsyncRequest) inputEvent.getInput();
+            ctx.sendEvent(
+                    new ChatRequestEvent(
+                            "toolBatchQueuedSlotChatModel",
+                            List.of(
+                                    new ChatMessage(
+                                            MessageRole.USER, String.valueOf(request.id)))));
+        }
+
+        @Action(EventType.ChatResponseEvent)
+        public static void emitToolTimings(Event event, RunnerContext ctx) {
+            ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+        }
+    }
+
+    /** Chat model setup for the queued-slot batch timeout e2e test. */
+    public static class ToolBatchQueuedSlotChatModel extends BaseChatModelSetup {
+        public ToolBatchQueuedSlotChatModel(
                 ResourceDescriptor descriptor, ResourceContext resourceContext) {
             super(descriptor, resourceContext);
         }
