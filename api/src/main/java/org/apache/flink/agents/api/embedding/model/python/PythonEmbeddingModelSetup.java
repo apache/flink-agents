@@ -137,7 +137,10 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", text);
         Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs);
-        return EmbeddingModelUtils.toSingleEmbeddingResult(result);
+        EmbeddingResult<float[]> embeddingResult =
+                EmbeddingModelUtils.toSingleEmbeddingResult(result);
+        recordTokenUsage(embeddingResult.getTokenUsage());
+        return embeddingResult;
     }
 
     @Override
@@ -150,7 +153,10 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", texts);
         Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs);
-        return EmbeddingModelUtils.toBatchEmbeddingResult(result);
+        EmbeddingResult<List<float[]>> embeddingResult =
+                EmbeddingModelUtils.toBatchEmbeddingResult(result);
+        recordTokenUsage(embeddingResult.getTokenUsage());
+        return embeddingResult;
     }
 
     @Override

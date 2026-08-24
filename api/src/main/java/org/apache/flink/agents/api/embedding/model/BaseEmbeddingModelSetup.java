@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.embedding.model;
 
+import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -94,7 +95,51 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
     }
 
     /**
+     * Record embedding token usage metrics for the given model on this setup's bound metric group.
+     *
+     * <p>Mirrors {@code BaseChatModelSetup#recordTokenMetrics} but records input-side tokens only,
+     * since embeddings have no completion tokens. Counters are placed under the same {@code model}
+     * key-value group used by chat metrics, so embedding and chat usage for a model share one
+     * dimension.
+     *
+     * <p>Unlike the chat path, embedding calls do not run inside a plan action that hands in a
+     * request-scoped metric group (vector-store, RAG, and direct calls reach this setup directly),
+     * so the resource-bound metric group injected via {@link #setMetricGroup} is used instead.
+     *
+     * @param modelName the name of the model used
+     * @param promptTokens the number of prompt tokens
+     * @param totalTokens the total number of tokens reported by the provider
+     */
+    public void recordTokenMetrics(String modelName, long promptTokens, long totalTokens) {
+        Preconditions.checkArgument(
+                modelName != null && !modelName.isBlank(),
+                "Model name must not be null or blank.");
+        FlinkAgentsMetricGroup metricGroup = getMetricGroup();
+        if (metricGroup == null) {
+            return;
+        }
+        FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", modelName);
+        modelGroup.getCounter("promptTokens").inc(promptTokens);
+        modelGroup.getCounter("totalTokens").inc(totalTokens);
+    }
+
+    /**
+     * Record the provider-reported embedding token usage, if any, onto this setup's bound metric
+     * group. Called from {@link #embedWithUsage} so direct calls and vector-store/RAG paths are
+     * both covered without each provider repeating the recording.
+     */
+    protected void recordTokenUsage(@Nullable EmbeddingTokenUsage tokenUsage) {
+        if (tokenUsage == null || model == null || model.isBlank()) {
+            return;
+        }
+        recordTokenMetrics(model, tokenUsage.getPromptTokens(), tokenUsage.getTotalTokens());
+    }
+
+    /**
      * Generate embeddings for the given text.
+     *
+     * <p>Token usage metrics are only recorded by {@link #embedWithUsage}; this method discards
+     * provider usage because it is not returned.
      *
      * @param text The input text to generate embeddings for
      * @return An array of floating-point values representing the text embeddings
@@ -117,7 +162,9 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
         BaseEmbeddingModelConnection currentConnection = getConnection();
-        return currentConnection.embedWithUsage(text, params);
+        EmbeddingResult<float[]> result = currentConnection.embedWithUsage(text, params);
+        recordTokenUsage(result.getTokenUsage());
+        return result;
     }
 
     /**
@@ -146,6 +193,8 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
         Map<String, Object> params = this.getParameters();
         params.putAll(parameters);
         BaseEmbeddingModelConnection currentConnection = getConnection();
-        return currentConnection.embedWithUsage(texts, params);
+        EmbeddingResult<List<float[]>> result = currentConnection.embedWithUsage(texts, params);
+        recordTokenUsage(result.getTokenUsage());
+        return result;
     }
 }
