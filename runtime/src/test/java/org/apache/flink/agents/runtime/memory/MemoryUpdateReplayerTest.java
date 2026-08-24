@@ -78,6 +78,20 @@ public class MemoryUpdateReplayerTest {
     }
 
     @Test
+    void testReplayLoneNewObjectPreservesEmptyNestedObject() throws Exception {
+        // An action that only creates an object (no child writes) must replay to an empty
+        // nested object, not a null value leaf.
+        List<MemoryUpdate> updates = recordUpdates(memory -> memory.newObject("empty"));
+
+        MemoryObject restored = freshMemory(new LinkedList<>());
+        MemoryUpdateReplayer.replay(restored, updates);
+
+        assertThat(restored.get("empty").isNestedObject()).isTrue();
+        assertThat(restored.get("empty").getFieldNames()).isEmpty();
+        assertThat(restored.get("empty").getValue()).isNull();
+    }
+
+    @Test
     void testReplayNewObjectOverExistingObjectFromRestoredCheckpoint() throws Exception {
         List<MemoryUpdate> updates =
                 recordUpdates(

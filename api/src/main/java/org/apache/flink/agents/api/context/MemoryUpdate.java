@@ -59,6 +59,13 @@ public class MemoryUpdate implements Serializable {
             @JsonProperty("path") String path,
             @JsonProperty("value") Object value,
             @JsonProperty("objectCreation") boolean objectCreation) {
+        if (objectCreation && value != null) {
+            throw new IllegalArgumentException(
+                    "An object-creation update cannot carry a value, but got one for path '"
+                            + path
+                            + "': "
+                            + value);
+        }
         this.path = path;
         this.value = value;
         this.objectCreation = objectCreation;
