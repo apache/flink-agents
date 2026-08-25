@@ -255,3 +255,27 @@ def test_native_strategy_forces_native_regardless_of_capability() -> None:
 def test_prompt_strategy_never_resolves_to_native() -> None:
     """PROMPT never resolves to native even when the model is capable."""
     assert StructuredOutputStrategy.PROMPT.resolves_to_native(True) is False
+
+
+def test_connection_rejects_unrecognized_constructor_argument() -> None:
+    """An unknown/misspelled constructor argument must raise, not be dropped.
+
+    Regression test: BaseChatModelConnection previously inherited pydantic's
+    default extra="ignore" behavior, so a caller who mistyped a config key (or
+    passed a key that only exists on a different language's implementation)
+    saw no error and no effect -- the value was silently discarded.
+    """
+    with pytest.raises(ValidationError, match="not_a_real_field"):
+        _RecordingConnection(not_a_real_field="oops")
+
+
+def test_connection_accepts_name_without_storing_it() -> None:
+    """`name` is accepted, since callers commonly pass it, but not stored."""
+    connection = _RecordingConnection(name="my-connection")
+    assert "name" not in connection.model_dump()
+
+
+def test_setup_rejects_unrecognized_constructor_argument() -> None:
+    """Same guarantee as the connection, for BaseChatModelSetup."""
+    with pytest.raises(ValidationError, match="not_a_real_field"):
+        _RecordingChatModelSetup(connection="c", model="m", not_a_real_field="oops")

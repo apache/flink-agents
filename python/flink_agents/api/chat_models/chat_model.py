@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, ClassVar, Dict, List, Mapping, Sequence, Tuple, cast
 
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import ConfigDict, Field, PrivateAttr, field_validator
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -114,6 +114,17 @@ class BaseChatModelConnection(Resource, ABC):
 
     One connection can be shared in multiple chat model setup.
     """
+
+    # Reject unrecognized constructor arguments instead of silently ignoring them
+    # (pydantic's default extra="ignore"), so a misspelled or unsupported config
+    # key fails loudly at construction time instead of appearing to apply and
+    # then having no effect. `name` is declared below purely so the resource
+    # name callers and the resource provider commonly pass through survives
+    # this check; it is not otherwise used by this class.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    name: str | None = Field(
+        default=None, exclude=True, description="Optional resource name."
+    )
 
     @classmethod
     @override
@@ -278,6 +289,12 @@ class BaseChatModelSetup(Resource):
     Different chat model setups can share the same chat model connection and contains
     different chat configurations.
     """
+
+    # See BaseChatModelConnection.model_config for rationale.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+    name: str | None = Field(
+        default=None, exclude=True, description="Optional resource name."
+    )
 
     connection: str = Field(description="The referenced connection name.")
     model: str = Field(description="Name of the chat model to use.")
