@@ -112,7 +112,7 @@ public class ElasticsearchVectorStore extends BaseVectorStore
 
     /** Default vector dimensionality used when {@code dims} is not provided. */
     public static final int DEFAULT_DIMENSION = 768;
-    /** The maximum number of documents that can be retrieved in get. */
+    /** Default request size used by {@code get} when no limit is provided. */
     public static final int MAX_RESULT_WINDOW = 10000;
 
     public static final String DEFAULT_METADATA_FIELD = "_metadata";
@@ -348,10 +348,12 @@ public class ElasticsearchVectorStore extends BaseVectorStore
      * extraArgs}; when both forms are present, they are combined with AND semantics.
      *
      * <p>The {@code limit} parameter takes precedence over a {@code limit} value in {@code
-     * extraArgs}. If neither is provided, up to {@link ElasticsearchVectorStore#MAX_RESULT_WINDOW}
-     * documents are returned. This is the Elasticsearch result-window ceiling: the combined {@code
-     * offset} and {@code limit} must not exceed it; an explicit limit above it is rejected by
-     * Elasticsearch rather than truncated. {@code extraArgs} may also contain an {@code offset}.
+     * extraArgs}. If neither limit is provided, the request size defaults to {@link
+     * ElasticsearchVectorStore#MAX_RESULT_WINDOW} (10,000). The effective Elasticsearch
+     * result-window limit is controlled by the target index's {@code index.max_result_window}
+     * setting, which defaults to 10,000 but is configurable. Elasticsearch rejects requests when
+     * the combined {@code offset} and request size exceed that setting rather than truncating them.
+     * {@code extraArgs} may also contain an {@code offset}.
      *
      * @param ids The IDs of documents to retrieve directly.
      * @param collection The collection name, or null to use the default collection.
