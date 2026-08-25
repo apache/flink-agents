@@ -49,11 +49,19 @@ public class ActionStateUtil {
                     .build();
     private static final String KEY_SEPARATOR = "_";
 
-    // Composite key layout: keyGroup_businessKey_seqNum_eventUUID_actionUUID.
+    // Composite key layout: keyGroup_seqNum_eventUUID_actionUUID_businessKey.
+    //
+    // Every fixed field before the business key (key-group, seq-num, and the two UUIDs) is
+    // guaranteed to be free of KEY_SEPARATOR, and the business key — the only caller-supplied,
+    // variable-length field — is placed LAST. Parsing therefore splits with a fixed limit so the
+    // final segment keeps the business key intact even when it contains the separator, e.g.
+    // "tenant_user". No escaping is required and the segment count is always exact.
     private static final int KEY_GROUP_SEGMENT = 0;
-    private static final int BUSINESS_KEY_SEGMENT = 1;
-    private static final int SEQ_NUM_SEGMENT = 2;
-    private static final int KEY_SEGMENT_COUNT = 5;
+    private static final int SEQ_NUM_SEGMENT = 1;
+    private static final int EVENT_UUID_SEGMENT = 2;
+    private static final int ACTION_UUID_SEGMENT = 3;
+    private static final int BUSINESS_KEY_SEGMENT = 4;
+    static final int KEY_SEGMENT_COUNT = 5;
 
     public static String generateKey(
             @Nonnull Object key,
@@ -74,63 +82,69 @@ public class ActionStateUtil {
         return String.join(
                 KEY_SEPARATOR,
                 String.valueOf(keyGroup),
-                key.toString(),
                 String.valueOf(seqNum),
                 generateUUIDForEvent(event),
-                generateUUIDForAction(action));
-    }
-
-    public static List<String> parseKey(String key) {
-        Preconditions.checkNotNull(key, "key cannot be null.");
-        String[] parts = key.split(KEY_SEPARATOR);
-        Preconditions.checkArgument(parts.length == KEY_SEGMENT_COUNT, "Invalid key format.");
-        return List.of(parts);
+                generateUUIDForAction(action),
+                key.toString());
     }
 
     /**
-     * Extracts the key-group from a composite state key. The key-group is the first segment and was
-     * computed from the original typed key via {@link KeyGroupRangeAssignment#assignToKeyGroup}.
-     * Rejects keys without the expected segment layout, including keys written in the pre-key-group
-     * 4-segment format.
+     * Parses a composite state key into its semantic fields, in the order {@code [keyGroup,
+     * seqNum, eventUUID, actionUUID, businessKey]}. Throws when {@code key} is not in the current
+     * format.
+     */
+    public static List<String> parseKey(String key) {
+        Preconditions.checkNotNull(key, "key cannot be null.");
+        String[] parts = splitValidatedKey(key);
+        Preconditions.checkArgument(parts != null, "Invalid key format.");
+        return List.of(
+                parts[KEY_GROUP_SEGMENT],
+                parts[SEQ_NUM_SEGMENT],
+                parts[EVENT_UUID_SEGMENT],
+                parts[ACTION_UUID_SEGMENT],
+                parts[BUSINESS_KEY_SEGMENT]);
+    }
+
+    /**
+     * Extracts the key-group from a composite state key. The key-group was computed from the
+     * original typed key via {@link KeyGroupRangeAssignment#assignToKeyGroup}. Throws when {@code
+     * key} is not in the current format.
      */
     public static int parseKeyGroup(String key) {
         Preconditions.checkNotNull(key, "key cannot be null.");
-        String[] parts = key.split(KEY_SEPARATOR);
-        Preconditions.checkArgument(parts.length == KEY_SEGMENT_COUNT, "Invalid key format.");
+        String[] parts = splitValidatedKey(key);
+        Preconditions.checkArgument(parts != null, "Invalid key format.");
         return Integer.parseInt(parts[KEY_GROUP_SEGMENT]);
     }
 
     /**
-     * Returns {@code true} when {@code stateKey} has the expected segment layout and its
-     * business-key segment equals {@code businessKey}. Comparison is segment-exact; substring
-     * matching is deliberately avoided because a numeric business key can collide with another
-     * record's sequence-number segment.
+     * Returns {@code true} when {@code stateKey} is in the current format and its business-key
+     * segment equals {@code businessKey}. The business key occupies its own trailing segment, so
+     * the comparison is exact and cannot collide with another record's numeric segments.
      */
     public static boolean matchesBusinessKey(String stateKey, Object businessKey) {
-        String[] parts = stateKey.split(KEY_SEPARATOR);
-        return parts.length == KEY_SEGMENT_COUNT
-                && parts[BUSINESS_KEY_SEGMENT].equals(businessKey.toString());
+        String[] parts = splitValidatedKey(stateKey);
+        return parts != null && parts[BUSINESS_KEY_SEGMENT].equals(businessKey.toString());
     }
 
     /** Like {@link #matchesBusinessKey} with an additional exact sequence-number segment match. */
     public static boolean matchesBusinessKeyAndSeqNum(
             String stateKey, Object businessKey, long seqNum) {
-        String[] parts = stateKey.split(KEY_SEPARATOR);
-        return parts.length == KEY_SEGMENT_COUNT
+        String[] parts = splitValidatedKey(stateKey);
+        return parts != null
                 && parts[BUSINESS_KEY_SEGMENT].equals(businessKey.toString())
                 && parts[SEQ_NUM_SEGMENT].equals(String.valueOf(seqNum));
     }
 
     /**
      * Like {@link #matchesBusinessKey} with an additional predicate over the parsed sequence-number
-     * segment. Returns {@code false} for keys that cannot be attributed (malformed layout or
-     * unparsable sequence number): never prune what cannot be attributed.
+     * segment. Returns {@code false} for keys that cannot be attributed (not the current format or
+     * an unparsable sequence number): never prune what cannot be attributed.
      */
     public static boolean matchesBusinessKeyWithSeqNum(
             String stateKey, Object businessKey, LongPredicate seqNumFilter) {
-        String[] parts = stateKey.split(KEY_SEPARATOR);
-        if (parts.length != KEY_SEGMENT_COUNT
-                || !parts[BUSINESS_KEY_SEGMENT].equals(businessKey.toString())) {
+        String[] parts = splitValidatedKey(stateKey);
+        if (parts == null || !parts[BUSINESS_KEY_SEGMENT].equals(businessKey.toString())) {
             return false;
         }
         try {
@@ -146,45 +160,61 @@ public class ActionStateUtil {
      * ownership filter. A {@code null} filter retains every key (the default for in-memory and test
      * backends).
      *
-     * <p>Keys without the expected 5-segment layout — including records written in the
-     * pre-key-group 4-segment format — have UNKNOWN ownership: they cannot be attributed to a
-     * key-group, so they are retained in every subtask rather than dropped. This preserves durable
-     * state across a key-group upgrade at the cost of a bounded, one-time memory amplification for
-     * the legacy recovery tail, which ages out once a new checkpoint marker advances past those
-     * records. Lookups still find such records via {@link #legacyKeyOf}. A 5-segment key whose
-     * key-group segment fails to parse is likewise retained as a fail-safe.
+     * <p>A key that does not have the expected segment count — or whose key-group segment cannot
+     * be parsed — is dropped rather than retained: it cannot be attributed to a key-group, so
+     * keeping it in every subtask would leak orphan state. This is safe because the project does
+     * not preserve pre-format durable state.
      */
     public static boolean isKeyRetained(@Nullable IntPredicate ownershipFilter, String stateKey) {
         if (ownershipFilter == null) {
             return true;
         }
-        String[] parts = stateKey.split(KEY_SEPARATOR);
-        if (parts.length != KEY_SEGMENT_COUNT) {
-            return true;
+        String[] parts = splitValidatedKey(stateKey);
+        if (parts == null) {
+            LOG.warn(
+                    "Dropping state key with unrecognized format during ownership filtering: {}",
+                    stateKey);
+            return false;
         }
         try {
             return ownershipFilter.test(Integer.parseInt(parts[KEY_GROUP_SEGMENT]));
         } catch (NumberFormatException e) {
             LOG.warn(
-                    "Failed to parse key-group from state key for ownership filtering; retaining"
-                            + " as fail-safe: {}",
+                    "Dropping state key with unparsable key-group during ownership filtering: {}",
                     stateKey,
                     e);
-            return true;
+            return false;
         }
     }
 
     /**
-     * Returns the pre-key-group 4-segment form of a current 5-segment {@code stateKey} by dropping
-     * its leading key-group segment. Used as a lookup fallback so durable state written before the
-     * key-group upgrade — which has no key-group prefix but an otherwise identical
-     * businessKey/seqNum/eventUUID/actionUUID tail — is still found and not re-executed. Returns
-     * the key unchanged when it has no separator.
+     * Returns the business-key segment of {@code stateKey}, or {@code null} when {@code stateKey}
+     * is not in the current format. The returned value preserves separators inside the business
+     * key.
      */
-    public static String legacyKeyOf(String stateKey) {
+    @Nullable
+    public static String businessKeyOf(String stateKey) {
         Preconditions.checkNotNull(stateKey, "stateKey cannot be null.");
-        int firstSeparator = stateKey.indexOf(KEY_SEPARATOR);
-        return firstSeparator < 0 ? stateKey : stateKey.substring(firstSeparator + 1);
+        String[] parts = splitValidatedKey(stateKey);
+        return parts == null ? null : parts[BUSINESS_KEY_SEGMENT];
+    }
+
+    /**
+     * Splits and validates a composite state key. Returns its {@link #KEY_SEGMENT_COUNT} segments
+     * when {@code key} has the expected segment count, or {@code null} otherwise. The split is
+     * bounded so the trailing business-key segment is returned intact even when it contains {@link
+     * #KEY_SEPARATOR}.
+     */
+    @Nullable
+    private static String[] splitValidatedKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        String[] parts = key.split(KEY_SEPARATOR, KEY_SEGMENT_COUNT);
+        if (parts.length != KEY_SEGMENT_COUNT) {
+            return null;
+        }
+        return parts;
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {

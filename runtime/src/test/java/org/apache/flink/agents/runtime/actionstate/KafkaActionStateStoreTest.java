@@ -97,7 +97,7 @@ public class KafkaActionStateStoreTest {
         assertEquals(1, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(record.key()).contains("_" + TEST_KEY + "_1");
+        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L)).isTrue();
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
@@ -238,7 +238,7 @@ public class KafkaActionStateStoreTest {
         assertEquals(2, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(record.key()).contains("_" + TEST_KEY + "_1");
+        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L)).isTrue();
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
@@ -379,14 +379,13 @@ public class KafkaActionStateStoreTest {
     }
 
     /**
-     * Records whose composite state key does not have the current 5-segment layout — including
-     * records written in the pre-key-group 4-segment format — have UNKNOWN ownership and are
-     * retained in every subtask during rebuild (rather than dropped), even when the ownership
-     * filter would reject other key-groups. This preserves durable state across a key-group
-     * upgrade; such records age out of the recovery tail after the next checkpoint.
+     * Records whose composite state key is not in the current format — including records written
+     * before the format change and otherwise malformed keys — cannot be attributed to a key-group
+     * and are dropped during rebuild rather than retained in every subtask. This closes the
+     * orphan-state leak; the project does not preserve pre-format durable state.
      */
     @Test
-    void testRebuildStateKeepsLegacyFormatKeysAsUnknownOwnership() throws Exception {
+    void testRebuildStateDropsUnrecognizedFormatKeys() throws Exception {
         String legacyKey = TEST_KEY + "_1_event-uuid_action-uuid";
         String malformedKey = "malformed-key";
         String stateKeyA =
@@ -407,33 +406,17 @@ public class KafkaActionStateStoreTest {
         actionStateStore.rebuildState(recoveryMarkers);
 
         assertThat(actionStates).containsKey(stateKeyA);
-        assertThat(actionStates).containsKey(legacyKey);
-        assertThat(actionStates).containsKey(malformedKey);
+        assertThat(actionStates).doesNotContainKey(legacyKey);
+        assertThat(actionStates).doesNotContainKey(malformedKey);
     }
 
     /**
-     * A record written before the key-group upgrade is stored under the 4-segment key (the current
-     * key without its key-group prefix). {@code get()} must still find it via the legacy fallback
-     * so the durable action is not re-executed after an upgrade.
+     * A well-formed (5-segment) key whose key-group segment is not numeric cannot be attributed to
+     * a key-group and is dropped during rebuild.
      */
     @Test
-    void testGetFindsLegacyFormatRecordViaFallback() throws Exception {
-        String currentKey =
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
-        String legacyKey = ActionStateUtil.legacyKeyOf(currentKey);
-        actionStates.put(legacyKey, testActionState);
-
-        assertThat(actionStateStore.get(TEST_KEY, 1L, testAction, testEvent))
-                .isEqualTo(testActionState);
-    }
-
-    /**
-     * A 5-segment key whose key-group segment fails to parse is retained as a fail-safe (prefer
-     * keeping a possibly-valid current-format key over dropping it on a parse error).
-     */
-    @Test
-    void testRebuildStateKeepsCurrentFormatKeyWithUnparseableKeyGroup() throws Exception {
-        String unparseableGroupKey = "not-a-number_key_1_event-uuid_action-uuid";
+    void testRebuildStateDropsKeyWithUnparsableKeyGroup() throws Exception {
+        String unparseableGroupKey = "not-a-number_1_event-uuid_action-uuid_bkey";
         String stateKeyA =
                 ActionStateUtil.generateKey("A", 1L, testAction, testEvent, MAX_PARALLELISM);
 
@@ -451,7 +434,7 @@ public class KafkaActionStateStoreTest {
         actionStateStore.rebuildState(recoveryMarkers);
 
         assertThat(actionStates).containsKey(stateKeyA);
-        assertThat(actionStates).containsKey(unparseableGroupKey);
+        assertThat(actionStates).doesNotContainKey(unparseableGroupKey);
     }
 
     /** Contract: the consumer is closed even when closing the producer throws. */

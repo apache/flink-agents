@@ -130,14 +130,14 @@ public class ActionStateUtilTest {
         // Parse the generated key
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        // Verify the parsed components
+        // Verify the parsed components: [keyGroup, seqNum, eventUUID, actionUUID, businessKey]
         assertEquals(5, parsedParts.size());
         assertTrue(Integer.parseInt(parsedParts.get(0)) >= 0); // keyGroup
-        assertEquals(key.toString(), parsedParts.get(1));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
-        // The fourth and fifth parts are UUIDs - just verify they're non-empty
+        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
+        // The event and action UUID segments are non-empty.
+        assertTrue(parsedParts.get(2).length() > 0);
         assertTrue(parsedParts.get(3).length() > 0);
-        assertTrue(parsedParts.get(4).length() > 0);
+        assertEquals(key.toString(), parsedParts.get(4));
     }
 
     @Test
@@ -153,8 +153,8 @@ public class ActionStateUtilTest {
                         originalKey, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        assertEquals(originalKey.toString(), parsedParts.get(1));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
+        assertEquals(originalKey.toString(), parsedParts.get(4));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
     }
 
     @Test
@@ -168,21 +168,21 @@ public class ActionStateUtilTest {
 
     @Test
     public void testParseKeyWithInvalidFormat() {
-        // Test with too few parts
+        // Too few segments.
         assertThrows(
                 IllegalArgumentException.class,
                 () -> {
                     ActionStateUtil.parseKey("only_three_parts");
                 });
 
-        // Test with too many parts
+        // Still one segment short of the required count.
         assertThrows(
                 IllegalArgumentException.class,
                 () -> {
-                    ActionStateUtil.parseKey("one_two_three_four_five_six");
+                    ActionStateUtil.parseKey("one_two_three_four");
                 });
 
-        // Test with empty string
+        // Empty string.
         assertThrows(
                 IllegalArgumentException.class,
                 () -> {
@@ -202,8 +202,8 @@ public class ActionStateUtilTest {
                 ActionStateUtil.generateKey(key, seqNum, action, inputEvent, MAX_PARALLELISM);
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        assertEquals(key.toString(), parsedParts.get(1));
-        assertEquals(String.valueOf(seqNum), parsedParts.get(2));
+        assertEquals(key.toString(), parsedParts.get(4));
+        assertEquals(String.valueOf(seqNum), parsedParts.get(1));
     }
 
     @Test
@@ -218,13 +218,13 @@ public class ActionStateUtilTest {
         List<String> parsed1 = ActionStateUtil.parseKey(key1);
         List<String> parsed2 = ActionStateUtil.parseKey(key2);
 
-        // Keys should be different
-        assertNotEquals(parsed1.get(1), parsed2.get(1));
-        assertNotEquals(parsed1.get(2), parsed2.get(2));
+        // Business keys and sequence numbers differ.
+        assertNotEquals(parsed1.get(4), parsed2.get(4)); // businessKey
+        assertNotEquals(parsed1.get(1), parsed2.get(1)); // seqNum
 
         // But event and action UUIDs should be the same (same event and action)
-        assertEquals(parsed1.get(3), parsed2.get(3)); // Event UUID
-        assertEquals(parsed1.get(4), parsed2.get(4)); // Action UUID
+        assertEquals(parsed1.get(2), parsed2.get(2)); // Event UUID
+        assertEquals(parsed1.get(3), parsed2.get(3)); // Action UUID
     }
 
     @Test
@@ -251,39 +251,43 @@ public class ActionStateUtilTest {
     }
 
     @Test
-    public void testIsKeyRetainedKeepsLegacyFormatKeys() {
-        // Records written in the pre-key-group 4-segment format cannot be attributed to a
-        // key-group, so they have UNKNOWN ownership and are retained in every subtask (rather than
-        // dropped) to preserve durable state across a key-group upgrade. A filter that rejects
-        // every key-group still keeps them; lookups reach them via ActionStateUtil.legacyKeyOf.
-        String legacyKey = "test-key_1_event-uuid_action-uuid";
-        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, legacyKey));
-        assertTrue(ActionStateUtil.isKeyRetained(kg -> false, "malformed-key"));
+    public void testIsKeyRetainedDropsUnrecognizedFormatKeys() {
+        // Keys that do not have the current segment count cannot be attributed to a key-group, so
+        // they are dropped during ownership filtering rather than retained in every subtask. This
+        // closes the orphan-state leak; the project does not preserve pre-format durable state.
+        assertFalse(
+                ActionStateUtil.isKeyRetained(kg -> true, "test-key_1_event-uuid_action-uuid"));
+        assertFalse(ActionStateUtil.isKeyRetained(kg -> true, "malformed-key"));
     }
 
     @Test
-    public void testLegacyKeyOfStripsKeyGroupPrefix() throws Exception {
-        Object key = "legacy-lookup";
-        Action action = new NoOpAction("legacy-action");
-        InputEvent event = new InputEvent("legacy-input");
-        String currentKey = ActionStateUtil.generateKey(key, 3, action, event, MAX_PARALLELISM);
-
-        // The legacy form is the current key without its leading key-group segment, i.e. the
-        // 4-segment businessKey_seqNum_eventUUID_actionUUID that pre-key-group writers produced.
-        List<String> parts = ActionStateUtil.parseKey(currentKey);
-        String expectedLegacy =
-                String.join("_", parts.get(1), parts.get(2), parts.get(3), parts.get(4));
-        assertEquals(expectedLegacy, ActionStateUtil.legacyKeyOf(currentKey));
-        // A key without a separator is returned unchanged.
-        assertEquals("noseparator", ActionStateUtil.legacyKeyOf("noseparator"));
-    }
-
-    @Test
-    public void testIsKeyRetainedKeepsCurrentFormatKeyWithUnparseableKeyGroup() {
-        // A 5-segment key whose key-group segment fails to parse is retained as a fail-safe.
-        assertTrue(
+    public void testIsKeyRetainedDropsKeyWithUnparsableKeyGroup() {
+        // A well-formed (5-segment) key whose key-group segment is not numeric cannot be
+        // attributed to a key-group and is dropped.
+        assertFalse(
                 ActionStateUtil.isKeyRetained(
-                        kg -> false, "not-a-number_key_1_event-uuid_action-uuid"));
+                        kg -> true, "not-a-number_1_event-uuid_action-uuid_bkey"));
+    }
+
+    @Test
+    public void testBusinessKeyContainingSeparatorIsHandled() throws Exception {
+        // A business key containing the separator (e.g. "tenant_user") must still round-trip and
+        // be attributable, because it occupies the trailing segment of the composite key. This is
+        // the exact case that broke the previous segment-count parsing.
+        Object businessKey = "tenant_user";
+        Action action = new NoOpAction("underscore-action");
+        InputEvent event = new InputEvent("underscore-input");
+        String stateKey =
+                ActionStateUtil.generateKey(businessKey, 3, action, event, MAX_PARALLELISM);
+
+        assertEquals("tenant_user", ActionStateUtil.businessKeyOf(stateKey));
+        assertEquals("tenant_user", ActionStateUtil.parseKey(stateKey).get(4));
+        assertTrue(ActionStateUtil.matchesBusinessKey(stateKey, businessKey));
+        assertTrue(ActionStateUtil.matchesBusinessKeyAndSeqNum(stateKey, businessKey, 3));
+
+        int ownedKeyGroup = ActionStateUtil.parseKeyGroup(stateKey);
+        assertTrue(ActionStateUtil.isKeyRetained(kg -> kg == ownedKeyGroup, stateKey));
+        assertFalse(ActionStateUtil.isKeyRetained(kg -> kg != ownedKeyGroup, stateKey));
     }
 
     @Test

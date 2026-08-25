@@ -175,21 +175,6 @@ public class FlussActionStateStoreTest {
         assertThat(actionStates).containsKey(otherKeyNewerState);
     }
 
-    /**
-     * A record written before the key-group upgrade is stored under the 4-segment key (the current
-     * key without its key-group prefix). {@code get()} must still find it via the legacy fallback
-     * so the durable action is not re-executed after an upgrade.
-     */
-    @Test
-    void testGetFindsLegacyFormatRecordViaFallback() throws Exception {
-        String currentKey =
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
-        String legacyKey = ActionStateUtil.legacyKeyOf(currentKey);
-        actionStates.put(legacyKey, testActionState);
-
-        assertThat(store.get(TEST_KEY, 1L, testAction, testEvent)).isEqualTo(testActionState);
-    }
-
     // ==================== rebuildState tests ====================
 
     @Test
