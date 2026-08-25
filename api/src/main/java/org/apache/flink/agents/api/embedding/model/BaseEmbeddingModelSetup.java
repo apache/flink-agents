@@ -112,8 +112,7 @@ public abstract class BaseEmbeddingModelSetup extends Resource {
      */
     public void recordTokenMetrics(String modelName, long promptTokens, long totalTokens) {
         Preconditions.checkArgument(
-                modelName != null && !modelName.isBlank(),
-                "Model name must not be null or blank.");
+                modelName != null && !modelName.isBlank(), "Model name must not be null or blank.");
         FlinkAgentsMetricGroup metricGroup = getMetricGroup();
         if (metricGroup == null) {
             return;

@@ -311,8 +311,7 @@ class BaseEmbeddingModelSetupTokenMetricsTest {
 
         assertThrows(
                 IllegalArgumentException.class, () -> setup.recordTokenMetrics(null, 100, 210));
-        assertThrows(
-                IllegalArgumentException.class, () -> setup.recordTokenMetrics("", 100, 210));
+        assertThrows(IllegalArgumentException.class, () -> setup.recordTokenMetrics("", 100, 210));
         assertThrows(
                 IllegalArgumentException.class, () -> setup.recordTokenMetrics("   ", 100, 210));
     }
