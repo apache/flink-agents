@@ -119,9 +119,9 @@ public class PythonActionExecutor {
     /**
      * Execute the Python function, which may return a Python coroutine (awaitable) that needs to be
      * processed in the future. Due to an issue in Pemja regarding incorrect object reference
-     * counting, this may lead to garbage collection of the object. To prevent this, we use the set
-     * and get methods to manually increment the object's reference count, then return the name of
-     * the Python awaitable variable.
+     * counting, this may lead to garbage collection of the object. To prevent this, we store the
+     * awaitable in the interpreter globals, then return the name of that variable. The temporary
+     * Java wrapper can be closed after the interpreter takes ownership of its own reference.
      *
      * @return The name of the Python awaitable variable. It may be null if the Python function does
      *     not return a coroutine.
@@ -131,10 +131,10 @@ public class PythonActionExecutor {
         function.setInterpreter(interpreter);
 
         String eventJson = new ObjectMapper().writeValueAsString(event);
-        Object pythonEventObject = interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
-
-        try {
-            Object calledResult = function.call(pythonEventObject, pythonRunnerContext);
+        try (PyObject pythonEventObject =
+                        (PyObject) interpreter.invoke(CONVERT_JSON_TO_PYTHON_EVENT, eventJson);
+                PyObject calledResult =
+                        (PyObject) function.call(pythonEventObject, pythonRunnerContext)) {
             if (calledResult == null) {
                 return null;
             } else {
@@ -189,16 +189,21 @@ public class PythonActionExecutor {
      *     interpreter's context
      * @return true if the awaitable has completed; false otherwise
      */
-    public boolean callPythonAwaitable(String pythonAwaitableRef) {
+    public boolean callPythonAwaitable(String pythonAwaitableRef) throws Exception {
         // Calling awaitable.send(None) in Python returns a tuple of (finished, output).
-        Object pythonAwaitable = interpreter.get(pythonAwaitableRef);
-        checkState(
-                pythonAwaitable != null,
-                "Python awaitable '%s' not found in interpreter. ",
-                pythonAwaitableRef);
-        Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
-        checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
-        return (boolean) ((Object[]) invokeResult)[0];
+        try (PyObject pythonAwaitable = (PyObject) interpreter.get(pythonAwaitableRef)) {
+            checkState(
+                    pythonAwaitable != null,
+                    "Python awaitable '%s' not found in interpreter.",
+                    pythonAwaitableRef);
+            Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
+            checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
+            boolean finished = (boolean) ((Object[]) invokeResult)[0];
+            if (finished) {
+                interpreter.exec("del " + pythonAwaitableRef);
+            }
+            return finished;
+        }
     }
 
     public void close() throws Exception {
