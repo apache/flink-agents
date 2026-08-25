@@ -64,7 +64,7 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.Backe
  * durable execution is enabled.
  *
  * <p>Lifecycle: instantiated in the operator constructor. {@link
- * #maybeInitActionStateStore(AgentConfiguration)} runs from BOTH the operator's {@code
+ * #maybeInitActionStateStore(AgentConfiguration, int)} runs from BOTH the operator's {@code
  * initializeState()} and {@code open()} — recovery requires the store to be configured before
  * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} reads from it, and the {@code open()}
  * call ensures the store is also available on the normal (non-recovery) path. The method creates a
@@ -96,7 +96,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     /**
      * @param actionStateStore an optional pre-injected store, primarily for tests. When {@code
-     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration)} may create a default store
+     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration, int)} may create a default store
      *     based on configuration; otherwise durable execution is disabled.
      */
     DurableExecutionManager(@Nullable ActionStateStore actionStateStore) {
@@ -115,27 +115,16 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      *
      * @param config the agent configuration carrying the backend selection.
      */
-    void maybeInitActionStateStore(AgentConfiguration config) {
+    void maybeInitActionStateStore(AgentConfiguration config, int maxParallelism) {
         if (actionStateStore == null) {
             String backend = config.get(ACTION_STATE_STORE_BACKEND);
             if (KAFKA.getType().equalsIgnoreCase(backend)) {
                 LOG.info("Using Kafka as backend of action state store.");
-                actionStateStore = new KafkaActionStateStore(config);
+                actionStateStore = new KafkaActionStateStore(config, maxParallelism);
             } else if (FLUSS.getType().equalsIgnoreCase(backend)) {
                 LOG.info("Using Fluss as backend of action state store.");
-                actionStateStore = new FlussActionStateStore(config);
+                actionStateStore = new FlussActionStateStore(config, maxParallelism);
             }
-        }
-    }
-
-    /**
-     * Sets the maximum parallelism on the underlying action state store so that key-groups are
-     * computed consistently with Flink's key-group assignment when generating action-state record
-     * keys.
-     */
-    void setMaxParallelism(int maxParallelism) {
-        if (actionStateStore != null) {
-            actionStateStore.setMaxParallelism(maxParallelism);
         }
     }
 

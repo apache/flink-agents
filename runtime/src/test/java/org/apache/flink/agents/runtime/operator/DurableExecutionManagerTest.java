@@ -54,7 +54,7 @@ class DurableExecutionManagerTest {
     void noStoreModeMakesAllMaybeOperationsNoOp() throws Exception {
         DurableExecutionManager dem = new DurableExecutionManager(null);
         // No ACTION_STATE_STORE_BACKEND set → no default store should be created.
-        dem.maybeInitActionStateStore(new AgentConfiguration());
+        dem.maybeInitActionStateStore(new AgentConfiguration(), 128);
 
         assertThat(dem.hasDurableStore()).isFalse();
         assertThat(dem.getActionStateStore()).isNull();

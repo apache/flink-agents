@@ -111,7 +111,7 @@ public class FlussActionStateStore implements ActionStateStore {
     private IntPredicate ownershipFilter;
 
     // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
-    private int maxParallelism;
+    private final int maxParallelism;
 
     @VisibleForTesting
     FlussActionStateStore(
@@ -131,7 +131,13 @@ public class FlussActionStateStore implements ActionStateStore {
         this.maxParallelism = maxParallelism;
     }
 
-    public FlussActionStateStore(AgentConfiguration agentConfiguration) {
+    public FlussActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
+        Preconditions.checkArgument(
+                maxParallelism > 0,
+                "maxParallelism must be positive but was %s; it must be set to the operator's max"
+                        + " parallelism so key-groups match Flink's key-group assignment.",
+                maxParallelism);
+        this.maxParallelism = maxParallelism;
         this.agentConfiguration = agentConfiguration;
         this.databaseName = agentConfiguration.get(FLUSS_ACTION_STATE_DATABASE);
         this.tableName =
@@ -451,11 +457,6 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void setOwnershipFilter(IntPredicate ownershipFilter) {
         this.ownershipFilter = ownershipFilter;
-    }
-
-    @Override
-    public void setMaxParallelism(int maxParallelism) {
-        this.maxParallelism = maxParallelism;
     }
 
     private Map<Integer, Long> getBucketEndOffsets() {

@@ -46,6 +46,7 @@ public class FlussActionStateStoreIT {
     private static final String TEST_DATABASE = "test_flink_agents";
     private static final String TEST_TABLE = "action_state_it";
     private static final String TEST_KEY = "test-key";
+    private static final int MAX_PARALLELISM = 128;
 
     @RegisterExtension
     static final FlussClusterExtension FLUSS_CLUSTER =
@@ -58,7 +59,7 @@ public class FlussActionStateStoreIT {
     @BeforeEach
     void setUp() throws Exception {
         AgentConfiguration config = createAgentConfiguration();
-        store = new FlussActionStateStore(config);
+        store = new FlussActionStateStore(config, MAX_PARALLELISM);
 
         // Wait for table to be ready in the cluster
         waitForTableReady();
@@ -188,7 +189,7 @@ public class FlussActionStateStoreIT {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
         try {
             // Rebuild using the marker; should replay from marker offset to current end
             recoveredStore.rebuildState(List.of(marker));
@@ -224,7 +225,7 @@ public class FlussActionStateStoreIT {
 
         // Simulate recovery into a new store instance that owns only key "A".
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
         try {
             // Own key's key-group computed from the WAL key; the filter accepts only this
             // key-group.
@@ -256,7 +257,7 @@ public class FlussActionStateStoreIT {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
         try {
             // Rebuild state from the log using recovery markers
             recoveredStore.rebuildState(List.of(marker));
@@ -285,7 +286,7 @@ public class FlussActionStateStoreIT {
         String multiDb = "test_flink_agents_multi";
         String multiTable = "action_state_multi";
         AgentConfiguration multiConfig = createAgentConfiguration(multiDb, multiTable, 4);
-        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig);
+        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
         try {
             waitForTableReady(multiDb, multiTable);
 
@@ -316,7 +317,8 @@ public class FlussActionStateStoreIT {
             multiStore.close();
 
             // Recover into a new store instance
-            FlussActionStateStore recoveredStore = new FlussActionStateStore(multiConfig);
+            FlussActionStateStore recoveredStore =
+                    new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
             try {
                 recoveredStore.rebuildState(List.of(marker));
 

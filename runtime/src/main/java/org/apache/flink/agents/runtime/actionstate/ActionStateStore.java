@@ -109,15 +109,6 @@ public interface ActionStateStore extends AutoCloseable {
     default void setOwnershipFilter(IntPredicate ownershipFilter) {}
 
     /**
-     * Sets the maximum parallelism used for key-group assignment. This value must match the
-     * operator's {@code maxParallelism} so that the key-group embedded in action-state record keys
-     * is computed consistently with the key-group ranges that Flink assigns to subtasks.
-     *
-     * @param maxParallelism the operator's maximum parallelism.
-     */
-    default void setMaxParallelism(int maxParallelism) {}
-
-    /**
      * Get a marker object representing the current recovery point in the state store.
      *
      * @return a marker object, or null if not supported

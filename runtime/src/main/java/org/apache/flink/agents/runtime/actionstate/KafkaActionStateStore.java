@@ -17,7 +17,7 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import org.apache.beam.sdk.util.Preconditions;
+import org.apache.flink.util.Preconditions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
@@ -97,7 +97,7 @@ public class KafkaActionStateStore implements ActionStateStore {
     private IntPredicate ownershipFilter;
 
     // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
-    private int maxParallelism;
+    private final int maxParallelism;
 
     @VisibleForTesting
     KafkaActionStateStore(
@@ -117,12 +117,18 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     /** Constructs a new KafkaActionStateStore with custom Kafka configuration. */
-    public KafkaActionStateStore(AgentConfiguration agentConfiguration) {
+    public KafkaActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
+        Preconditions.checkArgument(
+                maxParallelism > 0,
+                "maxParallelism must be positive but was %s; it must be set to the operator's max"
+                        + " parallelism so key-groups match Flink's key-group assignment.",
+                maxParallelism);
+        this.maxParallelism = maxParallelism;
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.topic =
-                Preconditions.checkArgumentNotNull(
+                Preconditions.checkNotNull(
                         agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
                         "Kafka action state topic must be configured");
         // create the topic if not exists
@@ -276,11 +282,6 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public void setOwnershipFilter(IntPredicate ownershipFilter) {
         this.ownershipFilter = ownershipFilter;
-    }
-
-    @Override
-    public void setMaxParallelism(int maxParallelism) {
-        this.maxParallelism = maxParallelism;
     }
 
     @Override

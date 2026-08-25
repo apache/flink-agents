@@ -38,15 +38,15 @@ public class InMemoryActionStateStore implements ActionStateStore {
 
     private final Map<String, Map<String, ActionState>> keyedActionStates;
     private final boolean doCleanup;
-    private int maxParallelism = DEFAULT_MAX_PARALLELISM;
+    private final int maxParallelism;
 
     public InMemoryActionStateStore(boolean doCleanup) {
-        this.keyedActionStates = new HashMap<>();
-        this.doCleanup = doCleanup;
+        this(doCleanup, DEFAULT_MAX_PARALLELISM);
     }
 
-    @Override
-    public void setMaxParallelism(int maxParallelism) {
+    public InMemoryActionStateStore(boolean doCleanup, int maxParallelism) {
+        this.keyedActionStates = new HashMap<>();
+        this.doCleanup = doCleanup;
         this.maxParallelism = maxParallelism;
     }
 

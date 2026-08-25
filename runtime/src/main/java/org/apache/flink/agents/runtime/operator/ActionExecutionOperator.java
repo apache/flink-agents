@@ -194,7 +194,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         eventRouter.open(builtInMetrics);
 
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
+        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
         durableExecManager.initializeKeyedStates(getRuntimeContext());
 
@@ -621,7 +622,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
+        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
 
         stateManager = new OperatorStateManager();
 
@@ -635,12 +637,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // ownership. This avoids the type-dependent hashing mismatch that would occur if ownership
         // were reconstructed from the string form of the business key (e.g., Long(1) hashes to
         // key-group 86 while String("1") hashes to 54).
-        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
         KeyGroupRange currentSubtaskKeyGroupRange =
                 stateManager.getCurrentSubtaskKeyGroupRange(maxParallelism, getRuntimeContext());
         IntPredicate ownershipFilter = currentSubtaskKeyGroupRange::contains;
 
-        durableExecManager.setMaxParallelism(maxParallelism);
         durableExecManager.handleRecovery(getOperatorStateBackend(), ownershipFilter);
 
         // Resolve the agent's stable job identifier:

@@ -2447,8 +2447,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteReconcilableRecoverySuccess() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
-        actionStateStore.setMaxParallelism(1);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 1L;
         long input = 1L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
@@ -2493,8 +2492,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteReconcilableRecoveryException() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
-        actionStateStore.setMaxParallelism(1);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 2L;
         long input = 2L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.EXCEPTION;
@@ -2582,8 +2580,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteRecoveryMixedCompletionOnlyAndReconcilableCalls() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableMixedRecoveryAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
-        actionStateStore.setMaxParallelism(1);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 1L;
         long input = 1L;
         TestAgent.MIXED_RECONCILE_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
