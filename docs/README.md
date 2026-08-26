@@ -22,11 +22,15 @@ $ docker run -v $(pwd):/src -p 1313:1313 jakejarvis/hugo-extended:latest server 
 
 #### Local Hugo installation:
 
-Make sure you have installed [Hugo](https://gohugo.io/getting-started/installing/) on your system.
+`setup_hugo.sh` installs Hugo 0.110.0, the version the docs build is pinned to. A newer Hugo release removed an internal template the pinned `hugo-book` theme calls, so building with a current Hugo fails with `no such template "_internal/google_analytics_async.html"`.
+
+On Linux, install it with:
 
 ```sh
 $ ./setup_hugo.sh
 ```
+
+`setup_hugo.sh` downloads a Linux binary, x86_64 or ARM64. On other platforms, install the extended Hugo 0.110.0 from the [Hugo releases page](https://github.com/gohugoio/hugo/releases/tag/v0.110.0) yourself.
 
 Then build the docs from source:
 

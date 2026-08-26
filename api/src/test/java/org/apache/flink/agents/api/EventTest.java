@@ -197,8 +197,25 @@ class EventTest {
         String json = "{\"type\":\"MyCustomEvent\",\"attributes\":{\"msg\":\"hello\"}}";
         Event event = Event.fromJson(json);
 
+        assertNotNull(event.getId());
         assertEquals("MyCustomEvent", event.getType());
         assertEquals("hello", event.getAttr("msg"));
+    }
+
+    @Test
+    void testFromJsonExplicitNullIdGeneratesUuid() throws IOException {
+        Event event = Event.fromJson("{\"id\":null,\"type\":\"x\"}");
+
+        assertNotNull(event.getId());
+        assertEquals("x", event.getType());
+    }
+
+    @Test
+    void testConstructorExplicitNullIdGeneratesUuid() {
+        Event event = new Event(null, "x", Map.of());
+
+        assertNotNull(event.getId());
+        assertEquals("x", event.getType());
     }
 
     @Test

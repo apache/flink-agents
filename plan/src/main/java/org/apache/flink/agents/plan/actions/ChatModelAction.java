@@ -26,18 +26,18 @@ import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
-import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
@@ -49,9 +49,41 @@ import javax.annotation.Nullable;
 import java.util.*;
 
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
-import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
-/** Built-in action for processing chat request and tool call result. */
+/**
+ * Built-in action for processing chat request and tool call result.
+ *
+ * <h2>Model routing overview</h2>
+ *
+ * <p>When a {@link ChatRequestEvent} names a {@code MODEL_ROUTER} instead of a chat model, this
+ * action layers five jobs on top of the normal chat path; each is localized to one place:
+ *
+ * <ol>
+ *   <li><b>Decide</b> — {@link ModelRoutingResolver} runs the router's strategy and normalizes the
+ *       result (abstain → default model; non-candidate → fail).
+ *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<router>"};
+ *       per-request uniqueness comes from the store's (key, sequence, event, action) scoping, and
+ *       the id must stay deterministic across recovery re-processing), so recovery replays the
+ *       persisted decision instead of re-running a possibly non-deterministic strategy. This replay
+ *       guarantee requires an action-state store to be configured ({@code actionStateStoreBackend},
+ *       see {@code AgentConfigOptions#ACTION_STATE_STORE_BACKEND}); without one — the default — the
+ *       decision and the chat call re-execute together on recovery, which is self-consistent but
+ *       re-derives the decision.
+ *   <li><b>Once per reasoning loop</b> — the selected concrete model is saved in the tool-request
+ *       context and reused by tool rounds with no re-routing; the routing metadata block is parked
+ *       once in an initial-request-keyed context and attached only to the loop's final response.
+ *   <li><b>Fallback over retries</b> — {@link ResolvedModelRoute#attemptOrder} tries the selected
+ *       model first (with its full retry budget, durable id {@code "chat:<router>:<candidate>"}),
+ *       then remaining candidates in declaration order if fallback is enabled.
+ *   <li><b>Observably</b> — a {@link ModelRoutingEvent} records the decision (and a second one any
+ *       fallback outcome); {@link ResolvedModelRoute#buildResponseMetadata} supplies the {@code
+ *       model_routing} extra args stamped on the final response; decision latency feeds {@code
+ *       decision_ms} and the {@code routingDecisionLatencyMs} histogram.
+ * </ol>
+ *
+ * <p>A request naming a plain chat model takes the pre-routing path unchanged, including the legacy
+ * durable call id {@code "chat"}.
+ */
 public class ChatModelAction {
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelAction.class);
 
@@ -59,6 +91,7 @@ public class ChatModelAction {
     private static final String TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT";
     private static final String INITIAL_REQUEST_ID = "initialRequestId";
     private static final String MODEL = "model";
+    private static final String ROUTING_METADATA_CONTEXT = "_ROUTING_METADATA_CONTEXT";
     private static final String OUTPUT_SCHEMA = "outputSchema";
     private static final String PROMPT_ARGS = "prompt_args";
     private static final String RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT";
@@ -286,7 +319,7 @@ public class ChatModelAction {
     }
 
     @SuppressWarnings("unchecked")
-    private static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
+    static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
             throws JsonProcessingException {
         String output = response.getContent();
         output = cleanLlmResponse(output);
@@ -327,16 +360,23 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
-        BaseChatModelSetup chatModel =
-                (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
-        FlinkAgentsMetricGroup requestMetricGroup = ctx.getActionMetricGroup();
+        chat(
+                initialRequestId,
+                ResolvedModelRoute.direct(model),
+                messages,
+                promptArgs,
+                outputSchema,
+                ctx);
+    }
 
-        boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
-
-        if ((chatModel instanceof PythonChatModelSetup) && !supportAsync()) {
-            chatAsync = false;
-        }
-
+    private static void chat(
+            UUID initialRequestId,
+            ResolvedModelRoute selection,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            @Nullable Object outputSchema,
+            RunnerContext ctx)
+            throws Exception {
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = 0;
@@ -352,106 +392,239 @@ public class ChatModelAction {
                             : 0;
         }
 
-        ChatMessage response = null;
-        int actualRetryCount = 0;
-        int totalWaitTimeSec = 0;
-
-        DurableCallable<ChatMessage> callable =
-                new DurableCallable<>() {
-                    @Override
-                    public String getId() {
-                        return "chat";
-                    }
-
-                    @Override
-                    public Class<ChatMessage> getResultClass() {
-                        return ChatMessage.class;
-                    }
-
-                    @Override
-                    public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, promptArgs, Map.of());
-                    }
-                };
-
-        for (int attempt = 0; attempt < numRetries + 1; attempt++) {
+        List<String> triedModels = new ArrayList<>();
+        Exception lastError = null;
+        for (String candidate : selection.attemptOrder()) {
+            triedModels.add(candidate);
             try {
-                response =
-                        chatAsync
-                                ? ctx.durableExecuteAsync(callable)
-                                : ctx.durableExecute(callable);
-                recordChatTokenMetrics(chatModel, response, requestMetricGroup);
-                // only generate structured output for final response.
-                if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response = generateStructuredOutput(response, outputSchema);
+                ChatModelInvoker.ChatAttemptResult result =
+                        ChatModelInvoker.chatWithRetries(
+                                initialRequestId,
+                                candidate,
+                                selection.durableChatCallId(candidate),
+                                messages,
+                                promptArgs,
+                                outputSchema,
+                                ctx,
+                                strategy,
+                                numRetries,
+                                retryWaitIntervalSec);
+                recordAttemptRetryStats(
+                        ctx,
+                        initialRequestId,
+                        result.chatModel,
+                        result.retryCount,
+                        result.totalRetryWaitSec);
+                if (selection.isRouter) {
+                    if (!result.model.equals(selection.selectedModel)) {
+                        // The strategy's pick failed and another candidate answered; record the
+                        // outcome in the event log, not just on the response.
+                        ctx.sendEvent(
+                                new ModelRoutingEvent(
+                                        initialRequestId,
+                                        selection.requestedModel,
+                                        selection.candidates,
+                                        result.model,
+                                        ModelRoutingEvent.SOURCE_FALLBACK,
+                                        selection.fallbackEnabled,
+                                        String.format(
+                                                "fallback after selected model '%s' failed",
+                                                selection.selectedModel),
+                                        null,
+                                        selection.metadata,
+                                        null));
+                    }
                 }
-                break;
-            } catch (Exception e) {
-                if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
-                    LOG.warn(
-                            "Chat request {} failed with error: {}, ignored.", initialRequestId, e);
-                    return;
-                } else if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
-                    if (attempt == numRetries) {
-                        throw e;
+
+                // Routing metadata is observability-only and needed exactly once, on the final
+                // response. If this response starts (or continues) a tool loop, park the block
+                // in an initial-request-keyed context instead of stamping intermediate messages
+                // and copying it through every tool round.
+                Map<String, Object> routingMetadata =
+                        selection.isRouter
+                                ? selection.buildResponseMetadata(result.model, triedModels)
+                                : null;
+                if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
+                    if (routingMetadata != null) {
+                        saveRoutingMetadata(
+                                ctx.getSensoryMemory(), initialRequestId, routingMetadata);
                     }
-                    actualRetryCount = attempt + 1;
-                    int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
-                    LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                    handleToolCalls(
+                            result.response,
                             initialRequestId,
-                            e,
-                            actualRetryCount,
-                            numRetries,
-                            currentWaitSec);
-                    if (currentWaitSec > 0) {
-                        Thread.sleep(currentWaitSec * 1000L);
-                        totalWaitTimeSec += currentWaitSec;
-                    }
+                            result.model,
+                            result.chatModel,
+                            messages,
+                            promptArgs,
+                            outputSchema,
+                            ctx);
                 } else {
-                    LOG.debug(
-                            "Chat request {} failed, the input chat messages are {}.",
-                            initialRequestId,
-                            messages);
-                    throw e;
+                    if (routingMetadata == null) {
+                        routingMetadata =
+                                takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
+                    }
+                    if (routingMetadata != null) {
+                        result.response.getExtraArgs().put("model_routing", routingMetadata);
+                    }
+                    Map<String, Long> retryStats =
+                            getRetryStats(ctx.getSensoryMemory(), initialRequestId);
+                    int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
+                    int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+
+                    ctx.sendEvent(
+                            new ChatResponseEvent(
+                                    initialRequestId,
+                                    result.response,
+                                    totalRetryCount,
+                                    totalRetryWaitSec));
                 }
+                return;
+            } catch (ChatModelInvoker.ChatAttemptFailed e) {
+                recordAttemptRetryStats(
+                        ctx, initialRequestId, e.chatModel, e.retryCount, e.totalRetryWaitSec);
+                // Keep every candidate's failure: chain the previous error into the new one so
+                // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
+                if (lastError != null && lastError != e.error) {
+                    e.error.addSuppressed(lastError);
+                }
+                lastError = e.error;
+                LOG.debug(
+                        "Chat request {} failed for model {} with error: {}. The input chat messages are {}.",
+                        initialRequestId,
+                        e.model,
+                        e.error.toString(),
+                        messages);
             }
         }
 
-        if (actualRetryCount > 0) {
-            accumulateRetryStats(
-                    ctx.getSensoryMemory(), initialRequestId, actualRetryCount, totalWaitTimeSec);
-        }
-
-        if (!Objects.requireNonNull(response).getToolCalls().isEmpty()) {
-            handleToolCalls(
-                    response,
+        if (selection.isRouter && triedModels.size() > 1) {
+            LOG.warn(
+                    "Chat request {} exhausted all candidates {} of router '{}'; last error: {}.",
                     initialRequestId,
-                    model,
-                    chatModel,
-                    messages,
-                    promptArgs,
-                    outputSchema,
-                    ctx);
+                    triedModels,
+                    selection.requestedModel,
+                    lastError == null ? null : lastError.toString());
+        }
+        // The reasoning loop is over; a routed loop that dies mid-way must not leak its
+        // parked metadata (matters under IGNORE, where the job keeps running).
+        takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
+        if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
+            LOG.warn(
+                    "Chat request {} failed with error: {}, ignored.", initialRequestId, lastError);
+            return;
+        }
+        throw Objects.requireNonNull(lastError);
+    }
+
+    /**
+     * Compatibility note: retry metrics are recorded per attempt (including attempts on the failure
+     * path), where previously they were recorded once with cumulative totals on the final response.
+     * Totals over a completed request are unchanged; requests that ultimately fail now contribute
+     * their retry counts where they previously did not.
+     */
+    private static void recordAttemptRetryStats(
+            RunnerContext ctx,
+            UUID initialRequestId,
+            BaseChatModelSetup chatModel,
+            int retryCount,
+            int retryWaitSec)
+            throws Exception {
+        if (retryCount <= 0) {
+            return;
+        }
+        accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitSec);
+        String metricModel = chatModel == null ? null : chatModel.getConnectionName();
+        recordRetryMetrics(
+                ctx,
+                metricModel == null || metricModel.isEmpty() ? "unknown" : metricModel,
+                retryCount,
+                retryWaitSec);
+    }
+
+    /**
+     * Parks the routed request's {@code model_routing} block for the lifetime of its reasoning
+     * loop, keyed by the initial request id. Stored once when the loop starts; taken (removed) once
+     * when the final response is produced or the loop is abandoned.
+     */
+    @SuppressWarnings("unchecked")
+    private static void saveRoutingMetadata(
+            MemoryObject sensoryMem, UUID initialRequestId, Map<String, Object> routing)
+            throws Exception {
+        Map<UUID, Object> context;
+        if (sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
+            context = (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
         } else {
-            Map<String, Long> retryStats = getRetryStats(ctx.getSensoryMemory(), initialRequestId);
-            int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
-            int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
+            context = new HashMap<>();
+        }
+        context.put(initialRequestId, routing);
+        sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
+    }
 
-            recordRetryMetrics(
-                    ctx, chatModel.getConnectionName(), totalRetryCount, totalRetryWaitSec);
+    @SuppressWarnings("unchecked")
+    @Nullable
+    private static Map<String, Object> takeRoutingMetadata(
+            MemoryObject sensoryMem, UUID initialRequestId) throws Exception {
+        if (!sensoryMem.isExist(ROUTING_METADATA_CONTEXT)) {
+            return null;
+        }
+        Map<UUID, Object> context =
+                (Map<UUID, Object>) sensoryMem.get(ROUTING_METADATA_CONTEXT).getValue();
+        Map<String, Object> routing = (Map<String, Object>) context.remove(initialRequestId);
+        if (routing != null) {
+            sensoryMem.set(ROUTING_METADATA_CONTEXT, context);
+        }
+        return routing;
+    }
 
-            ctx.sendEvent(
-                    new ChatResponseEvent(
-                            initialRequestId, response, totalRetryCount, totalRetryWaitSec));
+    static ChatMessage generateStructuredOutputWithReport(
+            RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
+        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+        try {
+            ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
+            ExecutionReporters.succeeded(
+                    ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+            return structuredResponse;
+        } catch (Throwable e) {
+            throw reportFailedAndPropagate(
+                    ctx,
+                    ExecutionReporter.EntityTypes.PARSER,
+                    STRUCTURED_OUTPUT,
+                    null,
+                    e,
+                    ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
         }
     }
 
     private static void processChatRequest(ChatRequestEvent event, RunnerContext ctx)
             throws Exception {
+        ResolvedModelRoute selection;
+        try {
+            selection =
+                    ModelRoutingResolver.resolve(
+                            event.getId(),
+                            event.getModel(),
+                            event.getMessages(),
+                            event.getPromptArgs(),
+                            ctx);
+        } catch (Exception e) {
+            // A routing-strategy failure honors the same error-handling strategy as the chat
+            // call itself: under IGNORE the request is dropped with a warning instead of killing
+            // the job. (Retries are not applied to the decision; strategies that perform I/O are
+            // expected to absorb their own transient failures.)
+            if (ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY)
+                    == Agent.ErrorHandlingStrategy.IGNORE) {
+                LOG.warn(
+                        "Routing for chat request {} (model '{}') failed with error: {}, ignored.",
+                        event.getId(),
+                        event.getModel(),
+                        e.toString());
+                return;
+            }
+            throw e;
+        }
         chat(
                 event.getId(),
-                event.getModel(),
+                selection,
                 event.getMessages(),
                 event.getPromptArgs(),
                 event.getOutputSchema(),
@@ -503,7 +676,16 @@ public class ChatModelAction {
                         Collections.emptyList(),
                         toolResponseMessages);
 
-        chat(initialRequestId, model, messages, promptArgs, outputSchema, ctx);
+        // Tool rounds reuse the already-selected concrete model (no re-routing). If the initial
+        // request was routed, its metadata block waits in ROUTING_METADATA_CONTEXT and is
+        // attached when this loop produces its final response.
+        chat(
+                initialRequestId,
+                ResolvedModelRoute.direct(model),
+                messages,
+                promptArgs,
+                outputSchema,
+                ctx);
     }
 
     /**
@@ -527,5 +709,32 @@ public class ChatModelAction {
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }
+    }
+
+    /**
+     * Reports a nested execution failure, then always throws the original failure. The Exception
+     * return type exists so callers must {@code throw} the result and cannot fall through.
+     */
+    static Exception reportFailedAndPropagate(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            @Nullable Map<String, Object> entityMetadata,
+            Throwable error,
+            String problemCategory)
+            throws Exception {
+        if (entityMetadata == null) {
+            ExecutionReporters.failed(ctx, entityType, entityName, error, problemCategory);
+        } else {
+            ExecutionReporters.failed(
+                    ctx, entityType, entityName, entityMetadata, error, problemCategory);
+        }
+        if (error instanceof Error) {
+            throw (Error) error;
+        }
+        if (error instanceof Exception) {
+            throw (Exception) error;
+        }
+        throw new RuntimeException(error);
     }
 }

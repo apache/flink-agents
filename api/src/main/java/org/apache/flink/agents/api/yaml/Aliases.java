@@ -88,9 +88,9 @@ public final class Aliases {
         chatConnJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_CONNECTION);
         chatConnJava.put("gemini", ResourceName.ChatModel.GEMINI_CONNECTION);
         chatConnJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_CONNECTION);
-        chatConnJava.put("azure", ResourceName.ChatModel.AZURE_CONNECTION);
         chatConnJava.put("bedrock", ResourceName.ChatModel.BEDROCK_CONNECTION);
         chatConnJava.put("vllm", ResourceName.ChatModel.VLLM_CONNECTION);
+        chatConnJava.put("watsonx", ResourceName.ChatModel.WATSONX_CONNECTION);
         Map<String, String> chatConnPython = new HashMap<>();
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
@@ -98,6 +98,7 @@ public final class Aliases {
         chatConnPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_CONNECTION);
         chatConnPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_CONNECTION);
         chatConnPython.put("vllm", ResourceName.ChatModel.Python.VLLM_CONNECTION);
+        chatConnPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_CONNECTION);
         ca.put(ResourceType.CHAT_MODEL_CONNECTION, buildLangBuckets(chatConnJava, chatConnPython));
 
         // CHAT_MODEL
@@ -108,9 +109,9 @@ public final class Aliases {
         chatJava.put("anthropic", ResourceName.ChatModel.ANTHROPIC_SETUP);
         chatJava.put("gemini", ResourceName.ChatModel.GEMINI_SETUP);
         chatJava.put("azure_openai", ResourceName.ChatModel.AZURE_OPENAI_SETUP);
-        chatJava.put("azure", ResourceName.ChatModel.AZURE_SETUP);
         chatJava.put("bedrock", ResourceName.ChatModel.BEDROCK_SETUP);
         chatJava.put("vllm", ResourceName.ChatModel.VLLM_SETUP);
+        chatJava.put("watsonx", ResourceName.ChatModel.WATSONX_SETUP);
         Map<String, String> chatPython = new HashMap<>();
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
@@ -118,6 +119,7 @@ public final class Aliases {
         chatPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_SETUP);
         chatPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_SETUP);
         chatPython.put("vllm", ResourceName.ChatModel.Python.VLLM_SETUP);
+        chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
         ca.put(ResourceType.CHAT_MODEL, buildLangBuckets(chatJava, chatPython));
 
         // EMBEDDING_MODEL_CONNECTION

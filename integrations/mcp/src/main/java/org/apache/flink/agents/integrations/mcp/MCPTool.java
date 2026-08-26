@@ -22,12 +22,15 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -38,25 +41,42 @@ import java.util.Objects;
  * <p>This represents a single tool from an MCP server. It extends the base Tool class and delegates
  * actual execution to the MCP server.
  */
-public class MCPTool extends Tool {
+public class MCPTool extends Tool implements ToolExecutionMetadataProvider {
 
     private static final String FIELD_MCP_SERVER = "mcpServer";
+    private static final String FIELD_MCP_SERVER_NAME = "mcpServerName";
 
     @JsonProperty(FIELD_MCP_SERVER)
     private final MCPServer mcpServer;
+
+    @JsonProperty(FIELD_MCP_SERVER_NAME)
+    private final String mcpServerName;
+
+    public MCPTool(ToolMetadata metadata, MCPServer mcpServer) {
+        this(metadata, mcpServer, null);
+    }
 
     /**
      * Create a new MCPTool.
      *
      * @param metadata The tool metadata
      * @param mcpServer The MCP server reference
+     * @param mcpServerName The AgentPlan resource name of the MCP server, if known
      */
     @JsonCreator
     public MCPTool(
             @JsonProperty("metadata") ToolMetadata metadata,
-            @JsonProperty(FIELD_MCP_SERVER) MCPServer mcpServer) {
+            @JsonProperty(FIELD_MCP_SERVER) MCPServer mcpServer,
+            @JsonProperty(FIELD_MCP_SERVER_NAME) String mcpServerName) {
         super(metadata);
         this.mcpServer = Objects.requireNonNull(mcpServer, "mcpServer cannot be null");
+        this.mcpServerName = mcpServerName;
+    }
+
+    /** Returns a copy of this tool associated with the given MCP server resource name. */
+    @JsonIgnore
+    public MCPTool withMcpServerName(String mcpServerName) {
+        return new MCPTool(metadata, mcpServer, mcpServerName);
     }
 
     @Override
@@ -106,18 +126,33 @@ public class MCPTool extends Tool {
         return mcpServer;
     }
 
+    /** Returns the AgentPlan resource name of the MCP server, if available. */
+    public String getMcpServerName() {
+        return mcpServerName;
+    }
+
+    @Override
+    public Map<String, Object> getToolExecutionMetadata(ToolParameters parameters) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (mcpServerName != null) {
+            metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, mcpServerName);
+        }
+        return metadata;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MCPTool mcpTool = (MCPTool) o;
         return Objects.equals(metadata, mcpTool.metadata)
-                && Objects.equals(mcpServer, mcpTool.mcpServer);
+                && Objects.equals(mcpServer, mcpTool.mcpServer)
+                && Objects.equals(mcpServerName, mcpTool.mcpServerName);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(metadata, mcpServer);
+        return Objects.hash(metadata, mcpServer, mcpServerName);
     }
 
     @Override

@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import logging
+from typing import Any
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.event import Event
@@ -23,15 +24,57 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.tools import ToolExecutionMetadataProvider
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     ToolParameterSource,
+)
+from flink_agents.api.trace import (
+    ExecutionEntityTypes,
+    ExecutionProblemCategories,
+    ExecutionReporters,
+    ToolExecutionMetadataKeys,
 )
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
 _logger = logging.getLogger(__name__)
+
+
+def _tool_entity_metadata(
+    tool_request_event_id: object,
+    tool_call_id: object,
+    external_id: object,
+    tool_name: str,
+    tool: object | None,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID: str(tool_request_event_id),
+        ToolExecutionMetadataKeys.TOOL_CALL_ID: str(tool_call_id),
+    }
+    if external_id is not None:
+        metadata[ToolExecutionMetadataKeys.EXTERNAL_ID] = str(external_id)
+    tool_type = tool.tool_type() if tool is not None else None
+    if tool_type is not None:
+        metadata[ToolExecutionMetadataKeys.TOOL_TYPE] = getattr(
+            tool_type, "value", str(tool_type)
+        )
+    if isinstance(tool, ToolExecutionMetadataProvider):
+        try:
+            supplemental = tool.get_tool_execution_metadata(dict(kwargs)) or {}
+        except Exception:
+            _logger.debug(
+                "Failed to collect execution metadata for tool %s.",
+                tool_name,
+                exc_info=True,
+            )
+            supplemental = {}
+        for key, value in supplemental.items():
+            if key is not None and value is not None:
+                metadata.setdefault(key, value)
+    return metadata
 
 
 async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
@@ -52,38 +95,73 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
         name = tool_call["function"]["name"]
         kwargs = tool_call["function"]["arguments"]
         external_id = tool_call.get("original_id")
+        external_ids[call_id] = external_id
+        call_kwargs = dict(kwargs or {})
 
+        tool = None
+        preparation_error = None
         try:
             tool = ctx.get_resource(name, ResourceType.TOOL)
         except Exception as e:
-            tool = None
-            error[call_id] = str(e)
-        if not tool:
-            responses[call_id] = f"Tool `{name}` does not exist."
-            success[call_id] = False
-            error.setdefault(call_id, f"Tool `{name}` does not exist.")
-            external_ids[call_id] = external_id
-            continue
-        else:
+            preparation_error = e
+        if tool is not None:
             try:
-                call_kwargs = dict(kwargs or {})
                 # Framework-owned injected args must win over model-provided values so
                 # hidden context such as tenant ids cannot be spoofed by tool calls.
                 call_kwargs.update(_resolve_injected_arguments(tool, ctx))
-                if tool_call_async:
-                    response = await ctx.durable_execute_async(
-                        tool.call, **call_kwargs
-                    )
-                else:
-                    response = ctx.durable_execute(tool.call, **call_kwargs)
-                responses[call_id] = response
-                success[call_id] = True
             except Exception as e:
-                responses[call_id] = f"Tool `{name}` execute failed."
-                success[call_id] = False
-                error[call_id] = str(e)
+                preparation_error = e
 
-        external_ids[call_id] = external_id
+        entity_metadata = _tool_entity_metadata(
+            event.id, call_id, external_id, name, tool, call_kwargs
+        )
+        ExecutionReporters.started(
+            ctx, ExecutionEntityTypes.TOOL, name, entity_metadata
+        )
+
+        if not tool or preparation_error is not None:
+            failure = preparation_error or RuntimeError(
+                f"Tool `{name}` does not exist."
+            )
+            responses[call_id] = (
+                f"Tool `{name}` does not exist."
+                if not tool
+                else f"Tool `{name}` execute failed."
+            )
+            success[call_id] = False
+            error[call_id] = str(failure)
+            ExecutionReporters.failed(
+                ctx,
+                ExecutionEntityTypes.TOOL,
+                name,
+                entity_metadata,
+                failure,
+                ExecutionProblemCategories.TOOL_CALL_FAILED,
+            )
+            continue
+
+        try:
+            if tool_call_async:
+                response = await ctx.durable_execute_async(tool.call, **call_kwargs)
+            else:
+                response = ctx.durable_execute(tool.call, **call_kwargs)
+            responses[call_id] = response
+            success[call_id] = True
+            ExecutionReporters.succeeded(
+                ctx, ExecutionEntityTypes.TOOL, name, entity_metadata
+            )
+        except Exception as e:
+            responses[call_id] = f"Tool `{name}` execute failed."
+            success[call_id] = False
+            error[call_id] = str(e)
+            ExecutionReporters.failed(
+                ctx,
+                ExecutionEntityTypes.TOOL,
+                name,
+                entity_metadata,
+                e,
+                ExecutionProblemCategories.TOOL_CALL_FAILED,
+            )
     ctx.send_event(
         ToolResponseEvent(
             request_id=event.id,
@@ -125,9 +203,7 @@ def _resolve_injected_argument(injection: InjectedArg, ctx: RunnerContext) -> ob
 
 def _get_memory_value(memory: MemoryObject, source: str, path: str) -> object:
     if memory is None:
-        msg = (
-            f"Cannot inject tool parameter from {source} because memory is not initialized."
-        )
+        msg = f"Cannot inject tool parameter from {source} because memory is not initialized."
         raise ValueError(msg)
     if not memory.is_exist(path):
         msg = f"Missing memory path for injected tool parameter: {path}"

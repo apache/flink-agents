@@ -79,3 +79,52 @@ jobs:
           name: flink-logs-${{ matrix.flink-version }}
           path: flink-logs-*.tar.gz
           if-no-files-found: ignore
+
+  checkpoint-recovery:
+    runs-on: ubuntu-latest
+    # Scheduled and manual runs only. The pull_request trigger above exists for the
+    # examples job; extending it to this one would spend a second full
+    # download-and-build on every PR matching those paths, and nothing in this
+    # repository caches either. Accepted consequence: no pre-merge signal.
+    if: github.event_name != 'pull_request'
+    # Budget. Typical: Flink download ~5m, tools/build.sh ~15m, plus the wheel and
+    # PyFlink install; the last two are unbounded. Worst case is dominated by the
+    # download: install.sh runs `curl --max-time 900 --retry 3` with no
+    # --retry-max-time and each retry restarts that clock, so four attempts take
+    # ~60m of the 75 below on their own — FLINK_BASE_URL defaults to the Apache
+    # CDN, which makes that tail unlikely. The script's own waits add up to roughly
+    # 22m on top, if every one runs to its deadline (its *_TIMEOUT block).
+    timeout-minutes: 75
+    env:
+      # Null on a scheduled run, so the literal is what runs then; keep it in step
+      # with the workflow_dispatch input default above. Leaving the version to the
+      # script's own default instead would still run, but the log-artifact name
+      # below reads this variable and would lose its version suffix.
+      FLINK_VERSION: ${{ github.event.inputs.flink-version || '2.3.0' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+      - name: Install python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/0.11.0/install.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+      # No model server env: the payload agent answers from a deterministic mock
+      # chat model. The script sets SKIP_SPOTLESS_CHECK around its own
+      # tools/build.sh call, so no job-level env is needed for that either.
+      - name: Run checkpoint-recovery E2E test
+        run: bash e2e-test/test-scripts/test_checkpoint_recovery.sh
+      - name: Upload Flink logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flink-logs-checkpoint-recovery-${{ env.FLINK_VERSION }}
+          path: flink-logs-*.tar.gz
+          if-no-files-found: ignore

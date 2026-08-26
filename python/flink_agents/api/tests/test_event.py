@@ -57,6 +57,22 @@ def test_event_setattr_serializable() -> None:
     event.c = Event(type="nested")
 
 
+def test_same_content_creates_distinct_event_occurrences() -> None:
+    first = Event(type="test", a=1)
+    second = Event(type="test", a=1)
+
+    assert first.id != second.id
+
+
+def test_mutating_event_payload_preserves_occurrence_id() -> None:
+    event = Event(type="test", a=1)
+    event_id = event.id
+
+    event.a = 2
+
+    assert event.id == event_id
+
+
 def test_event_setattr_non_serializable() -> None:
     event = Event(type="test", a=1)
     with pytest.raises(PydanticSerializationError):
@@ -108,6 +124,29 @@ def test_event_id_cannot_be_reassigned() -> None:
 
     with pytest.raises(ValidationError, match="Field is frozen"):
         event.id = uuid4()
+
+
+def test_explicit_none_id_generates_uuid() -> None:
+    event = Event(id=None, type="x")
+
+    assert event.id is not None
+    assert event.id.version == 4
+    assert event.type == "x"
+
+
+def test_from_json_explicit_null_id_generates_uuid() -> None:
+    event = Event.from_json('{"id":null,"type":"x"}')
+
+    assert event.id is not None
+    assert event.id.version == 4
+    assert event.type == "x"
+
+
+def test_explicit_none_ids_are_distinct() -> None:
+    first = Event(id=None, type="x")
+    second = Event(id=None, type="x")
+
+    assert first.id != second.id
 
 
 def test_event_json_serialization_with_row() -> None:

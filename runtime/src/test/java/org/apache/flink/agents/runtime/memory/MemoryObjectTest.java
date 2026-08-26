@@ -177,9 +177,9 @@ public class MemoryObjectTest {
         assertThat(memoryUpdates)
                 .containsExactlyInAnyOrder(
                         new MemoryUpdate("str", "hello"),
-                        new MemoryUpdate("str", null),
+                        new MemoryUpdate("str", null, true),
                         new MemoryUpdate("str.test", 100),
-                        new MemoryUpdate("str.new_str", null),
+                        new MemoryUpdate("str.new_str", null, true),
                         new MemoryUpdate("str.new_str.int", 42),
                         new MemoryUpdate("str.new_str.str", "world"));
     }

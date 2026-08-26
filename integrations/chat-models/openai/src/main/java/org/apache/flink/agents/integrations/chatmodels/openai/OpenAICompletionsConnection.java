@@ -191,33 +191,29 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
-        try {
-            ChatCompletionCreateParams params =
-                    buildRequest(messages, tools, modelParams, outputSchema);
-            ChatCompletion completion = client.chat().completions().create(params);
-            ChatMessage response =
-                    OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                            completion.choices().get(0).message());
+        ChatCompletionCreateParams params =
+                buildRequest(messages, tools, modelParams, outputSchema);
+        ChatCompletion completion = client.chat().completions().create(params);
+        ChatMessage response =
+                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
+                        completion.choices().get(0).message());
 
-            // Stash token usage
-            if (completion.usage().isPresent()) {
-                String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-                if (modelName == null || modelName.isBlank()) {
-                    modelName = this.defaultModel;
-                }
-                if (modelName != null && !modelName.isBlank()) {
-                    response.getExtraArgs().put("model_name", modelName);
-                    response.getExtraArgs()
-                            .put("promptTokens", completion.usage().get().promptTokens());
-                    response.getExtraArgs()
-                            .put("completionTokens", completion.usage().get().completionTokens());
-                }
+        // Stash token usage
+        if (completion.usage().isPresent()) {
+            String modelName = modelParams != null ? (String) modelParams.get("model") : null;
+            if (modelName == null || modelName.isBlank()) {
+                modelName = this.defaultModel;
             }
-
-            return response;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to call OpenAI chat completions API.", e);
+            if (modelName != null && !modelName.isBlank()) {
+                response.getExtraArgs().put("model_name", modelName);
+                response.getExtraArgs()
+                        .put("promptTokens", completion.usage().get().promptTokens());
+                response.getExtraArgs()
+                        .put("completionTokens", completion.usage().get().completionTokens());
+            }
         }
+
+        return response;
     }
 
     // Package-private so the request body (including the native response_format) can be asserted

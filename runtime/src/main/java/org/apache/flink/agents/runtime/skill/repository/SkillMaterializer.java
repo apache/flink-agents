@@ -205,11 +205,11 @@ public final class SkillMaterializer {
         URL innerUrl = new URL(innerSpec);
         File jarFileObj;
         try {
-            jarFileObj = new File(innerUrl.toURI());
-        } catch (URISyntaxException | IllegalArgumentException e) {
-            // IllegalArgumentException is thrown by File(URI) when the URI scheme is not "file"
-            // (e.g. a JAR nested behind http://). Surface both as IOException so callers that
-            // catch IOException for graceful failure handling see them.
+            jarFileObj = LocalUrls.toLocalFile(innerUrl);
+        } catch (IOException e) {
+            // toLocalFile rejects a non-file inner URL (e.g. a JAR nested behind http://) and
+            // malformed URLs. Re-wrap with the outer jar URL for context so callers that catch
+            // IOException for graceful failure handling see it.
             throw new IOException("Invalid JAR URL: " + jarUrl, e);
         }
         try (JarFile jarFile = new JarFile(jarFileObj)) {

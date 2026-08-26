@@ -32,11 +32,11 @@ under the License.
 
     <modules>
         <module>anthropic</module>
-        <module>azureai</module>
         <module>bedrock</module>
         <module>gemini</module>
         <module>ollama</module>
         <module>openai</module>
+        <module>watsonx</module>
     </modules>
 
 </project>

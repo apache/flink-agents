@@ -53,12 +53,6 @@ public final class ResourceName {
         public static final String ANTHROPIC_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.anthropic.AnthropicChatModelSetup";
 
-        // Azure
-        public static final String AZURE_CONNECTION =
-                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelConnection";
-        public static final String AZURE_SETUP =
-                "org.apache.flink.agents.integrations.chatmodels.azureai.AzureAIChatModelSetup";
-
         // Bedrock
         public static final String BEDROCK_CONNECTION =
                 "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelConnection";
@@ -100,6 +94,12 @@ public final class ResourceName {
                 "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelConnection";
         public static final String VLLM_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelSetup";
+
+        // IBM watsonx.ai
+        public static final String WATSONX_CONNECTION =
+                "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection";
+        public static final String WATSONX_SETUP =
+                "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup";
 
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
@@ -145,6 +145,12 @@ public final class ResourceName {
                     "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelConnection";
             public static final String VLLM_SETUP =
                     "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelSetup";
+
+            // IBM watsonx.ai
+            public static final String WATSONX_CONNECTION =
+                    "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection";
+            public static final String WATSONX_SETUP =
+                    "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup";
 
             private Python() {}
         }

@@ -303,13 +303,48 @@ def check_result(*, result_dir: Path) -> None:
     for record in actual_result:
         records[f"{record.name}.{record.count}"] = record
 
+    assert "alice.2" in records, f"missing alice.2; got {sorted(records)}"
+    assert "bob.2" in records, f"missing bob.2; got {sorted(records)}"
+    # The extraction model decides whether each key's two facts collapse into a
+    # single item or stay separate, so the item count is not fixed. Each set is
+    # reported alongside the other's failure to tell a per-key miss from a
+    # store-wide one.
     items = records["alice.2"].items
-    # LLMs may treat different review comments as updates to the same
-    # fact or as distinct facts.
-    assert len(items) == 1
-    item: MemorySetItem = items[-1]
-    assert item.created_at < item.updated_at
-    assert "bananas" in item.value
+    values = [item.value for item in items or []]
+    bob_values = [item.value for item in records["bob.2"].items or []]
+    # A scoping break misattributes in either direction. alice's facts landing
+    # in bob's set leaves alice's set short rather than inflated, so check that
+    # direction ahead of the emptiness assertion below, which would otherwise
+    # report the symptom in place of the cause. bob's set has to be populated
+    # for that scan to carry any weight, since an empty one satisfies it
+    # without ever being examined.
+    assert bob_values, f"bob's memory set is empty (alice's set: {values})"
+    bob_leaked = [
+        value
+        for value in bob_values
+        if "watermelon" in value.lower() or "bananas" in value.lower()
+    ]
+    assert not bob_leaked, f"bob's set contains alice's facts: {bob_values}"
+    assert values, f"alice's memory set is empty (bob's set: {bob_values})"
+
+    # The stored text is the model's paraphrase of the input, so match loosely.
+    assert any("bananas" in value.lower() for value in values), (
+        f"no stored item carries the updated fact: {values}"
+    )
+    # Each partition key is scoped to its own memories, so bob's facts must
+    # never surface in alice's set.
+    leaked = [
+        value
+        for value in values
+        if "swimming" in value.lower() or "vegetarian" in value.lower()
+    ]
+    assert not leaked, f"alice's set contains bob's facts: {values}"
+    # Both timestamps are populated whether an item was created or updated, and
+    # the parser turns an unrecognized format into None rather than raising.
+    assert all(item.created_at and item.updated_at for item in items), (
+        f"stored items are missing timestamps: "
+        f"{[(item.created_at, item.updated_at) for item in items]}"
+    )
 
     # verify async add doesn't block process other key
     assert datetime.fromisoformat(
