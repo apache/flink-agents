@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.runtime.operator.ActionTask;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
 import org.apache.flink.util.ExceptionUtils;
@@ -48,6 +49,25 @@ public class PythonActionExecutor implements AutoCloseable {
 
     private static final String CLOSE_FLINK_RUNNER_CONTEXT =
             "flink_runner_context.close_flink_runner_context";
+
+    // =========== TASK LIFECYCLE FORWARDING ===========
+    private static final String ADD_TASK_LIFECYCLE_LISTENER =
+            "flink_runner_context.add_task_lifecycle_listener";
+    private static final String NOTIFY_RECORD_START = "flink_runner_context.notify_record_start";
+    private static final String NOTIFY_ACTION_PREPARED =
+            "flink_runner_context.notify_action_prepared";
+    private static final String NOTIFY_ACTION_STARTED =
+            "flink_runner_context.notify_action_started";
+    private static final String NOTIFY_ACTION_TRANSFERRED =
+            "flink_runner_context.notify_action_transferred";
+    private static final String NOTIFY_ACTION_FINISHING =
+            "flink_runner_context.notify_action_finishing";
+    private static final String NOTIFY_ACTION_FINISHED =
+            "flink_runner_context.notify_action_finished";
+    private static final String NOTIFY_ACTION_REUSED = "flink_runner_context.notify_action_reused";
+    private static final String NOTIFY_ACTION_FAILED = "flink_runner_context.notify_action_failed";
+    private static final String NOTIFY_RECORD_FINISHED =
+            "flink_runner_context.notify_record_finished";
 
     // ========== ASYNC THREAD POOL ===========
     private static final String CREATE_ASYNC_THREAD_POOL =
@@ -95,6 +115,66 @@ public class PythonActionExecutor implements AutoCloseable {
 
     public PyObject getPythonRunnerContext() {
         return pythonRunnerContext;
+    }
+
+    /**
+     * Registers a Python object in the Python runtime's task lifecycle registry. The Python side
+     * fans the operator's callbacks out to that registry when {@link
+     * org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener} forwards them.
+     *
+     * @return whether the object observes the lifecycle, so the caller can tell whether the Python
+     *     runtime has anything to be notified about.
+     */
+    public boolean addTaskLifecycleListener(PyObject pythonListener) {
+        Object registered =
+                interpreter.invoke(
+                        ADD_TASK_LIFECYCLE_LISTENER, pythonRunnerContext, pythonListener);
+        return Boolean.TRUE.equals(registered);
+    }
+
+    /** Forwards {@code onRecordStart} to the Python runtime lifecycle listeners. */
+    public void notifyRecordStart(Object key) {
+        interpreter.invoke(NOTIFY_RECORD_START, pythonRunnerContext, key);
+    }
+
+    /** Forwards {@code onActionPrepared} to the Python runtime lifecycle listeners. */
+    public void notifyActionPrepared(ActionTask task) {
+        interpreter.invoke(NOTIFY_ACTION_PREPARED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onActionStarted} to the Python runtime lifecycle listeners. */
+    public void notifyActionStarted(ActionTask task) {
+        interpreter.invoke(NOTIFY_ACTION_STARTED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onActionTransferred} to the Python runtime lifecycle listeners. */
+    public void notifyActionTransferred(ActionTask fromTask, ActionTask toTask) {
+        interpreter.invoke(NOTIFY_ACTION_TRANSFERRED, pythonRunnerContext, fromTask, toTask);
+    }
+
+    /** Forwards {@code onActionFinishing} to the Python runtime lifecycle listeners. */
+    public void notifyActionFinishing(ActionTask task) {
+        interpreter.invoke(NOTIFY_ACTION_FINISHING, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onActionFinished} to the Python runtime lifecycle listeners. */
+    public void notifyActionFinished(ActionTask task) {
+        interpreter.invoke(NOTIFY_ACTION_FINISHED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onActionReused} to the Python runtime lifecycle listeners. */
+    public void notifyActionReused(ActionTask task) {
+        interpreter.invoke(NOTIFY_ACTION_REUSED, pythonRunnerContext, task);
+    }
+
+    /** Forwards {@code onActionFailed} to the Python runtime lifecycle listeners. */
+    public void notifyActionFailed(ActionTask task, Throwable error) {
+        interpreter.invoke(NOTIFY_ACTION_FAILED, pythonRunnerContext, task, error);
+    }
+
+    /** Forwards {@code onRecordFinished} to the Python runtime lifecycle listeners. */
+    public void notifyRecordFinished(Object key) {
+        interpreter.invoke(NOTIFY_RECORD_FINISHED, pythonRunnerContext, key);
     }
 
     public void open() throws Exception {

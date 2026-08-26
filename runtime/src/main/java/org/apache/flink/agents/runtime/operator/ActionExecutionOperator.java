@@ -21,8 +21,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
-import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -32,6 +30,8 @@ import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
+import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
@@ -40,6 +40,8 @@ import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.trace.EventLogComponentExecutionListener;
+import org.apache.flink.agents.runtime.trace.EventLogTaskLifecycleListener;
 import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
@@ -141,6 +143,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final boolean pythonKeyIsPickled;
     private final boolean agentRunBeginEventEnabled;
 
+    // Broadcast targets for the per-record/per-action lifecycle events.
+    private transient List<TaskLifecycleListener> taskLifecycleListeners = new ArrayList<>();
+
+    // Broadcast targets for component execution reports, injected per action execution.
+    private transient List<ComponentExecutionListener> componentExecutionListeners =
+            new ArrayList<>();
+
     public ActionExecutionOperator(
             AgentPlan agentPlan,
             Boolean inputIsJava,
@@ -216,6 +225,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
         ltm = pythonBridge.getLongTermMemory();
+
+        if (taskLifecycleListeners == null) {
+            taskLifecycleListeners = new ArrayList<>();
+        }
+        if (componentExecutionListeners == null) {
+            componentExecutionListeners = new ArrayList<>();
+        }
+
+        registerEventLogListeners();
 
         // init context manager for runner context creation and memory contexts
         contextManager =
@@ -305,8 +323,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 output.collect(eventRouter.getReusedStreamRecord().replace(outputData));
             }
         } else {
+            boolean freshRecordRound = false;
             if (isInputEvent) {
                 // If the event is an InputEvent, we mark that the key is currently being processed.
+                if (!stateManager.hasMoreActionTasks()) {
+                    // No tasks in flight for this key: this input record starts a fresh record
+                    // processing round.
+                    freshRecordRound = true;
+                }
                 stateManager.addProcessingKey(key);
                 stateManager.initOrIncSequenceNumber();
                 tryEmitAgentRunBeginEvent(key, contextKey, event, traceContext);
@@ -323,6 +347,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     event,
                                     stateManager.getSequenceNumber(),
                                     traceContext));
+                    if (freshRecordRound) {
+                        notifyRecordStart(key);
+                        freshRecordRound = false;
+                    }
                 }
             }
         }
@@ -428,7 +456,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
-                executionEventLogger);
+                this::createComponentListeners);
+        notifyActionPrepared(actionTask);
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -465,8 +494,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 key, sequenceNumber, actionTask.action, actionTask.event);
             }
 
-            notifyActionStarted(actionTask);
             try {
+                notifyActionStarted(actionTask);
                 // Set up durable execution context for fine-grained recovery
                 durableExecManager.setupDurableExecutionContext(
                         actionTask, actionState, sequenceNumber);
@@ -494,6 +523,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // action task, meaning it is not finished.
                 contextManager.removeContexts(actionTask);
                 durableExecManager.removeDurableContext(actionTask);
+                if (actionTaskResult.isFinished()) {
+                    // Notify before persisting the result, so listeners observe the task
+                    // before its completion becomes durable.
+                    notifyActionFinishing(actionTask);
+                }
                 durableExecManager.maybePersistTaskResult(
                         key,
                         sequenceNumber,
@@ -508,25 +542,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     notifyActionFinished(actionTask);
                 }
             } catch (Throwable t) {
-                try {
-                    notifyActionFailed(actionTask, t);
-                } finally {
-                    contextManager.completeActionExecution(actionTask);
-                }
+                notifyActionFailed(actionTask, t);
                 ExceptionUtils.rethrowException(t);
                 // Unreachable; required for Java definite-assignment analysis.
                 return;
             }
         }
 
-        try {
-            for (Event actionOutputEvent : outputEvents) {
-                processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
-            }
-        } finally {
-            if (isFinished) {
-                contextManager.completeActionExecution(actionTask);
-            }
+        for (Event actionOutputEvent : outputEvents) {
+            processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
         }
 
         boolean currentInputEventFinished = false;
@@ -548,12 +572,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // If the action task is not finished, we keep the contexts in memory for the
             // next generated ActionTask to be invoked.
             contextManager.transferContexts(actionTask, generatedActionTask, durableExecManager);
+            notifyActionTransferred(actionTask, generatedActionTask);
 
             stateManager.addActionTask(generatedActionTask);
         }
 
         // 3. Process the next InputEvent or next action task
         if (currentInputEventFinished) {
+            notifyRecordFinished(key);
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
             durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
@@ -707,30 +733,99 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (actionTask.hasExecutionStartedEventEmitted()) {
             return;
         }
-        notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionStarted());
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionStarted(actionTask);
+        }
         actionTask.markExecutionStartedEventEmitted();
     }
 
-    private void notifyActionFinished(ActionTask actionTask) {
-        notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionFinished());
+    private void registerEventLogListeners() {
+        addTaskLifecycleListener(new EventLogTaskLifecycleListener(executionEventLogger));
     }
 
-    private void notifyActionReused(ActionTask actionTask) {
-        notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(), ExecutionLifecycleEvents.executionReused());
+    /**
+     * Builds the component execution listeners of one action execution: the per-execution event log
+     * adapter first, followed by the globally registered listeners.
+     */
+    private List<ComponentExecutionListener> createComponentListeners(ActionTask actionTask) {
+        List<ComponentExecutionListener> listeners = new ArrayList<>();
+        listeners.add(
+                new EventLogComponentExecutionListener(
+                        actionTask.getTraceContext(), executionEventLogger));
+        listeners.addAll(componentExecutionListeners);
+        return listeners;
     }
 
-    private void notifyActionFailed(ActionTask actionTask, Throwable error) {
-        notifyExecutionLifecycleEvent(
-                actionTask.getTraceContext(),
-                ExecutionLifecycleEvents.executionFailed(
-                        error, ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED));
+    /**
+     * Registers a listener to be notified of per-record/per-action lifecycle events. The
+     * registration itself is not part of the operator state, so it must happen before records are
+     * processed.
+     */
+    public void addTaskLifecycleListener(TaskLifecycleListener listener) {
+        taskLifecycleListeners.add(listener);
     }
 
-    private void notifyExecutionLifecycleEvent(ExecutionTraceContext traceContext, Event event) {
-        executionEventLogger.emit(event, traceContext);
+    /**
+     * Registers a listener to be notified of component execution reports of every action execution.
+     * The registration itself is not part of the operator state, so it must happen before records
+     * are processed.
+     */
+    public void addComponentExecutionListener(ComponentExecutionListener listener) {
+        componentExecutionListeners.add(listener);
+    }
+
+    private void notifyRecordStart(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordStart(key);
+        }
+    }
+
+    private void notifyActionPrepared(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionPrepared(task);
+        }
+    }
+
+    private void notifyActionTransferred(ActionTask from, ActionTask to) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionTransferred(from, to);
+        }
+    }
+
+    private void notifyActionFinishing(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionFinishing(task);
+        }
+    }
+
+    private void notifyActionFinished(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionFinished(task);
+        }
+    }
+
+    private void notifyActionReused(ActionTask task) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onActionReused(task);
+        }
+    }
+
+    private void notifyActionFailed(ActionTask task, Throwable error) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            try {
+                listener.onActionFailed(task, error);
+            } catch (Throwable listenerError) {
+                if (listenerError != error) {
+                    error.addSuppressed(listenerError);
+                }
+            }
+        }
+    }
+
+    private void notifyRecordFinished(Object key) {
+        for (TaskLifecycleListener listener : taskLifecycleListeners) {
+            listener.onRecordFinished(key);
+        }
     }
 
     private ActionTask createActionTask(
@@ -791,6 +886,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 String contextKey = resolveContextKey(key);
+                // Align with the task-level replay: re-emit the record start for the resumed
+                // round so listeners observe a paired start/finished bracket as well.
+                notifyRecordStart(key);
                 mailboxExecutor.submit(
                         () -> tryProcessActionTaskForKey(key, contextKey), "process action task");
             }

@@ -42,12 +42,12 @@ class RunnerContextPendingEventsContractTest {
         List<Event> bufferB = new ArrayList<>();
         Event eventA = new InputEvent(1L);
 
-        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false);
+        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false, null);
         context.sendEvent(eventA);
         assertThat(context.drainEvents(null)).containsExactly(eventA);
         context.checkNoPendingEvents();
 
-        context.switchActionContext("action-b", memoryB, bufferB, "key-b", "obs-b", false);
+        context.switchActionContext("action-b", memoryB, bufferB, "key-b", "obs-b", false, null);
         assertThat(context.drainEvents(null)).isEmpty();
     }
 
@@ -60,17 +60,17 @@ class RunnerContextPendingEventsContractTest {
         List<Event> bufferB = new ArrayList<>();
         Event eventA = new InputEvent(1L);
 
-        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false);
+        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false, null);
         context.sendEvent(eventA);
 
         // Switching to another action task now exposes that task's own (empty) buffer: action-a's
         // event stays isolated in bufferA and cannot contaminate action-b, even though action-a
         // yielded with an undrained buffer.
-        context.switchActionContext("action-b", memoryB, bufferB, "key-b", "obs-b", false);
+        context.switchActionContext("action-b", memoryB, bufferB, "key-b", "obs-b", false, null);
         assertThat(context.drainEvents(null)).isEmpty();
 
         // Switching back to action-a still sees its buffered event.
-        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false);
+        context.switchActionContext("action-a", memoryA, bufferA, "key-a", "obs-a", false, null);
         assertThat(context.drainEvents(null)).containsExactly(eventA);
     }
 

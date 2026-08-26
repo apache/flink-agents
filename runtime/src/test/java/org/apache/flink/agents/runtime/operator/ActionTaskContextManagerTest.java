@@ -17,9 +17,10 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -29,10 +30,10 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -46,6 +47,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -270,52 +273,67 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
-    void reportedExecutionStateFollowsActionExecutionAcrossContinuationTasks() throws Exception {
+    void componentListenersFollowActionExecutionAcrossContinuationTasks() throws Exception {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask to =
                     new JavaActionTask("k", new InputEvent(1L), action, 1L, from.getTraceContext());
-            List<ExecutionTraceContext> reports = new ArrayList<>();
-            ExecutionEventSink sink = (event, context) -> reports.add(context);
+            RecordingComponentListener listener = new RecordingComponentListener();
+            AtomicInteger factoryInvocations = new AtomicInteger();
+            Function<ActionTask, List<ComponentExecutionListener>> factory =
+                    task -> {
+                        factoryInvocations.incrementAndGet();
+                        return List.of(listener);
+                    };
 
-            invokeCreateAndSetRunnerContext(mgr, from, sink);
+            invokeCreateAndSetRunnerContext(mgr, from, factory);
             from.getRunnerContext()
                     .reportExecutionStarted(
                             ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
             mgr.transferContexts(from, to, new DurableExecutionManager(null));
-            invokeCreateAndSetRunnerContext(mgr, to, sink);
+            invokeCreateAndSetRunnerContext(mgr, to, factory);
             to.getRunnerContext()
                     .reportExecutionSucceeded(
                             ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
-            assertThat(reports).hasSize(2);
-            assertThat(reports.get(1).getExecutionId()).isEqualTo(reports.get(0).getExecutionId());
+            // The continuation task shares the execution's listener list, so the start/terminal
+            // pair reaches the same listener instance.
+            assertThat(factoryInvocations.get()).isOne();
+            assertThat(listener.started).containsExactly("slow-tool");
+            assertThat(listener.succeeded).containsExactly("slow-tool");
         }
     }
 
     @Test
-    void completingActionExecutionDropsReportedExecutionState() throws Exception {
+    void removingContextsDropsComponentListeners() throws Exception {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
-            List<ExecutionTraceContext> reports = new ArrayList<>();
-            ExecutionEventSink sink = (event, context) -> reports.add(context);
+            List<RecordingComponentListener> created = new ArrayList<>();
+            Function<ActionTask, List<ComponentExecutionListener>> factory =
+                    ignored -> {
+                        RecordingComponentListener listener = new RecordingComponentListener();
+                        created.add(listener);
+                        return List.of(listener);
+                    };
 
-            invokeCreateAndSetRunnerContext(mgr, task, sink);
+            invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
                     .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
-            mgr.completeActionExecution(task);
-            invokeCreateAndSetRunnerContext(mgr, task, sink);
+            mgr.removeContexts(task);
+            invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
                     .reportExecutionSucceeded(
                             ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
-            assertThat(reports).hasSize(2);
-            assertThat(reports.get(1).getExecutionId())
-                    .isNotEqualTo(reports.get(0).getExecutionId());
+            // A released contexts record starts a fresh listener list on the next preparation.
+            assertThat(created).hasSize(2);
+            assertThat(created.get(0).started).containsExactly("model-a");
+            assertThat(created.get(0).succeeded).isEmpty();
+            assertThat(created.get(1).succeeded).containsExactly("model-a");
         }
     }
 
@@ -324,7 +342,8 @@ class ActionTaskContextManagerTest {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
-            invokeCreateAndSetRunnerContext(mgr, task, (event, context) -> {});
+            invokeCreateAndSetRunnerContext(
+                    mgr, task, ignored -> List.of(new RecordingComponentListener()));
             task.getRunnerContext()
                     .reportExecutionStarted(
                             ExecutionReporter.EntityTypes.TOOL,
@@ -415,8 +434,10 @@ class ActionTaskContextManagerTest {
     }
 
     private static void invokeCreateAndSetRunnerContext(
-            ActionTaskContextManager mgr, ActionTask task, ExecutionEventSink executionEventSink) {
-        invokeCreateAndSetRunnerContext(mgr, task, null, executionEventSink);
+            ActionTaskContextManager mgr,
+            ActionTask task,
+            Function<ActionTask, List<ComponentExecutionListener>> componentListenerFactory) {
+        invokeCreateAndSetRunnerContext(mgr, task, null, componentListenerFactory);
     }
 
     @SuppressWarnings("unchecked")
@@ -424,7 +445,7 @@ class ActionTaskContextManagerTest {
             ActionTaskContextManager mgr,
             ActionTask task,
             InteranlBaseLongTermMemory longTermMemory,
-            ExecutionEventSink executionEventSink) {
+            Function<ActionTask, List<ComponentExecutionListener>> componentListenerFactory) {
         AgentPlan plan = newEmptyAgentPlan();
         ResourceCache cache = mock(ResourceCache.class);
         FlinkAgentsMetricGroupImpl metricGroup =
@@ -443,7 +464,26 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
-                executionEventSink);
+                componentListenerFactory);
+    }
+
+    /** Records the entity names of the component reports it receives. */
+    private static final class RecordingComponentListener implements ComponentExecutionListener {
+        private final List<String> started = new ArrayList<>();
+        private final List<String> succeeded = new ArrayList<>();
+
+        @Override
+        public void onComponentExecution(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                Event event) {
+            if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+                started.add(entityName);
+            } else {
+                succeeded.add(entityName);
+            }
+        }
     }
 
     private static AgentPlan newEmptyAgentPlan() {

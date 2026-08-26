@@ -153,7 +153,7 @@ public abstract class ActionTask implements Serializable {
         return observationId;
     }
 
-    ExecutionTraceContext getTraceContext() {
+    public ExecutionTraceContext getTraceContext() {
         return traceContext;
     }
 
