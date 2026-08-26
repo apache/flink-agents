@@ -108,11 +108,20 @@ public class ToolCallAction {
             }
 
             Tool tool = null;
-            String diagnosticError = null;
+            Exception preparationError = null;
             try {
                 tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
             } catch (Exception e) {
-                diagnosticError = e.getMessage();
+                preparationError = e;
+            }
+            if (tool != null) {
+                try {
+                    // Framework-owned injected args must win over model-provided values so hidden
+                    // context such as tenant ids cannot be spoofed by a tool call payload.
+                    mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
+                } catch (Exception e) {
+                    preparationError = e;
+                }
             }
 
             ToolParameters metadataParameters = new ToolParameters(mergedArguments);
@@ -127,11 +136,24 @@ public class ToolCallAction {
             ExecutionReporters.started(
                     ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
 
-            if (tool == null) {
+            if (tool == null || preparationError != null) {
+                Exception failure =
+                        preparationError != null
+                                ? preparationError
+                                : new IllegalArgumentException("Tool does not exist.");
+                String diagnosticError = failure.getMessage();
+                if (diagnosticError == null && tool == null) {
+                    diagnosticError = "Tool does not exist.";
+                }
                 recordInlineResponse(
                         id,
-                        ToolResponse.error(String.format("Tool %s does not exist.", name)),
-                        diagnosticError != null ? diagnosticError : "Tool does not exist.",
+                        ToolResponse.error(
+                                String.format(
+                                        tool == null
+                                                ? "Tool %s does not exist."
+                                                : "Tool %s execute failed.",
+                                        name)),
+                        diagnosticError,
                         success,
                         error,
                         responses);
@@ -140,31 +162,7 @@ public class ToolCallAction {
                         ExecutionReporter.EntityTypes.TOOL,
                         name,
                         entityMetadata,
-                        diagnosticError != null
-                                ? new RuntimeException(diagnosticError)
-                                : new IllegalArgumentException("Tool does not exist."),
-                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-                continue;
-            }
-
-            try {
-                // Framework-owned injected args must win over model-provided values so hidden
-                // context such as tenant ids cannot be spoofed by a tool call payload.
-                mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
-            } catch (Exception e) {
-                recordInlineResponse(
-                        id,
-                        ToolResponse.error(String.format("Tool %s execute failed.", name)),
-                        e.getMessage(),
-                        success,
-                        error,
-                        responses);
-                ExecutionReporters.failed(
-                        ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        name,
-                        entityMetadata,
-                        e,
+                        failure,
                         ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
                 continue;
             }
