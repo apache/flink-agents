@@ -53,6 +53,9 @@ dependencies = [
     "dashscope~=1.24.2",
     "openai>=1.66.3",
     "anthropic>=0.64.0",
+    # googleapis-common-protos 1.75.1+ requires protobuf 6.33.5+, which is
+    # incompatible with the protobuf runtimes selected by supported PyFlink releases.
+    "googleapis-common-protos<1.72.1",
     "chromadb==1.0.21",
     "onnxruntime<1.24.1;python_version<'3.11'",
 ]
