@@ -34,7 +34,7 @@ from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import
 
 
 def _connection() -> AnthropicChatModelConnection:
-    return AnthropicChatModelConnection(name="test", api_key="dummy")
+    return AnthropicChatModelConnection(api_key="dummy")
 
 
 def _connection_returning(message: Message) -> AnthropicChatModelConnection:

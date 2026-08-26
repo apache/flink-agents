@@ -118,13 +118,11 @@ class BaseChatModelConnection(Resource, ABC):
     # Reject unrecognized constructor arguments instead of silently ignoring them
     # (pydantic's default extra="ignore"), so a misspelled or unsupported config
     # key fails loudly at construction time instead of appearing to apply and
-    # then having no effect. `name` is declared below purely so the resource
-    # name callers and the resource provider commonly pass through survives
-    # this check; it is not otherwise used by this class.
+    # then having no effect. Java-backed subclasses (JavaChatModelConnection,
+    # JavaChatModelSetup) override this back to "ignore", since their descriptor
+    # arguments intentionally carry implementation-specific, provider-facing keys
+    # (e.g. java_clazz, extract_reasoning) that this base has no field for.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-    name: str | None = Field(
-        default=None, exclude=True, description="Optional resource name."
-    )
 
     @classmethod
     @override
@@ -292,9 +290,6 @@ class BaseChatModelSetup(Resource):
 
     # See BaseChatModelConnection.model_config for rationale.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-    name: str | None = Field(
-        default=None, exclude=True, description="Optional resource name."
-    )
 
     connection: str = Field(description="The referenced connection name.")
     model: str = Field(description="Name of the chat model to use.")

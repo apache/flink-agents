@@ -45,7 +45,6 @@ api_version = os.environ.get("AZURE_OPENAI_API_VERSION")
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
 def test_azure_openai_chat_model() -> None:
     connection = AzureOpenAIChatModelConnection(
-        name="azure_openai",
         api_key=api_key,
         azure_endpoint=azure_endpoint,
         api_version=api_version,
@@ -61,7 +60,6 @@ def test_azure_openai_chat_model() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = AzureOpenAIChatModelSetup(
-        name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
         resource_context=mock_ctx,
@@ -92,7 +90,6 @@ def add(a: int, b: int) -> int:
 @pytest.mark.skipif(api_key is None, reason="AZURE_OPENAI_API_KEY is not set")
 def test_azure_openai_chat_with_tools() -> None:
     connection = AzureOpenAIChatModelConnection(
-        name="azure_openai",
         api_key=api_key,
         azure_endpoint=azure_endpoint,
         api_version=api_version,
@@ -108,7 +105,6 @@ def test_azure_openai_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = AzureOpenAIChatModelSetup(
-        name="azure_openai",
         model=test_deployment,
         connection="azure_openai",
         tools=["add"],

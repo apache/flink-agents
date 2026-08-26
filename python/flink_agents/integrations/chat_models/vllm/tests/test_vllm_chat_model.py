@@ -34,7 +34,7 @@ from flink_agents.integrations.chat_models.vllm.vllm_chat_model import (
 
 
 def test_connection_defaults_to_local_vllm_server() -> None:
-    connection = VLLMChatModelConnection(name="vllm")
+    connection = VLLMChatModelConnection()
     assert isinstance(connection, OpenAIChatModelConnection)
     assert connection.api_base_url == DEFAULT_VLLM_API_BASE_URL
     assert connection.api_key == DEFAULT_VLLM_API_KEY
@@ -42,7 +42,6 @@ def test_connection_defaults_to_local_vllm_server() -> None:
 
 def test_connection_honors_explicit_arguments() -> None:
     connection = VLLMChatModelConnection(
-        name="vllm",
         api_key="secret-key",
         api_base_url="http://vllm-host:8000/v1",
         timeout=30.0,
@@ -56,24 +55,24 @@ def test_connection_honors_explicit_arguments() -> None:
 
 def test_setup_requires_model() -> None:
     with pytest.raises(ValueError, match="model is required for vLLM"):
-        VLLMChatModelSetup(name="vllm_model", connection="vllm")
+        VLLMChatModelSetup(connection="vllm")
 
 
 def test_connection_defaults_whitespace_only_arguments() -> None:
     # Semantic parity with the Java connection, which treats blank values as absent.
-    connection = VLLMChatModelConnection(name="vllm", api_key=" ", api_base_url="  ")
+    connection = VLLMChatModelConnection(api_key=" ", api_base_url="  ")
     assert connection.api_key == DEFAULT_VLLM_API_KEY
     assert connection.api_base_url == DEFAULT_VLLM_API_BASE_URL
 
 
 def test_setup_rejects_whitespace_only_model() -> None:
     with pytest.raises(ValueError, match="model is required for vLLM"):
-        VLLMChatModelSetup(name="vllm_model", connection="vllm", model=" ")
+        VLLMChatModelSetup(connection="vllm", model=" ")
 
 
 def test_setup_rejects_empty_model() -> None:
     with pytest.raises(ValueError, match="model is required for vLLM"):
-        VLLMChatModelSetup(name="vllm_model", connection="vllm", model="")
+        VLLMChatModelSetup(connection="vllm", model="")
 
 
 class _Person(BaseModel):
@@ -84,7 +83,7 @@ class _Person(BaseModel):
 
 
 def test_supports_native_structured_output_follows_served_model() -> None:
-    connection = VLLMChatModelConnection(name="vllm")
+    connection = VLLMChatModelConnection()
     assert connection.supports_native_structured_output("Qwen/Qwen2.5-7B-Instruct")
     assert connection.supports_native_structured_output(
         "meta-llama/Llama-3.1-8B-Instruct"
@@ -94,7 +93,7 @@ def test_supports_native_structured_output_follows_served_model() -> None:
 
 
 def test_native_response_format_applied_for_qwen_model() -> None:
-    connection = VLLMChatModelConnection(name="vllm")
+    connection = VLLMChatModelConnection()
     mock_client = MagicMock()
     mock_message = MagicMock()
     mock_message.role = "assistant"
@@ -119,7 +118,6 @@ def test_native_response_format_applied_for_qwen_model() -> None:
 
 def test_setup_carries_served_model_name() -> None:
     setup = VLLMChatModelSetup(
-        name="vllm_model",
         connection="vllm",
         model="Qwen/Qwen2.5-7B-Instruct",
         temperature=0.3,

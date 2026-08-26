@@ -45,9 +45,7 @@ api_base_url = os.environ.get("TEST_API_BASE_URL")
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_openai_chat_model() -> None:
-    connection = OpenAIChatModelConnection(
-        name="openai", api_key=api_key, api_base_url=api_base_url
-    )
+    connection = OpenAIChatModelConnection(api_key=api_key, api_base_url=api_base_url)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -59,7 +57,7 @@ def test_openai_chat_model() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = OpenAIChatModelSetup(
-        name="openai", model=test_model, connection="openai", resource_context=mock_ctx
+        model=test_model, connection="openai", resource_context=mock_ctx
     )
     response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
     assert response is not None
@@ -86,9 +84,7 @@ def add(a: int, b: int) -> int:
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_openai_chat_with_tools() -> None:
-    connection = OpenAIChatModelConnection(
-        name="openai", api_key=api_key, api_base_url=api_base_url
-    )
+    connection = OpenAIChatModelConnection(api_key=api_key, api_base_url=api_base_url)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -100,7 +96,6 @@ def test_openai_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = OpenAIChatModelSetup(
-        name="openai",
         model=test_model,
         connection="openai",
         tools=["add"],
@@ -130,9 +125,7 @@ def test_default_model_when_omitted() -> None:
 
 def test_connection_default_timeout_and_max_retries() -> None:
     """Pin canonical connection defaults to prevent silent drift."""
-    conn = OpenAIChatModelConnection(
-        name="test", api_key="fake", api_base_url="http://localhost"
-    )
+    conn = OpenAIChatModelConnection(api_key="fake", api_base_url="http://localhost")
     assert conn.timeout == 60.0
     assert conn.max_retries == 3
 
@@ -140,7 +133,7 @@ def test_connection_default_timeout_and_max_retries() -> None:
 def test_zero_timeout_disables_client_timeout() -> None:
     """Keep zero-timeout semantics aligned with the Java OpenAI SDK."""
     conn = OpenAIChatModelConnection(
-        name="test", api_key="fake", api_base_url="http://localhost", timeout=0
+        api_key="fake", api_base_url="http://localhost", timeout=0
     )
 
     assert conn.client.timeout is None
@@ -156,7 +149,6 @@ def test_zero_timeout_disables_client_timeout() -> None:
 def test_zero_timeout_disables_custom_http_client_timeout() -> None:
     http_client = httpx.Client(timeout=10.0)
     conn = OpenAIChatModelConnection(
-        name="test",
         api_key="fake",
         api_base_url="http://localhost",
         timeout=0,
@@ -173,7 +165,6 @@ def test_zero_timeout_disables_custom_http_client_timeout() -> None:
 def test_connection_rejects_non_finite_timeout(timeout: float) -> None:
     with pytest.raises(ValidationError, match="finite"):
         OpenAIChatModelConnection(
-            name="test",
             api_key="fake",
             api_base_url="http://localhost",
             timeout=timeout,
@@ -192,7 +183,6 @@ def test_connection_rejects_values_beyond_java_sdk_limits(
 ) -> None:
     with pytest.raises(ValidationError, match="less than or equal"):
         OpenAIChatModelConnection(
-            name="test",
             api_key="fake",
             api_base_url="http://localhost",
             **{argument: value},

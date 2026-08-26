@@ -41,7 +41,6 @@ credentials_available = (
 def _fake_connection(**kwargs: Any) -> WatsonxChatModelConnection:
     """Create a connection with fake credentials for offline tests."""
     return WatsonxChatModelConnection(
-        name="watsonx",
         url=kwargs.pop("url", "https://us-south.ml.cloud.ibm.com"),
         api_key=kwargs.pop("api_key", "fake-key"),
         project_id=kwargs.pop("project_id", "fake-project"),
@@ -55,7 +54,7 @@ def _fake_connection(**kwargs: Any) -> WatsonxChatModelConnection:
 )
 def test_watsonx_chat() -> None:
     """Test basic chat functionality of WatsonxChatModelConnection."""
-    connection = WatsonxChatModelConnection(name="watsonx")
+    connection = WatsonxChatModelConnection()
     response = connection.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
@@ -103,7 +102,6 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_ctx.get_resource = get_resource
 
     llm = WatsonxChatModelSetup(
-        name="watsonx",
         model=test_model,
         connection="watsonx",
         temperature=0.5,
@@ -315,22 +313,18 @@ def test_configuration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(var, raising=False)
 
     with pytest.raises(ValueError, match="url"):
-        WatsonxChatModelConnection(name="watsonx")
+        WatsonxChatModelConnection()
 
     with pytest.raises(ValueError, match="credentials"):
-        WatsonxChatModelConnection(
-            name="watsonx", url="https://us-south.ml.cloud.ibm.com"
-        )
+        WatsonxChatModelConnection(url="https://us-south.ml.cloud.ibm.com")
 
     with pytest.raises(ValueError, match="project or space"):
         WatsonxChatModelConnection(
-            name="watsonx",
             url="https://us-south.ml.cloud.ibm.com",
             api_key="fake-key",
         )
 
     connection = WatsonxChatModelConnection(
-        name="watsonx",
         url=" https://us-south.ml.cloud.ibm.com ",
         api_key=" fake-key ",
         space_id=" fake-space ",
@@ -343,7 +337,6 @@ def test_configuration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match=r"cannot both be provided.*exactly one"):
         WatsonxChatModelConnection(
-            name="watsonx",
             url="https://us-south.ml.cloud.ibm.com",
             api_key="fake-key",
             project_id="fake-project",
@@ -352,7 +345,6 @@ def test_configuration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match=r"api_key and token.*exactly one"):
         WatsonxChatModelConnection(
-            name="watsonx",
             url=" https://us-south.ml.cloud.ibm.com ",
             api_key=" fake-key ",
             token=" fake-token ",

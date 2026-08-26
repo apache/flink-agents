@@ -42,7 +42,7 @@ client = pull_model(test_model)
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat() -> None:
-    server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
+    server = OllamaChatModelConnection(request_timeout=120.0)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
@@ -76,7 +76,7 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat_with_tools() -> None:
-    connection = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
+    connection = OllamaChatModelConnection(request_timeout=120.0)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
@@ -88,7 +88,6 @@ def test_ollama_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     llm = OllamaChatModelSetup(
-        name="ollama",
         connection="ollama",
         model=test_model,
         tools=["add"],
@@ -155,7 +154,7 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     # Configure mock client to return our mock response
     mock_client.chat.return_value = mock_response
     # Create model with mocked client
-    connection = OllamaChatModelConnection(name="ollama")
+    connection = OllamaChatModelConnection()
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
@@ -164,7 +163,6 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     mock_ctx.get_resource = get_resource
 
     llm = OllamaChatModelSetup(
-        name="ollama",
         connection="ollama",
         model=test_model,
         extract_reasoning=True,

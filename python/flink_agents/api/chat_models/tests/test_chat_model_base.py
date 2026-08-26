@@ -269,12 +269,6 @@ def test_connection_rejects_unrecognized_constructor_argument() -> None:
         _RecordingConnection(not_a_real_field="oops")
 
 
-def test_connection_accepts_name_without_storing_it() -> None:
-    """`name` is accepted, since callers commonly pass it, but not stored."""
-    connection = _RecordingConnection(name="my-connection")
-    assert "name" not in connection.model_dump()
-
-
 def test_setup_rejects_unrecognized_constructor_argument() -> None:
     """Same guarantee as the connection, for BaseChatModelSetup."""
     with pytest.raises(ValidationError, match="not_a_real_field"):
