@@ -255,8 +255,7 @@ public class ActionStateUtilTest {
         // Keys that do not have the current segment count cannot be attributed to a key-group, so
         // they are dropped during ownership filtering rather than retained in every subtask. This
         // closes the orphan-state leak; the project does not preserve pre-format durable state.
-        assertFalse(
-                ActionStateUtil.isKeyRetained(kg -> true, "test-key_1_event-uuid_action-uuid"));
+        assertFalse(ActionStateUtil.isKeyRetained(kg -> true, "test-key_1_event-uuid_action-uuid"));
         assertFalse(ActionStateUtil.isKeyRetained(kg -> true, "malformed-key"));
     }
 

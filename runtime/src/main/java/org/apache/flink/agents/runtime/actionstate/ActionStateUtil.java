@@ -89,9 +89,8 @@ public class ActionStateUtil {
     }
 
     /**
-     * Parses a composite state key into its semantic fields, in the order {@code [keyGroup,
-     * seqNum, eventUUID, actionUUID, businessKey]}. Throws when {@code key} is not in the current
-     * format.
+     * Parses a composite state key into its semantic fields, in the order {@code [keyGroup, seqNum,
+     * eventUUID, actionUUID, businessKey]}. Throws when {@code key} is not in the current format.
      */
     public static List<String> parseKey(String key) {
         Preconditions.checkNotNull(key, "key cannot be null.");
@@ -160,10 +159,10 @@ public class ActionStateUtil {
      * ownership filter. A {@code null} filter retains every key (the default for in-memory and test
      * backends).
      *
-     * <p>A key that does not have the expected segment count — or whose key-group segment cannot
-     * be parsed — is dropped rather than retained: it cannot be attributed to a key-group, so
-     * keeping it in every subtask would leak orphan state. This is safe because the project does
-     * not preserve pre-format durable state.
+     * <p>A key that does not have the expected segment count — or whose key-group segment cannot be
+     * parsed — is dropped rather than retained: it cannot be attributed to a key-group, so keeping
+     * it in every subtask would leak orphan state. This is safe because the project does not
+     * preserve pre-format durable state.
      */
     public static boolean isKeyRetained(@Nullable IntPredicate ownershipFilter, String stateKey) {
         if (ownershipFilter == null) {

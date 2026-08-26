@@ -96,8 +96,8 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     /**
      * @param actionStateStore an optional pre-injected store, primarily for tests. When {@code
-     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration, int)} may create a default store
-     *     based on configuration; otherwise durable execution is disabled.
+     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration, int)} may create a default
+     *     store based on configuration; otherwise durable execution is disabled.
      */
     DurableExecutionManager(@Nullable ActionStateStore actionStateStore) {
         this.actionStateStore = actionStateStore;

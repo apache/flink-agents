@@ -97,7 +97,8 @@ public class KafkaActionStateStoreTest {
         assertEquals(1, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L)).isTrue();
+        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L))
+                .isTrue();
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
@@ -238,7 +239,8 @@ public class KafkaActionStateStoreTest {
         assertEquals(2, history.size());
         var record = history.get(0);
         assertEquals(TEST_TOPIC, record.topic());
-        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L)).isTrue();
+        assertThat(ActionStateUtil.matchesBusinessKeyAndSeqNum(record.key(), TEST_KEY, 1L))
+                .isTrue();
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
     }
