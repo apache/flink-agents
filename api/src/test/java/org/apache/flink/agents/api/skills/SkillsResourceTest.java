@@ -28,6 +28,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -122,11 +123,17 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlRejectsInvalidHostAndPort() {
+        IllegalArgumentException malformedPort =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                Skills.fromUrl(
+                                        "https://example.com:bad/x.zip?token=top-secret"));
+        assertNull(malformedPort.getCause());
+        assertFalse(malformedPort.getMessage().contains("top-secret"));
+
         for (String url :
-                List.of(
-                        "https://:443/x.zip",
-                        "https://example.com:bad/x.zip",
-                        "https://example.com:65536/x.zip")) {
+                List.of("https://:443/x.zip", "https://example.com:65536/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
         }
     }

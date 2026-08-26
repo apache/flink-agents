@@ -164,8 +164,8 @@ public class Skills extends SerializableResource {
         URI uri;
         try {
             uri = URI.create(url);
-        } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url), e);
+        } catch (IllegalArgumentException ignored) {
+            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url));
         }
         String scheme = uri.getScheme();
         scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
@@ -175,11 +175,10 @@ public class Skills extends SerializableResource {
         }
         try {
             uri = uri.parseServerAuthority();
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException ignored) {
             throw new IllegalArgumentException(
                     "Skill URL must include a valid host and, when present, a valid port: "
-                            + urlForError(url),
-                    e);
+                            + urlForError(url));
         }
         if (uri.getHost() == null || uri.getHost().isEmpty()) {
             throw new IllegalArgumentException(

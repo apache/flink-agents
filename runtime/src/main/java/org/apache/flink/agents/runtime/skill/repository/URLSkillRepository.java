@@ -70,9 +70,9 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
         }
         try {
             uri = new URI(url);
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException ignored) {
             throw new IllegalArgumentException(
-                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url), e);
+                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url));
         }
         String scheme = uri.getScheme();
         scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
@@ -82,11 +82,10 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
         }
         try {
             uri = uri.parseServerAuthority();
-        } catch (URISyntaxException e) {
+        } catch (URISyntaxException ignored) {
             throw new IllegalArgumentException(
                     "Skill URL must include a valid host and, when present, a valid port: "
-                            + SkillMaterializer.urlForLogging(url),
-                    e);
+                            + SkillMaterializer.urlForLogging(url));
         }
         if (uri.getHost() == null || uri.getHost().isEmpty()) {
             throw new IllegalArgumentException(

@@ -39,6 +39,7 @@ import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -142,11 +143,18 @@ class URLSkillRepositoryTest {
 
     @Test
     void invalidHostAndPortAreRejectedBeforeDownload() {
+        IllegalArgumentException malformedPort =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "https://example.com:bad/skills.zip?token=top-secret"));
+        assertNull(malformedPort.getCause());
+        assertFalse(malformedPort.getMessage().contains("top-secret"));
+
         for (String url :
                 List.of(
-                        "https://:443/skills.zip",
-                        "https://example.com:bad/skills.zip",
-                        "https://example.com:65536/skills.zip")) {
+                        "https://:443/skills.zip", "https://example.com:65536/skills.zip")) {
             assertThrows(
                     IllegalArgumentException.class,
                     () -> new URLSkillRepository(url),
@@ -185,8 +193,13 @@ class URLSkillRepositoryTest {
         HttpServer server = startZipServer(new byte[0], 404);
         try {
             int port = server.getAddress().getPort();
-            String url = "http://127.0.0.1:" + port + "/missing.zip";
-            assertThrows(IOException.class, () -> new URLSkillRepository(url, null, true));
+            String url =
+                    "http://127.0.0.1:" + port + "/missing.zip?token=top-secret#fragment";
+            IOException error =
+                    assertThrows(
+                            IOException.class, () -> new URLSkillRepository(url, null, true));
+            assertTrue(error.getMessage().contains("Skill URL returned HTTP 404"));
+            assertFalse(error.getMessage().contains("top-secret"));
         } finally {
             server.stop(0);
         }

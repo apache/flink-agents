@@ -286,6 +286,10 @@ public final class SkillMaterializer {
                         "Skill URL returned an unsupported redirect to: "
                                 + urlForLogging(conn.getHeaderField("Location")));
             }
+            if (responseCode < 200 || responseCode >= 300) {
+                throw new IOException(
+                        "Skill URL returned HTTP " + responseCode + ": " + urlForLogging(u));
+            }
             try (InputStream in = conn.getInputStream()) {
                 URL effectiveUrl = conn.getURL();
                 if (!u.toExternalForm().equals(effectiveUrl.toExternalForm())) {
