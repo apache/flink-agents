@@ -171,6 +171,7 @@ class SkillsResourceTest {
                         "https://foo.1bar/x.zip",
                         "https://1.2.3.4.5/x.zip",
                         "https://1.2.3./x.zip",
+                        "https://1.2.3.4./x.zip",
                         "https://[v1.foo]/x.zip",
                         "https://[fe80::1%eth0]/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
@@ -188,6 +189,17 @@ class SkillsResourceTest {
         assertTrue(ex.getMessage().contains("must not include user info"));
         assertFalse(ex.getMessage().contains("password"));
         assertFalse(ex.getMessage().contains("secret"));
+    }
+
+    @Test
+    void fromUrlRedactsOpaqueMalformedCredentials() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> Skills.fromUrl("https:user:password?token=top-secret"));
+        assertTrue(ex.getMessage().endsWith("<redacted>"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("top-secret"));
     }
 
     @Test

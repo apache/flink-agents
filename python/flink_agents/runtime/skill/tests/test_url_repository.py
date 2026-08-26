@@ -144,6 +144,7 @@ class TestURLSkillRepository:
             "https://foo.1bar/skills.zip",
             "https://1.2.3.4.5/skills.zip",
             "https://1.2.3./skills.zip",
+            "https://1.2.3.4./skills.zip",
             "https://[v1.foo]/skills.zip",
         ],
     )
@@ -157,11 +158,13 @@ class TestURLSkillRepository:
             "https://example.com/x zip?token=top-secret",
             "https://example.com/%invalid?token=top-secret",
             "https://[fe80::1%eth0]/x.zip?token=top-secret",
+            "https:user:password?token=top-secret",
         ],
     )
     def test_malformed_url_is_rejected_without_leaking_query(self, url: str) -> None:
         with pytest.raises(ValueError) as exc_info:
             URLSkillRepository(url)
+        assert "password" not in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
 
     def test_user_info_is_rejected_without_leaking_secrets(self) -> None:

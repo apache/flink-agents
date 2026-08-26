@@ -30,6 +30,7 @@ from flink_agents.runtime.skill.repository._materialize import (
     Materialized,
     download_to_tempfile,
     extract_zip_safely,
+    url_for_logging,
 )
 
 
@@ -144,6 +145,9 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
 
 
 class TestDownloadToTempfile:
+    def test_url_for_logging_redacts_opaque_malformed_credentials(self) -> None:
+        assert url_for_logging("https:user:password?token=top-secret") == "<redacted>"
+
     def test_downloads_bytes(
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:

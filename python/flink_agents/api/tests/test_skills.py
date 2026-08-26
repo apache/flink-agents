@@ -120,6 +120,7 @@ class TestSkillsFactories:
             "https://foo.1bar/x.zip",
             "https://1.2.3.4.5/x.zip",
             "https://1.2.3./x.zip",
+            "https://1.2.3.4./x.zip",
             "https://[v1.foo]/x.zip",
         ],
     )
@@ -133,6 +134,14 @@ class TestSkillsFactories:
             Skills.from_url(url)
         assert "password" not in str(exc_info.value)
         assert "secret" not in str(exc_info.value)
+
+    def test_from_url_redacts_opaque_malformed_credentials(self) -> None:
+        url = "https:user:password?token=top-secret"
+        with pytest.raises(ValueError) as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "url",

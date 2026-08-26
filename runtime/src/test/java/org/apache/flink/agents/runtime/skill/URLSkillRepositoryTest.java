@@ -174,6 +174,7 @@ class URLSkillRepositoryTest {
                         "https://foo.1bar/skills.zip",
                         "https://1.2.3.4.5/skills.zip",
                         "https://1.2.3./skills.zip",
+                        "https://1.2.3.4./skills.zip",
                         "https://[v1.foo]/skills.zip",
                         "https://[fe80::1%eth0]/skills.zip")) {
             assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
@@ -190,6 +191,17 @@ class URLSkillRepositoryTest {
                                         "https://user:password@example.com/skills.zip"
                                                 + "?token=top-secret"));
         assertTrue(ex.getMessage().contains("must not include user info"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("top-secret"));
+    }
+
+    @Test
+    void opaqueMalformedCredentialsAreRedacted() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https:user:password?token=top-secret"));
+        assertTrue(ex.getMessage().endsWith("<redacted>"));
         assertFalse(ex.getMessage().contains("password"));
         assertFalse(ex.getMessage().contains("top-secret"));
     }

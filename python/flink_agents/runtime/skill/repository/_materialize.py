@@ -236,11 +236,14 @@ def url_for_logging(url: str) -> str:
     """Return a URL without user info, query parameters, or fragments."""
     try:
         parts = urlsplit(url)
+        if not parts.scheme or not parts.netloc:
+            return "<redacted>"
         netloc = parts.netloc.rsplit("@", 1)[-1]
+        if not netloc:
+            return "<redacted>"
         return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
     except ValueError:
-        scheme = url.split(":", 1)[0].lower()
-        return f"{scheme}://<redacted>"
+        return "<redacted>"
 
 
 def _require_allowed_transport(

@@ -75,7 +75,11 @@ _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 def _url_for_error(url: str) -> str:
     try:
         parts = urlsplit(url)
+        if not parts.scheme or not parts.netloc:
+            return "<redacted>"
         netloc = parts.netloc.rsplit("@", 1)[-1]
+        if not netloc:
+            return "<redacted>"
         return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
     except ValueError:
         return "<redacted>"
@@ -140,7 +144,9 @@ def _is_valid_hostname(hostname: str) -> bool:
         return False
     dns_name = hostname[:-1] if hostname.endswith(".") else hostname
     if re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", dns_name):
-        return all(int(part) <= 255 for part in dns_name.split("."))
+        return not hostname.endswith(".") and all(
+            int(part) <= 255 for part in dns_name.split(".")
+        )
     labels = dns_name.split(".")
     return (
         bool(dns_name)
