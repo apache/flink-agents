@@ -45,6 +45,7 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
 
     private static final int REQUEST_TIMEOUT_MS = 90_000;
     private static final Pattern SHA256_PATTERN = Pattern.compile("[0-9a-fA-F]{64}");
+    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     private final String url;
 
@@ -68,6 +69,10 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
         if (url == null) {
             throw new IllegalArgumentException("skill URL must not be null");
         }
+        if (INVALID_PERCENT_ESCAPE.matcher(url).find()) {
+            throw new IllegalArgumentException(
+                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url));
+        }
         try {
             uri = new URI(url);
         } catch (URISyntaxException ignored) {
@@ -87,10 +92,14 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
                     "Skill URL must include a valid host and, when present, a valid port: "
                             + SkillMaterializer.urlForLogging(url));
         }
+        if (uri.getRawUserInfo() != null) {
+            throw new IllegalArgumentException(
+                    "Skill URL must not include user info: "
+                            + SkillMaterializer.urlForLogging(url));
+        }
         if (uri.getHost() == null || uri.getHost().isEmpty()) {
             throw new IllegalArgumentException(
-                    "Skill URL must include a valid host: "
-                            + SkillMaterializer.urlForLogging(url));
+                    "Skill URL must include a valid host: " + SkillMaterializer.urlForLogging(url));
         }
         if (uri.getPort() > 65535) {
             throw new IllegalArgumentException(

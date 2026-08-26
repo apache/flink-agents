@@ -125,8 +125,7 @@ public final class SkillSourceRegistry {
                             + key
                             + "' for skill source scheme '"
                             + scheme
-                            + "'. Got: "
-                            + params);
+                            + "'");
         }
         return value;
     }

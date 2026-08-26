@@ -140,7 +140,7 @@ Each factory method creates a source with a different scheme:
 | Factory method (Python / Java) | Scheme | Description |
 |--------------------------------|--------|-------------|
 | `Skills.from_local_dir(*paths)` / `Skills.fromLocalDir(String...)` | `local` | One or more local directories, or `.zip` files, holding skill subdirectories. The path must be resolvable on the Flink TaskManager that runs the agent. |
-| `Skills.from_url(*urls)` / `Skills.fromUrl(String...)` | `url` | One or more HTTPS URLs, each pointing to a `.zip` whose top level holds the skill subdirectories. Plain HTTP is rejected by default. |
+| `Skills.from_url(*urls)` / `Skills.fromUrl(String...)` | `url` | One or more HTTPS URLs without embedded user information, each pointing to a `.zip` whose top level holds the skill subdirectories. Plain HTTP is rejected by default. |
 | `Skills.from_url_with_sha256(url, digest)` / `Skills.fromUrlWithSha256(url, digest)` | `url` | An HTTPS URL pinned to the expected lowercase or uppercase SHA-256 digest of the downloaded archive. The digest is verified before extraction. |
 | `Skills.from_url_unsafe(*urls)` / `Skills.fromUrlUnsafe(String...)` | `url` | Explicitly permits plain HTTP for compatibility on trusted development networks. |
 | `Skills.from_url_unsafe_with_sha256(url, digest)` / `Skills.fromUrlUnsafeWithSha256(url, digest)` | `url` | Pins an archive digest while explicitly permitting plain HTTP transport. |

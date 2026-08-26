@@ -214,8 +214,8 @@ agents:
 |-------|----------|-------------|
 | `name` | yes | Skills resource name. |
 | `paths` | one-of | `local` scheme: list of directories or `.zip` files. |
-| `urls` | one-of | `url` scheme: list of HTTPS URLs pointing to `.zip` archives. |
-| `url_sources` | one-of | `url` scheme: list of `{url, sha256?, allow_insecure_http?}` archive sources. HTTPS is required by default; `sha256` pins the downloaded archive, and `allow_insecure_http: true` is an explicit unsafe compatibility opt-in. |
+| `urls` | one-of | `url` scheme: list of HTTPS URLs without embedded user information, pointing to `.zip` archives. |
+| `url_sources` | one-of | `url` scheme: list of `{url, sha256?, allow_insecure_http?}` archive sources without embedded user information. HTTPS is required by default; `sha256` pins the downloaded archive, and `allow_insecure_http: true` is an explicit unsafe compatibility opt-in. |
 | `classpath` | one-of | `classpath` scheme (Java runtime only): list of classpath resource paths. |
 | `package` | one-of | `package` scheme (Python runtime only): list of `{package, resource}` pairs. |
 

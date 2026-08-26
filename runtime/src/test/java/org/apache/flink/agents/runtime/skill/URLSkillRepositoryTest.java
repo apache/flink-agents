@@ -126,10 +126,7 @@ class URLSkillRepositoryTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip), 200);
         try {
             int port = server.getAddress().getPort();
-            String url =
-                    "http://127.0.0.1:"
-                            + port
-                            + "/skills.zip?token=top-secret#fragment";
+            String url = "http://127.0.0.1:" + port + "/skills.zip?token=top-secret#fragment";
             IllegalArgumentException ex =
                     assertThrows(
                             IllegalArgumentException.class,
@@ -150,16 +147,51 @@ class URLSkillRepositoryTest {
                                 new URLSkillRepository(
                                         "https://example.com:bad/skills.zip?token=top-secret"));
         assertNull(malformedPort.getCause());
+        assertTrue(malformedPort.getMessage().contains("https://example.com:bad/skills.zip"));
         assertFalse(malformedPort.getMessage().contains("top-secret"));
 
         for (String url :
-                List.of(
-                        "https://:443/skills.zip", "https://example.com:65536/skills.zip")) {
-            assertThrows(
-                    IllegalArgumentException.class,
-                    () -> new URLSkillRepository(url),
-                    url);
+                List.of("https://:443/skills.zip", "https://example.com:65536/skills.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
         }
+    }
+
+    @Test
+    void invalidHostnameSyntaxIsRejectedBeforeDownload() {
+        for (String url :
+                List.of(
+                        "https://exa_mple.com/skills.zip",
+                        "https://tést.com/skills.zip",
+                        "https://%65xample.com/skills.zip",
+                        "https://-example.com/skills.zip",
+                        "https://example-.com/skills.zip",
+                        "https://.example.com/skills.zip",
+                        "https://example..com/skills.zip",
+                        "https://999.999.999.999/skills.zip",
+                        "https://127.1/skills.zip",
+                        "https://1.2.3/skills.zip",
+                        "https://foo.123/skills.zip",
+                        "https://foo.1bar/skills.zip",
+                        "https://1.2.3.4.5/skills.zip",
+                        "https://1.2.3./skills.zip",
+                        "https://[v1.foo]/skills.zip",
+                        "https://[fe80::1%eth0]/skills.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
+        }
+    }
+
+    @Test
+    void userInfoIsRejectedWithoutLeakingSecrets() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "https://user:password@example.com/skills.zip"
+                                                + "?token=top-secret"));
+        assertTrue(ex.getMessage().contains("must not include user info"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("top-secret"));
     }
 
     @Test
@@ -193,11 +225,9 @@ class URLSkillRepositoryTest {
         HttpServer server = startZipServer(new byte[0], 404);
         try {
             int port = server.getAddress().getPort();
-            String url =
-                    "http://127.0.0.1:" + port + "/missing.zip?token=top-secret#fragment";
+            String url = "http://127.0.0.1:" + port + "/missing.zip?token=top-secret#fragment";
             IOException error =
-                    assertThrows(
-                            IOException.class, () -> new URLSkillRepository(url, null, true));
+                    assertThrows(IOException.class, () -> new URLSkillRepository(url, null, true));
             assertTrue(error.getMessage().contains("Skill URL returned HTTP 404"));
             assertFalse(error.getMessage().contains("top-secret"));
         } finally {

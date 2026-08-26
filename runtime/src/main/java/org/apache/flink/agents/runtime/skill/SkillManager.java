@@ -169,8 +169,7 @@ public class SkillManager implements AutoCloseable {
                     registerRepo(repo, originOf(spec));
                 } catch (IOException | IllegalArgumentException e) {
                     throw new IllegalStateException(
-                            "Failed to load skills from " + spec.getScheme() + " source",
-                            e);
+                            "Failed to load skills from " + spec.getScheme() + " source", e);
                 }
             }
         } catch (Throwable t) {

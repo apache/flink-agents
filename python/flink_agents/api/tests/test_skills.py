@@ -36,6 +36,23 @@ class TestSkillsFactories:
             SkillSourceSpec(scheme="url", params={"url": "https://example.com/x.zip"})
         ]
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://localhost/x.zip",
+            "https://127.0.0.1/x.zip",
+            "https://[::1]/x.zip",
+            "https://[fe80::1%25eth0]/x.zip",
+            "https://example.com./x.zip",
+            "https://example.com:/x.zip",
+            "https://999/x.zip",
+            "https://1bar/x.zip",
+            "https://999./x.zip",
+        ],
+    )
+    def test_from_url_accepts_shared_valid_host_syntax(self, url: str) -> None:
+        assert Skills.from_url(url).sources[0].params["url"] == url
+
     def test_from_url_with_sha256_emits_integrity_param(self) -> None:
         digest = "A" * 64
         s = Skills.from_url_with_sha256("https://example.com/x.zip", digest)
@@ -89,8 +106,40 @@ class TestSkillsFactories:
     @pytest.mark.parametrize(
         "url",
         [
+            "https://exa_mple.com/x.zip",
+            "https://tést.com/x.zip",
+            "https://%65xample.com/x.zip",
+            "https://-example.com/x.zip",
+            "https://example-.com/x.zip",
+            "https://.example.com/x.zip",
+            "https://example..com/x.zip",
+            "https://999.999.999.999/x.zip",
+            "https://127.1/x.zip",
+            "https://1.2.3/x.zip",
+            "https://foo.123/x.zip",
+            "https://foo.1bar/x.zip",
+            "https://1.2.3.4.5/x.zip",
+            "https://1.2.3./x.zip",
+            "https://[v1.foo]/x.zip",
+        ],
+    )
+    def test_from_url_rejects_invalid_hostname_syntax(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            Skills.from_url(url)
+
+    def test_from_url_rejects_user_info_without_leaking_secrets(self) -> None:
+        url = "https://user:password@example.com/x.zip?token=secret#part"
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            Skills.from_url(url)
+        assert "password" not in str(exc_info.value)
+        assert "secret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
             "https://exa mple.com/x.zip",
             "https://example.com/%invalid",
+            "https://[fe80::1%eth0]/x.zip",
             "https://[::1/x.zip",
         ],
     )

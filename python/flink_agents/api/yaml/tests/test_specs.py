@@ -232,9 +232,7 @@ def test_action_spec_rejects_non_string_trigger_condition() -> None:
 
 
 def test_action_spec_defaults() -> None:
-    spec = ActionSpec.model_validate(
-        {"name": "a1", "trigger_conditions": ["input"]}
-    )
+    spec = ActionSpec.model_validate({"name": "a1", "trigger_conditions": ["input"]})
     assert spec.trigger_conditions == ["input"]
     assert spec.function is None
     assert spec.config is None
@@ -255,9 +253,7 @@ def test_action_spec_accepts_type() -> None:
 
 
 def test_action_spec_type_defaults_to_none() -> None:
-    spec = ActionSpec.model_validate(
-        {"name": "a1", "trigger_conditions": ["input"]}
-    )
+    spec = ActionSpec.model_validate({"name": "a1", "trigger_conditions": ["input"]})
     assert spec.type is None
 
 
@@ -374,6 +370,21 @@ def test_url_skill_spec_rejects_null_allow_insecure_http() -> None:
         UrlSkillSpec.model_validate(
             {"url": "https://x/skills.zip", "allow_insecure_http": None}
         )
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1, 0])
+def test_url_skill_spec_rejects_non_boolean_allow_insecure_http(value: object) -> None:
+    with pytest.raises(ValidationError):
+        UrlSkillSpec.model_validate(
+            {"url": "https://x/skills.zip", "allow_insecure_http": value}
+        )
+
+
+def test_skills_spec_treats_null_url_sources_as_empty() -> None:
+    spec = SkillsSpec.model_validate(
+        {"name": "s", "paths": ["./a"], "url_sources": None}
+    )
+    assert spec.url_sources == []
 
 
 def test_skills_spec_forbids_extras() -> None:

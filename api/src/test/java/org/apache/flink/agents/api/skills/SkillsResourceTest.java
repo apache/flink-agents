@@ -54,6 +54,23 @@ class SkillsResourceTest {
     }
 
     @Test
+    void fromUrlAcceptsSharedValidHostSyntax() {
+        for (String url :
+                List.of(
+                        "https://localhost/x.zip",
+                        "https://127.0.0.1/x.zip",
+                        "https://[::1]/x.zip",
+                        "https://[fe80::1%25eth0]/x.zip",
+                        "https://example.com./x.zip",
+                        "https://example.com:/x.zip",
+                        "https://999/x.zip",
+                        "https://1bar/x.zip",
+                        "https://999./x.zip")) {
+            assertEquals(url, Skills.fromUrl(url).getSources().get(0).getParams().get("url"));
+        }
+    }
+
+    @Test
     void fromUrlWithSha256EmitsIntegrityParam() {
         String digest = "A".repeat(64);
         Skills skills = Skills.fromUrlWithSha256("https://example.com/x.zip", digest);
@@ -126,16 +143,51 @@ class SkillsResourceTest {
         IllegalArgumentException malformedPort =
                 assertThrows(
                         IllegalArgumentException.class,
-                        () ->
-                                Skills.fromUrl(
-                                        "https://example.com:bad/x.zip?token=top-secret"));
+                        () -> Skills.fromUrl("https://example.com:bad/x.zip?token=top-secret"));
         assertNull(malformedPort.getCause());
+        assertTrue(malformedPort.getMessage().contains("https://example.com:bad/x.zip"));
         assertFalse(malformedPort.getMessage().contains("top-secret"));
 
-        for (String url :
-                List.of("https://:443/x.zip", "https://example.com:65536/x.zip")) {
+        for (String url : List.of("https://:443/x.zip", "https://example.com:65536/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
         }
+    }
+
+    @Test
+    void fromUrlRejectsInvalidHostnameSyntax() {
+        for (String url :
+                List.of(
+                        "https://exa_mple.com/x.zip",
+                        "https://tést.com/x.zip",
+                        "https://%65xample.com/x.zip",
+                        "https://-example.com/x.zip",
+                        "https://example-.com/x.zip",
+                        "https://.example.com/x.zip",
+                        "https://example..com/x.zip",
+                        "https://999.999.999.999/x.zip",
+                        "https://127.1/x.zip",
+                        "https://1.2.3/x.zip",
+                        "https://foo.123/x.zip",
+                        "https://foo.1bar/x.zip",
+                        "https://1.2.3.4.5/x.zip",
+                        "https://1.2.3./x.zip",
+                        "https://[v1.foo]/x.zip",
+                        "https://[fe80::1%eth0]/x.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
+        }
+    }
+
+    @Test
+    void fromUrlRejectsUserInfoWithoutLeakingSecrets() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                Skills.fromUrl(
+                                        "https://user:password@example.com/x.zip?token=secret"));
+        assertTrue(ex.getMessage().contains("must not include user info"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("secret"));
     }
 
     @Test

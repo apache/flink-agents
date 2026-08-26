@@ -58,6 +58,7 @@ sources; the runtime merges them and de-duplicates identical
 from __future__ import annotations
 
 import re
+from ipaddress import AddressValueError, IPv6Address
 from typing import Dict, List, Tuple
 from urllib.parse import urlparse, urlsplit, urlunsplit
 
@@ -68,6 +69,7 @@ from flink_agents.api.resource import ResourceType, SerializableResource
 
 _INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+_HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 
 
 def _url_for_error(url: str) -> str:
@@ -77,6 +79,74 @@ def _url_for_error(url: str) -> str:
         return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
     except ValueError:
         return "<redacted>"
+
+
+def _validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
+    """Validate a skill URL using the contract shared with the Java API."""
+    if not isinstance(url, str):
+        msg = "skill URL must be a string"
+        raise TypeError(msg)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        msg = f"Invalid skill URL: {_url_for_error(url)}"
+        raise ValueError(msg) from None
+    if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
+        msg = f"Invalid skill URL: {_url_for_error(url)}"
+        raise ValueError(msg)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        msg = f"Only HTTP(S) skill URLs are supported: {_url_for_error(url)}"
+        raise ValueError(msg)
+    try:
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        msg = (
+            "Skill URL must include a valid host and, when present, a valid port: "
+            f"{_url_for_error(url)}"
+        )
+        raise ValueError(msg) from None
+    if parsed.username is not None:
+        msg = f"Skill URL must not include user info: {_url_for_error(url)}"
+        raise ValueError(msg)
+    bracketed_host = parsed.netloc.rsplit("@", 1)[-1].startswith("[")
+    if (
+        not hostname
+        or (bracketed_host and ":" not in hostname)
+        or not _is_valid_hostname(hostname)
+    ):
+        msg = f"Skill URL must include a valid host: {_url_for_error(url)}"
+        raise ValueError(msg)
+    if scheme == "http" and not allow_insecure_http:
+        msg = (
+            "Plain HTTP skill URLs are disabled by default; use HTTPS or "
+            "explicitly allow insecure HTTP for this source: "
+            f"{_url_for_error(url)}"
+        )
+        raise ValueError(msg)
+    return scheme
+
+
+def _is_valid_hostname(hostname: str) -> bool:
+    """Match the host syntax accepted by Java URI.parseServerAuthority()."""
+    if ":" in hostname:
+        try:
+            IPv6Address(hostname)
+        except AddressValueError:
+            return False
+        return True
+    if not hostname.isascii():
+        return False
+    dns_name = hostname[:-1] if hostname.endswith(".") else hostname
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", dns_name):
+        return all(int(part) <= 255 for part in dns_name.split("."))
+    labels = dns_name.split(".")
+    return (
+        bool(dns_name)
+        and not (len(labels) > 1 and labels[-1][0].isdigit())
+        and all(_HOST_LABEL.fullmatch(label) for label in labels)
+    )
 
 
 class SkillSourceSpec(BaseModel):
@@ -187,40 +257,7 @@ class Skills(SerializableResource):
 
     @staticmethod
     def _require_url(url: str, *, allow_insecure_http: bool) -> None:
-        if not isinstance(url, str):
-            msg = "skill URL must be a string"
-            raise TypeError(msg)
-        try:
-            parsed = urlparse(url)
-        except ValueError as exc:
-            msg = f"Invalid skill URL: {_url_for_error(url)}"
-            raise ValueError(msg) from exc
-        if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
-            msg = f"Invalid skill URL: {_url_for_error(url)}"
-            raise ValueError(msg)
-        scheme = parsed.scheme.lower()
-        if scheme not in {"http", "https"}:
-            msg = f"Only HTTP(S) skill URLs are supported: {_url_for_error(url)}"
-            raise ValueError(msg)
-        try:
-            hostname = parsed.hostname
-            _ = parsed.port
-        except ValueError as exc:
-            msg = (
-                "Skill URL must include a valid host and, when present, a valid port: "
-                f"{_url_for_error(url)}"
-            )
-            raise ValueError(msg) from exc
-        if not hostname:
-            msg = f"Skill URL must include a valid host: {_url_for_error(url)}"
-            raise ValueError(msg)
-        if scheme == "http" and not allow_insecure_http:
-            msg = (
-                "Plain HTTP skill URLs are disabled by default; use HTTPS or "
-                "explicitly allow insecure HTTP for this source: "
-                f"{_url_for_error(url)}"
-            )
-            raise ValueError(msg)
+        _validate_skill_url(url, allow_insecure_http=allow_insecure_http)
 
     @staticmethod
     def _require_sha256(sha256: str) -> None:

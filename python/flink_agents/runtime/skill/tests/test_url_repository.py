@@ -112,9 +112,7 @@ class TestURLSkillRepository:
 
         signed_url = f"{url}?token=top-secret#fragment"
         with pytest.raises(ValueError, match="SHA-256 mismatch") as exc_info:
-            URLSkillRepository(
-                signed_url, sha256="0" * 64, allow_insecure_http=True
-            )
+            URLSkillRepository(signed_url, sha256="0" * 64, allow_insecure_http=True)
         assert "top-secret" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
@@ -129,6 +127,50 @@ class TestURLSkillRepository:
         with pytest.raises(ValueError, match=r"valid host|valid port"):
             URLSkillRepository(url)
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://exa_mple.com/skills.zip",
+            "https://tést.com/skills.zip",
+            "https://%65xample.com/skills.zip",
+            "https://-example.com/skills.zip",
+            "https://example-.com/skills.zip",
+            "https://.example.com/skills.zip",
+            "https://example..com/skills.zip",
+            "https://999.999.999.999/skills.zip",
+            "https://127.1/skills.zip",
+            "https://1.2.3/skills.zip",
+            "https://foo.123/skills.zip",
+            "https://foo.1bar/skills.zip",
+            "https://1.2.3.4.5/skills.zip",
+            "https://1.2.3./skills.zip",
+            "https://[v1.foo]/skills.zip",
+        ],
+    )
+    def test_invalid_hostname_syntax_rejected_before_download(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            URLSkillRepository(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/x zip?token=top-secret",
+            "https://example.com/%invalid?token=top-secret",
+            "https://[fe80::1%eth0]/x.zip?token=top-secret",
+        ],
+    )
+    def test_malformed_url_is_rejected_without_leaking_query(self, url: str) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            URLSkillRepository(url)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_user_info_is_rejected_without_leaking_secrets(self) -> None:
+        url = "https://user:password@example.com/x.zip?token=top-secret"
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            URLSkillRepository(url)
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
     def test_malformed_sha256_rejected_before_download(self) -> None:
         with pytest.raises(ValueError, match="64 hexadecimal"):
             URLSkillRepository(
@@ -141,5 +183,6 @@ class TestURLSkillRepository:
         url, handler = zip_server
         handler.status = 404
 
-        with pytest.raises(HTTPError):
-            URLSkillRepository(url, allow_insecure_http=True)
+        with pytest.raises(HTTPError) as exc_info:
+            URLSkillRepository(f"{url}?token=top-secret", allow_insecure_http=True)
+        assert "top-secret" not in str(exc_info.value)

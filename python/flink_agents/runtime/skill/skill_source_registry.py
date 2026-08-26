@@ -104,10 +104,7 @@ def get(scheme: str) -> SkillSourceHandler:
 def _require(params: Mapping[str, str], scheme: str, key: str) -> str:
     value = params.get(key)
     if value is None:
-        msg = (
-            f"Missing required param '{key}' for skill source scheme "
-            f"'{scheme}'. Got: {dict(params)}"
-        )
+        msg = f"Missing required param '{key}' for skill source scheme '{scheme}'"
         raise ValueError(msg)
     return value
 

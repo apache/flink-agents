@@ -98,13 +98,18 @@ class TestMaterialized:
 class _StaticHandler(BaseHTTPRequestHandler):
     payload: bytes = b""
     status: int = 200
+    redirect_status: int = 302
     redirect_location: str | None = None
+    request_count: int = 0
 
     def do_GET(self) -> None:
+        type(self).request_count += 1
         is_redirect = self.path.startswith("/redirect") and (
             type(self).redirect_location is not None
         )
-        self.send_response(302 if is_redirect else type(self).status)
+        self.send_response(
+            type(self).redirect_status if is_redirect else type(self).status
+        )
         if is_redirect:
             self.send_header("Location", type(self).redirect_location)
         self.send_header("Content-Length", str(len(type(self).payload)))
@@ -119,7 +124,9 @@ class _StaticHandler(BaseHTTPRequestHandler):
 def static_server() -> "tuple[str, type[_StaticHandler]]":
     _StaticHandler.payload = b""
     _StaticHandler.status = 200
+    _StaticHandler.redirect_status = 302
     _StaticHandler.redirect_location = None
+    _StaticHandler.request_count = 0
     server = HTTPServer(("127.0.0.1", 0), _StaticHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -131,7 +138,9 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
         server.server_close()
         _StaticHandler.payload = b""
         _StaticHandler.status = 200
+        _StaticHandler.redirect_status = 302
         _StaticHandler.redirect_location = None
+        _StaticHandler.request_count = 0
 
 
 class TestDownloadToTempfile:
@@ -180,6 +189,50 @@ class TestDownloadToTempfile:
             download_to_tempfile(
                 f"{base_url}/redirect", timeout=10, allow_insecure_http=True
             )
+
+    def test_follows_308_redirect(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"redirected-zip-bytes"
+        handler.redirect_status = 308
+        handler.redirect_location = f"{base_url}/skills.zip"
+
+        path = download_to_tempfile(
+            f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+        )
+        try:
+            assert path.read_bytes() == b"redirected-zip-bytes"
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_rejects_redirect_user_info_without_leaking_secrets(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        target = base_url.removeprefix("http://")
+        handler.redirect_location = (
+            f"http://user:password@{target}/skills.zip?token=top-secret"
+        )
+
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_rejects_fifth_repeat_of_redirect_target(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = f"{base_url}/redirect"
+
+        with pytest.raises(HTTPError):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 5
 
     def test_logs_sanitized_effective_url_for_same_protocol_redirect(
         self,

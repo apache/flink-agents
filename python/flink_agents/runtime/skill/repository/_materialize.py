@@ -30,17 +30,20 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+from flink_agents.api.skills import _validate_skill_url
+
 if TYPE_CHECKING:
     from typing import Any
 
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
+_MAX_REDIRECTS = 10
 logger = logging.getLogger(__name__)
 
 
 class _SameProtocolRedirectHandler(HTTPRedirectHandler):
-    """Reject cross-protocol redirects before requesting their targets."""
+    """Validate redirect targets and enforce the shared redirect limits."""
 
     def __init__(
         self, initial_scheme: str, *, allow_insecure_http: bool = False
@@ -62,7 +65,14 @@ class _SameProtocolRedirectHandler(HTTPRedirectHandler):
             allow_insecure_http=self._allow_insecure_http,
             initial_scheme=self._initial_scheme,
         )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirect_count = getattr(req, "_skill_redirect_count", 0) + 1
+        if redirect_count > _MAX_REDIRECTS:
+            msg = "Skill URL returned too many redirects"
+            raise ValueError(msg)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            redirected._skill_redirect_count = redirect_count
+        return redirected
 
 
 class Materialized:
@@ -250,4 +260,5 @@ def _require_allowed_transport(
             f"{url_for_logging(final_url)}"
         )
         raise ValueError(msg)
+    _validate_skill_url(final_url, allow_insecure_http=allow_insecure_http)
     return final_scheme

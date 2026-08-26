@@ -27,7 +27,14 @@ import sys
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
@@ -155,7 +162,7 @@ class UrlSkillSpec(BaseModel):
 
     url: str
     sha256: str | None = None
-    allow_insecure_http: bool = False
+    allow_insecure_http: StrictBool = False
 
 
 class SkillsSpec(BaseModel):
@@ -186,6 +193,11 @@ class SkillsSpec(BaseModel):
     url_sources: List[UrlSkillSpec] = Field(default_factory=list)
     classpath: List[str] = Field(default_factory=list)
     package: List[PackageSkillSpec] = Field(default_factory=list)
+
+    @field_validator("url_sources", mode="before")
+    @classmethod
+    def _normalize_null_url_sources(cls, value: object) -> object:
+        return [] if value is None else value
 
     @model_validator(mode="after")
     def _require_one_source(self) -> "SkillsSpec":

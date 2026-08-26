@@ -285,6 +285,21 @@ class SkillManagerTest {
     }
 
     @Test
+    void urlSourceFailuresDoNotLeakParams() {
+        for (Map<String, String> params :
+                List.of(
+                        Map.of("uri", "https://user:password@example.com/x.zip?token=top-secret"),
+                        Map.of("url", "https://example.com/x zip?token=top-secret"))) {
+            Skills config = new Skills(List.of(new SkillSourceSpec("url", params)));
+            IllegalStateException ex =
+                    assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+            String messages = ex.getMessage() + "\n" + ex.getCause().getMessage();
+            assertFalse(messages.contains("password"));
+            assertFalse(messages.contains("top-secret"));
+        }
+    }
+
+    @Test
     void mixedSourcesAllBranchesExecute(@TempDir Path tempDir) throws IOException {
         Path src = Path.of("src/test/resources/skills").toAbsolutePath();
         Path zip = tempDir.resolve("skills.zip");

@@ -22,6 +22,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -68,5 +70,25 @@ class SkillsSpecTest {
     void rejectsAllEmpty() {
         assertThatThrownBy(() -> M.readValue("name: s\n", SkillsSpec.class))
                 .hasMessageContaining("at least one of paths/urls/url_sources/classpath");
+    }
+
+    @Test
+    void treatsNullUrlSourcesAsEmpty() throws Exception {
+        SkillsSpec spec =
+                M.readValue("name: s\npaths: [./a]\nurl_sources: null\n", SkillsSpec.class);
+        assertThat(spec.getUrlSources()).isEmpty();
+    }
+
+    @Test
+    void rejectsNonBooleanAllowInsecureHttp() {
+        for (String value : List.of("\"true\"", "\"yes\"", "1", "0")) {
+            String yaml =
+                    "name: s\nurl_sources:\n  - url: https://x/skills.zip\n"
+                            + "    allow_insecure_http: "
+                            + value
+                            + "\n";
+            assertThatThrownBy(() -> M.readValue(yaml, SkillsSpec.class))
+                    .hasMessageContaining("allow_insecure_http");
+        }
     }
 }

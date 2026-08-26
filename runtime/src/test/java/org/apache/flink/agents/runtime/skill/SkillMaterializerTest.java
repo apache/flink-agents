@@ -41,6 +41,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.zip.ZipEntry;
@@ -161,6 +162,18 @@ class SkillMaterializerTest {
     }
 
     @Test
+    void malformedUrlDoesNotLeakRawInput() {
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.downloadToTempFile(
+                                        "not-a-url?token=top-secret", 5_000, true));
+        assertTrue(!ex.getMessage().contains("top-secret"));
+        assertTrue(ex.getCause() == null);
+    }
+
+    @Test
     void unfollowedCrossProtocolRedirectFailsClearly() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
@@ -181,6 +194,108 @@ class SkillMaterializerTest {
                                             "http://127.0.0.1:" + port + "/redirect", 5_000, true));
             assertTrue(ex.getMessage().contains("unsupported redirect"));
             assertTrue(ex.getMessage().contains("https://example.com/skills.zip"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void follows308Redirect() throws IOException {
+        byte[] body = "redirected-zip-bytes".getBytes(StandardCharsets.UTF_8);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress().getPort();
+        String baseUrl = "http://127.0.0.1:" + port;
+        server.createContext(
+                "/redirect",
+                exchange -> {
+                    exchange.getResponseHeaders().add("Location", baseUrl + "/skills.zip");
+                    exchange.sendResponseHeaders(308, -1);
+                    exchange.close();
+                });
+        server.createContext(
+                "/skills.zip",
+                exchange -> {
+                    exchange.sendResponseHeaders(200, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            Path file = SkillMaterializer.downloadToTempFile(baseUrl + "/redirect", 5_000, true);
+            try {
+                assertEquals("redirected-zip-bytes", Files.readString(file));
+            } finally {
+                Files.deleteIfExists(file);
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsRedirectUserInfoBeforeRequestWithoutLeakingSecrets() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress().getPort();
+        String baseUrl = "http://127.0.0.1:" + port;
+        AtomicInteger targetRequests = new AtomicInteger();
+        server.createContext(
+                "/redirect",
+                exchange -> {
+                    exchange.getResponseHeaders()
+                            .add(
+                                    "Location",
+                                    "http://user:password@127.0.0.1:"
+                                            + port
+                                            + "/skills.zip?token=top-secret");
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.createContext(
+                "/skills.zip",
+                exchange -> {
+                    targetRequests.incrementAndGet();
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            baseUrl + "/redirect", 5_000, true));
+            assertTrue(ex.getMessage().contains("must not include user info"));
+            assertTrue(!ex.getMessage().contains("password"));
+            assertTrue(!ex.getMessage().contains("top-secret"));
+            assertEquals(0, targetRequests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsFifthRepeatOfRedirectTarget() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress().getPort();
+        String url = "http://127.0.0.1:" + port + "/redirect";
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext(
+                "/redirect",
+                exchange -> {
+                    requests.incrementAndGet();
+                    exchange.getResponseHeaders().add("Location", url);
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () -> SkillMaterializer.downloadToTempFile(url, 5_000, true));
+            assertTrue(ex.getMessage().contains("too many redirects"));
+            assertEquals(5, requests.get());
         } finally {
             server.stop(0);
         }

@@ -32,6 +32,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -59,6 +60,8 @@ import java.util.stream.Collectors;
         ignoreUnknown = true,
         value = {"metricGroup", "resourceType"})
 public class Skills extends SerializableResource {
+
+    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     /** Reserved resource name under which AgentPlan registers the merged Skills config. */
     public static final String SKILLS_CONFIG = "_skills_config";
@@ -161,6 +164,9 @@ public class Skills extends SerializableResource {
         if (url == null) {
             throw new IllegalArgumentException("skill URL must not be null");
         }
+        if (INVALID_PERCENT_ESCAPE.matcher(url).find()) {
+            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url));
+        }
         URI uri;
         try {
             uri = URI.create(url);
@@ -179,6 +185,10 @@ public class Skills extends SerializableResource {
             throw new IllegalArgumentException(
                     "Skill URL must include a valid host and, when present, a valid port: "
                             + urlForError(url));
+        }
+        if (uri.getRawUserInfo() != null) {
+            throw new IllegalArgumentException(
+                    "Skill URL must not include user info: " + urlForError(url));
         }
         if (uri.getHost() == null || uri.getHost().isEmpty()) {
             throw new IllegalArgumentException(
@@ -199,19 +209,16 @@ public class Skills extends SerializableResource {
     private static String urlForError(String url) {
         try {
             URI uri = URI.create(url);
-            if (uri.getScheme() == null || uri.getHost() == null) {
+            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
                 return "<redacted>";
             }
-            return new URI(
-                            uri.getScheme(),
-                            null,
-                            uri.getHost(),
-                            uri.getPort(),
-                            uri.getPath(),
-                            null,
-                            null)
-                    .toASCIIString();
-        } catch (IllegalArgumentException | URISyntaxException e) {
+            String authority = uri.getRawAuthority();
+            int userInfoEnd = authority.lastIndexOf('@');
+            if (userInfoEnd >= 0) {
+                authority = authority.substring(userInfoEnd + 1);
+            }
+            return uri.getScheme() + "://" + authority + uri.getRawPath();
+        } catch (IllegalArgumentException e) {
             return "<redacted>";
         }
     }

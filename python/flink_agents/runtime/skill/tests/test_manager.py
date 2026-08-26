@@ -215,9 +215,7 @@ class TestSkillManagerMixedSources:
             sources=[
                 SkillSourceSpec(
                     scheme="url",
-                    params={
-                        "url": f"http://example.com/skills.zip?token={secret}"
-                    },
+                    params={"url": f"http://example.com/skills.zip?token={secret}"},
                 )
             ]
         )
@@ -229,11 +227,7 @@ class TestSkillManagerMixedSources:
 
     def test_url_origin_description_omits_credentials_and_query(self) -> None:
         description = skill_source_registry.get("url").describe_location(
-            {
-                "url": (
-                    "https://user:password@example.com/x.zip?token=secret#part"
-                )
-            }
+            {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
         )
 
         assert description == "https://example.com/x.zip"
@@ -293,6 +287,25 @@ class TestSkillManagerMixedSources:
         # The registered-scheme list comes from the chained ValueError.
         assert "local" in str(exc_info.value.__cause__)
         assert "package" in str(exc_info.value.__cause__)
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"uri": "https://user:password@example.com/x.zip?token=top-secret"},
+            {"url": "https://example.com/x zip?token=top-secret"},
+        ],
+    )
+    def test_url_source_failures_do_not_leak_params(
+        self, params: dict[str, str]
+    ) -> None:
+        config = Skills(sources=[SkillSourceSpec(scheme="url", params=params)])
+
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config)
+
+        messages = f"{exc_info.value}\n{exc_info.value.__cause__}"
+        assert "password" not in messages
+        assert "top-secret" not in messages
 
     def test_close_releases_repo_displaced_by_duplicate_skill_name(self) -> None:
         from typing import Dict, List
