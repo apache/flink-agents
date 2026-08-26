@@ -19,7 +19,6 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.event.MemoryEvent;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -28,13 +27,12 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
-import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
-import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -45,6 +43,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * Owns the per-{@link ActionTask} runtime context bookkeeping for {@link ActionExecutionOperator}.
@@ -56,10 +55,8 @@ import java.util.Map;
  *       RunnerContextImpl#switchActionContext}.
  *   <li>A single per-{@link ActionTask} contexts record ({@link ActionTaskContexts}) that survives
  *       across the boundary between a finishing action and the action it generates: memory context,
- *       continuation context (for async Java actions), and the Python awaitable reference, created,
- *       transferred, and removed as one unit.
- *   <li>Active child-execution reports, keyed by Action execution id, that pair start and terminal
- *       reports across continuation tasks without entering Flink state.
+ *       continuation context (for async Java actions), the Python awaitable reference, and the
+ *       component execution listeners, created, transferred, and removed as one unit.
  *   <li>The {@link ContinuationActionExecutor} thread pool used to run async Java continuations.
  * </ul>
  *
@@ -76,14 +73,11 @@ class ActionTaskContextManager implements AutoCloseable {
     private RunnerContextImpl runnerContext;
 
     private final Map<ActionTask, ActionTaskContexts> actionTaskContexts;
-    private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
-            activeReportedExecutionsByActionExecutionId;
 
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskContexts = new HashMap<>();
-        this.activeReportedExecutionsByActionExecutionId = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
@@ -96,6 +90,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private ContinuationContext continuationContext;
         @Nullable private String pythonAwaitableRef;
         private List<Event> pendingEvents = new ArrayList<>();
+        @Nullable private List<ComponentExecutionListener> componentListeners;
     }
 
     private boolean hasContexts(ActionTask actionTask) {
@@ -197,9 +192,10 @@ class ActionTaskContextManager implements AutoCloseable {
      *   <li>Selects a Java or Python runner context based on the action's {@code Exec} type.
      *   <li>Reuses any existing {@link RunnerContextImpl.MemoryContext} for this task; otherwise
      *       builds a fresh one backed by the supplied sensory/short-term memory states.
-     *   <li>Wires the runtime-level execution event sink onto the runner context.
+     *   <li>Creates or reuses the per-action-execution component listener list and wires it onto
+     *       the runner context.
      *   <li>Calls {@link RunnerContextImpl#switchActionContext} so the shared context now points at
-     *       this action's name, memory, key namespace, trace context, and reported-execution state.
+     *       this action's name, memory, key namespace, and component listener list.
      *   <li>For Java contexts, attaches a continuation context (re-used if the task is resuming
      *       from an async suspend, fresh otherwise).
      *   <li>For Python contexts, attaches the per-task awaitable reference (or {@code null} if the
@@ -230,7 +226,9 @@ class ActionTaskContextManager implements AutoCloseable {
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
             PythonRunnerContextImpl pythonRunnerContext,
             @Nullable InteranlBaseLongTermMemory longTermMemory,
-            @Nullable ExecutionEventSink executionEventSink) {
+            @Nullable
+                    Function<ActionTask, List<ComponentExecutionListener>>
+                            componentListenerFactory) {
         if (!hasContexts(actionTask)) {
             // First preparation of a root task materializes its contexts. Re-preparations of a
             // suspended task, or preparation of a generated successor, already have one (created by
@@ -264,7 +262,6 @@ class ActionTaskContextManager implements AutoCloseable {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());
         }
-        context.setExecutionEventSink(executionEventSink);
 
         RunnerContextImpl.MemoryContext memoryContext = getMemoryContext(actionTask);
         if (memoryContext == null) {
@@ -282,8 +279,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 contextKey,
                 actionTask.getObservationId(),
                 MemoryEvent.isMemoryType(actionTask.event.getType()),
-                actionTask.getTraceContext(),
-                getOrCreateActiveReportedExecutions(actionTask));
+                getOrCreateComponentListeners(actionTask, componentListenerFactory));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -335,6 +331,11 @@ class ActionTaskContextManager implements AutoCloseable {
         // outlives the removed contexts, so events emitted before a suspend survive into the
         // generated task.
         requireContexts(toTask).pendingEvents = fromTask.getRunnerContext().getPendingEvents();
+        // Carry over the execution's very listener instances: one that pairs a component's start
+        // report with its terminal report keeps that pairing in itself, so rebuilding them here
+        // would orphan the reports of components that started before the suspend.
+        requireContexts(toTask).componentListeners =
+                fromTask.getRunnerContext().getComponentExecutionListeners();
         RunnerContextImpl.DurableExecutionContext durableContext =
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
@@ -354,19 +355,20 @@ class ActionTaskContextManager implements AutoCloseable {
         }
     }
 
-    void completeActionExecution(ActionTask actionTask) {
-        activeReportedExecutionsByActionExecutionId.remove(
-                actionTask.getTraceContext().getExecutionId());
-    }
-
-    private Map<ReportedExecutionKey, ExecutionTraceContext> getOrCreateActiveReportedExecutions(
-            ActionTask actionTask) {
-        String executionId = actionTask.getTraceContext().getExecutionId();
-        if (executionId == null) {
-            throw new IllegalStateException("Action execution id must not be null.");
+    @Nullable
+    private List<ComponentExecutionListener> getOrCreateComponentListeners(
+            ActionTask actionTask,
+            @Nullable
+                    Function<ActionTask, List<ComponentExecutionListener>>
+                            componentListenerFactory) {
+        if (componentListenerFactory == null) {
+            return null;
         }
-        return activeReportedExecutionsByActionExecutionId.computeIfAbsent(
-                executionId, ignored -> new HashMap<>());
+        ActionTaskContexts contexts = requireContexts(actionTask);
+        if (contexts.componentListeners == null) {
+            contexts.componentListeners = componentListenerFactory.apply(actionTask);
+        }
+        return contexts.componentListeners;
     }
 
     @Nullable
