@@ -192,8 +192,7 @@ class PythonActionExecutorTest {
         PyObject pythonAwaitable = mock(PyObject.class);
         String pythonAwaitableRef = "python_awaitable_1";
         when(interpreter.get(pythonAwaitableRef)).thenReturn(pythonAwaitable);
-        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable))
-                .thenReturn(new Object[] {false, null});
+        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable)).thenReturn(false);
 
         assertThat(executor.callPythonAwaitable(pythonAwaitableRef)).isFalse();
 
@@ -208,8 +207,7 @@ class PythonActionExecutorTest {
         PyObject pythonAwaitable = mock(PyObject.class);
         String pythonAwaitableRef = "python_awaitable_1";
         when(interpreter.get(pythonAwaitableRef)).thenReturn(pythonAwaitable);
-        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable))
-                .thenReturn(new Object[] {true, null});
+        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable)).thenReturn(true);
 
         assertThat(executor.callPythonAwaitable(pythonAwaitableRef)).isTrue();
 

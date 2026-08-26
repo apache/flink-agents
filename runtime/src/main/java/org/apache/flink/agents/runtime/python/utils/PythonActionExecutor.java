@@ -190,15 +190,15 @@ public class PythonActionExecutor {
      * @return true if the awaitable has completed; false otherwise
      */
     public boolean callPythonAwaitable(String pythonAwaitableRef) throws Exception {
-        // Calling awaitable.send(None) in Python returns a tuple of (finished, output).
+        // Python discards yielded/returned values because Actions communicate through Events.
         try (PyObject pythonAwaitable = (PyObject) interpreter.get(pythonAwaitableRef)) {
             checkState(
                     pythonAwaitable != null,
                     "Python awaitable '%s' not found in interpreter.",
                     pythonAwaitableRef);
             Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
-            checkState(invokeResult.getClass().isArray() && ((Object[]) invokeResult).length == 2);
-            boolean finished = (boolean) ((Object[]) invokeResult)[0];
+            checkState(invokeResult instanceof Boolean);
+            boolean finished = (boolean) invokeResult;
             if (finished) {
                 interpreter.exec("del " + pythonAwaitableRef);
             }
