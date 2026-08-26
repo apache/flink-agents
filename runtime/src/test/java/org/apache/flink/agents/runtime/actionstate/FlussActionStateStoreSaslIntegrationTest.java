@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Integration tests for {@link FlussActionStateStore} with SASL/PLAIN authentication against an
  * embedded Fluss cluster.
  */
-public class FlussActionStateStoreSaslIT {
+public class FlussActionStateStoreSaslIntegrationTest {
 
     private static final String TEST_DATABASE = "test_flink_agents_sasl";
     private static final String TEST_TABLE = "action_state_sasl_it";

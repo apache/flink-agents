@@ -41,7 +41,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Integration tests for {@link FlussActionStateStore} against an embedded Fluss cluster. */
-public class FlussActionStateStoreIT {
+public class FlussActionStateStoreIntegrationTest {
 
     private static final String TEST_DATABASE = "test_flink_agents";
     private static final String TEST_TABLE = "action_state_it";
