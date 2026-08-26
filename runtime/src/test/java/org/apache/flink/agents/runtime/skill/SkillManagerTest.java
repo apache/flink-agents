@@ -42,6 +42,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -168,10 +169,15 @@ class SkillManagerTest {
                 new Skills(
                         List.of(
                                 new SkillSourceSpec(
-                                        "url", Map.of("url", "http://example.com/skills.zip"))));
+                                        "url",
+                                        Map.of(
+                                                "url",
+                                                "http://example.com/skills.zip?token=top-secret"))));
         IllegalStateException ex =
                 assertThrows(IllegalStateException.class, () -> new SkillManager(config));
         assertTrue(ex.getCause().getMessage().contains("disabled by default"));
+        assertFalse(ex.getMessage().contains("top-secret"));
+        assertFalse(ex.getCause().getMessage().contains("top-secret"));
     }
 
     @Test

@@ -145,7 +145,7 @@ class SkillManager:
                     repo = handler.open(spec.params)
                     self._opened_repos.append(repo)
                 except (OSError, ValueError) as e:
-                    msg = f"Failed to load skills from {spec.scheme}:{spec.params}"
+                    msg = f"Failed to load skills from {spec.scheme} source"
                     raise RuntimeError(msg) from e
                 self._register_repo(repo, _origin_of(spec))
         except BaseException:

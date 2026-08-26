@@ -71,21 +71,38 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
         try {
             uri = new URI(url);
         } catch (URISyntaxException e) {
-            throw new IllegalArgumentException("Invalid skill URL: " + url, e);
+            throw new IllegalArgumentException(
+                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url), e);
         }
         String scheme = uri.getScheme();
         scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
         if (!(scheme.equals("http") || scheme.equals("https"))) {
-            throw new IllegalArgumentException("Only HTTP(S) URLs are supported: " + url);
+            throw new IllegalArgumentException(
+                    "Only HTTP(S) URLs are supported: " + SkillMaterializer.urlForLogging(url));
+        }
+        try {
+            uri = uri.parseServerAuthority();
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException(
+                    "Skill URL must include a valid host and, when present, a valid port: "
+                            + SkillMaterializer.urlForLogging(url),
+                    e);
+        }
+        if (uri.getHost() == null || uri.getHost().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Skill URL must include a valid host: "
+                            + SkillMaterializer.urlForLogging(url));
+        }
+        if (uri.getPort() > 65535) {
+            throw new IllegalArgumentException(
+                    "Skill URL port must be between 0 and 65535: "
+                            + SkillMaterializer.urlForLogging(url));
         }
         if (scheme.equals("http") && !allowInsecureHttp) {
             throw new IllegalArgumentException(
                     "Plain HTTP skill URLs are disabled by default; use HTTPS or explicitly allow"
                             + " insecure HTTP for this source: "
-                            + url);
-        }
-        if (uri.getRawAuthority() == null || uri.getRawAuthority().isEmpty()) {
-            throw new IllegalArgumentException("Skill URL must include a host: " + url);
+                            + SkillMaterializer.urlForLogging(url));
         }
         String normalizedSha256 = sha256 == null ? null : sha256.toLowerCase(Locale.ROOT);
         if (normalizedSha256 != null && !SHA256_PATTERN.matcher(normalizedSha256).matches()) {
@@ -99,9 +116,7 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
                 String actual = sha256(tmpZip);
                 if (!actual.equals(normalizedSha256)) {
                     throw new IllegalArgumentException(
-                            "SHA-256 mismatch for skill archive "
-                                    + url
-                                    + ": expected "
+                            "SHA-256 mismatch for skill archive: expected "
                                     + normalizedSha256
                                     + ", got "
                                     + actual);

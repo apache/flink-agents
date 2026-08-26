@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.skills import Skills, SkillSourceSpec
+from flink_agents.runtime.skill import skill_source_registry
 from flink_agents.runtime.skill.repository.package_repository import (
     PackageSkillRepository,
 )
@@ -209,16 +210,33 @@ class TestSkillManagerMixedSources:
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
 
     def test_serialized_http_source_is_rejected_by_default(self) -> None:
+        secret = "top-secret"
         config = Skills(
             sources=[
                 SkillSourceSpec(
-                    scheme="url", params={"url": "http://example.com/skills.zip"}
+                    scheme="url",
+                    params={
+                        "url": f"http://example.com/skills.zip?token={secret}"
+                    },
                 )
             ]
         )
         with pytest.raises(RuntimeError) as exc_info:
             SkillManager(config)
         assert "disabled by default" in str(exc_info.value.__cause__)
+        assert secret not in str(exc_info.value)
+        assert secret not in str(exc_info.value.__cause__)
+
+    def test_url_origin_description_omits_credentials_and_query(self) -> None:
+        description = skill_source_registry.get("url").describe_location(
+            {
+                "url": (
+                    "https://user:password@example.com/x.zip?token=secret#part"
+                )
+            }
+        )
+
+        assert description == "https://example.com/x.zip"
 
     def test_package_only_loads_skills(self, mixed_sources) -> None:
         _dir, _url, pkg, resource = mixed_sources

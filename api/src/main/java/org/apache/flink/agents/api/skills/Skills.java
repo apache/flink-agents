@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -164,21 +165,55 @@ public class Skills extends SerializableResource {
         try {
             uri = URI.create(url);
         } catch (IllegalArgumentException e) {
-            throw new IllegalArgumentException("Invalid skill URL: " + url, e);
+            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url), e);
         }
         String scheme = uri.getScheme();
         scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
         if (!(scheme.equals("http") || scheme.equals("https"))) {
-            throw new IllegalArgumentException("Only HTTP(S) skill URLs are supported: " + url);
+            throw new IllegalArgumentException(
+                    "Only HTTP(S) skill URLs are supported: " + urlForError(url));
+        }
+        try {
+            uri = uri.parseServerAuthority();
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException(
+                    "Skill URL must include a valid host and, when present, a valid port: "
+                            + urlForError(url),
+                    e);
+        }
+        if (uri.getHost() == null || uri.getHost().isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Skill URL must include a valid host: " + urlForError(url));
+        }
+        if (uri.getPort() > 65535) {
+            throw new IllegalArgumentException(
+                    "Skill URL port must be between 0 and 65535: " + urlForError(url));
         }
         if (scheme.equals("http") && !allowInsecureHttp) {
             throw new IllegalArgumentException(
                     "Plain HTTP skill URLs are disabled by default; use HTTPS or explicitly allow"
                             + " insecure HTTP for this source: "
-                            + url);
+                            + urlForError(url));
         }
-        if (uri.getRawAuthority() == null || uri.getRawAuthority().isEmpty()) {
-            throw new IllegalArgumentException("Skill URL must include a host: " + url);
+    }
+
+    private static String urlForError(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (uri.getScheme() == null || uri.getHost() == null) {
+                return "<redacted>";
+            }
+            return new URI(
+                            uri.getScheme(),
+                            null,
+                            uri.getHost(),
+                            uri.getPort(),
+                            uri.getPath(),
+                            null,
+                            null)
+                    .toASCIIString();
+        } catch (IllegalArgumentException | URISyntaxException e) {
+            return "<redacted>";
         }
     }
 

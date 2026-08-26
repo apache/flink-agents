@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 from flink_agents.runtime.skill.repository._materialize import (
     download_to_tempfile,
     extract_zip_safely,
+    url_for_logging,
 )
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
@@ -63,19 +64,33 @@ class URLSkillRepository(MaterializedSkillRepository):
         if not isinstance(url, str):
             msg = "skill URL must be a string"
             raise TypeError(msg)
-        parsed_url = urlparse(url)
+        try:
+            parsed_url = urlparse(url)
+        except ValueError as exc:
+            msg = f"Invalid skill URL: {url_for_logging(url)}"
+            raise ValueError(msg) from exc
         scheme = parsed_url.scheme.lower()
         if scheme not in {"http", "https"}:
-            msg = f"Only HTTP(S) URLs are supported: {url}"
+            msg = f"Only HTTP(S) URLs are supported: {url_for_logging(url)}"
+            raise ValueError(msg)
+        try:
+            hostname = parsed_url.hostname
+            _ = parsed_url.port
+        except ValueError as exc:
+            msg = (
+                "Skill URL must include a valid host and, when present, a valid port: "
+                f"{url_for_logging(url)}"
+            )
+            raise ValueError(msg) from exc
+        if not hostname:
+            msg = f"Skill URL must include a valid host: {url_for_logging(url)}"
             raise ValueError(msg)
         if scheme == "http" and not allow_insecure_http:
             msg = (
                 "Plain HTTP skill URLs are disabled by default; use HTTPS or "
-                f"explicitly allow insecure HTTP for this source: {url}"
+                "explicitly allow insecure HTTP for this source: "
+                f"{url_for_logging(url)}"
             )
-            raise ValueError(msg)
-        if not parsed_url.netloc:
-            msg = f"Skill URL must include a host: {url}"
             raise ValueError(msg)
         if sha256 is not None and not isinstance(sha256, str):
             msg = "sha256 must contain exactly 64 hexadecimal characters"
@@ -102,7 +117,7 @@ class URLSkillRepository(MaterializedSkillRepository):
                 actual = digest.hexdigest()
                 if actual != normalized_sha256:
                     msg = (
-                        f"SHA-256 mismatch for skill archive {url}: expected "
+                        "SHA-256 mismatch for skill archive: expected "
                         f"{normalized_sha256}, got {actual}"
                     )
                     raise ValueError(msg)

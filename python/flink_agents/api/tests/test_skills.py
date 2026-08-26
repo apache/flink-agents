@@ -68,8 +68,23 @@ class TestSkillsFactories:
             Skills.from_url_with_sha256("https://example.com/x.zip", "invalid")
 
     def test_from_url_rejects_unsupported_scheme_clearly(self) -> None:
-        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
-            Skills.from_url("ftp://example.com/x.zip")
+        url = "ftp://user:password@example.com/x.zip?token=secret#part"
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)") as exc_info:
+            Skills.from_url(url)
+        assert "password" not in str(exc_info.value)
+        assert "secret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://:443/x.zip",
+            "https://example.com:bad/x.zip",
+            "https://example.com:65536/x.zip",
+        ],
+    )
+    def test_from_url_rejects_invalid_host_and_port(self, url: str) -> None:
+        with pytest.raises(ValueError, match=r"valid host|valid port"):
+            Skills.from_url(url)
 
     @pytest.mark.parametrize(
         "url",

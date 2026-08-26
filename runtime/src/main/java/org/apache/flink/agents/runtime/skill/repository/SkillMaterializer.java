@@ -269,7 +269,7 @@ public final class SkillMaterializer {
         String initialProtocol = u.getProtocol();
         if (!("https".equalsIgnoreCase(initialProtocol)
                 || (allowInsecureHttp && "http".equalsIgnoreCase(initialProtocol)))) {
-            throw new IOException("Skill URL uses a disallowed transport: " + url);
+            throw new IOException("Skill URL uses a disallowed transport: " + urlForLogging(u));
         }
         HttpURLConnection conn = (HttpURLConnection) u.openConnection();
         conn.setConnectTimeout(timeoutMs);
@@ -284,7 +284,7 @@ public final class SkillMaterializer {
             if (responseCode >= 300 && responseCode < 400) {
                 throw new IOException(
                         "Skill URL returned an unsupported redirect to: "
-                                + conn.getHeaderField("Location"));
+                                + urlForLogging(conn.getHeaderField("Location")));
             }
             try (InputStream in = conn.getInputStream()) {
                 URL effectiveUrl = conn.getURL();
@@ -303,6 +303,18 @@ public final class SkillMaterializer {
             conn.disconnect();
         }
         return tmpZip;
+    }
+
+    /** Returns a URL suitable for logs and errors, without user info, query, or fragment. */
+    public static String urlForLogging(String url) {
+        if (url == null) {
+            return "<redacted>";
+        }
+        try {
+            return urlForLogging(new URL(url));
+        } catch (Exception e) {
+            return "<redacted>";
+        }
     }
 
     private static String urlForLogging(URL url) {

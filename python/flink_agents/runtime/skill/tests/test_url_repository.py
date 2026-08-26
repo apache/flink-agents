@@ -110,8 +110,24 @@ class TestURLSkillRepository:
             zf.writestr("../evil.txt", "pwn")
         handler.zip_bytes = archive.getvalue()
 
-        with pytest.raises(ValueError, match="SHA-256 mismatch"):
-            URLSkillRepository(url, sha256="0" * 64, allow_insecure_http=True)
+        signed_url = f"{url}?token=top-secret#fragment"
+        with pytest.raises(ValueError, match="SHA-256 mismatch") as exc_info:
+            URLSkillRepository(
+                signed_url, sha256="0" * 64, allow_insecure_http=True
+            )
+        assert "top-secret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://:443/skills.zip",
+            "https://example.com:bad/skills.zip",
+            "https://example.com:65536/skills.zip",
+        ],
+    )
+    def test_invalid_host_and_port_rejected_before_download(self, url: str) -> None:
+        with pytest.raises(ValueError, match=r"valid host|valid port"):
+            URLSkillRepository(url)
 
     def test_malformed_sha256_rejected_before_download(self) -> None:
         with pytest.raises(ValueError, match="64 hexadecimal"):

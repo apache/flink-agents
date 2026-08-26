@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -102,9 +103,13 @@ class SkillsResourceTest {
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class,
-                        () -> Skills.fromUrl("ftp://example.com/x.zip"));
+                        () ->
+                                Skills.fromUrl(
+                                        "ftp://user:password@example.com/x.zip?token=secret#part"));
         assertEquals(
                 "Only HTTP(S) skill URLs are supported: ftp://example.com/x.zip", ex.getMessage());
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("secret"));
     }
 
     @Test
@@ -112,7 +117,18 @@ class SkillsResourceTest {
         IllegalArgumentException ex =
                 assertThrows(
                         IllegalArgumentException.class, () -> Skills.fromUrl("https://[::1/x.zip"));
-        assertEquals("Invalid skill URL: https://[::1/x.zip", ex.getMessage());
+        assertEquals("Invalid skill URL: <redacted>", ex.getMessage());
+    }
+
+    @Test
+    void fromUrlRejectsInvalidHostAndPort() {
+        for (String url :
+                List.of(
+                        "https://:443/x.zip",
+                        "https://example.com:bad/x.zip",
+                        "https://example.com:65536/x.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
+        }
     }
 
     @Test

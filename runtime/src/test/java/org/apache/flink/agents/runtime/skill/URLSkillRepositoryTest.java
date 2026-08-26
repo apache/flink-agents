@@ -38,6 +38,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -124,14 +125,32 @@ class URLSkillRepositoryTest {
         HttpServer server = startZipServer(Files.readAllBytes(zip), 200);
         try {
             int port = server.getAddress().getPort();
-            String url = "http://127.0.0.1:" + port + "/skills.zip";
+            String url =
+                    "http://127.0.0.1:"
+                            + port
+                            + "/skills.zip?token=top-secret#fragment";
             IllegalArgumentException ex =
                     assertThrows(
                             IllegalArgumentException.class,
                             () -> new URLSkillRepository(url, "0".repeat(64), true));
             assertTrue(ex.getMessage().contains("SHA-256 mismatch"));
+            assertFalse(ex.getMessage().contains("top-secret"));
         } finally {
             server.stop(0);
+        }
+    }
+
+    @Test
+    void invalidHostAndPortAreRejectedBeforeDownload() {
+        for (String url :
+                List.of(
+                        "https://:443/skills.zip",
+                        "https://example.com:bad/skills.zip",
+                        "https://example.com:65536/skills.zip")) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> new URLSkillRepository(url),
+                    url);
         }
     }
 

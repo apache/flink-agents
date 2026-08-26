@@ -212,8 +212,8 @@ def download_to_tempfile(
             if final_url != url:
                 logger.warning(
                     "Skill URL redirected from %s to %s",
-                    _url_for_logging(url),
-                    _url_for_logging(final_url),
+                    url_for_logging(url),
+                    url_for_logging(final_url),
                 )
             shutil.copyfileobj(resp, out)
     except Exception:
@@ -222,7 +222,8 @@ def download_to_tempfile(
     return tmp_path
 
 
-def _url_for_logging(url: str) -> str:
+def url_for_logging(url: str) -> str:
+    """Return a URL without user info, query parameters, or fragments."""
     try:
         parts = urlsplit(url)
         netloc = parts.netloc.rsplit("@", 1)[-1]
@@ -241,9 +242,12 @@ def _require_allowed_transport(
     final_scheme = final_url.split(":", 1)[0].lower()
     allowed_schemes = {"http", "https"} if allow_insecure_http else {"https"}
     if final_scheme not in allowed_schemes:
-        msg = f"Skill URL used a disallowed transport: {final_url}"
+        msg = f"Skill URL used a disallowed transport: {url_for_logging(final_url)}"
         raise ValueError(msg)
     if initial_scheme is not None and final_scheme != initial_scheme:
-        msg = f"Skill URL returned an unsupported redirect to: {final_url}"
+        msg = (
+            "Skill URL returned an unsupported redirect to: "
+            f"{url_for_logging(final_url)}"
+        )
         raise ValueError(msg)
     return final_scheme

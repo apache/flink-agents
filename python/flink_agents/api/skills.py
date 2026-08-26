@@ -59,7 +59,7 @@ from __future__ import annotations
 
 import re
 from typing import Dict, List, Tuple
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import override
@@ -68,6 +68,15 @@ from flink_agents.api.resource import ResourceType, SerializableResource
 
 _INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+
+
+def _url_for_error(url: str) -> str:
+    try:
+        parts = urlsplit(url)
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+    except ValueError:
+        return "<redacted>"
 
 
 class SkillSourceSpec(BaseModel):
@@ -184,23 +193,33 @@ class Skills(SerializableResource):
         try:
             parsed = urlparse(url)
         except ValueError as exc:
-            msg = f"Invalid skill URL: {url}"
+            msg = f"Invalid skill URL: {_url_for_error(url)}"
             raise ValueError(msg) from exc
         if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
-            msg = f"Invalid skill URL: {url}"
+            msg = f"Invalid skill URL: {_url_for_error(url)}"
             raise ValueError(msg)
         scheme = parsed.scheme.lower()
         if scheme not in {"http", "https"}:
-            msg = f"Only HTTP(S) skill URLs are supported: {url}"
+            msg = f"Only HTTP(S) skill URLs are supported: {_url_for_error(url)}"
+            raise ValueError(msg)
+        try:
+            hostname = parsed.hostname
+            _ = parsed.port
+        except ValueError as exc:
+            msg = (
+                "Skill URL must include a valid host and, when present, a valid port: "
+                f"{_url_for_error(url)}"
+            )
+            raise ValueError(msg) from exc
+        if not hostname:
+            msg = f"Skill URL must include a valid host: {_url_for_error(url)}"
             raise ValueError(msg)
         if scheme == "http" and not allow_insecure_http:
             msg = (
                 "Plain HTTP skill URLs are disabled by default; use HTTPS or "
-                f"explicitly allow insecure HTTP for this source: {url}"
+                "explicitly allow insecure HTTP for this source: "
+                f"{_url_for_error(url)}"
             )
-            raise ValueError(msg)
-        if not parsed.netloc:
-            msg = f"Skill URL must include a host: {url}"
             raise ValueError(msg)
 
     @staticmethod
