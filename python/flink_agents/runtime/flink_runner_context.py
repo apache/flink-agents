@@ -15,9 +15,11 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import logging
 import os
 import time
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
@@ -42,6 +44,7 @@ from flink_agents.api.runner_context import (
     Outcome,
     RunnerContext,
 )
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
@@ -59,6 +62,22 @@ from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
 from flink_agents.runtime.resource_cache import ResourceCache
 
 logger = logging.getLogger(__name__)
+
+
+def _error_type(error: BaseException) -> str:
+    return f"{error.__class__.__module__}.{error.__class__.__qualname__}"
+
+
+def _root_cause(error: BaseException) -> BaseException:
+    current = error
+    visited: set[int] = set()
+    while id(current) not in visited:
+        visited.add(id(current))
+        cause = current.__cause__
+        if cause is None:
+            break
+        current = cause
+    return current
 
 
 @dataclass(frozen=True)
@@ -301,7 +320,9 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
     def __await__(self) -> Any:
         plan = self._ctx._prepare_batch_execution(self._calls)
         parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
-        timeout_ms = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS)
+        timeout_ms = self._ctx.config.get(
+            AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS
+        )
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         suppliers = [supplier for _, supplier in plan.suppliers]
         batch_futures: list[Any | None] = [None] * len(suppliers)
@@ -320,9 +341,7 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
             executed = _collect_sliding_window_outcomes_on_timeout(
                 batch_futures, exception
             )
-        return self._ctx._finalize_batch_execution(
-            self._calls, plan, started, executed
-        )
+        return self._ctx._finalize_batch_execution(self._calls, plan, started, executed)
 
 
 class _BatchTimeoutError(TimeoutError):
@@ -427,7 +446,7 @@ def _collect_outcomes(futures: list[Any]) -> list[Outcome]:
     return outcomes
 
 
-class FlinkRunnerContext(RunnerContext):
+class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     """Providing context for agent execution in Flink Environment.
 
     This context allows access to event handling and provides fine-grained
@@ -587,6 +606,56 @@ class FlinkRunnerContext(RunnerContext):
             The individual metric group specific to the current action.
         """
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
+
+    @override
+    def report_execution_started(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._j_runner_context.reportExecutionStartedJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
+    def report_execution_succeeded(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._j_runner_context.reportExecutionSucceededJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
+    def report_execution_failed(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        error: BaseException,
+        problem_category: str | None = None,
+    ) -> None:
+        root_error = _root_cause(error)
+        error_message = str(root_error)
+        self._j_runner_context.reportExecutionFailedJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+            _error_type(root_error),
+            error_message or None,
+            problem_category,
+        )
+
+    @staticmethod
+    def _entity_metadata_json(entity_metadata: Mapping[str, Any] | None) -> str:
+        return json.dumps(dict(entity_metadata or {}))
 
     def _try_get_cached_result(
         self,
@@ -825,9 +894,7 @@ class FlinkRunnerContext(RunnerContext):
         except BaseException as e:
             exception = e
 
-        self._finalize_current_call(
-            func, args, kwargs, result, exception
-        )
+        self._finalize_current_call(func, args, kwargs, result, exception)
 
         if exception is not None:
             raise exception
@@ -846,9 +913,7 @@ class FlinkRunnerContext(RunnerContext):
         except BaseException as e:
             exception = e
 
-        self._record_call_completion(
-            func, args, kwargs, result, exception
-        )
+        self._record_call_completion(func, args, kwargs, result, exception)
 
         if exception is not None:
             raise exception
@@ -918,10 +983,7 @@ class FlinkRunnerContext(RunnerContext):
 
     def _call_matches(self, current: _PersistedCallResult, call: DurableCall) -> bool:
         function_id, args_digest = self._durable_identity(call)
-        return (
-            current.function_id == function_id
-            and current.args_digest == args_digest
-        )
+        return current.function_id == function_id and current.args_digest == args_digest
 
     def _read_terminal_outcome(self, current: _PersistedCallResult) -> Outcome:
         try:

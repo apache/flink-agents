@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
@@ -218,6 +219,21 @@ public class ChatModelActionRoutingTest {
         public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
             durableCallIds.add(callable.getId());
             return callable.call();
+        }
+
+        @Override
+        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+                throws Exception {
+            List<Outcome<T>> outcomes = new ArrayList<>();
+            for (DurableCallable<T> callable : callables) {
+                durableCallIds.add(callable.getId());
+                try {
+                    outcomes.add(Outcome.success(callable.call()));
+                } catch (Exception e) {
+                    outcomes.add(Outcome.failure(e));
+                }
+            }
+            return outcomes;
         }
 
         @Override
