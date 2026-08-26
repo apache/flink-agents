@@ -25,14 +25,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -60,8 +56,6 @@ import java.util.stream.Collectors;
         ignoreUnknown = true,
         value = {"metricGroup", "resourceType"})
 public class Skills extends SerializableResource {
-
-    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     /** Reserved resource name under which AgentPlan registers the merged Skills config. */
     public static final String SKILLS_CONFIG = "_skills_config";
@@ -107,7 +101,7 @@ public class Skills extends SerializableResource {
                 Arrays.stream(urls)
                         .map(
                                 u -> {
-                                    requireUrl(u, false);
+                                    SkillUrlUtils.validate(u, false);
                                     return new SkillSourceSpec("url", Map.of("url", u));
                                 })
                         .collect(Collectors.toList()));
@@ -133,7 +127,7 @@ public class Skills extends SerializableResource {
                 Arrays.stream(urls)
                         .map(
                                 u -> {
-                                    requireUrl(u, true);
+                                    SkillUrlUtils.validate(u, true);
                                     return new SkillSourceSpec(
                                             "url", Map.of("url", u, "allow_insecure_http", "true"));
                                 })
@@ -148,7 +142,7 @@ public class Skills extends SerializableResource {
     }
 
     private static Skills urlSource(String url, String sha256, boolean allowInsecureHttp) {
-        requireUrl(url, allowInsecureHttp);
+        SkillUrlUtils.validate(url, allowInsecureHttp);
         if (sha256 == null || !sha256.matches("[0-9a-fA-F]{64}")) {
             throw new IllegalArgumentException(
                     "sha256 must contain exactly 64 hexadecimal characters");
@@ -158,69 +152,6 @@ public class Skills extends SerializableResource {
                         ? Map.of("url", url, "sha256", sha256, "allow_insecure_http", "true")
                         : Map.of("url", url, "sha256", sha256);
         return new Skills(List.of(new SkillSourceSpec("url", params)));
-    }
-
-    private static void requireUrl(String url, boolean allowInsecureHttp) {
-        if (url == null) {
-            throw new IllegalArgumentException("skill URL must not be null");
-        }
-        if (INVALID_PERCENT_ESCAPE.matcher(url).find()) {
-            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url));
-        }
-        URI uri;
-        try {
-            uri = URI.create(url);
-        } catch (IllegalArgumentException ignored) {
-            throw new IllegalArgumentException("Invalid skill URL: " + urlForError(url));
-        }
-        String scheme = uri.getScheme();
-        scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
-        if (!(scheme.equals("http") || scheme.equals("https"))) {
-            throw new IllegalArgumentException(
-                    "Only HTTP(S) skill URLs are supported: " + urlForError(url));
-        }
-        try {
-            uri = uri.parseServerAuthority();
-        } catch (URISyntaxException ignored) {
-            throw new IllegalArgumentException(
-                    "Skill URL must include a valid host and, when present, a valid port: "
-                            + urlForError(url));
-        }
-        if (uri.getRawUserInfo() != null) {
-            throw new IllegalArgumentException(
-                    "Skill URL must not include user info: " + urlForError(url));
-        }
-        if (uri.getHost() == null || uri.getHost().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Skill URL must include a valid host: " + urlForError(url));
-        }
-        if (uri.getPort() > 65535) {
-            throw new IllegalArgumentException(
-                    "Skill URL port must be between 0 and 65535: " + urlForError(url));
-        }
-        if (scheme.equals("http") && !allowInsecureHttp) {
-            throw new IllegalArgumentException(
-                    "Plain HTTP skill URLs are disabled by default; use HTTPS or explicitly allow"
-                            + " insecure HTTP for this source: "
-                            + urlForError(url));
-        }
-    }
-
-    private static String urlForError(String url) {
-        try {
-            URI uri = URI.create(url);
-            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
-                return "<redacted>";
-            }
-            String authority = uri.getRawAuthority();
-            int userInfoEnd = authority.lastIndexOf('@');
-            if (userInfoEnd >= 0) {
-                authority = authority.substring(userInfoEnd + 1);
-            }
-            return uri.getScheme() + "://" + authority + uri.getRawPath();
-        } catch (IllegalArgumentException e) {
-            return "<redacted>";
-        }
     }
 
     /**

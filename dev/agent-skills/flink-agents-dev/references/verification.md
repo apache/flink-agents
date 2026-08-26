@@ -249,15 +249,23 @@ Runtime Skills:
 - For a new project, the source is an explicit TODO and no coding-agent host Skill
   was inspected, copied, or offered for reuse. Do not require a path, URL, package,
   classpath, or distribution answer before scaffolding.
-- Once the user fills it, the YAML field or direct `Skills` factory matches the source: bundled Python uses `package`/`from_package`, bundled Java uses `classpath`/`fromClasspath`, TaskManager-managed files use `paths`/`from_local_dir`/`fromLocalDir`, and remote ZIP distribution uses `urls` or `url_sources` with the corresponding URL factory.
+- Once the user fills it, the YAML field or direct `Skills` factory matches the source:
+  - Bundled Python uses `package`/`from_package`.
+  - Bundled Java uses `classpath`/`fromClasspath`.
+  - TaskManager-managed files use `paths`/`from_local_dir`/`fromLocalDir`.
+  - Remote ZIP distribution uses `urls` or `url_sources` with the corresponding URL factory.
 - A `package` source is Python-only and its resource is present in the installed
   package/wheel on every Python worker; a `classpath` source is Java-only and its
   resource is present in the application JAR or runtime classpath.
 - For a filled source, every `paths` directory or ZIP is provisioned at a resolvable path on every
   TaskManager. A local MiniCluster check is not cluster-wide path evidence.
-- For a filled source, every `urls` value is HTTPS, points to a ZIP with Skill directories at its top level, contains no embedded user information, and is reachable from every TaskManager. `url_sources` may additionally pin `sha256` or explicitly opt in to plain HTTP. Prefer immutable, versioned URLs; do not claim cluster connectivity from a client-side download.
+- For a filled source, every `urls` value is HTTPS, points to a ZIP with Skill directories at its top level, contains no embedded user information, and is reachable from every TaskManager.
+  - `url_sources` may additionally pin `sha256` or explicitly opt in to plain HTTP.
+  - Prefer immutable, versioned URLs; do not claim cluster connectivity from a client-side download.
 - Cross-language Skill sources use `paths`, `urls`, or `url_sources` and are tested across the confirmed bridge.
-- If fields are intentionally combined, account for loader order `paths`, `urls`, `url_sources`, `classpath`, `package`; reject duplicate Skill names rather than relying on last-wins replacement.
+- If fields are intentionally combined:
+  - Account for loader order `paths`, `urls`, `url_sources`, `classpath`, `package`.
+  - Reject duplicate Skill names rather than relying on last-wins replacement.
 - Chat model `skills` entries match individual Skill names, not the Skills Resource
   name.
 - `allowed_commands` contains only commands actually required by the enabled Skills.

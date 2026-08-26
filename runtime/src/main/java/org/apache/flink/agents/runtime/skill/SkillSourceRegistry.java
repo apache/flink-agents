@@ -18,9 +18,9 @@
 
 package org.apache.flink.agents.runtime.skill;
 
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
-import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
 
 import java.util.Locale;
@@ -54,7 +54,7 @@ public final class SkillSourceRegistry {
                                 params.get("sha256"),
                                 Boolean.parseBoolean(
                                         params.getOrDefault("allow_insecure_http", "false"))),
-                params -> SkillMaterializer.urlForLogging(params.get("url")));
+                params -> SkillUrlUtils.redact(params.get("url")));
         register(
                 "classpath",
                 (params, cl) ->

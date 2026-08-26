@@ -26,11 +26,11 @@ from urllib.error import HTTPError
 
 import pytest
 
+from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
     Materialized,
     download_to_tempfile,
     extract_zip_safely,
-    url_for_logging,
 )
 
 
@@ -105,14 +105,18 @@ class _StaticHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         type(self).request_count += 1
+        is_chain = self.path.startswith("/chain/")
         is_redirect = self.path.startswith("/redirect") and (
             type(self).redirect_location is not None
         )
         self.send_response(
-            type(self).redirect_status if is_redirect else type(self).status
+            type(self).redirect_status if is_redirect or is_chain else type(self).status
         )
         if is_redirect:
             self.send_header("Location", type(self).redirect_location)
+        elif is_chain:
+            step = int(self.path.rsplit("/", 1)[-1])
+            self.send_header("Location", f"/chain/{step + 1}")
         self.send_header("Content-Length", str(len(type(self).payload)))
         self.end_headers()
         self.wfile.write(type(self).payload)
@@ -145,8 +149,8 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
 
 
 class TestDownloadToTempfile:
-    def test_url_for_logging_redacts_opaque_malformed_credentials(self) -> None:
-        assert url_for_logging("https:user:password?token=top-secret") == "<redacted>"
+    def test_redact_skill_url_redacts_opaque_malformed_credentials(self) -> None:
+        assert redact_skill_url("https:user:password?token=top-secret") == "<redacted>"
 
     def test_downloads_bytes(
         self, static_server: "tuple[str, type[_StaticHandler]]"
@@ -237,6 +241,29 @@ class TestDownloadToTempfile:
                 f"{base_url}/redirect", timeout=10, allow_insecure_http=True
             )
         assert handler.request_count == 5
+
+    def test_rejects_eleventh_distinct_redirect(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+
+        with pytest.raises(HTTPError):
+            download_to_tempfile(
+                f"{base_url}/chain/0", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 11
+
+    def test_rejects_redirect_location_with_raw_space(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = f"{base_url}/skills archive.zip"
+
+        with pytest.raises(ValueError, match="Invalid skill URL"):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 1
 
     def test_logs_sanitized_effective_url_for_same_protocol_redirect(
         self,

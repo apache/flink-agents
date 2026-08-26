@@ -164,6 +164,8 @@ class SkillsResourceTest {
                         "https://example-.com/x.zip",
                         "https://.example.com/x.zip",
                         "https://example..com/x.zip",
+                        "https://a../x.zip",
+                        "https://../x.zip",
                         "https://999.999.999.999/x.zip",
                         "https://127.1/x.zip",
                         "https://1.2.3/x.zip",
@@ -172,8 +174,14 @@ class SkillsResourceTest {
                         "https://1.2.3.4.5/x.zip",
                         "https://1.2.3./x.zip",
                         "https://1.2.3.4./x.zip",
-                        "https://[v1.foo]/x.zip",
-                        "https://[fe80::1%eth0]/x.zip")) {
+                        "https://[v1.foo]/x.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
+        }
+    }
+
+    @Test
+    void fromUrlRejectsCompatibilitySensitiveHosts() {
+        for (String url : List.of("https://skill_server/x.zip", "https://tést.com/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
         }
     }

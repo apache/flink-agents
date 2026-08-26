@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, Mapping
 
-from flink_agents.runtime.skill.repository._materialize import url_for_logging
+from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository.filesystem_repository import (
     FileSystemSkillRepository,
 )
@@ -122,7 +122,7 @@ register(
         allow_insecure_http=params.get("allow_insecure_http", "false").lower()
         == "true",
     ),
-    lambda params: url_for_logging(params.get("url", "")),
+    lambda params: redact_skill_url(params.get("url", "")),
 )
 register(
     "package",

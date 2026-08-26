@@ -18,12 +18,12 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
+
 import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -45,7 +45,6 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
 
     private static final int REQUEST_TIMEOUT_MS = 90_000;
     private static final Pattern SHA256_PATTERN = Pattern.compile("[0-9a-fA-F]{64}");
-    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     private final String url;
 
@@ -65,53 +64,7 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
 
     private static SkillMaterializer.Materialized materialize(
             String url, @Nullable String sha256, boolean allowInsecureHttp) throws IOException {
-        URI uri;
-        if (url == null) {
-            throw new IllegalArgumentException("skill URL must not be null");
-        }
-        if (INVALID_PERCENT_ESCAPE.matcher(url).find()) {
-            throw new IllegalArgumentException(
-                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url));
-        }
-        try {
-            uri = new URI(url);
-        } catch (URISyntaxException ignored) {
-            throw new IllegalArgumentException(
-                    "Invalid skill URL: " + SkillMaterializer.urlForLogging(url));
-        }
-        String scheme = uri.getScheme();
-        scheme = scheme == null ? "" : scheme.toLowerCase(Locale.ROOT);
-        if (!(scheme.equals("http") || scheme.equals("https"))) {
-            throw new IllegalArgumentException(
-                    "Only HTTP(S) URLs are supported: " + SkillMaterializer.urlForLogging(url));
-        }
-        try {
-            uri = uri.parseServerAuthority();
-        } catch (URISyntaxException ignored) {
-            throw new IllegalArgumentException(
-                    "Skill URL must include a valid host and, when present, a valid port: "
-                            + SkillMaterializer.urlForLogging(url));
-        }
-        if (uri.getRawUserInfo() != null) {
-            throw new IllegalArgumentException(
-                    "Skill URL must not include user info: "
-                            + SkillMaterializer.urlForLogging(url));
-        }
-        if (uri.getHost() == null || uri.getHost().isEmpty()) {
-            throw new IllegalArgumentException(
-                    "Skill URL must include a valid host: " + SkillMaterializer.urlForLogging(url));
-        }
-        if (uri.getPort() > 65535) {
-            throw new IllegalArgumentException(
-                    "Skill URL port must be between 0 and 65535: "
-                            + SkillMaterializer.urlForLogging(url));
-        }
-        if (scheme.equals("http") && !allowInsecureHttp) {
-            throw new IllegalArgumentException(
-                    "Plain HTTP skill URLs are disabled by default; use HTTPS or explicitly allow"
-                            + " insecure HTTP for this source: "
-                            + SkillMaterializer.urlForLogging(url));
-        }
+        SkillUrlUtils.validate(url, allowInsecureHttp);
         String normalizedSha256 = sha256 == null ? null : sha256.toLowerCase(Locale.ROOT);
         if (normalizedSha256 != null && !SHA256_PATTERN.matcher(normalizedSha256).matches()) {
             throw new IllegalArgumentException(
@@ -124,7 +77,9 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
                 String actual = sha256(tmpZip);
                 if (!actual.equals(normalizedSha256)) {
                     throw new IllegalArgumentException(
-                            "SHA-256 mismatch for skill archive: expected "
+                            "SHA-256 mismatch for skill archive at "
+                                    + SkillUrlUtils.redact(url)
+                                    + ": expected "
                                     + normalizedSha256
                                     + ", got "
                                     + actual);

@@ -140,14 +140,20 @@ class SkillManager:
     def _load_skills(self) -> None:
         try:
             for spec in self._config.sources:
+                origin = None
                 try:
+                    origin = _origin_of(spec)
                     handler = skill_source_registry.get(spec.scheme)
                     repo = handler.open(spec.params)
                     self._opened_repos.append(repo)
                 except (OSError, ValueError) as e:
-                    msg = f"Failed to load skills from {spec.scheme} source"
+                    source_identity = (
+                        f"{spec.scheme} source" if origin is None else str(origin)
+                    )
+                    msg = f"Failed to load skills from {source_identity}"
                     raise RuntimeError(msg) from e
-                self._register_repo(repo, _origin_of(spec))
+                assert origin is not None
+                self._register_repo(repo, origin)
         except BaseException:
             # Release every repo opened so far — the caller never receives a
             # SkillManager reference to clean them up via close() itself, so

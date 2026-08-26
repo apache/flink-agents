@@ -194,9 +194,11 @@ class SkillsSpec(BaseModel):
     classpath: List[str] = Field(default_factory=list)
     package: List[PackageSkillSpec] = Field(default_factory=list)
 
-    @field_validator("url_sources", mode="before")
+    @field_validator(
+        "paths", "urls", "url_sources", "classpath", "package", mode="before"
+    )
     @classmethod
-    def _normalize_null_url_sources(cls, value: object) -> object:
+    def _normalize_null_sources(cls, value: object) -> object:
         return [] if value is None else value
 
     @model_validator(mode="after")

@@ -158,7 +158,7 @@ class SkillMaterializerTest {
                         () ->
                                 SkillMaterializer.downloadToTempFile(
                                         "http://127.0.0.1:1/anything", 5_000));
-        assertTrue(ex.getMessage().contains("disallowed transport"));
+        assertTrue(ex.getMessage().contains("disabled by default"));
     }
 
     @Test
@@ -194,6 +194,31 @@ class SkillMaterializerTest {
                                             "http://127.0.0.1:" + port + "/redirect", 5_000, true));
             assertTrue(ex.getMessage().contains("unsupported redirect"));
             assertTrue(ex.getMessage().contains("https://example.com/skills.zip"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void redirectWithoutLocationFailsClearly() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            "http://127.0.0.1:" + port + "/redirect", 5_000, true));
+            assertTrue(ex.getMessage().contains("invalid redirect"));
+            assertTrue(ex.getMessage().contains("<redacted>"));
         } finally {
             server.stop(0);
         }
@@ -275,16 +300,18 @@ class SkillMaterializerTest {
     }
 
     @Test
-    void rejectsFifthRepeatOfRedirectTarget() throws IOException {
+    void rejectsEleventhDistinctRedirect() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int port = server.getAddress().getPort();
-        String url = "http://127.0.0.1:" + port + "/redirect";
+        String baseUrl = "http://127.0.0.1:" + port;
         AtomicInteger requests = new AtomicInteger();
         server.createContext(
-                "/redirect",
+                "/chain",
                 exchange -> {
                     requests.incrementAndGet();
-                    exchange.getResponseHeaders().add("Location", url);
+                    String path = exchange.getRequestURI().getPath();
+                    int step = Integer.parseInt(path.substring(path.lastIndexOf('/') + 1));
+                    exchange.getResponseHeaders().add("Location", "/chain/" + (step + 1));
                     exchange.sendResponseHeaders(302, -1);
                     exchange.close();
                 });
@@ -293,9 +320,46 @@ class SkillMaterializerTest {
             IOException ex =
                     assertThrows(
                             IOException.class,
-                            () -> SkillMaterializer.downloadToTempFile(url, 5_000, true));
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            baseUrl + "/chain/0", 5_000, true));
             assertTrue(ex.getMessage().contains("too many redirects"));
-            assertEquals(5, requests.get());
+            assertEquals(11, requests.get());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void rejectsRedirectLocationWithRawSpace() throws IOException {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        int port = server.getAddress().getPort();
+        String baseUrl = "http://127.0.0.1:" + port;
+        AtomicInteger targetRequests = new AtomicInteger();
+        server.createContext(
+                "/redirect",
+                exchange -> {
+                    exchange.getResponseHeaders().add("Location", baseUrl + "/skills archive.zip");
+                    exchange.sendResponseHeaders(302, -1);
+                    exchange.close();
+                });
+        server.createContext(
+                "/",
+                exchange -> {
+                    targetRequests.incrementAndGet();
+                    exchange.sendResponseHeaders(200, 0);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            baseUrl + "/redirect", 5_000, true));
+            assertTrue(ex.getMessage().contains("Invalid skill URL"));
+            assertEquals(0, targetRequests.get());
         } finally {
             server.stop(0);
         }
@@ -310,7 +374,7 @@ class SkillMaterializerTest {
         server.createContext(
                 "/redirect",
                 exchange -> {
-                    exchange.getResponseHeaders().add("Location", baseUrl + "/skills.zip");
+                    exchange.getResponseHeaders().add("Location", "/skills.zip");
                     exchange.sendResponseHeaders(302, -1);
                     exchange.close();
                 });
@@ -333,6 +397,7 @@ class SkillMaterializerTest {
                                     SkillMaterializer.downloadToTempFile(
                                             baseUrl + "/redirect", 5_000, true));
             assertTrue(ex.getMessage().contains("unsupported redirect"));
+            assertTrue(ex.getMessage().contains(baseUrl + "/skills.zip"));
         } finally {
             HttpURLConnection.setFollowRedirects(redirectsOriginallyEnabled);
             server.stop(0);

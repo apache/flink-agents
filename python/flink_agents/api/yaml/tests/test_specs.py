@@ -380,11 +380,15 @@ def test_url_skill_spec_rejects_non_boolean_allow_insecure_http(value: object) -
         )
 
 
-def test_skills_spec_treats_null_url_sources_as_empty() -> None:
-    spec = SkillsSpec.model_validate(
-        {"name": "s", "paths": ["./a"], "url_sources": None}
-    )
-    assert spec.url_sources == []
+@pytest.mark.parametrize(
+    "field", ["paths", "urls", "url_sources", "classpath", "package"]
+)
+def test_skills_spec_treats_null_source_lists_as_empty(field: str) -> None:
+    values: dict[str, object] = {"name": "s", "paths": ["./a"], field: None}
+    if field == "paths":
+        values["urls"] = ["https://example.com/skills.zip"]
+    spec = SkillsSpec.model_validate(values)
+    assert getattr(spec, field) == []
 
 
 def test_skills_spec_forbids_extras() -> None:

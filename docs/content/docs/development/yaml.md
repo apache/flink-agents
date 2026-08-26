@@ -231,6 +231,8 @@ skills:
 
 Use this compatibility option only on trusted development networks; prefer HTTPS.
 
+URL source hosts must use DNS-compatible ASCII syntax. Names containing underscores, such as `skill_server`, are rejected; use a DNS-compatible name such as `skill-server`. Internationalized hostnames must use IDNA/Punycode rather than raw Unicode. This validation is stricter than in earlier releases.
+
 ```yaml
 skills:
   - name: agent_skills

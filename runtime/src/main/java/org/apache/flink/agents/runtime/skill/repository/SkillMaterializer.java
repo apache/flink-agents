@@ -18,27 +18,22 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import javax.annotation.Nullable;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Comparator;
 import java.util.Enumeration;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -61,8 +56,6 @@ public final class SkillMaterializer {
     private static final String TEMP_DIR_PREFIX = "flink-agents-skills-";
 
     private static final int MAX_REDIRECTS = 10;
-
-    private static final int MAX_REDIRECT_REPEATS = 4;
 
     private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
@@ -281,17 +274,15 @@ public final class SkillMaterializer {
         try {
             u = new URL(url);
         } catch (MalformedURLException ignored) {
-            throw new IOException("Invalid skill URL: " + urlForLogging(url));
+            throw new IOException("Invalid skill URL: " + SkillUrlUtils.redact(url));
         }
-        String initialProtocol = u.getProtocol();
-        requireValidDownloadUrl(u, allowInsecureHttp, null);
+        String initialProtocol = requireValidDownloadUrl(u, allowInsecureHttp);
         boolean followRedirects = HttpURLConnection.getFollowRedirects();
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
         HttpURLConnection conn = null;
         try {
             URL effectiveUrl = u;
             int redirects = 0;
-            Map<String, Integer> redirectCounts = new HashMap<>();
             while (true) {
                 conn = (HttpURLConnection) effectiveUrl.openConnection();
                 conn.setConnectTimeout(timeoutMs);
@@ -303,26 +294,32 @@ public final class SkillMaterializer {
                 int responseCode = conn.getResponseCode();
                 if (isRedirectStatus(responseCode)) {
                     String location = conn.getHeaderField("Location");
-                    if (!followRedirects) {
+                    if (location == null) {
                         throw new IOException(
-                                "Skill URL returned an unsupported redirect to: "
-                                        + urlForLogging(location));
+                                "Skill URL returned an invalid redirect to: <redacted>");
                     }
                     URL redirectUrl;
                     try {
                         redirectUrl = new URL(effectiveUrl, location);
-                    } catch (MalformedURLException | NullPointerException ignored) {
+                    } catch (MalformedURLException ignored) {
                         throw new IOException(
                                 "Skill URL returned an invalid redirect to: "
-                                        + urlForLogging(location));
+                                        + SkillUrlUtils.redact(location));
                     }
-                    requireValidDownloadUrl(redirectUrl, allowInsecureHttp, initialProtocol);
-                    String redirectKey = redirectUrl.toExternalForm();
-                    int repeatCount = redirectCounts.getOrDefault(redirectKey, 0);
-                    if (repeatCount >= MAX_REDIRECT_REPEATS || redirects >= MAX_REDIRECTS) {
+                    if (!followRedirects) {
+                        throw new IOException(
+                                "Skill URL returned an unsupported redirect to: "
+                                        + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
+                    }
+                    String redirectProtocol = requireValidDownloadUrl(redirectUrl, true);
+                    if (!redirectProtocol.equals(initialProtocol)) {
+                        throw new IOException(
+                                "Skill URL returned an unsupported redirect to: "
+                                        + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
+                    }
+                    if (redirects >= MAX_REDIRECTS) {
                         throw new IOException("Skill URL returned too many redirects");
                     }
-                    redirectCounts.put(redirectKey, repeatCount + 1);
                     redirects++;
                     conn.disconnect();
                     conn = null;
@@ -334,14 +331,14 @@ public final class SkillMaterializer {
                             "Skill URL returned HTTP "
                                     + responseCode
                                     + ": "
-                                    + urlForLogging(effectiveUrl));
+                                    + SkillUrlUtils.redact(effectiveUrl.toExternalForm()));
                 }
                 try (InputStream in = conn.getInputStream()) {
                     if (!u.toExternalForm().equals(effectiveUrl.toExternalForm())) {
                         LOG.warn(
                                 "Skill URL redirected from {} to {}",
-                                urlForLogging(u),
-                                urlForLogging(effectiveUrl));
+                                SkillUrlUtils.redact(u.toExternalForm()),
+                                SkillUrlUtils.redact(effectiveUrl.toExternalForm()));
                     }
                     Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
                 }
@@ -366,66 +363,17 @@ public final class SkillMaterializer {
                 || responseCode == 308;
     }
 
-    private static void requireValidDownloadUrl(
-            URL url, boolean allowInsecureHttp, @Nullable String initialProtocol)
+    private static String requireValidDownloadUrl(URL url, boolean allowInsecureHttp)
             throws IOException {
-        String protocol = url.getProtocol();
-        if (INVALID_PERCENT_ESCAPE.matcher(url.toExternalForm()).find()) {
-            throw new IOException("Invalid skill URL: " + urlForLogging(url));
-        }
-        if (!("https".equalsIgnoreCase(protocol)
-                || (allowInsecureHttp && "http".equalsIgnoreCase(protocol)))) {
-            String prefix =
-                    initialProtocol == null
-                            ? "Skill URL uses a disallowed transport: "
-                            : "Skill URL returned an unsupported redirect to: ";
-            throw new IOException(prefix + urlForLogging(url));
-        }
-        if (initialProtocol != null && !protocol.equalsIgnoreCase(initialProtocol)) {
-            throw new IOException(
-                    "Skill URL returned an unsupported redirect to: " + urlForLogging(url));
-        }
-        URI uri;
-        try {
-            uri = url.toURI().parseServerAuthority();
-        } catch (URISyntaxException ignored) {
-            throw new IOException("Invalid skill URL: " + urlForLogging(url));
-        }
-        if (uri.getRawUserInfo() != null) {
-            throw new IOException("Skill URL must not include user info: " + urlForLogging(url));
-        }
-        if (uri.getHost() == null || uri.getHost().isEmpty()) {
-            throw new IOException("Skill URL must include a valid host: " + urlForLogging(url));
-        }
-        if (uri.getPort() > 65535) {
-            throw new IOException(
-                    "Skill URL port must be between 0 and 65535: " + urlForLogging(url));
-        }
-    }
-
-    /** Returns a URL suitable for logs and errors, without user info, query, or fragment. */
-    public static String urlForLogging(String url) {
-        if (url == null) {
-            return "<redacted>";
+        String externalUrl = url.toExternalForm();
+        if (INVALID_PERCENT_ESCAPE.matcher(externalUrl).find()) {
+            throw new IOException("Invalid skill URL: " + SkillUrlUtils.redact(externalUrl));
         }
         try {
-            URI uri = URI.create(url);
-            if (uri.getScheme() == null || uri.getRawAuthority() == null) {
-                return "<redacted>";
-            }
-            String authority = uri.getRawAuthority();
-            int userInfoEnd = authority.lastIndexOf('@');
-            if (userInfoEnd >= 0) {
-                authority = authority.substring(userInfoEnd + 1);
-            }
-            return uri.getScheme() + "://" + authority + uri.getRawPath();
+            return SkillUrlUtils.validate(externalUrl, allowInsecureHttp);
         } catch (IllegalArgumentException e) {
-            return "<redacted>";
+            throw new IOException(e.getMessage());
         }
-    }
-
-    private static String urlForLogging(URL url) {
-        return urlForLogging(url.toExternalForm());
     }
 
     private static void deleteRecursively(Path path) {

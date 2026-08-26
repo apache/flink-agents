@@ -26,7 +26,7 @@ from __future__ import annotations
 import hashlib
 import re
 
-from flink_agents.api.skills import _validate_skill_url
+from flink_agents.api.skills import redact_skill_url, validate_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
     download_to_tempfile,
     extract_zip_safely,
@@ -60,7 +60,7 @@ class URLSkillRepository(MaterializedSkillRepository):
             ValueError: If the URL transport or SHA-256 value is invalid.
             urllib.error.HTTPError / URLError: On transport/HTTP failures.
         """
-        _validate_skill_url(url, allow_insecure_http=allow_insecure_http)
+        validate_skill_url(url, allow_insecure_http=allow_insecure_http)
         if sha256 is not None and not isinstance(sha256, str):
             msg = "sha256 must contain exactly 64 hexadecimal characters"
             raise ValueError(msg)
@@ -86,7 +86,8 @@ class URLSkillRepository(MaterializedSkillRepository):
                 actual = digest.hexdigest()
                 if actual != normalized_sha256:
                     msg = (
-                        "SHA-256 mismatch for skill archive: expected "
+                        "SHA-256 mismatch for skill archive at "
+                        f"{redact_skill_url(url)}: expected "
                         f"{normalized_sha256}, got {actual}"
                     )
                     raise ValueError(msg)

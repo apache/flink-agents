@@ -113,6 +113,7 @@ class TestURLSkillRepository:
         signed_url = f"{url}?token=top-secret#fragment"
         with pytest.raises(ValueError, match="SHA-256 mismatch") as exc_info:
             URLSkillRepository(signed_url, sha256="0" * 64, allow_insecure_http=True)
+        assert url in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
@@ -137,6 +138,8 @@ class TestURLSkillRepository:
             "https://example-.com/skills.zip",
             "https://.example.com/skills.zip",
             "https://example..com/skills.zip",
+            "https://a../skills.zip",
+            "https://../skills.zip",
             "https://999.999.999.999/skills.zip",
             "https://127.1/skills.zip",
             "https://1.2.3/skills.zip",

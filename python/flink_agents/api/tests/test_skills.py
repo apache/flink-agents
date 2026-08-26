@@ -106,13 +106,13 @@ class TestSkillsFactories:
     @pytest.mark.parametrize(
         "url",
         [
-            "https://exa_mple.com/x.zip",
-            "https://tést.com/x.zip",
             "https://%65xample.com/x.zip",
             "https://-example.com/x.zip",
             "https://example-.com/x.zip",
             "https://.example.com/x.zip",
             "https://example..com/x.zip",
+            "https://a../x.zip",
+            "https://../x.zip",
             "https://999.999.999.999/x.zip",
             "https://127.1/x.zip",
             "https://1.2.3/x.zip",
@@ -125,6 +125,14 @@ class TestSkillsFactories:
         ],
     )
     def test_from_url_rejects_invalid_hostname_syntax(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            Skills.from_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        ["https://skill_server/x.zip", "https://tést.com/x.zip"],
+    )
+    def test_from_url_rejects_compatibility_sensitive_hosts(self, url: str) -> None:
         with pytest.raises(ValueError, match="valid host"):
             Skills.from_url(url)
 

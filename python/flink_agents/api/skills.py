@@ -72,7 +72,8 @@ _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 
 
-def _url_for_error(url: str) -> str:
+def redact_skill_url(url: str) -> str:
+    """Return a skill URL without user info, query parameters, or a fragment."""
     try:
         parts = urlsplit(url)
         if not parts.scheme or not parts.netloc:
@@ -85,7 +86,7 @@ def _url_for_error(url: str) -> str:
         return "<redacted>"
 
 
-def _validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
+def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
     """Validate a skill URL using the contract shared with the Java API."""
     if not isinstance(url, str):
         msg = "skill URL must be a string"
@@ -93,14 +94,14 @@ def _validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
     try:
         parsed = urlparse(url)
     except ValueError:
-        msg = f"Invalid skill URL: {_url_for_error(url)}"
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
         raise ValueError(msg) from None
     if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
-        msg = f"Invalid skill URL: {_url_for_error(url)}"
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
         raise ValueError(msg)
     scheme = parsed.scheme.lower()
     if scheme not in {"http", "https"}:
-        msg = f"Only HTTP(S) skill URLs are supported: {_url_for_error(url)}"
+        msg = f"Only HTTP(S) skill URLs are supported: {redact_skill_url(url)}"
         raise ValueError(msg)
     try:
         hostname = parsed.hostname
@@ -108,11 +109,11 @@ def _validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
     except ValueError:
         msg = (
             "Skill URL must include a valid host and, when present, a valid port: "
-            f"{_url_for_error(url)}"
+            f"{redact_skill_url(url)}"
         )
         raise ValueError(msg) from None
     if parsed.username is not None:
-        msg = f"Skill URL must not include user info: {_url_for_error(url)}"
+        msg = f"Skill URL must not include user info: {redact_skill_url(url)}"
         raise ValueError(msg)
     bracketed_host = parsed.netloc.rsplit("@", 1)[-1].startswith("[")
     if (
@@ -120,13 +121,13 @@ def _validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
         or (bracketed_host and ":" not in hostname)
         or not _is_valid_hostname(hostname)
     ):
-        msg = f"Skill URL must include a valid host: {_url_for_error(url)}"
+        msg = f"Skill URL must include a valid host: {redact_skill_url(url)}"
         raise ValueError(msg)
     if scheme == "http" and not allow_insecure_http:
         msg = (
             "Plain HTTP skill URLs are disabled by default; use HTTPS or "
             "explicitly allow insecure HTTP for this source: "
-            f"{_url_for_error(url)}"
+            f"{redact_skill_url(url)}"
         )
         raise ValueError(msg)
     return scheme
@@ -143,15 +144,17 @@ def _is_valid_hostname(hostname: str) -> bool:
     if not hostname.isascii():
         return False
     dns_name = hostname[:-1] if hostname.endswith(".") else hostname
+    if not dns_name:
+        return False
     if re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", dns_name):
         return not hostname.endswith(".") and all(
             int(part) <= 255 for part in dns_name.split(".")
         )
     labels = dns_name.split(".")
-    return (
-        bool(dns_name)
-        and not (len(labels) > 1 and labels[-1][0].isdigit())
-        and all(_HOST_LABEL.fullmatch(label) for label in labels)
+    if any(not label for label in labels):
+        return False
+    return not (len(labels) > 1 and labels[-1][0].isdigit()) and all(
+        _HOST_LABEL.fullmatch(label) for label in labels
     )
 
 
@@ -263,7 +266,7 @@ class Skills(SerializableResource):
 
     @staticmethod
     def _require_url(url: str, *, allow_insecure_http: bool) -> None:
-        _validate_skill_url(url, allow_insecure_http=allow_insecure_http)
+        validate_skill_url(url, allow_insecure_http=allow_insecure_http)
 
     @staticmethod
     def _require_sha256(sha256: str) -> None:

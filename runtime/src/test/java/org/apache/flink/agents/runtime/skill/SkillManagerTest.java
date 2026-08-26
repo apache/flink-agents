@@ -175,6 +175,7 @@ class SkillManagerTest {
                                                 "http://example.com/skills.zip?token=top-secret"))));
         IllegalStateException ex =
                 assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+        assertTrue(ex.getMessage().contains("url:http://example.com/skills.zip"));
         assertTrue(ex.getCause().getMessage().contains("disabled by default"));
         assertFalse(ex.getMessage().contains("top-secret"));
         assertFalse(ex.getCause().getMessage().contains("top-secret"));
@@ -289,13 +290,16 @@ class SkillManagerTest {
         for (Map<String, String> params :
                 List.of(
                         Map.of("uri", "https://user:password@example.com/x.zip?token=top-secret"),
-                        Map.of("url", "https://example.com/x zip?token=top-secret"))) {
+                        Map.of("url", "https://example.com:bad/x.zip?token=top-secret"))) {
             Skills config = new Skills(List.of(new SkillSourceSpec("url", params)));
             IllegalStateException ex =
                     assertThrows(IllegalStateException.class, () -> new SkillManager(config));
             String messages = ex.getMessage() + "\n" + ex.getCause().getMessage();
             assertFalse(messages.contains("password"));
             assertFalse(messages.contains("top-secret"));
+            if (params.containsKey("url")) {
+                assertTrue(ex.getMessage().contains("url:https://example.com:bad/x.zip"));
+            }
         }
     }
 

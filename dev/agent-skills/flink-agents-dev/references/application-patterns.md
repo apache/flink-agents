@@ -312,7 +312,11 @@ compilable factory/helper that lists the valid factories and throws
 Do not package, mount, download, or activate the runtime Skill on the user's behalf
 unless they later provide the source configuration or explicitly ask for it.
 
-Once the user fills the source, multiple fields may coexist only when explicitly intended. The implementation language removes invalid choices (`package` is Python-only and `classpath` is Java-only), while `paths`, `urls`, and `url_sources` can bridge languages. Validate loader order and deployment constraints at that time. YAML loaders append them in `paths`, `urls`, `url_sources`, `classpath`, `package` order. Runtime registration is last-wins for duplicate Skill frontmatter names, so avoid duplicate names instead of relying on an implicit override or fallback chain. Prefer immutable, versioned URLs and use `url_sources.sha256` when the user provides an archive digest. A path that works in a local MiniCluster proves only single-machine availability, not cluster-wide TaskManager visibility.
+Once the user fills the source, multiple fields may coexist only when explicitly intended.
+
+The implementation language removes invalid choices (`package` is Python-only and `classpath` is Java-only), while `paths`, `urls`, and `url_sources` can bridge languages. Validate loader order and deployment constraints at that time. YAML loaders append them in `paths`, `urls`, `url_sources`, `classpath`, `package` order.
+
+Runtime registration is last-wins for duplicate Skill frontmatter names, so avoid duplicate names instead of relying on an implicit override or fallback chain. Prefer immutable, versioned URLs and use `url_sources.sha256` when the user provides an archive digest. A path that works in a local MiniCluster proves only single-machine availability, not cluster-wide TaskManager visibility.
 
 ## Design the Action Graph
 

@@ -132,6 +132,7 @@ class URLSkillRepositoryTest {
                             IllegalArgumentException.class,
                             () -> new URLSkillRepository(url, "0".repeat(64), true));
             assertTrue(ex.getMessage().contains("SHA-256 mismatch"));
+            assertTrue(ex.getMessage().contains("http://127.0.0.1:" + port + "/skills.zip"));
             assertFalse(ex.getMessage().contains("top-secret"));
         } finally {
             server.stop(0);
@@ -167,6 +168,8 @@ class URLSkillRepositoryTest {
                         "https://example-.com/skills.zip",
                         "https://.example.com/skills.zip",
                         "https://example..com/skills.zip",
+                        "https://a../skills.zip",
+                        "https://../skills.zip",
                         "https://999.999.999.999/skills.zip",
                         "https://127.1/skills.zip",
                         "https://1.2.3/skills.zip",
@@ -175,10 +178,16 @@ class URLSkillRepositoryTest {
                         "https://1.2.3.4.5/skills.zip",
                         "https://1.2.3./skills.zip",
                         "https://1.2.3.4./skills.zip",
-                        "https://[v1.foo]/skills.zip",
-                        "https://[fe80::1%eth0]/skills.zip")) {
+                        "https://[v1.foo]/skills.zip")) {
             assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
         }
+    }
+
+    @Test
+    void rawPercentEscapeIsRejectedByDownloader() {
+        assertThrows(
+                IOException.class,
+                () -> new URLSkillRepository("https://[fe80::1%eth0]/skills.zip"));
     }
 
     @Test

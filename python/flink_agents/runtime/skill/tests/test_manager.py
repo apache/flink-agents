@@ -221,6 +221,7 @@ class TestSkillManagerMixedSources:
         )
         with pytest.raises(RuntimeError) as exc_info:
             SkillManager(config)
+        assert "url:http://example.com/skills.zip" in str(exc_info.value)
         assert "disabled by default" in str(exc_info.value.__cause__)
         assert secret not in str(exc_info.value)
         assert secret not in str(exc_info.value.__cause__)
@@ -292,7 +293,7 @@ class TestSkillManagerMixedSources:
         "params",
         [
             {"uri": "https://user:password@example.com/x.zip?token=top-secret"},
-            {"url": "https://example.com/x zip?token=top-secret"},
+            {"url": "https://example.com:bad/x.zip?token=top-secret"},
         ],
     )
     def test_url_source_failures_do_not_leak_params(
@@ -306,6 +307,8 @@ class TestSkillManagerMixedSources:
         messages = f"{exc_info.value}\n{exc_info.value.__cause__}"
         assert "password" not in messages
         assert "top-secret" not in messages
+        if "url" in params:
+            assert "url:https://example.com:bad/x.zip" in str(exc_info.value)
 
     def test_close_releases_repo_displaced_by_duplicate_skill_name(self) -> None:
         from typing import Dict, List

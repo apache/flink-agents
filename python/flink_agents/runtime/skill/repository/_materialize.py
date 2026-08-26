@@ -27,10 +27,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
-from flink_agents.api.skills import _validate_skill_url
+from flink_agents.api.skills import redact_skill_url, validate_skill_url
 
 if TYPE_CHECKING:
     from typing import Any
@@ -38,7 +38,6 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
-_MAX_REDIRECTS = 10
 logger = logging.getLogger(__name__)
 
 
@@ -65,14 +64,26 @@ class _SameProtocolRedirectHandler(HTTPRedirectHandler):
             allow_insecure_http=self._allow_insecure_http,
             initial_scheme=self._initial_scheme,
         )
-        redirect_count = getattr(req, "_skill_redirect_count", 0) + 1
-        if redirect_count > _MAX_REDIRECTS:
-            msg = "Skill URL returned too many redirects"
-            raise ValueError(msg)
-        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if redirected is not None:
-            redirected._skill_redirect_count = redirect_count
-        return redirected
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    def http_error_302(
+        self,
+        req: Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+    ) -> Any:
+        raw_location = headers.get("location") or headers.get("uri")
+        if raw_location is not None:
+            _require_allowed_transport(
+                urljoin(req.full_url, raw_location),
+                allow_insecure_http=self._allow_insecure_http,
+                initial_scheme=self._initial_scheme,
+            )
+        return super().http_error_302(req, fp, code, msg, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
 class Materialized:
@@ -222,8 +233,8 @@ def download_to_tempfile(
             if final_url != url:
                 logger.warning(
                     "Skill URL redirected from %s to %s",
-                    url_for_logging(url),
-                    url_for_logging(final_url),
+                    redact_skill_url(url),
+                    redact_skill_url(final_url),
                 )
             shutil.copyfileobj(resp, out)
     except Exception:
@@ -232,36 +243,21 @@ def download_to_tempfile(
     return tmp_path
 
 
-def url_for_logging(url: str) -> str:
-    """Return a URL without user info, query parameters, or fragments."""
-    try:
-        parts = urlsplit(url)
-        if not parts.scheme or not parts.netloc:
-            return "<redacted>"
-        netloc = parts.netloc.rsplit("@", 1)[-1]
-        if not netloc:
-            return "<redacted>"
-        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
-    except ValueError:
-        return "<redacted>"
-
-
 def _require_allowed_transport(
     final_url: str,
     *,
     allow_insecure_http: bool,
     initial_scheme: str | None = None,
 ) -> str:
-    final_scheme = final_url.split(":", 1)[0].lower()
+    final_scheme = validate_skill_url(final_url, allow_insecure_http=True)
     allowed_schemes = {"http", "https"} if allow_insecure_http else {"https"}
     if final_scheme not in allowed_schemes:
-        msg = f"Skill URL used a disallowed transport: {url_for_logging(final_url)}"
+        msg = f"Skill URL used a disallowed transport: {redact_skill_url(final_url)}"
         raise ValueError(msg)
     if initial_scheme is not None and final_scheme != initial_scheme:
         msg = (
             "Skill URL returned an unsupported redirect to: "
-            f"{url_for_logging(final_url)}"
+            f"{redact_skill_url(final_url)}"
         )
         raise ValueError(msg)
-    _validate_skill_url(final_url, allow_insecure_http=allow_insecure_http)
     return final_scheme
