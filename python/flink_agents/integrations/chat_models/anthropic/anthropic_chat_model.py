@@ -197,6 +197,42 @@ def _supports_json_prefill(effective_model: str | None) -> bool:
     return effective_model not in _PREFILL_UNSUPPORTED_MODELS
 
 
+# Models Anthropic documents as rejecting a non-default sampling parameter such as
+# temperature. Source of truth:
+# https://platform.claude.com/docs/en/build-with-claude/working-with-messages
+#
+# Sampling rejection starts at the 4.7 generation and also covers Claude Mythos 5,
+# Claude Fable 5 and Claude Sonnet 5; a request that carries temperature for one of
+# them is answered with a 400 rather than a completion. Claude 4.6-generation models
+# still accept it, which is why this boundary sits one generation later than
+# _PREFILL_UNSUPPORTED_MODELS above and cannot reuse it: Claude 4.6 rejects a prefill
+# while still accepting a temperature. Names carry no date and are pinned, so the name
+# is itself the snapshot and is matched exactly, and a name outside the list is treated
+# as accepting the parameter.
+_SAMPLING_UNSUPPORTED_MODELS = frozenset(
+    {
+        "claude-opus-4-7",
+        "claude-opus-4-8",
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-fable-5",
+        "claude-mythos-5",
+        "claude-mythos-preview",
+    }
+)
+
+
+def _supports_sampling(effective_model: str | None) -> bool:
+    """Whether ``effective_model`` accepts a non-default sampling parameter.
+
+    See the module-level list above for the source of truth and for why it is one
+    generation narrower than ``_PREFILL_UNSUPPORTED_MODELS``. An unrecognized name
+    reports ``True``, matching the documented rule that sampling parameters are the
+    long-standing behaviour and only the listed names withdraw support.
+    """
+    return effective_model not in _SAMPLING_UNSUPPORTED_MODELS
+
+
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Anthropic ``output_config`` for a native structured-output request.
 
@@ -335,6 +371,12 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         # Removed from kwargs unconditionally: it is a framework parameter, and leaving
         # it in place would reach messages.create as an unknown request field.
         json_prefill = kwargs.pop("json_prefill", False)
+
+        # Only forwarded when the model accepts it: Claude 4.7 and later reject a
+        # request that carries temperature with a 400 rather than a completion, so an
+        # unsupported model omits the parameter instead of sending it.
+        if "temperature" in kwargs and not _supports_sampling(kwargs.get("model")):
+            kwargs.pop("temperature")
 
         # TODO(#912): the requested strategy is not visible here, so this check
         # cannot tell an explicit NATIVE request apart from one that merely

@@ -223,6 +223,45 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         return !PREFILL_UNSUPPORTED_MODELS.contains(effectiveModel);
     }
 
+    // Models Anthropic documents as rejecting a non-default sampling parameter such as
+    // temperature. Source of truth:
+    // https://platform.claude.com/docs/en/build-with-claude/working-with-messages
+    //
+    // Sampling rejection starts at the 4.7 generation and also covers Claude Mythos 5, Claude
+    // Fable 5 and Claude Sonnet 5; a request that carries temperature for one of them is answered
+    // with a 400 rather than a completion. Claude 4.6-generation models still accept it, which is
+    // why this boundary sits one generation later than PREFILL_UNSUPPORTED_MODELS above and cannot
+    // reuse it: Claude 4.6 rejects a prefill while still accepting a temperature. Names carry no
+    // date and are pinned, so the name is itself the snapshot and is matched exactly, and a name
+    // outside the list is treated as accepting the parameter.
+    private static final Set<String> SAMPLING_UNSUPPORTED_MODELS =
+            Set.of(
+                    "claude-opus-4-7",
+                    "claude-opus-4-8",
+                    "claude-opus-5",
+                    "claude-sonnet-5",
+                    "claude-fable-5",
+                    "claude-mythos-5",
+                    "claude-mythos-preview");
+
+    /**
+     * Whether {@code effectiveModel} accepts a non-default sampling parameter such as {@code
+     * temperature}.
+     *
+     * <p>See the list above for the source of truth and for why it is one generation narrower than
+     * {@link #PREFILL_UNSUPPORTED_MODELS}. An unrecognized name reports {@code true}, matching the
+     * documented rule that sampling parameters are the long-standing behaviour and only the listed
+     * names withdraw support.
+     */
+    static boolean supportsSampling(String effectiveModel) {
+        // Load-bearing: the list is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null) {
+            return true;
+        }
+        return !SAMPLING_UNSUPPORTED_MODELS.contains(effectiveModel);
+    }
+
     /**
      * Derives the native {@code output_config} for a POJO class through the SDK's typed
      * structured-output builder.
@@ -365,8 +404,11 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             builder.maxTokens(((Number) maxTokens).longValue());
         }
 
+        // Only forwarded when the model accepts it: Claude 4.7 and later reject a request that
+        // carries temperature with a 400 rather than a completion, so an unsupported model omits
+        // the parameter instead of sending it.
         Object temperature = modelParams.remove("temperature");
-        if (temperature instanceof Number) {
+        if (temperature instanceof Number && supportsSampling(modelName)) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 

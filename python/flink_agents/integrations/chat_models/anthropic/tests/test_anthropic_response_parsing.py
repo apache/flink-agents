@@ -30,6 +30,7 @@ from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
     _supports_json_prefill,
+    _supports_sampling,
 )
 
 
@@ -498,6 +499,60 @@ def test_prefill_predicate_rejects_unsupported_models(model) -> None:
 @pytest.mark.parametrize("model", _PREFILL_SUPPORTED)
 def test_prefill_predicate_accepts_every_other_model(model) -> None:
     assert _supports_json_prefill(model) is True
+
+
+# ---------------------------------------------------------------------------------
+# Sampling (temperature)
+# ---------------------------------------------------------------------------------
+
+# The models the provider documents as rejecting a non-default sampling parameter, in
+# the order the connection lists them.
+_SAMPLING_UNSUPPORTED = [
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+]
+
+# Names that accept a sampling parameter. claude-opus-4-6 and claude-sonnet-4-6 are the
+# load-bearing ones: they reject a prefill but still accept temperature, which is why
+# this boundary cannot reuse _PREFILL_UNSUPPORTED.
+_SAMPLING_SUPPORTED = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-latest",
+    "",
+    None,
+]
+
+
+def test_temperature_omitted_on_unsupported_model() -> None:
+    assert "temperature" not in _request_kwargs(
+        model="claude-opus-4-7", temperature=0.1
+    )
+
+
+def test_temperature_sent_on_supported_model() -> None:
+    assert (
+        _request_kwargs(model="claude-sonnet-4-20250514", temperature=0.3)[
+            "temperature"
+        ]
+        == 0.3
+    )
+
+
+@pytest.mark.parametrize("model", _SAMPLING_UNSUPPORTED)
+def test_sampling_predicate_rejects_unsupported_models(model) -> None:
+    assert _supports_sampling(model) is False
+
+
+@pytest.mark.parametrize("model", _SAMPLING_SUPPORTED)
+def test_sampling_predicate_accepts_every_other_model(model) -> None:
+    assert _supports_sampling(model) is True
 
 
 # ---------------------------------------------------------------------------------

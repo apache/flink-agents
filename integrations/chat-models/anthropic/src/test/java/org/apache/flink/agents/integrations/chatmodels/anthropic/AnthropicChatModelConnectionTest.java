@@ -590,6 +590,89 @@ class AnthropicChatModelConnectionTest {
         assertPrefillDecisionForModel("claude-sonnet-4-5", true);
     }
 
+    // ---------------------------------------------------------------------------------------
+    // Sampling (temperature)
+    // ---------------------------------------------------------------------------------------
+
+    private static Map<String, Object> paramsWithModelAndTemperature(String model, double temp) {
+        Map<String, Object> params = params(null);
+        params.put("model", model);
+        params.put("temperature", temp);
+        return params;
+    }
+
+    /**
+     * The models the provider documents as rejecting a non-default sampling parameter, in the order
+     * the connection lists them.
+     */
+    private static Stream<String> samplingUnsupportedModels() {
+        return Stream.of(
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-opus-5",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-mythos-preview");
+    }
+
+    /**
+     * Names that accept a sampling parameter. {@code claude-opus-4-6} and {@code claude-sonnet-4-6}
+     * are the load-bearing ones: they reject a prefill but still accept temperature, which is why
+     * this boundary cannot reuse {@link #prefillUnsupportedModels}.
+     */
+    private static Stream<String> samplingSupportedModels() {
+        return Stream.of(
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-sonnet-4-20250514",
+                "claude-3-5-sonnet-latest",
+                "");
+    }
+
+    @ParameterizedTest
+    @MethodSource("samplingUnsupportedModels")
+    @DisplayName("every model documented as rejecting sampling reports unsupported")
+    void testSamplingUnsupportedModelsReportUnsupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSampling(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @MethodSource("samplingSupportedModels")
+    @DisplayName("a model outside that list reports sampling supported")
+    void testSamplingSupportedModelsReportSupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSampling(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("temperature is omitted on a model that rejects sampling")
+    void testTemperatureOmittedOnUnsupportedModel() {
+        AnthropicChatModelConnection.BuiltRequest built =
+                connection()
+                        .buildRequest(
+                                userMessage(),
+                                List.of(),
+                                paramsWithModelAndTemperature("claude-opus-4-7", 0.1),
+                                null);
+
+        assertThat(built.params.temperature()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("temperature is sent on a model that accepts sampling")
+    void testTemperatureSentOnSupportedModel() {
+        AnthropicChatModelConnection.BuiltRequest built =
+                connection()
+                        .buildRequest(
+                                userMessage(),
+                                List.of(),
+                                paramsWithModelAndTemperature("claude-sonnet-4-20250514", 0.3),
+                                null);
+
+        assertThat(built.params.temperature()).hasValue(0.3);
+    }
+
     /** Minimal tool stub; only its presence in the tools list matters. */
     private static class StubTool extends Tool {
         StubTool() {
