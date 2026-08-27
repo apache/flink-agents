@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import itertools
 import json
 import logging
 import os
@@ -1282,14 +1283,25 @@ def close_flink_runner_context(
     ctx.close()
 
 
+_ASYNC_POOL_ID = itertools.count(1)
+"""Process-unique pool ids keeping multiple async executors distinguishable."""
+
+
 def create_async_thread_pool(max_workers: int | None) -> ThreadPoolExecutor:
     """Used to create a thread pool to execute asynchronous
     code block in action.
+
+    Worker threads are named ``flink-agents-python-async-<pool-id>_<worker-id>``
+    (the default ``ThreadPoolExecutor-N_M`` names make Flink Agents workers hard
+    to attribute in TaskManager thread dumps and profiler output).
     """
     logging.info(
         f"Initialize fixed thread pool for async task with {max_workers} threads"
     )
-    return ThreadPoolExecutor(max_workers=max_workers or os.cpu_count() * 2)
+    return ThreadPoolExecutor(
+        max_workers=max_workers or os.cpu_count() * 2,
+        thread_name_prefix=f"flink-agents-python-async-{next(_ASYNC_POOL_ID)}",
+    )
 
 
 def close_async_thread_pool(executor: ThreadPoolExecutor) -> None:
