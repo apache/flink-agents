@@ -405,10 +405,9 @@ class BaseChatModelSetup(Resource):
             prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
 
             # append meaningful messages
+            # any block counts, so image-only messages survive
             for msg in messages:
-                if (
-                    msg.content is not None and msg.content != ""
-                ) or msg.role == MessageRole.ASSISTANT:
+                if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
             messages = prompt_messages
 
@@ -417,9 +416,7 @@ class BaseChatModelSetup(Resource):
             messages = (
                 messages[: index + 1]
                 + [
-                    ChatMessage(
-                        role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
-                    )
+                    ChatMessage.system(self.skill_discovery_prompt)
                 ]
                 + messages[index + 1 :]
             )

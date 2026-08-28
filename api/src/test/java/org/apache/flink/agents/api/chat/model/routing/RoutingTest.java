@@ -328,8 +328,8 @@ class RoutingTest {
                 new RoutingContext(
                         UUID.randomUUID(), "router", List.of(original), Map.of(), List.of());
         // A strategy mutating what it sees must not rewrite the message actually sent.
-        ctx.getMessages().get(0).setContent("REWRITTEN BY STRATEGY");
-        assertEquals("original prompt", original.getContent());
+        ctx.getMessages().get(0).setText("REWRITTEN BY STRATEGY");
+        assertEquals("original prompt", original.getText());
     }
 
     @Test
@@ -359,7 +359,7 @@ class RoutingTest {
                 new RoutingContext(
                         UUID.randomUUID(), "router", List.of(fromJson), Map.of(), List.of());
         assertEquals(1, ctx.getMessages().size());
-        assertEquals("hello", ctx.getMessages().get(0).getContent());
+        assertEquals("hello", ctx.getMessages().get(0).getText());
         // The copy re-normalizes through the constructor, so strategies see an empty list.
         assertEquals(0, ctx.getMessages().get(0).getToolCalls().size());
     }

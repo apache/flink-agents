@@ -78,13 +78,8 @@ class ReActAgent(Agent):
             # prepare prompt
             prompt = Prompt.from_messages(
                 messages=[
-                    ChatMessage(
-                        role=MessageRole.SYSTEM,
-                        content='An example of output is {"result": 30.32}.',
-                    ),
-                    ChatMessage(
-                        role=MessageRole.USER, content="What is ({a} + {b}) * {c}"
-                    ),
+                    ChatMessage.system('An example of output is {"result": 30.32}.'),
+                    ChatMessage.user("What is ({a} + {b}) * {c}"),
                 ],
             )
 
@@ -167,7 +162,7 @@ class ReActAgent(Agent):
                     role=MessageRole.USER, input=usr_input
                 )
             else:
-                usr_msgs = [ChatMessage(role=MessageRole.USER, content=usr_input)]
+                usr_msgs = [ChatMessage.user(usr_input)]
         else:
             if not prompt:
                 err_msg = (
@@ -216,6 +211,6 @@ class ReActAgent(Agent):
         if STRUCTURED_OUTPUT in response.extra_args:
             output = response.extra_args[STRUCTURED_OUTPUT]
         else:
-            output = response.content
+            output = response.text
 
         ctx.send_event(OutputEvent(output=output))
