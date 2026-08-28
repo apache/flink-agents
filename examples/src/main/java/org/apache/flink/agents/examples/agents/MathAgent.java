@@ -97,6 +97,6 @@ public class MathAgent extends Agent {
     /** Process chat response event and send the answer as output. */
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(event.getResponse().getText()));
     }
 }

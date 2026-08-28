@@ -55,9 +55,7 @@ class MathAgent(Agent):
         """System prompt instructing the model to use the skill."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="You are a helpful math assistant. Use the "
+                ChatMessage.of(MessageRole.SYSTEM, "You are a helpful math assistant. Use the "
                     "math-calculator skill when asked to evaluate an expression. "
                     "You must load the skill first and strictly follow its "
                     "instructions. Reply with only the final numeric result.",
@@ -88,7 +86,7 @@ class MathAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="math_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=question)],
+                messages=[ChatMessage.of(MessageRole.USER, question)],
             )
         )
 
@@ -97,4 +95,4 @@ class MathAgent(Agent):
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send the answer as output."""
         chat_response = ChatResponseEvent.from_event(event)
-        ctx.send_event(OutputEvent(output=chat_response.response.content))
+        ctx.send_event(OutputEvent(output=chat_response.response.text))

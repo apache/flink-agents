@@ -95,7 +95,7 @@ class ToolParameterInjectionAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="mock_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=order_id)],
+                messages=[ChatMessage.of(MessageRole.USER, order_id)],
             )
         )
 
@@ -104,7 +104,7 @@ class ToolParameterInjectionAgent(Agent):
     def emit_result(event: Event, ctx: RunnerContext) -> None:
         """Emit the final assistant response as output."""
         response_event = ChatResponseEvent.from_event(event)
-        ctx.send_event(OutputEvent(output=response_event.response.content))
+        ctx.send_event(OutputEvent(output=response_event.response.text))
 
 
 class MockToolChatConnection(BaseChatModelConnection):
@@ -126,17 +126,15 @@ class MockToolChatConnection(BaseChatModelConnection):
         self._reject_unsupported_output_schema(output_schema)
         last_message = messages[-1]
         if last_message.role == MessageRole.TOOL:
-            return ChatMessage(role=MessageRole.ASSISTANT, content=last_message.content)
+            return ChatMessage.of(MessageRole.ASSISTANT, last_message.text)
 
         for candidate_tool in tools or []:
             if "tenant_id" in str(candidate_tool.metadata.get_parameters_dict()):
                 msg = "Injected argument leaked into tool schema."
                 raise RuntimeError(msg)
 
-        order_id = str(last_message.content)
-        return ChatMessage(
-            role=MessageRole.ASSISTANT,
-            content="",
+        order_id = str(last_message.text)
+        return ChatMessage.of(MessageRole.ASSISTANT, "",
             tool_calls=[
                 {
                     "id": f"call-{order_id}",

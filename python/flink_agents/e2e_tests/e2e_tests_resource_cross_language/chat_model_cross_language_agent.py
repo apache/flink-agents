@@ -58,9 +58,7 @@ class ChatModelCrossLanguageAgent(Agent):
         """Prompt for instruction."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="Please answer the user's question.",
+                ChatMessage.of(MessageRole.SYSTEM, "Please answer the user's question.",
                 ),
             ],
         )
@@ -147,7 +145,7 @@ class ChatModelCrossLanguageAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model=model_name,
-                messages=[ChatMessage(role=MessageRole.USER, content=input_event.input)],
+                messages=[ChatMessage.of(MessageRole.USER, input_event.input)],
             )
         )
 
@@ -157,5 +155,5 @@ class ChatModelCrossLanguageAgent(Agent):
         """User defined action for processing chat model response."""
         chat_response = ChatResponseEvent.from_event(event)
         input = chat_response.response
-        if chat_response.response and input.content:
-            ctx.send_event(OutputEvent(output=input.content))
+        if chat_response.response and input.text:
+            ctx.send_event(OutputEvent(output=input.text))
