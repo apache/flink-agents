@@ -49,13 +49,13 @@ class ChatMessageTest {
     @DisplayName("Test ChatMessage creation with role and content")
     void testChatMessageCreation() {
         assertEquals(MessageRole.USER, userMessage.getRole());
-        assertEquals("Hello, how are you?", userMessage.getContent());
+        assertEquals("Hello, how are you?", userMessage.getText());
 
         assertEquals(MessageRole.SYSTEM, systemMessage.getRole());
-        assertEquals("You are a helpful assistant.", systemMessage.getContent());
+        assertEquals("You are a helpful assistant.", systemMessage.getText());
 
         assertEquals(MessageRole.ASSISTANT, assistantMessage.getRole());
-        assertEquals("I'm doing well, thank you!", assistantMessage.getContent());
+        assertEquals("I'm doing well, thank you!", assistantMessage.getText());
     }
 
     @Test
@@ -63,7 +63,7 @@ class ChatMessageTest {
     void testDefaultConstructor() {
         ChatMessage defaultMessage = new ChatMessage();
         assertEquals(MessageRole.SYSTEM, defaultMessage.getRole());
-        assertEquals("", defaultMessage.getContent());
+        assertEquals("", defaultMessage.getText());
         assertNotNull(defaultMessage.getToolCalls());
         assertNotNull(defaultMessage.getExtraArgs());
     }
@@ -135,10 +135,10 @@ class ChatMessageTest {
     @DisplayName("Test ChatMessage content modification")
     void testContentModification() {
         ChatMessage message = new ChatMessage(MessageRole.USER, "Original content");
-        assertEquals("Original content", message.getContent());
+        assertEquals("Original content", message.getText());
 
-        message.setContent("Modified content");
-        assertEquals("Modified content", message.getContent());
+        message.setText("Modified content");
+        assertEquals("Modified content", message.getText());
     }
 
     @Test
