@@ -81,14 +81,14 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, String> pythonAwaitableRefs;
     private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
             activeReportedExecutionsByActionExecutionId;
-    private final ContinuationActionExecutor actionContinuationExecutor;
+    private final ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
         this.activeReportedExecutionsByActionExecutionId = new HashMap<>();
-        this.actionContinuationExecutor = new ContinuationActionExecutor(numAsyncThreads);
+        this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
     /**
@@ -120,7 +120,7 @@ class ActionTaskContextManager implements AutoCloseable {
             @Nullable InteranlBaseLongTermMemory longTermMemory) {
         if (isJava) {
             if (runnerContext == null) {
-                if (actionContinuationExecutor == null) {
+                if (continuationActionExecutor == null) {
                     throw new IllegalStateException(
                             "ContinuationActionExecutor has not been initialized.");
                 }
@@ -131,7 +131,7 @@ class ActionTaskContextManager implements AutoCloseable {
                                 agentPlan,
                                 resourceCache,
                                 jobIdentifier,
-                                actionContinuationExecutor);
+                                continuationActionExecutor);
                 if (longTermMemory != null) {
                     runnerContext.setLongTermMemory(longTermMemory);
                 }
@@ -369,9 +369,9 @@ class ActionTaskContextManager implements AutoCloseable {
                 runnerContext = null;
             }
         }
-        if (actionContinuationExecutor != null) {
+        if (continuationActionExecutor != null) {
             try {
-                actionContinuationExecutor.close();
+                continuationActionExecutor.close();
             } catch (Throwable t) {
                 firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             }
