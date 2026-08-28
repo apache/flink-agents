@@ -18,7 +18,7 @@
 import importlib
 import json
 import typing
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import cloudpickle
 
@@ -281,16 +281,27 @@ def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     return normalized_call
 
 
+def _dump_blocks(chat_message: ChatMessage) -> List[Dict[str, Any]]:
+    """Content blocks as plain dicts in the serialized shape, for the Java bridge."""
+    return [
+        block.model_dump(mode="json", exclude_none=True)
+        for block in chat_message.blocks
+    ]
+
+
 def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
     """Convert a chat message to a python chat message."""
-    return ChatMessage(
-        role=MessageRole(j_chat_message.getRole().getValue()),
-        content=j_chat_message.getContent(),
-        tool_calls=[
-            normalize_tool_call_id(tool_call)
-            for tool_call in j_chat_message.getToolCalls()
-        ],
-        extra_args=j_chat_message.getExtraArgs(),
+    return ChatMessage.model_validate(
+        {
+            "role": MessageRole(j_chat_message.getRole().getValue()),
+            # Blocks cross the bridge as plain dicts in the serialized shape.
+            "blocks": j_chat_message.getBlocksAsMaps(),
+            "tool_calls": [
+                normalize_tool_call_id(tool_call)
+                for tool_call in j_chat_message.getToolCalls()
+            ],
+            "extra_args": j_chat_message.getExtraArgs(),
+        }
     )
 
 
@@ -303,7 +314,7 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
 
     j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
     j_chat_message.setRole(j_MessageRole.fromValue(chat_message.role.value))
-    j_chat_message.setContent(chat_message.content)
+    j_chat_message.setBlocksFromMaps(_dump_blocks(chat_message))
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
         tool_calls = [
@@ -317,7 +328,7 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
 # TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
 def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
     """Update a Java chat message using Python chat message."""
-    j_chat_message.setContent(chat_message.content)
+    j_chat_message.setBlocksFromMaps(_dump_blocks(chat_message))
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
         tool_calls = [

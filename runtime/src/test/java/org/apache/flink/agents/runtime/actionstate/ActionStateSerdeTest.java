@@ -24,7 +24,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -603,12 +605,12 @@ public class ActionStateSerdeTest {
 
         // Typed getters must return typed values directly on the deserialized events.
         ChatRequestEvent chatRequest = (ChatRequestEvent) outputEvents.get(0);
-        assertEquals("hello", chatRequest.getMessages().get(0).getContent());
+        assertEquals("hello", chatRequest.getMessages().get(0).getText());
         assertEquals(MessageRole.USER, chatRequest.getMessages().get(0).getRole());
 
         ChatResponseEvent chatResponse = (ChatResponseEvent) outputEvents.get(1);
         assertEquals(requestId, chatResponse.getRequestId());
-        assertEquals("hello", chatResponse.getResponse().getContent());
+        assertEquals("hello", chatResponse.getResponse().getText());
 
         ToolResponseEvent toolResponse = (ToolResponseEvent) outputEvents.get(3);
         assertEquals(requestId, toolResponse.getRequestId());
@@ -619,5 +621,26 @@ public class ActionStateSerdeTest {
         assertEquals(requestId, retrievalResponse.getRequestId());
         assertEquals("doc content", retrievalResponse.getDocuments().get(0).getContent());
         assertEquals("doc-1", retrievalResponse.getDocuments().get(0).getId());
+    }
+
+    @Test
+    void testChatMessageWithMediaBlocksRoundTrip() throws Exception {
+        // Content blocks are polymorphic Jackson types; the durable-execution path must
+        // round-trip them without interference from the serde's own type handling.
+        ChatMessage mixed =
+                new ChatMessage(
+                        MessageRole.USER,
+                        java.util.List.of(
+                                TextBlock.of("look at this"),
+                                ImageBlock.fromBase64("image/png", "aGk=")));
+        ActionState state = new ActionState(new ChatRequestEvent("m", java.util.List.of(mixed)));
+
+        ActionState restored = ActionStateSerde.deserialize(ActionStateSerde.serialize(state));
+
+        ChatMessage restoredMessage =
+                ((ChatRequestEvent) restored.getTaskEvent()).getMessages().get(0);
+        assertEquals(mixed, restoredMessage);
+        assertEquals("look at this", restoredMessage.getText());
+        assertEquals(ImageBlock.class, restoredMessage.getBlocks().get(1).getClass());
     }
 }

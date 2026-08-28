@@ -4,7 +4,10 @@
     "model" : "test-model",
     "messages" : [ {
       "role" : "user",
-      "content" : "hello world",
+      "blocks" : [ {
+        "type" : "text",
+        "text" : "hello world"
+      } ],
       "tool_calls" : [ ],
       "extra_args" : { }
     } ]
