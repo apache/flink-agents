@@ -309,7 +309,7 @@ actions:
   - name: action2
     function: my_pkg.actions:action2
     trigger_conditions:
-      - "type == EventType.ChatResponseEvent && response.content != ''"
+      - "type == EventType.ChatResponseEvent && size(response.blocks) > 0"
     type: python
   - action3                       # shared action reference (declared at file level)
 ```

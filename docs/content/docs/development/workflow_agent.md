@@ -117,7 +117,7 @@ class ReviewAnalysisAgent(Agent):
         """Process chat response event and send output event."""
         chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(chat_response.response.content)
+            json_content = json.loads(chat_response.response.text)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -129,7 +129,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {chat_response.response.content}"
+                f"Error processing chat response {chat_response.response.text}"
             )
 
             # To fail the agent, you can raise an exception here.
@@ -426,7 +426,7 @@ access these framework variables:
   `attributes.score > 80` refer to the same field.
 - Nested values are not flattened. For `{input: {status: "ok"}}`, use `input.status` or
   `attributes.input.status`; bare `status` does not refer to the nested value. Other event payloads
-  keep their top-level envelope, for example `response.content`.
+  keep their top-level envelope, for example `response.blocks`.
 - Framework variables take precedence over attributes with the same names. Use `attributes["type"]`
   or `attributes["id"]` to access a colliding attribute.
 - For a top-level key containing dots, use a literal index such as `attributes["a.b.c"]`. Test its
