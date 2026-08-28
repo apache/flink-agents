@@ -24,7 +24,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
@@ -161,7 +163,7 @@ public abstract class Prompt extends SerializableResource {
                     messages -> {
                         List<String> formattedMessages = new ArrayList<>();
                         for (ChatMessage message : messages) {
-                            String formattedContent = format(message.getContent(), kwargs);
+                            String formattedContent = format(message.getText(), kwargs);
                             String formatted =
                                     message.getRole().getValue() + ": " + formattedContent;
                             formattedMessages.add(formatted);
@@ -186,8 +188,22 @@ public abstract class Prompt extends SerializableResource {
                                             message ->
                                                     new ChatMessage(
                                                             message.getRole(),
-                                                            format(message.getContent(), kwargs)))
+                                                            formatBlocks(
+                                                                    message.getBlocks(), kwargs)))
                                     .collect(Collectors.toList()));
+        }
+
+        /** Placeholder substitution applies to text blocks; media blocks pass through as-is. */
+        private List<ContentBlock> formatBlocks(
+                List<ContentBlock> blocks, Map<String, String> kwargs) {
+            List<ContentBlock> formatted = new ArrayList<>(blocks.size());
+            for (ContentBlock block : blocks) {
+                formatted.add(
+                        block instanceof TextBlock
+                                ? new TextBlock(format(((TextBlock) block).getText(), kwargs))
+                                : block);
+            }
+            return formatted;
         }
 
         @Override
