@@ -77,7 +77,7 @@ class MockChatModelSetup:
                 ),
                 None,
             )
-            user_text = user_msg.content if user_msg else ""
+            user_text = user_msg.text if user_msg else ""
             if "Input:" in user_text:
                 user_text = user_text.split("Input:", 1)[1].strip()
             # Mem0 formats input as "role: content" — strip the role prefix.
@@ -85,16 +85,12 @@ class MockChatModelSetup:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage(
-                role=MessageRole.ASSISTANT,
-                content=json.dumps({"facts": self._last_facts}),
+            return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"facts": self._last_facts}),
             )
 
         # Call 2: Memory update — return ADD for each extracted fact.
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage(
-            role=MessageRole.ASSISTANT,
-            content=json.dumps({"memory": memory_ops}),
+        return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"memory": memory_ops}),
         )
 
 
@@ -372,23 +368,19 @@ class MockChatModelWithTokenUsage:
                 ),
                 None,
             )
-            user_text = user_msg.content if user_msg else ""
+            user_text = user_msg.text if user_msg else ""
             if "Input:" in user_text:
                 user_text = user_text.split("Input:", 1)[1].strip()
             if ": " in user_text:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage(
-                role=MessageRole.ASSISTANT,
-                content=json.dumps({"facts": self._last_facts}),
+            return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"facts": self._last_facts}),
                 extra_args=extra_args,
             )
 
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage(
-            role=MessageRole.ASSISTANT,
-            content=json.dumps({"memory": memory_ops}),
+        return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"memory": memory_ops}),
             extra_args=extra_args,
         )
 

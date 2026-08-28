@@ -448,13 +448,13 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private List<TextBlockParam> extractSystemMessages(List<ChatMessage> messages) {
         return messages.stream()
                 .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                .map(m -> TextBlockParam.builder().text(m.getContent()).build())
+                .map(m -> TextBlockParam.builder().text(m.getText()).build())
                 .collect(Collectors.toList());
     }
 
     private MessageParam convertToAnthropicMessage(ChatMessage message) {
         MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getContent()).orElse("");
+        String content = Optional.ofNullable(message.getText()).orElse("");
 
         switch (role) {
             case USER:

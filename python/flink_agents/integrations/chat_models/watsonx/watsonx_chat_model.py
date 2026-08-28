@@ -88,8 +88,8 @@ def convert_to_watsonx_messages(
 
         if role == MessageRole.ASSISTANT:
             assistant_message: Dict[str, Any] = {"role": "assistant"}
-            if message.content:
-                assistant_message["content"] = message.content
+            if message.text:
+                assistant_message["content"] = message.text
             if message.tool_calls:
                 assistant_message["tool_calls"] = [
                     _convert_to_watsonx_tool_call(tool_call)
@@ -104,12 +104,12 @@ def convert_to_watsonx_messages(
             watsonx_messages.append(
                 {
                     "role": "tool",
-                    "content": message.content,
+                    "content": message.text,
                     "tool_call_id": tool_call_id,
                 }
             )
         else:
-            watsonx_messages.append({"role": role.value, "content": message.content})
+            watsonx_messages.append({"role": role.value, "content": message.text})
     return watsonx_messages
 
 
@@ -427,9 +427,9 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
             if reasoning:
                 extra_args["reasoning"] = reasoning
 
-        return ChatMessage(
-            role=MessageRole(response_message.get("role", "assistant")),
-            content=content,
+        return ChatMessage.of(
+            MessageRole(response_message.get("role", "assistant")),
+            content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )

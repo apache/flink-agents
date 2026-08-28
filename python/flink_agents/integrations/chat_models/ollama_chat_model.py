@@ -149,9 +149,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = response.prompt_eval_count
             extra_args["completionTokens"] = response.eval_count
 
-        return ChatMessage(
-            role=MessageRole(response.message.role),
-            content=content,
+        return ChatMessage.of(MessageRole(response.message.role), content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )
@@ -160,7 +158,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
     def __convert_to_ollama_messages(messages: Sequence[ChatMessage]) -> List[Message]:
         ollama_messages = []
         for message in messages:
-            ollama_message = Message(role=message.role.value, content=message.content)
+            ollama_message = Message(role=message.role.value, content=message.text)
             if len(message.tool_calls) > 0:
                 ollama_tool_calls = []
                 for tool_call in message.tool_calls:

@@ -143,7 +143,7 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     if role == MessageRole.SYSTEM:
         system_message: ChatCompletionSystemMessageParam = {
             "role": "system",
-            "content": message.content,
+            "content": message.text,
         }
         system_message.update(message.extra_args)
         return system_message
@@ -152,7 +152,7 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     elif role == MessageRole.USER:
         user_message: ChatCompletionUserMessageParam = {
             "role": "user",
-            "content": message.content,
+            "content": message.text,
         }
         user_message.update(message.extra_args)
         return user_message
@@ -160,7 +160,7 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
 
     elif role == MessageRole.ASSISTANT:
         # Assistant messages may have empty content when tool_calls are present
-        content = message.content if message.content or not message.tool_calls else None
+        content = message.text if message.text or not message.tool_calls else None
         assistant_message: ChatCompletionAssistantMessageParam = {
             "role": "assistant",
             "content": content,
@@ -183,7 +183,7 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
             raise ValueError(msg)
         tool_message: ChatCompletionToolMessageParam = {
             "role": "tool",
-            "content": message.content,
+            "content": message.text,
             "tool_call_id": tool_call_id,
         }
         return tool_message
@@ -220,9 +220,7 @@ def convert_from_openai_message(
         ]
     if message.refusal is not None:
         extra_args = {**extra_args, "refusal": message.refusal}
-    return ChatMessage(
-        role=MessageRole(message.role),
-        content=message.content or "",
+    return ChatMessage.of(MessageRole(message.role), message.content or "",
         tool_calls=tool_calls,
         extra_args=extra_args,
     )

@@ -257,7 +257,7 @@ def _generate_structured_output(
 ) -> ChatMessage:
     """Deserialize output to expected output schema."""
     output_schema = output_schema.output_schema
-    output = json.loads(_clean_llm_response(response.content))
+    output = json.loads(_clean_llm_response(response.text))
 
     if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
         output = output_schema.model_validate(output)
@@ -494,9 +494,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         initial_request_id,
         None,
         [
-            ChatMessage(
-                role=MessageRole.TOOL,
-                content=str(response),
+            ChatMessage.of(MessageRole.TOOL, str(response),
                 extra_args={"external_id": event.external_ids.get(tool_id)}
                 if event.external_ids and event.external_ids.get(tool_id)
                 else {},

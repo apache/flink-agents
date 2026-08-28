@@ -98,19 +98,19 @@ def test_clean_llm_response_with_multiple_lines_in_block():
 
 def test_update_tool_call_context_stores_primitive_only():
     mem = _memory()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
-    added = [ChatMessage(role=MessageRole.ASSISTANT, content="hello")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
+    added = [ChatMessage.of(MessageRole.ASSISTANT, "hello")]
     _update_tool_call_context(mem, uuid4(), initial, added)
     _assert_primitive(mem.get(_TOOL_CALL_CONTEXT))
 
 
 def test_update_tool_call_context_returns_chat_messages():
     mem = _memory()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
-    added = [ChatMessage(role=MessageRole.ASSISTANT, content="hello")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
+    added = [ChatMessage.of(MessageRole.ASSISTANT, "hello")]
     result = _update_tool_call_context(mem, uuid4(), initial, added)
     assert all(isinstance(message, ChatMessage) for message in result)
-    assert [(m.role, m.content) for m in result] == [
+    assert [(m.role, m.text) for m in result] == [
         (MessageRole.USER, "hi"),
         (MessageRole.ASSISTANT, "hello"),
     ]
@@ -172,9 +172,9 @@ def test_request_event_key_match_after_normalization():
 def test_tool_call_context_key_match_after_normalization():
     mem = _memory()
     request_id = uuid4()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
     _update_tool_call_context(mem, request_id, initial, [])
-    extra = ChatMessage(role=MessageRole.TOOL, content="result")
+    extra = ChatMessage.of(MessageRole.TOOL, "result")
     result = _update_tool_call_context(mem, request_id, None, [extra])
     assert len(result) == 2
     assert len(mem.get(_TOOL_CALL_CONTEXT)[str(request_id)]) == 2

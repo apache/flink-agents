@@ -403,7 +403,7 @@ public class ChatModelActionRoutingTest {
 
         // the selected model's retry budget is consumed BEFORE fallback: big's retry
         // succeeds and small is never resolved — the ordering the class javadoc guarantees
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("recovered on retry");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("recovered on retry");
         assertThat(ctx.resolvedChatModels).containsExactly("big");
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
     }
@@ -446,7 +446,7 @@ public class ChatModelActionRoutingTest {
                 .containsExactly("route:router", "chat:router:big", "chat:router:small");
         ChatResponseEvent response = ctx.chatResponse();
         assertThat(response).isNotNull();
-        assertThat(response.getResponse().getContent()).isEqualTo("ok from small");
+        assertThat(response.getResponse().getText()).isEqualTo("ok from small");
         Map<String, Object> routing =
                 (Map<String, Object>) response.getResponse().getExtraArgs().get("model_routing");
         assertThat(routing.get("final_model")).isEqualTo("small");
@@ -647,7 +647,7 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
         assertThat(ctx.resolvedChatModels).containsExactly("big", "big");
         assertThat(ctx.chatResponse()).isNotNull();
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("final answer");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final answer");
 
         // the routing metadata from the initial decision is carried onto the final response
         @SuppressWarnings("unchecked")
