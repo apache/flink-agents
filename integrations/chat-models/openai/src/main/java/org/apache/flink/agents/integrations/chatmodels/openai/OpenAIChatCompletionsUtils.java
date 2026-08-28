@@ -170,7 +170,7 @@ final class OpenAIChatCompletionsUtils {
     /** Convert a single Flink Agents ChatMessage to an OpenAI ChatCompletionMessageParam. */
     public static ChatCompletionMessageParam convertToOpenAIMessage(ChatMessage message) {
         MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getContent()).orElse("");
+        String content = Optional.ofNullable(message.getText()).orElse("");
 
         switch (role) {
             case SYSTEM:

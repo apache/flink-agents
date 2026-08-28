@@ -75,9 +75,9 @@ public class PythonPromptTest {
                 prompt.formatMessages(MessageRole.SYSTEM, new HashMap<>());
         assertThat(formattedMessages).hasSize(2);
         assertThat(formattedMessages.get(0).getRole()).isEqualTo(MessageRole.SYSTEM);
-        assertThat(formattedMessages.get(0).getContent()).isEqualTo("You are a helpful assistant.");
+        assertThat(formattedMessages.get(0).getText()).isEqualTo("You are a helpful assistant.");
         assertThat(formattedMessages.get(1).getRole()).isEqualTo(MessageRole.USER);
-        assertThat(formattedMessages.get(1).getContent()).isEqualTo("Hello!");
+        assertThat(formattedMessages.get(1).getText()).isEqualTo("Hello!");
     }
 
     @Test
