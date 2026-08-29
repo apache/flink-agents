@@ -212,25 +212,36 @@ public class PythonActionExecutor implements AutoCloseable {
         if (interpreter == null) {
             return;
         }
+
+        // Clear the fields before releasing: PyObject.close() performs an unguarded native decRef,
+        // so a repeated close() must not reach the same handle twice.
+        PyObject asyncThreadPool = pythonAsyncThreadPool;
+        PyObject runnerContext = pythonRunnerContext;
+        pythonAsyncThreadPool = null;
+        pythonRunnerContext = null;
+
         Throwable firstFailure = null;
-        if (pythonAsyncThreadPool != null) {
-            try {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            } catch (Throwable t) {
-                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
-            }
+        try {
+            closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool);
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
         }
-        if (pythonRunnerContext != null) {
-            try {
-                interpreter.invoke(CLOSE_FLINK_RUNNER_CONTEXT, pythonRunnerContext);
-            } catch (Throwable t) {
-                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
-            } finally {
-                pythonRunnerContext = null;
-            }
+        try {
+            closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext);
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
         }
+
         if (firstFailure != null) {
             ExceptionUtils.rethrowException(firstFailure);
+        }
+    }
+
+    private void closePythonObject(String closeFunction, PyObject pythonObject) throws Exception {
+        if (pythonObject != null) {
+            try (pythonObject) {
+                interpreter.invoke(closeFunction, pythonObject);
+            }
         }
     }
 

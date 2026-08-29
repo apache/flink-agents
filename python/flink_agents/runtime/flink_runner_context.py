@@ -60,7 +60,11 @@ from flink_agents.runtime.memory.internal_base_long_term_memory import (
 from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
-from flink_agents.runtime.resource_cache import ResourceCache
+from flink_agents.runtime.resource_cache import (
+    ResourceCache,
+    _failure_of,
+    _first_or_logged,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1210,14 +1214,21 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     @override
     def close(self) -> None:
-        if self.long_term_memory is not None:
-            self.long_term_memory.close()
+        ltm = self.__ltm
+        self.__ltm = None
 
-        if self.__resource_cache is not None:
-            try:
-                self.__resource_cache.close()
-            finally:
-                self.__resource_cache = None
+        first_failure = _failure_of(ltm.close) if ltm is not None else None
+
+        resource_cache = self.__resource_cache
+        self.__resource_cache = None
+        first_failure = _first_or_logged(
+            _failure_of(resource_cache.close) if resource_cache is not None else None,
+            first_failure,
+            "runner context resource cache",
+        )
+
+        if first_failure is not None:
+            raise first_failure
 
 
 def create_flink_runner_context(

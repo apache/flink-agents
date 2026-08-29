@@ -38,7 +38,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class PythonResourceAdapterImpl implements PythonResourceAdapter {
+public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoCloseable {
 
     static final String PYTHON_IMPORTS = "from flink_agents.runtime import python_java_utils";
 
@@ -97,6 +97,16 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter {
     public void open() {
         interpreter.exec(PYTHON_IMPORTS);
         pythonResourceContext = (PyObject) interpreter.invoke(GET_RESOURCE_CONTEXT, this);
+    }
+
+    @Override
+    public void close() throws Exception {
+        // Clear first because Pemja's close performs an unguarded native decRef.
+        PyObject resourceContext = pythonResourceContext;
+        pythonResourceContext = null;
+        if (resourceContext != null) {
+            resourceContext.close();
+        }
     }
 
     public Object getResource(String resourceName, String resourceType) {
