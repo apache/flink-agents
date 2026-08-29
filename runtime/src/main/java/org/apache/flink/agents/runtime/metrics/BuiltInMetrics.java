@@ -20,6 +20,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -28,6 +29,7 @@ import org.apache.flink.metrics.Meter;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * Represents a group of built-in metrics for monitoring the performance and behavior of a flink
@@ -51,6 +53,19 @@ public class BuiltInMetrics {
     private final Map<String, BuiltInActionMetrics> actionMetricGroups;
 
     public BuiltInMetrics(FlinkAgentsMetricGroupImpl parentMetricGroup, AgentPlan agentPlan) {
+        this(
+                parentMetricGroup,
+                agentPlan,
+                toolName -> {
+                    Map<String, ?> tools = agentPlan.getResourceProviders().get(ResourceType.TOOL);
+                    return tools != null && tools.containsKey(toolName);
+                });
+    }
+
+    public BuiltInMetrics(
+            FlinkAgentsMetricGroupImpl parentMetricGroup,
+            AgentPlan agentPlan,
+            Predicate<String> isRegisteredTool) {
         Counter numOfEventsProcessed = parentMetricGroup.getCounter("numOfEventProcessed");
         this.numOfEventProcessedPerSec =
                 parentMetricGroup.getMeter("numOfEventProcessedPerSec", numOfEventsProcessed);
@@ -62,7 +77,8 @@ public class BuiltInMetrics {
         this.eventLogTruncatedEvents = parentMetricGroup.getCounter("eventLogTruncatedEvents");
         this.eventLogWriteFailures = parentMetricGroup.getCounter("eventLogWriteFailures");
         this.inputRunMetrics = new BuiltInInputRunMetrics(parentMetricGroup, System::nanoTime);
-        this.executionMetrics = new BuiltInExecutionMetrics(parentMetricGroup, System::nanoTime);
+        this.executionMetrics =
+                new BuiltInExecutionMetrics(parentMetricGroup, System::nanoTime, isRegisteredTool);
 
         this.actionMetricGroups = new HashMap<>();
         for (String actionName : agentPlan.getActions().keySet()) {

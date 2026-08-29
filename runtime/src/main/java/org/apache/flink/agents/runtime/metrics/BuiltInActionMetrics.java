@@ -119,7 +119,8 @@ public class BuiltInActionMetrics {
         }
 
         if (!ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(event.getType())
-                && !ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType())) {
+                && !ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType())
+                && !ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(event.getType())) {
             return;
         }
 

@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -190,7 +191,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         getRuntimeContext().getUserCodeClassLoader());
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
-        builtInMetrics = new BuiltInMetrics(metricGroup, agentPlan);
+        builtInMetrics =
+                new BuiltInMetrics(
+                        metricGroup,
+                        agentPlan,
+                        toolName -> resourceCache.hasResource(toolName, ResourceType.TOOL));
 
         eventRouter.open(builtInMetrics);
 
@@ -278,9 +283,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     /** Resolves one context key for an input and reuses it for the entire agent run. */
     private void processInputEvent(Object key, Event inputEvent) throws Exception {
-        String contextKey = resolveContextKey(key);
-        ExecutionTraceContext traceContext =
-                ExecutionTraceContext.forInputRun(contextKey, agentPlan.getAgentName());
+        final String contextKey;
+        final ExecutionTraceContext traceContext;
+        try {
+            contextKey = resolveContextKey(key);
+            traceContext = ExecutionTraceContext.forInputRun(contextKey, agentPlan.getAgentName());
+        } catch (Exception e) {
+            builtInMetrics.markInputEventFailed(inputEvent);
+            throw e;
+        }
         builtInMetrics.markInputRunStarted(inputEvent, traceContext);
         try {
             processEvent(key, contextKey, inputEvent, traceContext);

@@ -28,6 +28,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,7 +46,9 @@ class BuiltInExecutionMetricsTest {
         MetricGroup parentMetricGroup =
                 UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup();
         metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
-        metrics = new BuiltInExecutionMetrics(metricGroup, nanoTime::get);
+        Set<String> registeredTools = Set.of("search", "fetch", "load_skill");
+        metrics =
+                new BuiltInExecutionMetrics(metricGroup, nanoTime::get, registeredTools::contains);
     }
 
     @Test
@@ -113,6 +116,29 @@ class BuiltInExecutionMetricsTest {
         assertThat(tool.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED).getCount())
                 .isEqualTo(1);
         assertThat(tool.getHistogram(ToolExecutionMetricRecorder.TOOL_CALL_LATENCY_MS).getCount())
+                .isEqualTo(2);
+    }
+
+    @Test
+    void aggregatesUnregisteredToolNamesIntoUnknownScope() {
+        ExecutionTraceContext first =
+                execution(ExecutionReporter.EntityTypes.TOOL, "hallucinated_one", Map.of());
+        ExecutionTraceContext second =
+                execution(ExecutionReporter.EntityTypes.TOOL, "hallucinated_two", Map.of());
+
+        metrics.executionEventObserved(
+                ACTION_NAME,
+                ExecutionLifecycleEvents.executionFailed(new RuntimeException("missing")),
+                first);
+        metrics.executionEventObserved(
+                ACTION_NAME,
+                ExecutionLifecycleEvents.executionFailed(new RuntimeException("missing")),
+                second);
+
+        FlinkAgentsMetricGroupImpl unknown =
+                actionMetricGroup()
+                        .getSubGroup("tool", ToolExecutionMetricRecorder.UNKNOWN_TOOL_NAME);
+        assertThat(unknown.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED).getCount())
                 .isEqualTo(2);
     }
 
