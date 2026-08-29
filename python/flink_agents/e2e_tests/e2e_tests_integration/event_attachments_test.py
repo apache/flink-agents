@@ -62,12 +62,15 @@ class EventAttachmentsAgent(Agent):
     @action("AttachmentStep")
     @staticmethod
     def receive_attachment(event: Event, ctx: RunnerContext) -> None:
-        print(f"received attachments: {event.attachments}")
+        attachment = event.get_attachment("payload")
         ctx.send_event(
             OutputEvent(
                 output={
                     "kind": event.get_attr("kind"),
-                    "payload": event.get_attachment("payload"),
+                    "payload": {
+                        "value": attachment["value"],
+                        "items": attachment["items"],
+                    },
                 }
             )
         )
