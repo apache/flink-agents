@@ -26,6 +26,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 /** Derives built-in LLM and Tool metrics from execution lifecycle events. */
 final class BuiltInExecutionMetrics {
@@ -35,11 +36,15 @@ final class BuiltInExecutionMetrics {
     private final Map<String, ExecutionMetricRecorder> metricRecordersByEntityType;
     private final Map<String, Long> activeExecutionStartNanos = new HashMap<>();
 
-    BuiltInExecutionMetrics(FlinkAgentsMetricGroupImpl agentMetricGroup, LongSupplier nanoTime) {
+    BuiltInExecutionMetrics(
+            FlinkAgentsMetricGroupImpl agentMetricGroup,
+            LongSupplier nanoTime,
+            Predicate<String> isRegisteredTool) {
         this.agentMetricGroup = agentMetricGroup;
         this.nanoTime = nanoTime;
         ExecutionMetricRecorder llmMetricRecorder = new LlmExecutionMetricRecorder();
-        ExecutionMetricRecorder toolMetricRecorder = new ToolExecutionMetricRecorder();
+        ExecutionMetricRecorder toolMetricRecorder =
+                new ToolExecutionMetricRecorder(isRegisteredTool);
         this.metricRecordersByEntityType =
                 Map.of(
                         llmMetricRecorder.entityType(),

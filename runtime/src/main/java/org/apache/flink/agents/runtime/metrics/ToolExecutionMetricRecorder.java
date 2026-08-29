@@ -23,8 +23,13 @@ import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.metrics.Histogram;
 
+import java.util.Objects;
+import java.util.function.Predicate;
+
 /** Records Tool metrics and additional Skill and MCP projections. */
 final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
+
+    static final String UNKNOWN_TOOL_NAME = "unknown";
 
     static final String NUM_TOOL_CALLS_SUCCEEDED = "numOfToolCallsSucceeded";
     static final String NUM_TOOL_CALLS_FAILED = "numOfToolCallsFailed";
@@ -37,6 +42,12 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
     static final String NUM_MCP_TOOL_CALLS_FAILED = "numOfMcpToolCallsFailed";
     static final String MCP_TOOL_CALL_LATENCY_MS = "mcpToolCallLatencyMs";
 
+    private final Predicate<String> isRegisteredTool;
+
+    ToolExecutionMetricRecorder(Predicate<String> isRegisteredTool) {
+        this.isRegisteredTool = Objects.requireNonNull(isRegisteredTool);
+    }
+
     @Override
     public String entityType() {
         return ExecutionReporter.EntityTypes.TOOL;
@@ -48,16 +59,18 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
             ExecutionTraceContext traceContext,
             Outcome outcome,
             Long latencyMs) {
-        String toolName = traceContext.getEntityName();
-        if (!isBlank(toolName)) {
-            recordOutcome(
-                    actionMetricGroup.getSubGroup("tool", toolName),
-                    outcome,
-                    NUM_TOOL_CALLS_SUCCEEDED,
-                    NUM_TOOL_CALLS_FAILED,
-                    TOOL_CALL_LATENCY_MS,
-                    latencyMs);
-        }
+        String requestedToolName = traceContext.getEntityName();
+        String metricToolName =
+                !isBlank(requestedToolName) && isRegisteredTool.test(requestedToolName)
+                        ? requestedToolName
+                        : UNKNOWN_TOOL_NAME;
+        recordOutcome(
+                actionMetricGroup.getSubGroup("tool", metricToolName),
+                outcome,
+                NUM_TOOL_CALLS_SUCCEEDED,
+                NUM_TOOL_CALLS_FAILED,
+                TOOL_CALL_LATENCY_MS,
+                latencyMs);
 
         String skillName = metadataValue(traceContext, ToolExecutionMetadataKeys.SKILL_NAME);
         if (!isBlank(skillName)) {

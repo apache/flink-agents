@@ -119,6 +119,23 @@ class BuiltInActionMetricsTest {
                 .isZero();
     }
 
+    @Test
+    void reusedRestoredExecutionEndsActiveGaugeWithoutLatency() {
+        ExecutionTraceContext action = actionExecution();
+
+        metrics.restoreActionTask(action.getExecutionId(), true);
+        metrics.actionTaskDequeued(action.getExecutionId(), true);
+        metrics.executionEventObserved(ExecutionLifecycleEvents.executionReused(), action);
+
+        assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isZero();
+        assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isZero();
+        assertThat(
+                        metricGroup
+                                .getHistogram(BuiltInActionMetrics.ACTION_EXECUTION_LATENCY_MS)
+                                .getCount())
+                .isZero();
+    }
+
     private long gauge(String name) {
         return (Long) metricGroup.getGauge(name).getValue();
     }

@@ -80,6 +80,8 @@ Execution metrics are derived from LLM and Tool execution lifecycle events. The 
 
 An LLM metric represents one framework invocation of `ChatModel`. A framework retry that calls the model again produces another LLM outcome and latency sample; retries hidden inside a provider or connection are not observed. Every named Tool execution emits Tool metrics. Skill metrics are emitted only for explicit `load_skill` calls; subsequent Tool calls are not inferred to belong to a Skill. MCP metrics aggregate only Tool executions carrying an explicit MCP Server resource name. A `load_skill` or MCP Tool execution therefore contributes to both its Tool scope and the corresponding Skill or MCP Server scope.
 
+Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope to keep metric cardinality bounded. Their original requested names remain available in Agent Trace records.
+
 Tool outcomes follow the existing language-specific Tool contracts. In both Java and Python, resource preparation or invocation exceptions are failures and a normal return is successful. Java additionally treats an unsuccessful `ToolResponse` as a failed Tool execution. Python Tools return arbitrary values and currently have no equivalent explicit error-result type, so the runtime does not infer failure from a normally returned Python value.
 
 Consequently, Tool and MCP outcome metrics use the same names and scopes in both runtimes, but explicit error-result semantics are not yet identical. This alignment is tracked in [Issue #956](https://github.com/apache/flink-agents/issues/956) and is planned after the parallel Tool-call work in [PR #926](https://github.com/apache/flink-agents/pull/926).
