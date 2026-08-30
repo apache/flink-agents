@@ -329,6 +329,28 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
+     * The temperature a request would carry, given the top-level {@code temperature} and an {@code
+     * additional_kwargs} map that may hold one of its own.
+     *
+     * <p>The map wins when it holds a {@link Number} under that key: an entry naming the parameter
+     * outright is the more specific setting, so it takes the top-level parameter's place. An absent
+     * key, or one holding anything other than a {@link Number}, leaves {@code topLevel} in place,
+     * because such a value reaches the request by neither route.
+     *
+     * <p>Resolving here rather than gating each route separately is what keeps the
+     * dropped-parameter warning honest. That warning is owed once per model and parameter, so
+     * gating the top-level value first would spend the one report on a value the map was about to
+     * override, naming a setting that was never going to be sent.
+     */
+    static Object effectiveTemperature(Object topLevel, Map<String, Object> additionalKwargs) {
+        if (additionalKwargs == null) {
+            return topLevel;
+        }
+        Object override = additionalKwargs.get("temperature");
+        return override instanceof Number ? override : topLevel;
+    }
+
+    /**
      * Derives the native {@code output_config} for a POJO class through the SDK's typed
      * structured-output builder.
      *
@@ -470,15 +492,17 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             builder.maxTokens(((Number) maxTokens).longValue());
         }
 
-        Object temperature = modelParams.remove("temperature");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> additionalKwargs =
+                (Map<String, Object>) modelParams.remove("additional_kwargs");
+
+        Object temperature =
+                effectiveTemperature(modelParams.remove("temperature"), additionalKwargs);
         if (temperature instanceof Number
                 && sendSamplingParam(modelName, "temperature", temperature)) {
             builder.temperature(((Number) temperature).doubleValue());
         }
 
-        @SuppressWarnings("unchecked")
-        Map<String, Object> additionalKwargs =
-                (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             applyAdditionalKwargs(builder, additionalKwargs, modelName);
         }
@@ -810,13 +834,11 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
                     }
                     break;
                 case "temperature":
-                    // The parameter the top-level "temperature" above also handles, reaching the
-                    // request by a second route. Without a case of its own it falls to the default
-                    // branch and goes onto the body ungated, which the same models answer with a
-                    // 400.
-                    if (value instanceof Number && sendSamplingParam(modelName, key, value)) {
-                        builder.temperature(((Number) value).doubleValue());
-                    }
+                    // Resolved against the top-level "temperature" by effectiveTemperature and
+                    // gated before this map is applied, so there is nothing left to do with it
+                    // here. The case still has to exist: without a label of its own the key falls
+                    // to the default branch and goes onto the body as a raw property, ungated,
+                    // which the models that withdraw sampling parameters answer with a 400.
                     break;
                 case "stop_sequences":
                     if (value instanceof List) {

@@ -41,6 +41,7 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -696,6 +697,31 @@ class AnthropicChatModelConnectionTest {
         return connection().buildRequest(userMessage(), List.of(), params, null).params;
     }
 
+    /**
+     * Builds a request for {@code model} carrying a top-level temperature and a different one in
+     * {@code additional_kwargs}, the case where the two routes disagree about the value.
+     */
+    private static MessageCreateParams competingTemperatureRequest(String model) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        params.put("temperature", 0.1d);
+        params.put("additional_kwargs", Map.of("temperature", 0.5d));
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    /**
+     * A top-level temperature, an {@code additional_kwargs} map and the value the two resolve to.
+     * The map wins only when it holds a number, since only a number reaches the request by either
+     * route.
+     */
+    private static Stream<Arguments> temperatureResolutions() {
+        return Stream.of(
+                Arguments.of(0.1d, Map.of("temperature", 0.5d), 0.5d),
+                Arguments.of(0.1d, Map.of("top_p", 0.9d), 0.1d),
+                Arguments.of(0.1d, Map.of("temperature", "0.5"), 0.1d),
+                Arguments.of(null, Map.of("temperature", 0.5d), 0.5d),
+                Arguments.of(0.1d, null, 0.1d));
+    }
+
     @ParameterizedTest
     @MethodSource("samplingUnsupportedModels")
     @DisplayName("every model documented as rejecting sampling parameters reports unsupported")
@@ -765,6 +791,45 @@ class AnthropicChatModelConnectionTest {
                 .contains(0.5d);
     }
 
+    @ParameterizedTest
+    @MethodSource("temperatureResolutions")
+    @DisplayName(
+            "additional_kwargs overrides the top-level temperature only when it holds a number")
+    void testEffectiveTemperature(Object topLevel, Map<String, Object> kwargs, Object expected) {
+        assertThat(AnthropicChatModelConnection.effectiveTemperature(topLevel, kwargs))
+                .isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("the additional_kwargs temperature is the one an accepting model is sent")
+    void testCompetingTemperaturesResolveToKwargsOnSupportedModel() {
+        assertThat(competingTemperatureRequest("claude-sonnet-4-20250514").temperature())
+                .contains(0.5d);
+    }
+
+    @Test
+    @DisplayName("neither competing temperature reaches a model that rejects sampling parameters")
+    void testCompetingTemperaturesDroppedOnUnsupportedModel() {
+        // A rejecting name whose temperature no other test drives through buildRequest. The
+        // warning owed for a dropped parameter is tracked per model and parameter for the life of
+        // the JVM, so sharing a name would leave this test's meaning dependent on run order.
+        MessageCreateParams params = competingTemperatureRequest("claude-opus-4-8");
+
+        assertThat(params.temperature()).isEmpty();
+        // An ungated additional_kwargs value reaches the body as a raw property, which serializes
+        // to the same "temperature" field the typed setter writes, so the typed field being empty
+        // is not on its own proof the parameter was left off the request.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("temperature");
+        // One report is owed for the pair and the request spent it, so nothing is left to report.
+        // That the request above is what spent it holds only while no other test claims this
+        // model name and parameter first; one that did would satisfy this assertion for its own
+        // reason and leave nothing here for it to catch.
+        assertThat(
+                        AnthropicChatModelConnection.samplingWarning(
+                                "claude-opus-4-8", "temperature", 0.5d))
+                .isEmpty();
+    }
+
     @Test
     @DisplayName(
             "a dropped sampling parameter owes one warning naming the model, parameter and value")
@@ -812,6 +877,79 @@ class AnthropicChatModelConnectionTest {
         assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-5")).isTrue();
 
         assertPrefillDecisionForModel("claude-sonnet-4-5", true);
+    }
+
+    /**
+     * A temperature value that records whether anything rendered it as text.
+     *
+     * <p>The report owed for a dropped sampling parameter is assembled with a {@code %s}
+     * conversion, so the value it names is whichever one had {@code toString()} called on it. A
+     * value that was never rendered was never reported. That is the only handle on the choice from
+     * outside the class: a model rejecting sampling parameters is sent neither candidate, so the
+     * request itself looks the same whichever one the report picked.
+     *
+     * <p>Rendering is the measurement, so observing one taints it. A breakpoint that displays this
+     * value, or a debug print of it, calls {@code toString()} and makes {@code wasRendered()}
+     * answer true regardless of what the code under test did.
+     */
+    private static final class RecordingTemperature extends Number {
+        private final double value;
+        private boolean rendered;
+
+        RecordingTemperature(double value) {
+            this.value = value;
+        }
+
+        boolean wasRendered() {
+            return rendered;
+        }
+
+        @Override
+        public String toString() {
+            rendered = true;
+            return Double.toString(value);
+        }
+
+        @Override
+        public int intValue() {
+            return (int) value;
+        }
+
+        @Override
+        public long longValue() {
+            return (long) value;
+        }
+
+        @Override
+        public float floatValue() {
+            return (float) value;
+        }
+
+        @Override
+        public double doubleValue() {
+            return value;
+        }
+    }
+
+    @Test
+    @DisplayName("a dropped temperature is reported as the additional_kwargs value it resolved to")
+    void testDroppedTemperatureIsReportedAsTheResolvedValue() {
+        // A rejecting name no other test builds a request for or asks a temperature report of.
+        // The report is owed once per model and parameter for the life of the JVM, so a pair
+        // claimed elsewhere first would leave nothing to render here and the first assertion
+        // below would fail: a collision surfaces as a failure, not as a test that still passes
+        // while pinning less.
+        RecordingTemperature topLevel = new RecordingTemperature(0.1d);
+        RecordingTemperature override = new RecordingTemperature(0.5d);
+        Map<String, Object> params = paramsWithModel("claude-mythos-5", null);
+        params.put("temperature", topLevel);
+        params.put("additional_kwargs", Map.of("temperature", override));
+
+        connection().buildRequest(userMessage(), List.of(), params, null);
+
+        assertThat(override.wasRendered()).isTrue();
+        // The overridden value would have named a setting the request was never going to carry.
+        assertThat(topLevel.wasRendered()).isFalse();
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */
