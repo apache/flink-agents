@@ -791,6 +791,18 @@ class AnthropicChatModelConnectionTest {
                 .contains(0.5d);
     }
 
+    @Test
+    @DisplayName("stop_sequences supplied through additional_kwargs reaches the typed field")
+    void testStopSequencesFromAdditionalKwargs() {
+        Map<String, Object> params = paramsWithModel("claude-sonnet-4-20250514", null);
+        params.put("additional_kwargs", Map.of("stop_sequences", List.of("STOP", "END")));
+
+        MessageCreateParams built =
+                connection().buildRequest(userMessage(), List.of(), params, null).params;
+
+        assertThat(built.stopSequences()).contains(List.of("STOP", "END"));
+    }
+
     @ParameterizedTest
     @MethodSource("temperatureResolutions")
     @DisplayName(
