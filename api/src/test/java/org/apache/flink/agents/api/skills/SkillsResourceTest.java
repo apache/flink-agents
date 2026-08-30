@@ -144,8 +144,7 @@ class SkillsResourceTest {
         for (String url :
                 List.of(
                         "https://example.com/skills%5B1%5D.zip",
-                        "https://example.com/x.zip?a[0]=1",
-                        "https://example.com/x.zip#f[1]")) {
+                        "https://example.com/x.zip?a[0]=1", "https://example.com/x.zip#f[1]")) {
             assertEquals(url, Skills.fromUrl(url).getSources().get(0).getParams().get("url"));
         }
     }
