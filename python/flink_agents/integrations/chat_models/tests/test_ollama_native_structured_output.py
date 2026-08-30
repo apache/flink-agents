@@ -45,7 +45,7 @@ class Company(BaseModel):
 
 def _connection() -> OllamaChatModelConnection:
     """A connection whose Ollama client is a mock, so no server is contacted."""
-    conn = OllamaChatModelConnection(name="ollama")
+    conn = OllamaChatModelConnection()
     response = MagicMock()
     response.message.role = "assistant"
     response.message.content = "ok"
@@ -132,7 +132,7 @@ def test_supports_native_structured_output(model: str | None) -> None:
     The capability is the server's, not the model's, so there is no model name it
     can be keyed on and none it should report not-capable for.
     """
-    conn = OllamaChatModelConnection(name="ollama")
+    conn = OllamaChatModelConnection()
     assert conn.supports_native_structured_output(model) is True
 
 
