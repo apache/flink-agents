@@ -64,7 +64,10 @@ class _SameProtocolRedirectHandler(HTTPRedirectHandler):
             allow_insecure_http=self._allow_insecure_http,
             initial_scheme=self._initial_scheme,
         )
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        # Python 3.10's HTTPRedirectHandler rejects 308 even though it supports
+        # the otherwise identical method-preserving behavior for 307.
+        compatible_code = 307 if code == 308 else code
+        return super().redirect_request(req, fp, compatible_code, msg, headers, newurl)
 
     def http_error_302(
         self,
