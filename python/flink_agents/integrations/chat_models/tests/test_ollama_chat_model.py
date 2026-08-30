@@ -15,11 +15,14 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
@@ -110,6 +113,45 @@ def test_ollama_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 3
+
+
+class Person(BaseModel):
+    """A flat output schema with one string field and one integer field."""
+
+    name: str
+    age: int
+
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing"
+)
+def test_ollama_chat_with_output_schema() -> None:
+    """Verify a BaseModel schema constrains the server response to that schema.
+
+    Asserts schema conformance only. Ollama constrains decoding to the schema on
+    the server side, so the shape of the response is guaranteed while its values
+    are not; asserting the values would depend on the model's accuracy.
+    """
+    server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
+
+    response = server.chat(
+        [
+            ChatMessage(
+                role=MessageRole.USER,
+                content="Ada Lovelace is 36 years old. Extract the person.",
+            )
+        ],
+        model=test_model,
+        output_schema=OutputSchema(output_schema=Person),
+        think=False,
+    )
+
+    payload = json.loads(response.content)
+    assert {"name", "age"}.issubset(payload)
+
+    person = Person.model_validate_json(response.content)
+    assert isinstance(person.name, str)
+    assert isinstance(person.age, int)
 
 
 def test_model_field_roundtrip() -> None:
