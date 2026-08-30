@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -41,6 +42,7 @@ public class PythonMCPTool extends Tool
             "python_java_utils.get_java_tool_metadata_from_tool";
     private final PyObject tool;
     private final PythonResourceAdapter adapter;
+    private final PythonObjectScope ownedObjects = new PythonObjectScope();
     @Nullable private final String mcpServerName;
 
     /**
@@ -64,17 +66,19 @@ public class PythonMCPTool extends Tool
     public PythonMCPTool(
             PythonResourceAdapter adapter, PyObject tool, @Nullable String mcpServerName) {
         super(getToolMetadata(adapter, tool));
-        this.tool = tool;
+        this.tool = ownedObjects.own(tool);
         this.adapter = adapter;
         this.mcpServerName = mcpServerName;
     }
 
     @SuppressWarnings("unchecked")
     private static ToolMetadata getToolMetadata(PythonResourceAdapter adapter, PyObject tool) {
-        Map<String, String> metadata =
-                (Map<String, String>) adapter.invoke(GET_JAVA_TOOL_META, tool);
-        return new ToolMetadata(
-                metadata.get("name"), metadata.get("description"), metadata.get("inputSchema"));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, String> metadata =
+                    scope.own((Map<String, String>) adapter.invoke(GET_JAVA_TOOL_META, tool));
+            return new ToolMetadata(
+                    metadata.get("name"), metadata.get("description"), metadata.get("inputSchema"));
+        }
     }
 
     @Override
@@ -84,8 +88,10 @@ public class PythonMCPTool extends Tool
             kwargs.put(paramName, parameters.getParameter(paramName));
         }
         try {
-            Object result = adapter.callMethod(tool, "call", kwargs);
-            return ToolResponse.success(result);
+            try (PythonObjectScope scope = new PythonObjectScope()) {
+                Object result = scope.own(adapter.callMethod(tool, "call", kwargs));
+                return ToolResponse.success(scope.own(adapter.materializePythonValue(result)));
+            }
         } catch (Exception e) {
             return ToolResponse.error(e);
         }
@@ -119,5 +125,10 @@ public class PythonMCPTool extends Tool
             metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, mcpServerName);
         }
         return metadata;
+    }
+
+    @Override
+    public void close() throws Exception {
+        ownedObjects.closeResource(adapter, tool);
     }
 }

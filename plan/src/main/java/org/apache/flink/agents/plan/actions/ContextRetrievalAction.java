@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
@@ -136,33 +137,35 @@ public class ContextRetrievalAction {
                             }
                         });
 
-        final Object normalized = store.normalizeEmbedding(embedding);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            final Object normalized = scope.own(store.normalizeEmbedding(embedding));
 
-        final List<Document> documents =
-                ctx.durableExecuteAsync(
-                        new DurableCallable<List<Document>>() {
-                            @Override
-                            public String getId() {
-                                return "rag-query";
-                            }
+            final List<Document> documents =
+                    ctx.durableExecuteAsync(
+                            new DurableCallable<List<Document>>() {
+                                @Override
+                                public String getId() {
+                                    return "rag-query";
+                                }
 
-                            @SuppressWarnings("unchecked")
-                            @Override
-                            public Class<List<Document>> getResultClass() {
-                                return (Class<List<Document>>) (Class<?>) List.class;
-                            }
+                                @SuppressWarnings("unchecked")
+                                @Override
+                                public Class<List<Document>> getResultClass() {
+                                    return (Class<List<Document>>) (Class<?>) List.class;
+                                }
 
-                            @Override
-                            public List<Document> call() {
-                                return store.queryNormalized(
-                                        normalized,
-                                        query.getLimit(),
-                                        query.getCollection(),
-                                        query.getFilters(),
-                                        store.getStoreKwargs());
-                            }
-                        });
+                                @Override
+                                public List<Document> call() {
+                                    return store.queryNormalized(
+                                            normalized,
+                                            query.getLimit(),
+                                            query.getCollection(),
+                                            query.getFilters(),
+                                            store.getStoreKwargs());
+                                }
+                            });
 
-        return new VectorStoreQueryResult(documents);
+            return new VectorStoreQueryResult(documents);
+        }
     }
 }

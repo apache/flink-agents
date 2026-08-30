@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import pemja.core.object.PyObject;
 
@@ -62,7 +63,11 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
 
     @Override
     public boolean deleteMemorySet(String name) {
-        return (Boolean) adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            return (Boolean)
+                    scope.own(
+                            adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name)));
+        }
     }
 
     @Override
@@ -71,13 +76,15 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             MemorySet memorySet,
             List<String> memoryItems,
             @Nullable List<Map<String, Object>> metadatas) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        kwargs.put("memory_items", memoryItems);
-        if (metadatas != null) {
-            kwargs.put("metadatas", metadatas);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            kwargs.put("memory_items", memoryItems);
+            if (metadatas != null) {
+                kwargs.put("metadatas", metadatas);
+            }
+            return (List<String>) scope.own(adapter.callMethod(pyMem0, "add", kwargs));
         }
-        return (List<String>) adapter.callMethod(pyMem0, "add", kwargs);
     }
 
     @Override
@@ -86,29 +93,33 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             @Nullable List<String> ids,
             @Nullable Map<String, Object> filters,
             @Nullable Integer limit) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        if (ids != null) {
-            kwargs.put("ids", ids);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            if (ids != null) {
+                kwargs.put("ids", ids);
+            }
+            if (filters != null) {
+                kwargs.put("filters", filters);
+            }
+            if (limit != null) {
+                kwargs.put("limit", limit);
+            }
+            Object pyItems = scope.own(adapter.callMethod(pyMem0, "get", kwargs));
+            return convertItems(scope, pyItems);
         }
-        if (filters != null) {
-            kwargs.put("filters", filters);
-        }
-        if (limit != null) {
-            kwargs.put("limit", limit);
-        }
-        Object pyItems = adapter.callMethod(pyMem0, "get", kwargs);
-        return convertItems(pyItems);
     }
 
     @Override
     public void delete(MemorySet memorySet, @Nullable List<String> ids) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        if (ids != null) {
-            kwargs.put("ids", ids);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            if (ids != null) {
+                kwargs.put("ids", ids);
+            }
+            scope.own(adapter.callMethod(pyMem0, "delete", kwargs));
         }
-        adapter.callMethod(pyMem0, "delete", kwargs);
     }
 
     @Override
@@ -118,15 +129,17 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             int limit,
             @Nullable Map<String, Object> filters,
             Map<String, Object> extraArgs) {
-        Map<String, Object> kwargs = new HashMap<>(extraArgs);
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        kwargs.put("query", query);
-        kwargs.put("limit", limit);
-        if (filters != null) {
-            kwargs.put("filters", filters);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>(extraArgs);
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            kwargs.put("query", query);
+            kwargs.put("limit", limit);
+            if (filters != null) {
+                kwargs.put("filters", filters);
+            }
+            Object pyItems = scope.own(adapter.callMethod(pyMem0, "search", kwargs));
+            return convertItems(scope, pyItems);
         }
-        Object pyItems = adapter.callMethod(pyMem0, "search", kwargs);
-        return convertItems(pyItems);
     }
 
     @Override
@@ -134,37 +147,46 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             boolean updateObservationEnabled,
             boolean getObservationEnabled,
             boolean searchObservationEnabled) {
-        adapter.callMethod(
-                pyMem0,
-                "configure_observation",
-                Map.of(
-                        "update_observation_enabled",
-                        updateObservationEnabled,
-                        "get_observation_enabled",
-                        getObservationEnabled,
-                        "search_observation_enabled",
-                        searchObservationEnabled));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            scope.own(
+                    adapter.callMethod(
+                            pyMem0,
+                            "configure_observation",
+                            Map.of(
+                                    "update_observation_enabled",
+                                    updateObservationEnabled,
+                                    "get_observation_enabled",
+                                    getObservationEnabled,
+                                    "search_observation_enabled",
+                                    searchObservationEnabled)));
+        }
     }
 
     @Override
     public void switchContext(
             String partitionKey, String observationId, boolean observationSuppressed) {
-        adapter.callMethod(
-                pyMem0,
-                "switch_context",
-                Map.of(
-                        "key", partitionKey,
-                        "observation_id", observationId,
-                        "observation_suppressed", observationSuppressed));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            scope.own(
+                    adapter.callMethod(
+                            pyMem0,
+                            "switch_context",
+                            Map.of(
+                                    "key", partitionKey,
+                                    "observation_id", observationId,
+                                    "observation_suppressed", observationSuppressed)));
+        }
     }
 
     @Override
     public String drainObservationRecordsJson(String partitionKey, String observationId) {
-        return (String)
-                adapter.callMethod(
-                        pyMem0,
-                        "drain_ltm_observation_records",
-                        Map.of("key", partitionKey, "observation_id", observationId));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            return (String)
+                    scope.own(
+                            adapter.callMethod(
+                                    pyMem0,
+                                    "drain_ltm_observation_records",
+                                    Map.of("key", partitionKey, "observation_id", observationId)));
+        }
     }
 
     @Override
@@ -172,13 +194,13 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         adapter.callMethod(pyMem0, "close", Map.of());
     }
 
-    private Object buildPyMemorySet(MemorySet memorySet) {
-        return adapter.invoke(TO_PYTHON_MEMORY_SET, memorySet.getName());
+    private Object buildPyMemorySet(PythonObjectScope scope, MemorySet memorySet) {
+        return scope.own(adapter.invoke(TO_PYTHON_MEMORY_SET, memorySet.getName()));
     }
 
     @SuppressWarnings("unchecked")
-    private List<MemorySetItem> convertItems(Object pyItems) {
-        Object converted = adapter.invoke(MEM0_ITEMS_TO_JAVA, pyItems);
+    private List<MemorySetItem> convertItems(PythonObjectScope scope, Object pyItems) {
+        Object converted = scope.own(adapter.invoke(MEM0_ITEMS_TO_JAVA, pyItems));
         List<Map<String, Object>> dicts =
                 converted == null ? List.of() : (List<Map<String, Object>>) converted;
         List<MemorySetItem> items = new ArrayList<>(dicts.size());
