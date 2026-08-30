@@ -73,7 +73,10 @@ public class Mem0LongTermMemoryTest {
         pythonReady = isPythonAvailable();
         esConfigured = System.getenv("ES_HOST") != null;
         milvusConfigured = System.getenv("MILVUS_URI") != null;
-        apiKeySet = System.getenv("ACTION_API_KEY") != null;
+        // GitHub sets the variable to the empty string when the secret is unavailable, such as
+        // on a pull request from a fork, so an absent key arrives as empty rather than as null.
+        String apiKey = System.getenv("ACTION_API_KEY");
+        apiKeySet = apiKey != null && !apiKey.isEmpty();
     }
 
     @ParameterizedTest(name = "vectorStore={0}")
