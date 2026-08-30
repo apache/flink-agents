@@ -37,7 +37,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -56,8 +55,6 @@ public final class SkillMaterializer {
     private static final String TEMP_DIR_PREFIX = "flink-agents-skills-";
 
     private static final int MAX_REDIRECTS = 10;
-
-    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     private static final int JAR_URL_PREFIX_LEN = "jar:".length();
 
@@ -365,12 +362,8 @@ public final class SkillMaterializer {
 
     private static String requireValidDownloadUrl(URL url, boolean allowInsecureHttp)
             throws IOException {
-        String externalUrl = url.toExternalForm();
-        if (INVALID_PERCENT_ESCAPE.matcher(externalUrl).find()) {
-            throw new IOException("Invalid skill URL: " + SkillUrlUtils.redact(externalUrl));
-        }
         try {
-            return SkillUrlUtils.validate(externalUrl, allowInsecureHttp);
+            return SkillUrlUtils.validate(url.toExternalForm(), allowInsecureHttp);
         } catch (IllegalArgumentException e) {
             throw new IOException(e.getMessage());
         }

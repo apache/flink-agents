@@ -204,8 +204,8 @@ def download_to_tempfile(
         Path to the downloaded temp file (caller is responsible for deletion).
 
     Raises:
-        ValueError: If the request or response uses a disallowed transport, or
-            a redirect changes protocols.
+        ValueError: If the URL violates the transport policy or a redirect
+            changes protocols.
         urllib.error.HTTPError / URLError on HTTP or transport failures.
     """
     initial_scheme = _require_allowed_transport(
@@ -249,12 +249,12 @@ def _require_allowed_transport(
     allow_insecure_http: bool,
     initial_scheme: str | None = None,
 ) -> str:
+    if initial_scheme is None:
+        return validate_skill_url(final_url, allow_insecure_http=allow_insecure_http)
+    # Redirect targets: the scheme-change rule below subsumes the transport
+    # policy (matching the Java materializer), so validate leniently first.
     final_scheme = validate_skill_url(final_url, allow_insecure_http=True)
-    allowed_schemes = {"http", "https"} if allow_insecure_http else {"https"}
-    if final_scheme not in allowed_schemes:
-        msg = f"Skill URL used a disallowed transport: {redact_skill_url(final_url)}"
-        raise ValueError(msg)
-    if initial_scheme is not None and final_scheme != initial_scheme:
+    if final_scheme != initial_scheme:
         msg = (
             "Skill URL returned an unsupported redirect to: "
             f"{redact_skill_url(final_url)}"

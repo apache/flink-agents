@@ -259,10 +259,13 @@ Runtime Skills:
   resource is present in the application JAR or runtime classpath.
 - For a filled source, every `paths` directory or ZIP is provisioned at a resolvable path on every
   TaskManager. A local MiniCluster check is not cluster-wide path evidence.
-- For a filled source, every `urls` value is HTTPS, points to a ZIP with Skill directories at its top level, contains no embedded user information, and is reachable from every TaskManager.
+- For a filled source, every `urls` value is HTTPS, points to a ZIP with Skill
+  directories at its top level, contains no embedded user information, and is
+  reachable from every TaskManager.
   - `url_sources` may additionally pin `sha256` or explicitly opt in to plain HTTP.
   - Prefer immutable, versioned URLs; do not claim cluster connectivity from a client-side download.
-- Cross-language Skill sources use `paths`, `urls`, or `url_sources` and are tested across the confirmed bridge.
+- Cross-language Skill sources use `paths`, `urls`, or `url_sources` and are tested
+  across the confirmed bridge.
 - If fields are intentionally combined:
   - Account for loader order `paths`, `urls`, `url_sources`, `classpath`, `package`.
   - Reject duplicate Skill names rather than relying on last-wins replacement.

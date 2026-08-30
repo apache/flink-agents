@@ -394,11 +394,19 @@ every Python worker in the target cluster; installation in the selected local
 environment proves only local availability. Do not point `package` at an uninstalled
 source directory.
 
-Do not treat implementation language as the distribution decision: Java and Python may both use `paths`, `urls`, or `url_sources`. Use those portable schemes for an intentional cross-language source.
+Do not treat implementation language as the distribution decision: Java and Python may
+both use `paths`, `urls`, or `url_sources`. Use those portable schemes for an
+intentional cross-language source.
 
-If multiple YAML source fields are explicitly combined, preserve loader order `paths`, `urls`, `url_sources`, `classpath`, `package` and reject duplicate Skill names rather than depending on last-wins replacement.
+If multiple YAML source fields are explicitly combined, preserve loader order `paths`,
+`urls`, `url_sources`, `classpath`, `package` and reject duplicate Skill names rather
+than depending on last-wins replacement.
 
-A local MiniCluster shares one machine and can validate artifact contents, ZIP shape, and local resolution. It cannot prove that a distributed cluster mounts the same path or allows every TaskManager to reach a URL. Report those as deployment requirements unless they were verified in the target cluster environment. Prefer immutable, versioned URLs, and use `url_sources.sha256` when the user provides an archive digest.
+A local MiniCluster shares one machine and can validate artifact contents, ZIP shape,
+and local resolution. It cannot prove that a distributed cluster mounts the same path or
+allows every TaskManager to reach a URL. Report those as deployment requirements unless
+they were verified in the target cluster environment. Prefer immutable, versioned URLs,
+and use `url_sources.sha256` when the user provides an archive digest.
 
 ## Connect the Agent through RemoteExecutionEnvironment
 

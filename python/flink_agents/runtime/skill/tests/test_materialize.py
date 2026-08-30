@@ -182,7 +182,7 @@ class TestDownloadToTempfile:
             )
 
     def test_rejects_plain_http_by_default(self) -> None:
-        with pytest.raises(ValueError, match="disallowed transport"):
+        with pytest.raises(ValueError, match="disabled by default"):
             download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
 
     def test_rejects_cross_protocol_redirect_before_request(

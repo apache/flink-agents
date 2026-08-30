@@ -236,13 +236,22 @@ skills:
 mode. The generated application is not runtime-ready until the user replaces it.
 Do not package, mount, download, or validate a source that the user has not supplied.
 
-Do not choose `package` merely because the implementation is Python or `classpath` merely because it is Java. Language only constrains the valid bundled scheme. Use `paths`, `urls`, or `url_sources` for a supported cross-language source.
+Do not choose `package` merely because the implementation is Python or `classpath`
+merely because it is Java. Language only constrains the valid bundled scheme. Use
+`paths`, `urls`, or `url_sources` for a supported cross-language source.
 
-A relative `paths` entry is resolved in the TaskManager runtime, not guaranteed to be the submitting client's working directory; success in a local MiniCluster does not prove cluster-wide path availability.
+A relative `paths` entry is resolved in the TaskManager runtime, not guaranteed to be
+the submitting client's working directory; success in a local MiniCluster does not prove
+cluster-wide path availability.
 
-Multiple source fields can coexist when the user explicitly requests composition. The loaders append sources in `paths`, `urls`, `url_sources`, `classpath`, `package` order, and a later source replaces an earlier registration with the same Skill frontmatter name.
+Multiple source fields can coexist when the user explicitly requests composition. The
+loaders append sources in `paths`, `urls`, `url_sources`, `classpath`, `package` order,
+and a later source replaces an earlier registration with the same Skill frontmatter
+name.
 
-Avoid duplicate names and implicit fallback behavior. An unsupported scheme fails at load time; a runtime does not skip it as a fallback. Prefer immutable, versioned URLs. Use `url_sources` with `sha256` when the user provides an archive digest.
+Avoid duplicate names and implicit fallback behavior. An unsupported scheme fails at
+load time; a runtime does not skip it as a fallback. Prefer immutable, versioned URLs.
+Use `url_sources` with `sha256` when the user provides an archive digest.
 
 Declaring a Skills Resource only makes Skills available. To activate one after its
 business content and source are filled, add its `SKILL.md` name to a chat model
