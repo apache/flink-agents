@@ -24,7 +24,7 @@ import queue
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator
 from typing_extensions import override
@@ -171,6 +171,13 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         description="The runner context to retrieve resources.", exclude=True
     )
 
+    mailbox_thread_checker: Callable[[], None] = Field(
+        description="Raises when called off the Flink mailbox thread. Whole-memory-set "
+        "management reads the partition key currently in scope, which only the mailbox "
+        "thread can read consistently.",
+        exclude=True,
+    )
+
     job_id: str = Field(description="Unique identifier for the job.")
 
     key: str | None = Field(
@@ -221,6 +228,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         chat_model_name: str,
         embedding_model_name: str,
         vector_store_name: str,
+        mailbox_thread_checker: Callable[[], None],
     ) -> None:
         """Initialize the Mem0-based Long-Term Memory.
 
@@ -231,6 +239,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             embedding_model_name: Resource name of the embedding model.
             vector_store_name: Resource name of a
                 ``CollectionManageableVectorStore`` to back Mem0.
+            mailbox_thread_checker: Callable that raises when invoked off the
+                Flink mailbox thread.
         """
         # Resolve metric group upfront on the main thread so that it is
         # safe to use from any thread later.
@@ -242,6 +252,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         )
         super().__init__(
             ctx=ctx,
+            mailbox_thread_checker=mailbox_thread_checker,
             job_id=job_id,
             chat_model_name=chat_model_name,
             embedding_model_name=embedding_model_name,
@@ -483,7 +494,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         The current partition key and observation context are copied onto the set
         so that operations submitted to a worker thread stay scoped to the action
-        that obtained it. Must be called on the mailbox thread.
+        that obtained it. Only the mailbox thread reads that context consistently,
+        so this method refuses to run on any other thread.
 
         Args:
             name: The name of the memory set.
@@ -492,8 +504,12 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             The memory set.
 
         Raises:
-            ValueError: If no non-empty partition key is in scope.
+            ValueError: If the partition key in scope is absent or empty.
+            Exception: Called from a thread other than the mailbox thread. The
+                refusal originates on the Java side and reaches Python through the
+                bridge, so the concrete type is whatever that marshals to.
         """
+        self.mailbox_thread_checker()
         return MemorySet(
             name=name,
             ltm=self,
@@ -507,7 +523,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         """Delete a memory set and all its items.
 
         Takes a name rather than a ``MemorySet``, so it has no bound context to read
-        and uses the key currently in scope. It is therefore only correct on the
+        and uses the key currently in scope. It therefore refuses to run outside the
         mailbox thread, and deleting a whole set can target a different key than
         ``MemorySet.delete`` on a set of the same name would.
 
@@ -518,8 +534,12 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             True if the memory set was deleted.
 
         Raises:
-            ValueError: If no non-empty partition key is in scope.
+            ValueError: If the partition key in scope is absent or empty.
+            Exception: Called from a thread other than the mailbox thread. The
+                refusal originates on the Java side and reaches Python through the
+                bridge, so the concrete type is whatever that marshals to.
         """
+        self.mailbox_thread_checker()
         observation_key = self._current_partition_key()
         observation_id = self._observation_id
         observation_enabled = (

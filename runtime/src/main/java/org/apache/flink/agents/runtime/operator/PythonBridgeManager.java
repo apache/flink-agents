@@ -193,7 +193,7 @@ class PythonBridgeManager implements AutoCloseable {
                 initPythonActionExecutor(agentPlan, jobIdentifier);
             }
             if (mem0Configured) {
-                wireLongTermMemory(agentPlan);
+                wireLongTermMemory(agentPlan, mailboxThreadChecker);
             }
             initialized = true;
         }
@@ -240,7 +240,7 @@ class PythonBridgeManager implements AutoCloseable {
      * {@code create_flink_runner_context} already initialised via {@code _init_long_term_memory})
      * and wrap it as a Java {@link Mem0LongTermMemory}.
      */
-    private void wireLongTermMemory(AgentPlan agentPlan) {
+    private void wireLongTermMemory(AgentPlan agentPlan, Runnable mailboxThreadChecker) {
         PyObject pyCtx = pythonActionExecutor.getPythonRunnerContext();
         Object pyLtm = pythonInterpreter.invoke("python_java_utils.get_long_term_memory", pyCtx);
         if (pyLtm == null) {
@@ -254,7 +254,9 @@ class PythonBridgeManager implements AutoCloseable {
                             LongTermMemoryOptions.Mem0.EMBEDDING_MODEL_SETUP.getKey(),
                             LongTermMemoryOptions.Mem0.VECTOR_STORE.getKey()));
         }
-        longTermMemory = new Mem0LongTermMemory(pythonResourceAdapter, (PyObject) pyLtm);
+        longTermMemory =
+                new Mem0LongTermMemory(
+                        pythonResourceAdapter, (PyObject) pyLtm, mailboxThreadChecker);
         MemoryEventSettings settings = MemoryEventSettings.from(agentPlan.getConfigData());
         longTermMemory.configureObservation(
                 settings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_UPDATE),

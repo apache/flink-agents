@@ -31,11 +31,11 @@ public interface BaseLongTermMemory extends AutoCloseable {
     /**
      * Gets the memory set by name. If it does not exist, the backend creates it.
      *
-     * <p>The returned set is bound to the calling action, so call this from the action body itself,
-     * not from a callback running on another thread, and obtain one per action rather than holding
-     * one across actions. Operating on a set whose partition key is absent or empty throws rather
-     * than silently widening the operation to every partition key, and this method itself throws
-     * unless a non-empty partition key is in scope.
+     * <p>The returned set is bound to the calling action, so call this from the action body itself;
+     * calling it from another thread throws {@link IllegalStateException}. Obtain one per action
+     * rather than holding one across actions. Operating on a set whose partition key is absent or
+     * empty throws rather than silently widening the operation to every partition key, and this
+     * method itself throws unless a non-empty partition key is in scope.
      *
      * @param name the name of the memory set
      * @return the memory set
@@ -46,9 +46,9 @@ public interface BaseLongTermMemory extends AutoCloseable {
      * Deletes the memory set.
      *
      * <p>Unlike the set-scoped operations, this takes a name and applies to the key currently in
-     * scope, so it must be called from the action body rather than from another thread, and can
-     * target a different key than {@link MemorySet#delete} on a same-named set would. It throws
-     * unless a non-empty partition key is in scope.
+     * scope, so it must be called from the action body; calling it from another thread throws
+     * {@link IllegalStateException}. It can target a different key than {@link MemorySet#delete} on
+     * a same-named set would, and throws unless a non-empty partition key is in scope.
      *
      * @param name the name of the memory set to delete
      * @return true if the memory set was successfully deleted

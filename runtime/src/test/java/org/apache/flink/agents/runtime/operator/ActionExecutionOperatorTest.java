@@ -804,7 +804,7 @@ public class ActionExecutionOperatorTest {
         private RuntimeException drainFailure;
 
         private RecordingMem0LongTermMemory() {
-            super(null, null);
+            super(null, null, () -> {});
         }
 
         @Override

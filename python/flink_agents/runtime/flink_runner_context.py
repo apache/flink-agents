@@ -1271,6 +1271,7 @@ def _init_long_term_memory(
         chat_model_name=chat_model_name,
         embedding_model_name=embedding_model_name,
         vector_store_name=vector_store_name,
+        mailbox_thread_checker=lambda: ctx._j_runner_context.checkMailboxThread(),
     )
 
 

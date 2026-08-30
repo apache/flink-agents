@@ -30,6 +30,7 @@ import pemja.core.object.PyObject;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -51,7 +52,7 @@ public class Mem0LongTermMemoryTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
+        ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0, () -> {});
         // Operations refuse an absent or empty key, so every test that does not manage its
         // own context runs under the key an action would have switched to.
         ltm.switchContext("a-key", "an-action", false);
@@ -282,7 +283,7 @@ public class Mem0LongTermMemoryTest {
 
     @Test
     void testMemorySetIsRefusedBeforeAnyContextSwitch() {
-        Mem0LongTermMemory fresh = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
+        Mem0LongTermMemory fresh = new Mem0LongTermMemory(mockAdapter, mockPyMem0, () -> {});
 
         assertThatThrownBy(() -> fresh.getMemorySet("notes"))
                 .isInstanceOf(IllegalStateException.class)
@@ -304,5 +305,50 @@ public class Mem0LongTermMemoryTest {
                         eq("owner"),
                         eq("owner-action"),
                         eq(false));
+    }
+
+    @Test
+    void testMemorySetManagementIsRefusedOffTheMailboxThread() {
+        Mem0LongTermMemory guarded =
+                new Mem0LongTermMemory(
+                        mockAdapter,
+                        mockPyMem0,
+                        () -> {
+                            throw new IllegalStateException(
+                                    "Expected to be running on the task mailbox thread, but was"
+                                            + " not.");
+                        });
+        // No context switch: with no key in scope, only a checker that runs before the key
+        // is read can produce the mailbox-thread message. That pins the intended order,
+        // because off the mailbox thread the key read is itself unreliable.
+
+        assertThatThrownBy(() -> guarded.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("task mailbox thread");
+        assertThatThrownBy(() -> guarded.deleteMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("task mailbox thread");
+        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("delete_memory_set"), any());
+    }
+
+    @Test
+    void testSetScopedOperationsRunWithoutTheMailboxThread() {
+        // A set carries the context it was obtained under, so operations on it are safe to
+        // forward to a worker thread. Gating them would break durable async execution.
+        AtomicInteger checkerCalls = new AtomicInteger();
+        Mem0LongTermMemory counting =
+                new Mem0LongTermMemory(mockAdapter, mockPyMem0, checkerCalls::incrementAndGet);
+        counting.switchContext("a-key", "an-action", false);
+        MemorySet ms = counting.getMemorySet("notes");
+        // Guards the assertion below from passing vacuously on a checker that never runs.
+        assertThat(checkerCalls.get()).isOne();
+        checkerCalls.set(0);
+
+        counting.add(ms, List.of("hello"), null);
+        counting.get(ms, null, null, null);
+        counting.delete(ms, null);
+        counting.search(ms, "query", 5, null, Map.of());
+
+        assertThat(checkerCalls.get()).isZero();
     }
 }

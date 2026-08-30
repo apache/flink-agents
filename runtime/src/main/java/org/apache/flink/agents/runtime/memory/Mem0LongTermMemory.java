@@ -45,6 +45,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
 
     private final PythonResourceAdapter adapter;
     private PyObject pyMem0;
+    private final Runnable mailboxThreadChecker;
 
     // Null until the first context switch, mirroring the Python side's own default. A
     // memory set obtained before then carries no key and is refused rather than forwarded.
@@ -52,9 +53,11 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     private String observationId = "";
     private boolean observationSuppressed;
 
-    public Mem0LongTermMemory(PythonResourceAdapter adapter, PyObject pyMem0) {
+    public Mem0LongTermMemory(
+            PythonResourceAdapter adapter, PyObject pyMem0, Runnable mailboxThreadChecker) {
         this.adapter = adapter;
         this.pyMem0 = pyMem0;
+        this.mailboxThreadChecker = mailboxThreadChecker;
     }
 
     @Override
@@ -62,7 +65,9 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         // Mirrors Python's `Mem0LongTermMemory.get_memory_set`: a pure factory that
         // returns a new MemorySet bound to this ltm; no Python call is needed. The
         // current action context is copied onto the set so that operations forwarded
-        // from a worker thread stay scoped to the action that obtained it.
+        // from a worker thread stay scoped to the action that obtained it, which is
+        // only the right context to copy when the caller is the action itself.
+        mailboxThreadChecker.run();
         MemorySet ms = new MemorySet(name);
         ms.setLtm(this);
         ms.setActionContext(currentPartitionKey(), observationId, observationSuppressed);
@@ -74,8 +79,9 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         // Takes a name rather than a MemorySet, so it has no bound context and the Python
         // side uses the key currently in scope. It is therefore only correct on the mailbox
         // thread, and can target a different key than MemorySet.delete on a same-named set.
-        // Checked here so a Java caller gets the failure in Java rather than marshalled
-        // back from Python, which reads the same key on its own side.
+        // Both checks run here so a Java caller gets the failure in Java rather than
+        // marshalled back from Python, which repeats them on its own side.
+        mailboxThreadChecker.run();
         currentPartitionKey();
         return (Boolean) adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name));
     }

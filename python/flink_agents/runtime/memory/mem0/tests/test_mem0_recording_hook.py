@@ -32,7 +32,11 @@ def _make_ltm() -> Mem0LongTermMemory:
     ctx = MagicMock()
     ctx.agent_metric_group = None
     return Mem0LongTermMemory.model_construct(
-        ctx=ctx, job_id="job", key="shared-partition", metric_group=None
+        ctx=ctx,
+        job_id="job",
+        key="shared-partition",
+        metric_group=None,
+        mailbox_thread_checker=lambda: None,
     )
 
 

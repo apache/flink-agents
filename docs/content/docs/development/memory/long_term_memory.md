@@ -184,6 +184,19 @@ A memory set is scoped to the key of the action that obtained it. Call `get_memo
 `getMemorySet` inside each action that needs one, rather than caching a set and reusing it
 in a later action. Reusing a set would apply another key's operations to the key it was
 originally obtained for, and operating on a set that carries no scope raises an error.
+
+Obtaining a memory set and deleting one both read the key currently in scope, which only
+the action's own thread reads consistently. Both raise wherever they run on a worker
+thread, so passing `getMemorySet` / `get_memory_set` or `deleteMemorySet` /
+`delete_memory_set` to `durableExecuteAsync` / `durable_execute_async` is unsupported: in
+Python, and in Java on JDK 21 and above, the callable runs on a worker thread and the call
+raises. On JDK 11 Java runs the callable inline instead, so the same code does not raise
+today, but it is unsupported there too and will raise once the job moves to a newer JDK.
+
+Operations on a set you already hold are unaffected, since they carry the key the set was
+obtained under. That is why a memory set may be handed to a worker thread but the long-term
+memory itself may not.
+
 Long-term memory also requires a non-empty partition key. A key of `""` carries no
 isolation in the backing store, so obtaining or using a memory set under one raises
 rather than writing memories that no key can read back.

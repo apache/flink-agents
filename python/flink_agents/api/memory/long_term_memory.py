@@ -164,11 +164,11 @@ class BaseLongTermMemory(ABC, BaseModel):
         """Get the memory set by name. If it does not exist, create it.
 
         The returned set is bound to the calling action, so call this from the action
-        body itself, not from a callback running on another thread, and obtain one per
-        action rather than holding one across actions. Operating on a set whose
-        partition key is absent or empty raises rather than silently widening the
-        operation to every partition key, and this method itself raises unless a
-        non-empty partition key is in scope.
+        body itself; calling it from another thread raises. Obtain one per action rather
+        than holding one across actions. Operating on a set whose partition key is
+        absent or empty raises rather than silently widening the operation to every
+        partition key, and this method itself raises unless a non-empty partition key is
+        in scope.
 
         Args:
             name: The name of the memory set.
@@ -182,9 +182,10 @@ class BaseLongTermMemory(ABC, BaseModel):
         """Delete the memory set.
 
         Unlike the set-scoped operations, this takes a name and applies to the key
-        currently in scope, so it must be called from the action body rather than from
-        another thread, and can target a different key than ``MemorySet.delete`` on a
-        same-named set would. It raises unless a non-empty partition key is in scope.
+        currently in scope, so it must be called from the action body; calling it from
+        another thread raises. It can target a different key than ``MemorySet.delete``
+        on a same-named set would, and raises unless a non-empty partition key is in
+        scope.
 
         Args:
             name: The name of the memory set.

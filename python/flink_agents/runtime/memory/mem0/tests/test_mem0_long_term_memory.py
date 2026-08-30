@@ -172,6 +172,7 @@ def ltm(mock_ctx):
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
     # Operations refuse an absent or empty key, so the fixture runs under the key an
     # action would have switched to.
@@ -460,6 +461,7 @@ def test_token_usage_reported_on_switch_context() -> None:
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
 
     # First switch_context triggers lazy init; no metrics yet.
@@ -520,6 +522,7 @@ def test_token_usage_flushed_on_close() -> None:
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
 
     ltm.switch_context("key_1", observation_id="action-1")
