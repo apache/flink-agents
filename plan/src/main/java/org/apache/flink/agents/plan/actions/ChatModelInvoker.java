@@ -174,6 +174,9 @@ final class ChatModelInvoker {
                 ExecutionReporters.succeeded(
                         ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
                 ChatModelAction.recordChatTokenMetrics(chatModel, response, requestMetricGroup);
+                // A truncated response consumed its full token budget, so the token metrics
+                // above are recorded before this rejects and abandons the response.
+                ChatModelAction.rejectIncompleteResponse(response);
                 // only generate structured output for final response.
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     response =

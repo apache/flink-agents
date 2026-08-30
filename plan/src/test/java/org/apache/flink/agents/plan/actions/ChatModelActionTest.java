@@ -25,17 +25,11 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.HashMap;
-import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -65,14 +59,6 @@ class ChatModelActionTest {
                 ctx,
                 new ChatMessage(MessageRole.ASSISTANT, PARSEABLE_CONTENT, extraArgs),
                 Map.class);
-    }
-
-    private static Stream<Map<String, Object>> acceptedFinishReasons() {
-        return Stream.of(
-                Map.of("finish_reason", "stop"),
-                Map.of("finish_reason", "tool_calls"),
-                Map.of("finish_reason", "some_vendor_reason"),
-                Map.of());
     }
 
     @Test
@@ -214,60 +200,10 @@ class ChatModelActionTest {
     }
 
     @Test
-    void testStructuredOutputRejectsTruncatedResponse() {
-        IllegalStateException error =
-                assertThrows(
-                        IllegalStateException.class,
-                        () ->
-                                generateStructuredOutput(
-                                        reportingContext(), Map.of("finish_reason", "length")));
-
-        String message = error.getMessage().toLowerCase(Locale.ROOT);
-        assertTrue(message.contains("truncat"), message);
-        assertTrue(message.contains("token"), message);
-    }
-
-    @Test
-    void testStructuredOutputRejectsContentFilteredResponse() {
-        IllegalStateException error =
-                assertThrows(
-                        IllegalStateException.class,
-                        () ->
-                                generateStructuredOutput(
-                                        reportingContext(),
-                                        Map.of("finish_reason", "content_filter")));
-
-        // Both rejection messages interpolate the finish reason, so the literal
-        // content_filter appears in either one and cannot tell them apart. These
-        // match prose unique to the filtering message.
-        String message = error.getMessage().toLowerCase(Locale.ROOT);
-        assertTrue(message.contains("withheld"), message);
-        assertTrue(message.contains("content filter"), message);
-    }
-
-    @ParameterizedTest
-    @MethodSource("acceptedFinishReasons")
-    void testAcceptedFinishReasonParsesStructuredOutput(Map<String, Object> extraArgs)
-            throws Exception {
-        ChatMessage parsed = generateStructuredOutput(reportingContext(), extraArgs);
+    void testStructuredOutputParsesToExpectedValue() throws Exception {
+        ChatMessage parsed = generateStructuredOutput(reportingContext(), Map.of());
 
         assertEquals(Map.of("answer", "42"), parsed.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"length", "content_filter"})
-    void testRejectedFinishReasonReportsNoParserExecution(String finishReason) throws Exception {
-        RunnerContext ctx = reportingContext();
-
-        assertThrows(
-                IllegalStateException.class,
-                () -> generateStructuredOutput(ctx, Map.of("finish_reason", finishReason)));
-
-        ExecutionReporter reporter = (ExecutionReporter) ctx;
-        verify(reporter, never()).reportExecutionStarted(anyString(), anyString(), any());
-        verify(reporter, never()).reportExecutionSucceeded(anyString(), anyString(), any());
-        verify(reporter, never())
-                .reportExecutionFailed(anyString(), anyString(), any(), any(), any());
     }
 
     @Test

@@ -580,39 +580,35 @@ public class ChatModelAction {
     }
 
     /**
-     * Rejects a response the provider did not finish emitting. A finish reason reporting the
-     * content as cut off by the token budget or withheld by content filtering raises {@link
+     * Rejects a response the provider did not finish emitting. Evaluated once per chat response,
+     * before it is dispatched as text, structured output, or tool calls. A finish reason reporting
+     * the content as cut off by the token budget or withheld by content filtering raises {@link
      * IllegalStateException}; any other reason, and an absent one, are accepted.
      */
-    private static void rejectIncompleteResponse(ChatMessage response) {
+    static void rejectIncompleteResponse(ChatMessage response) {
         Object finishReason = response.getExtraArgs().get(FINISH_REASON);
         if (TRUNCATED_FINISH_REASON.equals(finishReason)) {
             throw new IllegalStateException(
                     String.format(
                             "ChatModel response is truncated (finish_reason='%s'): it"
                                     + " exhausted the completion token budget before the model"
-                                    + " finished, so the content is incomplete and cannot yield"
-                                    + " structured output. Raise the model's max output tokens,"
-                                    + " or ask for a smaller output.",
+                                    + " finished, so the content is incomplete. Raise the"
+                                    + " model's max output tokens, or ask for a smaller output.",
                             finishReason));
         }
         if (CONTENT_FILTERED_FINISH_REASON.equals(finishReason)) {
             throw new IllegalStateException(
                     String.format(
                             "ChatModel response was withheld by the provider's content"
-                                    + " filter (finish_reason='%s'), so the content is incomplete"
-                                    + " and cannot yield structured output. Adjust the prompt or"
-                                    + " the provider's content filtering configuration.",
+                                    + " filter (finish_reason='%s'), so the content is"
+                                    + " incomplete. Adjust the prompt or the provider's content"
+                                    + " filtering configuration.",
                             finishReason));
         }
     }
 
     static ChatMessage generateStructuredOutputWithReport(
             RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
-        // Precedes the start report: when this rejects, parsing is never attempted, so there is no
-        // parser execution to report.
-        rejectIncompleteResponse(response);
-
         ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
         try {
             ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);

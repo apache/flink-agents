@@ -37,6 +37,9 @@ import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
@@ -47,6 +50,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -54,7 +58,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
-/** Tests for retry behavior in {@link ChatModelAction}. */
+/**
+ * Tests for {@link ChatModelAction#chat} driven end to end: retry behavior, execution reporting,
+ * the finish-reason gate, and tool-response handling.
+ */
 class ChatModelActionRetryTest {
 
     private static final Map<String, Object> LLM_METADATA =
@@ -423,6 +430,205 @@ class ChatModelActionRetryTest {
         ArgumentCaptor<Map<String, Object>> promptArgsCaptor = ArgumentCaptor.forClass(Map.class);
         verify(mockChatModel).chat(any(), promptArgsCaptor.capture(), any());
         assertThat(promptArgsCaptor.getValue()).isEqualTo(savedPromptArgs);
+    }
+
+    @Test
+    void chatRejectsTruncatedTextResponse() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "partial answ",
+                                Map.of("finish_reason", "length")));
+
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.chat(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        Map.of(),
+                                        null,
+                                        reportingCtx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("truncated")
+                .hasMessageContaining("token");
+
+        assertThat(sentEvents).isEmpty();
+    }
+
+    @Test
+    void chatRejectsContentFilteredTextResponse() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "",
+                                Map.of("finish_reason", "content_filter")));
+
+        // Both rejection messages interpolate the finish reason, so the literal
+        // content_filter appears in either one and cannot tell them apart. These
+        // match prose unique to the filtering message.
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.chat(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        Map.of(),
+                                        null,
+                                        reportingCtx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("withheld")
+                .hasMessageContaining("content filter");
+
+        assertThat(sentEvents).isEmpty();
+    }
+
+    @Test
+    void chatRejectsTruncatedToolCallResponseBeforeDispatchingTools() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "",
+                                List.of(
+                                        Map.of(
+                                                "id",
+                                                "call-1",
+                                                "function",
+                                                Map.of("name", "f", "arguments", ""))),
+                                Map.of("finish_reason", "length")));
+
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.chat(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        Map.of(),
+                                        null,
+                                        reportingCtx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("truncated");
+
+        // A truncated tool call carries arguments the model never finished writing,
+        // so no ToolRequestEvent may leave the action.
+        assertThat(sentEvents).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"length", "content_filter"})
+    void chatRejectedFinishReasonSkipsStructuredOutput(String finishReason) throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "{\"answer\":\"42\"}",
+                                Map.of(
+                                        "finish_reason",
+                                        finishReason,
+                                        "model_name",
+                                        "provider-model",
+                                        "promptTokens",
+                                        100L,
+                                        "completionTokens",
+                                        50L)));
+
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.chat(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        Map.of(),
+                                        Map.class,
+                                        reportingCtx))
+                .isInstanceOf(IllegalStateException.class);
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        // The model call itself succeeded and spent its full token budget, so both
+        // must be recorded before the response is rejected.
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+        verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 100L, 50L);
+        // The parse is never attempted, so nothing about it is reported. The failed
+        // check is unscoped: the rejection must not be reported as a failure of any
+        // entity, the model call included.
+        verify(reporter, never())
+                .reportExecutionStarted(
+                        eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
+        verify(reporter, never())
+                .reportExecutionSucceeded(
+                        eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
+        verify(reporter, never())
+                .reportExecutionFailed(anyString(), anyString(), any(), any(), any());
+        assertThat(sentEvents).isEmpty();
+    }
+
+    @Test
+    void chatIgnoreStrategyDropsRejectedResponseWithoutEvent() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig())
+                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.IGNORE));
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "partial answ",
+                                Map.of("finish_reason", "length")));
+
+        // Under IGNORE the record is dropped: the rejection does not propagate and no
+        // event carries the truncated content downstream.
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+
+        assertThat(sentEvents).isEmpty();
+    }
+
+    private static Stream<Map<String, Object>> acceptedFinishReasons() {
+        return Stream.of(
+                Map.of("finish_reason", "stop"),
+                Map.of("finish_reason", "tool_calls"),
+                Map.of("finish_reason", "some_vendor_reason"),
+                Map.of());
+    }
+
+    @ParameterizedTest
+    @MethodSource("acceptedFinishReasons")
+    void chatAcceptedFinishReasonReachesTheResponseEvent(Map<String, Object> extraArgs)
+            throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello", extraArgs));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getResponse().getContent())
+                .isEqualTo("hello");
     }
 
     // --- Helper methods ---

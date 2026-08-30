@@ -34,7 +34,7 @@ from flink_agents.api.core_options import (
     ErrorHandlingStrategy,
 )
 from flink_agents.api.events.chat_event import ChatResponseEvent
-from flink_agents.api.events.tool_event import ToolResponseEvent
+from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.metric_group import Counter, MetricGroup
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
@@ -119,6 +119,7 @@ def _create_mock_runner_context(
     chat_model: Any,
     max_retries: int = 3,
     retry_wait_interval_sec: int = 1,
+    error_handling_strategy: ErrorHandlingStrategy = ErrorHandlingStrategy.RETRY,
 ) -> tuple[MagicMock, list, _MockMetricGroup, _MockMemoryObject]:
     """Create a mock RunnerContext with configurable retry settings.
 
@@ -131,7 +132,7 @@ def _create_mock_runner_context(
 
     config = MagicMock()
     option_values = {
-        id(AgentExecutionOptions.ERROR_HANDLING_STRATEGY): ErrorHandlingStrategy.RETRY,
+        id(AgentExecutionOptions.ERROR_HANDLING_STRATEGY): error_handling_strategy,
         id(AgentExecutionOptions.MAX_RETRIES): max_retries,
         id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): retry_wait_interval_sec,
         id(AgentExecutionOptions.CHAT_ASYNC): False,
@@ -341,6 +342,204 @@ class TestChatModelActionRetry:
             )
             == 2
         )
+
+
+class TestChatModelActionFinishReason:
+    """Tests for the finish-reason gate on the common chat-response path."""
+
+    def _run(self, ctx, output_schema=None) -> None:
+        asyncio.run(
+            chat(
+                uuid4(),
+                "test-model",
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                {},
+                output_schema,
+                ctx,
+            )
+        )
+
+    def test_truncated_text_response_rejected(self) -> None:
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="partial answ",
+                extra_args={"finish_reason": "length"},
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        with pytest.raises(ValueError, match="(?i)truncat") as exc_info:
+            self._run(ctx)
+
+        assert "token" in str(exc_info.value).lower()
+        assert len(sent_events) == 0
+
+    def test_content_filtered_text_response_rejected(self) -> None:
+        # Matches a word unique to the filtering message. Both messages
+        # interpolate the finish reason, so "content_filter" appears in either
+        # one and cannot tell them apart.
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="",
+                extra_args={"finish_reason": "content_filter"},
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        with pytest.raises(ValueError, match="(?i)withheld"):
+            self._run(ctx)
+
+        assert len(sent_events) == 0
+
+    def test_truncated_tool_call_response_rejected_before_tool_dispatch(self) -> None:
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=[
+                    {
+                        "id": "call-1",
+                        "function": {"name": "f", "arguments": ""},
+                    }
+                ],
+                extra_args={"finish_reason": "length"},
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        with pytest.raises(ValueError, match="(?i)truncat"):
+            self._run(ctx)
+
+        # A truncated tool call carries arguments the model never finished
+        # writing, so no ToolRequestEvent may leave the action.
+        assert len(sent_events) == 0
+
+    @pytest.mark.parametrize(
+        "extra_args",
+        [
+            {"finish_reason": "stop"},
+            {"finish_reason": "tool_calls"},
+            {"finish_reason": "some_vendor_reason"},
+            {},
+        ],
+        ids=["stop", "tool_calls", "unrecognized", "absent"],
+    )
+    def test_accepted_finish_reason_reaches_the_response_event(
+        self, extra_args: dict
+    ) -> None:
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="hello",
+                extra_args=extra_args,
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        self._run(ctx)
+
+        assert len(sent_events) == 1
+        assert isinstance(sent_events[0], ChatResponseEvent)
+        assert sent_events[0].response.content == "hello"
+
+    def test_accepted_finish_reason_dispatches_tool_request_event(self) -> None:
+        # A response carrying tool calls passes the same finish-reason gate as a
+        # text response, so an accepted reason must reach tool dispatch.
+        tool_calls = [{"id": "call-1", "function": {"name": "f", "arguments": {}}}]
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="",
+                tool_calls=tool_calls,
+                extra_args={"finish_reason": "tool_calls"},
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        self._run(ctx)
+
+        assert len(sent_events) == 1
+        assert isinstance(sent_events[0], ToolRequestEvent)
+        assert sent_events[0].tool_calls == tool_calls
+
+    def test_ignore_strategy_drops_rejected_response_without_event(self) -> None:
+        # Under IGNORE the record is dropped: the rejection does not propagate
+        # and no event carries the truncated content downstream.
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content="partial answ",
+                extra_args={"finish_reason": "length"},
+            )
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model,
+            max_retries=0,
+            retry_wait_interval_sec=0,
+            error_handling_strategy=ErrorHandlingStrategy.IGNORE,
+        )
+
+        self._run(ctx)
+
+        assert len(sent_events) == 0
+
+    @pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
+    def test_rejected_finish_reason_skips_structured_output(
+        self, finish_reason: str
+    ) -> None:
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            return_value=ChatMessage(
+                role=MessageRole.ASSISTANT,
+                content='{"result": 42}',
+                extra_args={
+                    "finish_reason": finish_reason,
+                    "model_name": "provider-model",
+                    "promptTokens": 100,
+                    "completionTokens": 50,
+                },
+            )
+        )
+        ctx, sent_events, metric_group, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+
+        with pytest.raises(ValueError):
+            self._run(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        # The model call itself succeeded and spent its full token budget, so
+        # both must be recorded before the response is rejected.
+        ctx.report_execution_succeeded.assert_called_once_with(
+            ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+        )
+        chat_model._record_token_metrics.assert_called_once_with(
+            "provider-model", 100, 50, metric_group
+        )
+        # The parse is never attempted, so nothing about it is reported and no
+        # response leaves the action.
+        ctx.report_execution_started.assert_called_once_with(
+            ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+        )
+        ctx.report_execution_failed.assert_not_called()
+        assert len(sent_events) == 0
 
 
 class TestChatResponseEventRetryFields:

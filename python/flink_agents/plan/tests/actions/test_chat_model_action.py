@@ -18,11 +18,9 @@
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
 from pydantic import BaseModel
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
-from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory_object import MemoryType
@@ -231,36 +229,7 @@ def _parse(ctx, extra_args) -> ChatMessage:
     )
 
 
-def test_length_finish_reason_rejects_parsing():
-    with pytest.raises(ValueError, match="(?i)truncat") as exc_info:
-        _parse(MagicMock(spec=ExecutionReporter), {"finish_reason": "length"})
-    assert "token" in str(exc_info.value).lower()
-
-
-def test_content_filter_finish_reason_rejects_parsing():
-    # Matches a word unique to the filtering message. Both messages interpolate
-    # the finish reason, so "content_filter" appears in either one and cannot
-    # tell them apart.
-    with pytest.raises(ValueError, match="(?i)withheld"):
-        _parse(MagicMock(spec=ExecutionReporter), {"finish_reason": "content_filter"})
-
-
-@pytest.mark.parametrize("finish_reason", ["length", "content_filter"])
-def test_rejected_finish_reason_reports_no_parser_execution(finish_reason):
-    ctx = MagicMock(spec=ExecutionReporter)
-
-    with pytest.raises(ValueError):
-        _parse(ctx, {"finish_reason": finish_reason})
-
-    ctx.report_execution_started.assert_not_called()
-    ctx.report_execution_succeeded.assert_not_called()
-    ctx.report_execution_failed.assert_not_called()
-
-
 def test_accepted_finish_reason_reports_parser_execution():
-    # Reports only reach a context that satisfies ExecutionReporter, so this
-    # also pins that the fixture still does. Without it, the assert_not_called
-    # checks above would hold for any context and stop testing the gate.
     ctx = MagicMock(spec=ExecutionReporter)
 
     _parse(ctx, {"finish_reason": "stop"})
@@ -268,18 +237,3 @@ def test_accepted_finish_reason_reports_parser_execution():
     ctx.report_execution_started.assert_called_once()
     ctx.report_execution_succeeded.assert_called_once()
     ctx.report_execution_failed.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "extra_args",
-    [
-        {"finish_reason": "stop"},
-        {"finish_reason": "tool_calls"},
-        {"finish_reason": "some_vendor_reason"},
-        {},
-    ],
-    ids=["stop", "tool_calls", "unrecognized", "absent"],
-)
-def test_accepted_finish_reason_parses_structured_output(extra_args):
-    response = _parse(MagicMock(spec=ExecutionReporter), extra_args)
-    assert response.extra_args[STRUCTURED_OUTPUT].result == 42

@@ -278,6 +278,9 @@ def _generate_structured_output(
 def _reject_incomplete_response(response: ChatMessage) -> None:
     """Reject a response the provider did not finish emitting.
 
+    Evaluated once per chat response, before it is dispatched as text,
+    structured output, or tool calls.
+
     Args:
         response: The chat response whose ``finish_reason`` is inspected. Any
             other reason, and an absent one, are accepted.
@@ -291,16 +294,15 @@ def _reject_incomplete_response(response: ChatMessage) -> None:
         error_message = (
             f"ChatModel response is truncated (finish_reason={finish_reason!r}): "
             "it exhausted the completion token budget before the model finished, "
-            "so the content is incomplete and cannot yield structured output. "
-            "Raise the model's max output tokens, or ask for a smaller output."
+            "so the content is incomplete. Raise the model's max output tokens, "
+            "or ask for a smaller output."
         )
         raise ValueError(error_message)
     if finish_reason == _CONTENT_FILTERED_FINISH_REASON:
         error_message = (
             "ChatModel response was withheld by the provider's content filter "
-            f"(finish_reason={finish_reason!r}), so the content is incomplete "
-            "and cannot yield structured output. Adjust the prompt or the "
-            "provider's content filtering configuration."
+            f"(finish_reason={finish_reason!r}), so the content is incomplete. "
+            "Adjust the prompt or the provider's content filtering configuration."
         )
         raise ValueError(error_message)
 
@@ -308,10 +310,6 @@ def _reject_incomplete_response(response: ChatMessage) -> None:
 def _generate_structured_output_with_report(
     ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
 ) -> ChatMessage:
-    # Precedes the start report: when this rejects, parsing is never attempted,
-    # so there is no parser execution to report.
-    _reject_incomplete_response(response)
-
     ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
     try:
         structured_response = _generate_structured_output(response, output_schema)
@@ -430,6 +428,10 @@ async def chat(
                     response.extra_args["completionTokens"],
                     request_metric_group,
                 )
+            # A truncated response consumed its full token budget, so the token
+            # metrics above are recorded before this rejects and abandons the
+            # response.
+            _reject_incomplete_response(response)
             if output_schema is not None and len(response.tool_calls) == 0:
                 response = _generate_structured_output_with_report(
                     ctx, response, output_schema
