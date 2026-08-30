@@ -132,10 +132,22 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlRejectsMalformedUrl() {
-        IllegalArgumentException ex =
-                assertThrows(
-                        IllegalArgumentException.class, () -> Skills.fromUrl("https://[::1/x.zip"));
-        assertEquals("Invalid skill URL: <redacted>", ex.getMessage());
+        for (String url : List.of("https://[::1/x.zip", "https://example.com/skills[1].zip")) {
+            IllegalArgumentException ex =
+                    assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
+            assertEquals("Invalid skill URL: <redacted>", ex.getMessage());
+        }
+    }
+
+    @Test
+    void fromUrlAcceptsBracketsOutsideRawPath() {
+        for (String url :
+                List.of(
+                        "https://example.com/skills%5B1%5D.zip",
+                        "https://example.com/x.zip?a[0]=1",
+                        "https://example.com/x.zip#f[1]")) {
+            assertEquals(url, Skills.fromUrl(url).getSources().get(0).getParams().get("url"));
+        }
     }
 
     @Test

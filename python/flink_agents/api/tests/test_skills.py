@@ -136,6 +136,17 @@ class TestSkillsFactories:
         with pytest.raises(ValueError, match="valid host"):
             Skills.from_url(url)
 
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/skills%5B1%5D.zip",
+            "https://example.com/x.zip?a[0]=1",
+            "https://example.com/x.zip#f[1]",
+        ],
+    )
+    def test_from_url_accepts_brackets_outside_raw_path(self, url: str) -> None:
+        assert Skills.from_url(url).sources[0].params["url"] == url
+
     def test_from_url_rejects_user_info_without_leaking_secrets(self) -> None:
         url = "https://user:password@example.com/x.zip?token=secret#part"
         with pytest.raises(ValueError, match="must not include user info") as exc_info:
@@ -158,6 +169,7 @@ class TestSkillsFactories:
             "https://example.com/%invalid",
             "https://[fe80::1%eth0]/x.zip",
             "https://[::1/x.zip",
+            "https://example.com/skills[1].zip",
         ],
     )
     def test_from_url_rejects_malformed_url(self, url: str) -> None:

@@ -161,6 +161,7 @@ class TestURLSkillRepository:
             "https://example.com/x zip?token=top-secret",
             "https://example.com/%invalid?token=top-secret",
             "https://[fe80::1%eth0]/x.zip?token=top-secret",
+            "https://example.com/skills[1].zip?token=top-secret",
             "https:user:password?token=top-secret",
         ],
     )

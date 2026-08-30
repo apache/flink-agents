@@ -18,11 +18,17 @@
 
 package org.apache.flink.agents.api.skills;
 
+import org.apache.flink.annotation.Internal;
+
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Locale;
 
-/** Shared validation and redaction helpers for URL-backed skill sources. */
+/**
+ * Shared validation and redaction helpers for URL-backed skill sources. Internal contract shared
+ * with the runtime module; not a stable public API.
+ */
+@Internal
 public final class SkillUrlUtils {
 
     private SkillUrlUtils() {}

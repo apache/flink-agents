@@ -73,7 +73,10 @@ _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 
 
 def redact_skill_url(url: str) -> str:
-    """Return a skill URL without user info, query parameters, or a fragment."""
+    """Return a skill URL without user info, query parameters, or a fragment.
+
+    Internal contract shared with the runtime; not a stable public API.
+    """
     try:
         parts = urlsplit(url)
         if not parts.scheme or not parts.netloc:
@@ -87,7 +90,10 @@ def redact_skill_url(url: str) -> str:
 
 
 def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
-    """Validate a skill URL using the contract shared with the Java API."""
+    """Validate a skill URL using the contract shared with the Java API.
+
+    Internal contract shared with the runtime; not a stable public API.
+    """
     if not isinstance(url, str):
         msg = "skill URL must be a string"
         raise TypeError(msg)
@@ -97,6 +103,11 @@ def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
         msg = f"Invalid skill URL: {redact_skill_url(url)}"
         raise ValueError(msg) from None
     if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    # Java's URI rejects raw brackets in the path (but not in the query or
+    # fragment); encoded %5B/%5D and IPv6 authority brackets stay valid.
+    if any(c in f"{parsed.path};{parsed.params}" for c in "[]"):
         msg = f"Invalid skill URL: {redact_skill_url(url)}"
         raise ValueError(msg)
     scheme = parsed.scheme.lower()
