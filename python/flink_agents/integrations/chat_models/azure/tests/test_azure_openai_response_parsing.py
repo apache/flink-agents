@@ -71,7 +71,6 @@ def _connection(
         payload["usage"] = usage
 
     conn = AzureOpenAIChatModelConnection(
-        name="azure_openai",
         api_key="test-key",
         azure_endpoint="https://example.openai.azure.com",
         api_version="2024-08-01-preview",

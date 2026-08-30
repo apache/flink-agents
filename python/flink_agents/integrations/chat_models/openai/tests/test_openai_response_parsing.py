@@ -192,7 +192,7 @@ def _connection(
         payload["usage"] = usage
 
     conn = OpenAIChatModelConnection(
-        name="openai", api_key="test-key", api_base_url="http://localhost"
+        api_key="test-key", api_base_url="http://localhost"
     )
     mock_client = MagicMock()
     mock_client.chat.completions.create.return_value = ChatCompletion.construct(
