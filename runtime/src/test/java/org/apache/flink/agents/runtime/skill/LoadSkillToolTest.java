@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.junit.jupiter.api.Test;
 
@@ -94,6 +95,50 @@ class LoadSkillToolTest {
         // The script file should be returned verbatim (not wrapped in <skill_content>).
         assertTrue(!out.startsWith("<skill_content"));
         assertTrue(out.length() > 0);
+    }
+
+    @Test
+    void executionMetadataDescribesRequestedSkillResource() {
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(args("github", "README.md"));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("README.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void executionMetadataNormalizesOmittedPathToSkillMd() {
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(args("github", null));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("SKILL.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void executionMetadataNormalizesExplicitNullPathToSkillMd() {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("name", "github");
+        parameters.put("path", null);
+
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(new ToolParameters(parameters));
+
+        assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals("SKILL.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void explicitNullPathLoadsSkillContentEnvelope() {
+        Map<String, Object> parameters = new HashMap<>();
+        parameters.put("name", "github");
+        parameters.put("path", null);
+        LoadSkillTool t = tool(contextWithSkills());
+
+        ToolResponse resp = t.call(new ToolParameters(parameters));
+
+        String out = (String) resp.getResult();
+        assertTrue(out.startsWith("<skill_content name=\"github\">"));
     }
 
     @Test

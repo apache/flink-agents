@@ -93,6 +93,9 @@ public class AgentPlan implements Serializable {
     /** Two-level mapping of resource type to resource name to resource provider. */
     private Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
 
+    /** User-visible agent identity used for observability. */
+    private String agentName;
+
     private AgentConfiguration config;
 
     public AgentPlan(Map<String, Action> actions) {
@@ -113,9 +116,18 @@ public class AgentPlan implements Serializable {
             Map<String, Action> actions,
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             AgentConfiguration config) {
+        this(actions, resourceProviders, config, null);
+    }
+
+    public AgentPlan(
+            Map<String, Action> actions,
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            AgentConfiguration config,
+            String agentName) {
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = config;
+        this.agentName = agentName;
     }
 
     /**
@@ -130,12 +142,17 @@ public class AgentPlan implements Serializable {
     }
 
     public AgentPlan(Agent agent, AgentConfiguration config) throws Exception {
+        this(agent, config, defaultAgentName(agent));
+    }
+
+    public AgentPlan(Agent agent, AgentConfiguration config, String agentName) throws Exception {
         this.actions = new LinkedHashMap<>();
         this.resourceProviders = new HashMap<>();
         this.config = config;
         extractActionsFromAgent(agent);
         extractResourceProvidersFromAgent(agent);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
+        this.agentName = agentName != null ? agentName : defaultAgentName(agent);
     }
 
     public Map<String, Action> getActions() {
@@ -152,6 +169,10 @@ public class AgentPlan implements Serializable {
 
     public Map<ResourceType, Map<String, ResourceProvider>> getResourceProviders() {
         return resourceProviders;
+    }
+
+    public String getAgentName() {
+        return agentName;
     }
 
     public AgentConfiguration getConfig() {
@@ -172,7 +193,13 @@ public class AgentPlan implements Serializable {
         AgentPlan agentPlan = new ObjectMapper().readValue(serializedStr, AgentPlan.class);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(agentPlan.getActions()));
         this.resourceProviders = agentPlan.getResourceProviders();
+        this.agentName = agentPlan.getAgentName();
         this.config = agentPlan.getConfig();
+    }
+
+    private static String defaultAgentName(Agent agent) {
+        String simpleName = agent.getClass().getSimpleName();
+        return simpleName == null || simpleName.isEmpty() ? agent.getClass().getName() : simpleName;
     }
 
     private void extractActions(
@@ -353,7 +380,8 @@ public class AgentPlan implements Serializable {
         Iterable<? extends SerializableResource> tools =
                 (Iterable<? extends SerializableResource>) listToolsMethod.invoke(mcpServer);
 
-        for (SerializableResource tool : tools) {
+        for (SerializableResource discoveredTool : tools) {
+            SerializableResource tool = attachMcpServerNameIfSupported(discoveredTool, name);
             Method getNameMethod = tool.getClass().getMethod("getName");
             String toolName = (String) getNameMethod.invoke(tool);
             addResourceProvider(
@@ -377,6 +405,19 @@ public class AgentPlan implements Serializable {
         // Call close() via reflection
         Method closeMethod = mcpServer.getClass().getMethod("close");
         closeMethod.invoke(mcpServer);
+    }
+
+    private static SerializableResource attachMcpServerNameIfSupported(
+            SerializableResource tool, String mcpServerName) throws Exception {
+        try {
+            Method method = tool.getClass().getMethod("withMcpServerName", String.class);
+            Object associatedTool = method.invoke(tool, mcpServerName);
+            return associatedTool instanceof SerializableResource
+                    ? (SerializableResource) associatedTool
+                    : tool;
+        } catch (NoSuchMethodException ignored) {
+            return tool;
+        }
     }
 
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
@@ -617,9 +658,37 @@ public class AgentPlan implements Serializable {
 
     /** Adds a resource provider to the resourceProviders map. */
     private void addResourceProvider(ResourceProvider provider) {
+        checkNoRouterModelNameClash(provider);
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * A name must not be registered as both a {@link ResourceType#CHAT_MODEL} and a {@link
+     * ResourceType#MODEL_ROUTER}: an agent references either by putting it in {@code
+     * ChatRequestEvent.model}, so a name that is both would resolve ambiguously. Fail clearly at
+     * plan-construction time rather than at request time.
+     */
+    private void checkNoRouterModelNameClash(ResourceProvider provider) {
+        final ResourceType conflicting;
+        if (provider.getType() == ResourceType.MODEL_ROUTER) {
+            conflicting = ResourceType.CHAT_MODEL;
+        } else if (provider.getType() == ResourceType.CHAT_MODEL) {
+            conflicting = ResourceType.MODEL_ROUTER;
+        } else {
+            return;
+        }
+        Map<String, ResourceProvider> existing = resourceProviders.get(conflicting);
+        if (existing != null && existing.containsKey(provider.getName())) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Resource name '%s' is registered as both %s and %s; a name must not be"
+                                    + " both a chat model and a model router.",
+                            provider.getName(),
+                            ResourceType.CHAT_MODEL,
+                            ResourceType.MODEL_ROUTER));
+        }
     }
 
     /**

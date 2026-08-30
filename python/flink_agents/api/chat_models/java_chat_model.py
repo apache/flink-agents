@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from pydantic import ConfigDict
+
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -31,6 +33,12 @@ class JavaChatModelConnection(BaseChatModelConnection):
     unlike JavaChatModelSetup, it does not provide direct chat functionality in Python.
     """
 
+    # Java descriptors intentionally carry implementation-specific arguments (e.g.
+    # java_clazz, or setup-specific keys like extract_reasoning) in an open map, so
+    # this reverts the base class's strict extra="forbid" back to "ignore" rather
+    # than making Java and Python validation semantics diverge.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
+
     java_class_name: str = ""
 
 
@@ -43,5 +51,8 @@ class JavaChatModelSetup(BaseChatModelSetup):
     compatibility while delegating actual chat operations to the underlying Java
     implementation.
     """
+
+    # See JavaChatModelConnection.model_config for rationale.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="ignore")
 
     java_class_name: str = ""

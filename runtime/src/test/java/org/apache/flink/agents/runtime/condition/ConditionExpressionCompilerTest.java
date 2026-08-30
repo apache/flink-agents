@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.condition;
 import dev.cel.runtime.CelEvaluationException;
 import dev.cel.runtime.CelRuntime;
 import org.apache.flink.agents.api.EventType;
+import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.plan.condition.ConditionExpressionValidator;
 import org.apache.flink.agents.plan.condition.TriggerCondition;
 import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
@@ -72,6 +73,18 @@ class ConditionExpressionCompilerTest {
         CelRuntime.Program program = compileValidated("type == EventType.InputEvent").program();
         Map<String, Object> activation = new HashMap<>();
         activation.put("type", "_input_event");
+        activation.put("attributes", new HashMap<String, Object>());
+        activation.put("EventType", EventType.allConstants());
+
+        assertThat(program.eval(activation)).isEqualTo(true);
+    }
+
+    @Test
+    void resolvesModelRoutingEventConstant() throws CelEvaluationException {
+        CelRuntime.Program program =
+                compileValidated("type == EventType.ModelRoutingEvent").program();
+        Map<String, Object> activation = new HashMap<>();
+        activation.put("type", ModelRoutingEvent.EVENT_TYPE);
         activation.put("attributes", new HashMap<String, Object>());
         activation.put("EventType", EventType.allConstants());
 

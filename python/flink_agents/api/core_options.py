@@ -206,6 +206,12 @@ class AgentConfigOptions:
         default=EventLogLevel.STANDARD,
     )
 
+    EVENT_LOG_TRACE_ENABLED = ConfigOption(
+        key="event-log.trace.enabled",
+        config_type=bool,
+        default=False,
+    )
+
     EVENT_LOG_MAX_STRING_LENGTH = ConfigOption(
         key="event-log.standard.max-string-length",
         config_type=int,
@@ -305,6 +311,36 @@ class AgentExecutionOptions:
         key="tool-call.async",
         config_type=bool,
         default=True,
+    )
+
+    # Default is os.cpu_count(), so multi-tool batches run in parallel on most hosts.
+    # Uses the same num-async-threads pool as chat/RAG (one pool per operator subtask,
+    # shared across keys). Built-in actions for one key run sequentially, so chat and
+    # tool batches on the same key do not overlap in the usual chat->tool flow;
+    # contention is mainly across keys on the same subtask. Defaults:
+    # pool=2xcores, parallelism=cores -> one batch can use up to half the pool.
+    # Lower tool-call.parallelism or raise
+    # num-async-threads when hot subtasks mix heavy tool batches with chat/RAG.
+    TOOL_CALL_PARALLELISM = ConfigOption(
+        key="tool-call.parallelism",
+        config_type=int,
+        default=os.cpu_count() or 1,
+    )
+
+    # Non-positive disables the batch timeout; positive values are milliseconds.
+    #
+    # Thread reclamation: the timeout unblocks the action but does not interrupt a
+    # tool that is already running. A running future cannot be cancelled, so a hung
+    # tool keeps its worker thread in the shared num-async-threads pool until it
+    # returns on its own. That thread is not reclaimed by the timeout and stays
+    # unavailable to other keys on the same subtask, so a tool that never returns
+    # permanently reduces pool capacity. Bound blocking work inside the tool itself
+    # (for example an HTTP client read timeout) instead of relying on this batch
+    # timeout to free the thread.
+    TOOL_CALL_BATCH_TIMEOUT_MS = ConfigOption(
+        key="tool-call.batch.timeout.ms",
+        config_type=int,
+        default=-1,
     )
 
     RAG_ASYNC = ConfigOption(

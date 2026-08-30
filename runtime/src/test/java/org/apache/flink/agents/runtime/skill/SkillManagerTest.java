@@ -455,8 +455,9 @@ class SkillManagerTest {
         // fails its registration with one Error and then its close() with another: a load guard
         // narrowed to Exception would skip the cleanup entirely, and a cleanup guard narrowed to
         // Exception would let the close() Error escape and replace the registration failure.
-        // One source keeps the assertions deterministic — closeRepos() catches only Exception per
-        // repo, so an Error from any repo's close() ends the iteration over the remaining ones.
+        // One source keeps the assertions deterministic: with a single repo there is no iteration
+        // order to depend on. closeRepos() now continues past an Error too — see
+        // closeAttemptsEveryRepoWhenAnEarlierRepoThrowsError.
         Error registrationBoom = new Error("registration-error");
         Error closeBoom = new Error("close-error");
         FakeRepo repo = new FakeRepo("alpha", closeBoom, registrationBoom);
@@ -509,6 +510,46 @@ class SkillManagerTest {
         }
         assertTrue(all.contains(badBoom), "bad-close must surface");
         assertTrue(all.contains(good2Boom), "good2-close must surface");
+    }
+
+    @Test
+    void closeAttemptsEveryRepoWhenAnEarlierRepoThrowsError() throws Exception {
+        // An Error from one repo's close() must not strand the repos behind it. Nothing can retry
+        // them: ResourceContextImpl.close() clears its SkillManager reference in a finally, so a
+        // skipped repo leaks its materialized temp directory for the life of the JVM.
+        //
+        // Both repos fail so the assertions do not depend on the de-dup set's iteration order,
+        // which is unspecified. With a handler narrowed to Exception, whichever repo runs first
+        // ends the iteration and the other is left unclosed — that fails here either way round.
+        Error firstBoom = new Error("close-error-1");
+        Error secondBoom = new Error("close-error-2");
+        FakeRepo first = new FakeRepo("alpha", firstBoom);
+        FakeRepo second = new FakeRepo("beta", secondBoom);
+
+        AtomicInteger seq = new AtomicInteger();
+        List<FakeRepo> ordered = List.of(first, second);
+        SkillSourceRegistry.register(
+                "test-close-error", (params, cl) -> ordered.get(seq.getAndIncrement()));
+
+        Skills config =
+                new Skills(
+                        List.of(
+                                new SkillSourceSpec("test-close-error", Map.of()),
+                                new SkillSourceSpec("test-close-error", Map.of())));
+
+        SkillManager manager = new SkillManager(config);
+        // The Error reaches the caller unwrapped rather than boxed in an Exception.
+        Error thrown = assertThrows(Error.class, manager::close);
+
+        assertTrue(first.closed.get(), "the first repo must be attempted");
+        assertTrue(second.closed.get(), "the repo behind the Error must still be closed");
+        List<Throwable> all = new ArrayList<>();
+        all.add(thrown);
+        for (Throwable s : thrown.getSuppressed()) {
+            all.add(s);
+        }
+        assertTrue(all.contains(firstBoom), "the first Error must surface");
+        assertTrue(all.contains(secondBoom), "the second Error must surface");
     }
 
     @Test

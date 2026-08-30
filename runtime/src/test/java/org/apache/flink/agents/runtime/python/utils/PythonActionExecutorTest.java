@@ -20,6 +20,9 @@ package org.apache.flink.agents.runtime.python.utils;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
+
+import java.lang.reflect.Field;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -85,6 +88,88 @@ class PythonActionExecutorTest {
         assertThatThrownBy(() -> executor.resolveKeyText(Row.of(malformedKey), true))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessage("bad pickle");
+    }
+
+    /**
+     * A failing thread-pool shutdown must not skip the runner-context cleanup. That cleanup
+     * releases the Python context's long-term memory and resource cache, and {@code
+     * PythonBridgeManager} closes the interpreter immediately behind this call, so a skipped
+     * cleanup never runs at all.
+     */
+    @Test
+    void closeCleansRunnerContextWhenThreadPoolShutdownFails() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(new RuntimeException("thread pool shutdown failed"));
+
+        assertThatThrownBy(executor::close)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("thread pool shutdown failed")
+                // A lone failure arrives with nothing attached to it.
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
+
+        verify(interpreter)
+                .invoke("flink_runner_context.close_flink_runner_context", runnerContext);
+        // The handle is released even on the failing path, so a repeated close cannot double-free.
+        assertThat(executor.getPythonRunnerContext()).isNull();
+    }
+
+    /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
+    @Test
+    void closeReportsFirstFailureWithLaterOneSuppressed() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(new RuntimeException("thread pool shutdown failed"));
+        when(interpreter.invoke("flink_runner_context.close_flink_runner_context", runnerContext))
+                .thenThrow(new RuntimeException("runner context cleanup failed"));
+
+        assertThatThrownBy(executor::close)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("thread pool shutdown failed")
+                .satisfies(
+                        thrown ->
+                                assertThat(thrown.getSuppressed())
+                                        .extracting(Throwable::getMessage)
+                                        .containsExactly("runner context cleanup failed"));
+    }
+
+    /**
+     * Pins the handler to {@code Throwable}: a non-{@code Exception} failure from the thread-pool
+     * shutdown must still release the runner context, and must reach the caller unwrapped.
+     */
+    @Test
+    void closeCleansRunnerContextWhenThreadPoolShutdownThrowsError() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        OutOfMemoryError failure = new OutOfMemoryError("thread pool shutdown failed");
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(failure);
+
+        assertThatThrownBy(executor::close).isSameAs(failure);
+
+        verify(interpreter)
+                .invoke("flink_runner_context.close_flink_runner_context", runnerContext);
+    }
+
+    private static void setField(PythonActionExecutor executor, String name, Object value)
+            throws Exception {
+        Field field = PythonActionExecutor.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(executor, value);
     }
 
     private static PythonActionExecutor newExecutor(PythonInterpreter interpreter)

@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, ClassVar, Dict, List, Mapping, Sequence, Tuple, cast
 
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import ConfigDict, Field, PrivateAttr, field_validator
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
@@ -114,6 +114,15 @@ class BaseChatModelConnection(Resource, ABC):
 
     One connection can be shared in multiple chat model setup.
     """
+
+    # Reject unrecognized constructor arguments instead of silently ignoring them
+    # (pydantic's default extra="ignore"), so a misspelled or unsupported config
+    # key fails loudly at construction time instead of appearing to apply and
+    # then having no effect. Java-backed subclasses (JavaChatModelConnection,
+    # JavaChatModelSetup) override this back to "ignore", since their descriptor
+    # arguments intentionally carry implementation-specific, provider-facing keys
+    # (e.g. java_clazz, extract_reasoning) that this base has no field for.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     @classmethod
     @override
@@ -217,7 +226,10 @@ class BaseChatModelConnection(Resource, ABC):
                 reasoning_chunks.extend(m.strip() for m in matches if m.strip())
                 cleaned = pat.sub("", cleaned)
 
-        reasoning = "\n\n".join(reasoning_chunks) if reasoning_chunks else None
+        if not reasoning_chunks:
+            return cleaned, None
+
+        reasoning = "\n\n".join(reasoning_chunks)
         cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         cleaned = re.sub(r" {2,}", " ", cleaned)
         cleaned = cleaned.strip()
@@ -275,6 +287,9 @@ class BaseChatModelSetup(Resource):
     Different chat model setups can share the same chat model connection and contains
     different chat configurations.
     """
+
+    # See BaseChatModelConnection.model_config for rationale.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     connection: str = Field(description="The referenced connection name.")
     model: str = Field(description="Name of the chat model to use.")

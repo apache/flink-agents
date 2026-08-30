@@ -22,24 +22,38 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionReporters;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
+    static final String TOOL_CALL_DURABLE_ID = "tool-call";
+    private static final Logger LOG = LoggerFactory.getLogger(ToolCallAction.class);
+
     public static Action getToolCallAction() throws Exception {
         return new Action(
                 "tool_call_action",
@@ -50,15 +64,37 @@ public class ToolCallAction {
                 List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
-    @SuppressWarnings("unchecked")
     public static void processToolRequest(Event event, RunnerContext ctx) {
         ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
+        int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
 
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
         Map<String, ToolResponse> responses = new HashMap<>();
         Map<String, String> externalIds = new HashMap<>();
+        List<ToolCallExecution> executions =
+                buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
+
+        if (toolCallAsync && toolCallParallelism > 1 && executions.size() > 1) {
+            executeParallel(executions, ctx, success, error, responses);
+        } else {
+            executeSequentially(executions, toolCallAsync, ctx, success, error, responses);
+        }
+
+        ctx.sendEvent(
+                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<ToolCallExecution> buildToolCallExecutions(
+            ToolRequestEvent toolRequest,
+            RunnerContext ctx,
+            Map<String, String> externalIds,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        List<ToolCallExecution> executions = new ArrayList<>();
         for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
             String id = String.valueOf(toolCall.get("id"));
             Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
@@ -72,62 +108,307 @@ public class ToolCallAction {
             }
 
             Tool tool = null;
-            String diagnosticError = null;
+            Exception preparationError = null;
             try {
                 tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
             } catch (Exception e) {
-                diagnosticError = e.getMessage();
+                preparationError = e;
             }
-
             if (tool != null) {
                 try {
                     // Framework-owned injected args must win over model-provided values so hidden
                     // context such as tenant ids cannot be spoofed by a tool call payload.
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
-                    ToolResponse response;
-                    final Tool toolRef = tool;
-                    final Map<String, Object> callArguments = mergedArguments;
-                    DurableCallable<ToolResponse> callable =
-                            new DurableCallable<>() {
-                                @Override
-                                public String getId() {
-                                    return "tool-call";
-                                }
-
-                                @Override
-                                public Class<ToolResponse> getResultClass() {
-                                    return ToolResponse.class;
-                                }
-
-                                @Override
-                                public ToolResponse call() throws Exception {
-                                    return toolRef.call(new ToolParameters(callArguments));
-                                }
-                            };
-                    response =
-                            toolCallAsync
-                                    ? ctx.durableExecuteAsync(callable)
-                                    : ctx.durableExecute(callable);
-                    success.put(id, response.isSuccess());
-                    responses.put(id, response);
-                    if (!response.isSuccess() && response.getError() != null) {
-                        error.put(id, response.getError());
-                    }
                 } catch (Exception e) {
-                    success.put(id, false);
-                    responses.put(
-                            id, ToolResponse.error(String.format("Tool %s execute failed.", name)));
-                    error.put(id, e.getMessage());
+                    preparationError = e;
                 }
-            } else {
-                success.put(id, false);
-                responses.put(
-                        id, ToolResponse.error(String.format("Tool %s does not exist.", name)));
-                error.put(id, diagnosticError != null ? diagnosticError : "Tool does not exist.");
+            }
+
+            ToolParameters metadataParameters = new ToolParameters(mergedArguments);
+            Map<String, Object> entityMetadata =
+                    toolEntityMetadata(
+                            toolRequest.getId(),
+                            id,
+                            externalIds.get(id),
+                            name,
+                            tool,
+                            metadataParameters);
+            ExecutionReporters.started(
+                    ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
+
+            if (tool == null || preparationError != null) {
+                Exception failure =
+                        preparationError != null
+                                ? preparationError
+                                : new IllegalArgumentException("Tool does not exist.");
+                String diagnosticError = failure.getMessage();
+                if (diagnosticError == null && tool == null) {
+                    diagnosticError = "Tool does not exist.";
+                }
+                recordInlineResponse(
+                        id,
+                        ToolResponse.error(
+                                String.format(
+                                        tool == null
+                                                ? "Tool %s does not exist."
+                                                : "Tool %s execute failed.",
+                                        name)),
+                        diagnosticError,
+                        success,
+                        error,
+                        responses);
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        name,
+                        entityMetadata,
+                        failure,
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                continue;
+            }
+
+            final Tool toolRef = tool;
+            final Map<String, Object> callArguments = mergedArguments;
+            DurableCallable<ToolResponse> callable =
+                    new DurableCallable<>() {
+                        @Override
+                        public String getId() {
+                            return TOOL_CALL_DURABLE_ID;
+                        }
+
+                        @Override
+                        public Class<ToolResponse> getResultClass() {
+                            return ToolResponse.class;
+                        }
+
+                        @Override
+                        public ToolResponse call() throws Exception {
+                            return toolRef.call(new ToolParameters(callArguments));
+                        }
+                    };
+            executions.add(new ToolCallExecution(id, name, callable, entityMetadata));
+        }
+        return executions;
+    }
+
+    private static void executeParallel(
+            List<ToolCallExecution> executions,
+            RunnerContext ctx,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        List<DurableCallable<ToolResponse>> callables = new ArrayList<>(executions.size());
+        for (ToolCallExecution execution : executions) {
+            callables.add(execution.callable);
+        }
+        try {
+            List<Outcome<ToolResponse>> outcomes = ctx.durableExecuteAllAsync(callables);
+            for (int i = 0; i < outcomes.size(); i++) {
+                recordOutcome(executions.get(i), outcomes.get(i), ctx, success, error, responses);
+            }
+        } catch (Exception e) {
+            for (ToolCallExecution execution : executions) {
+                recordExecutionException(execution, e, success, error, responses);
+            }
+        } catch (Error e) {
+            for (ToolCallExecution execution : executions) {
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        execution.name,
+                        execution.entityMetadata,
+                        e,
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+            }
+            throw e;
+        }
+    }
+
+    private static void executeSequentially(
+            List<ToolCallExecution> executions,
+            boolean toolCallAsync,
+            RunnerContext ctx,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        for (ToolCallExecution execution : executions) {
+            try {
+                ToolResponse response =
+                        toolCallAsync
+                                ? ctx.durableExecuteAsync(execution.callable)
+                                : ctx.durableExecute(execution.callable);
+                recordToolResponse(execution.id, response, success, error, responses);
+                if (response.isError()) {
+                    ExecutionReporters.failed(
+                            ctx,
+                            ExecutionReporter.EntityTypes.TOOL,
+                            execution.name,
+                            execution.entityMetadata,
+                            new RuntimeException(response.getError()),
+                            ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                } else {
+                    ExecutionReporters.succeeded(
+                            ctx,
+                            ExecutionReporter.EntityTypes.TOOL,
+                            execution.name,
+                            execution.entityMetadata);
+                }
+            } catch (Exception e) {
+                recordExecutionException(execution, e, success, error, responses);
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        execution.name,
+                        execution.entityMetadata,
+                        e,
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+            } catch (Error e) {
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        execution.name,
+                        execution.entityMetadata,
+                        e,
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                throw e;
             }
         }
-        ctx.sendEvent(
-                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
+    }
+
+    private static void recordOutcome(
+            ToolCallExecution execution,
+            Outcome<ToolResponse> outcome,
+            RunnerContext ctx,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        if (outcome.isFailure()) {
+            recordExecutionException(execution, outcome.getError(), success, error, responses);
+            ExecutionReporters.failed(
+                    ctx,
+                    ExecutionReporter.EntityTypes.TOOL,
+                    execution.name,
+                    execution.entityMetadata,
+                    outcome.getError(),
+                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+        } else {
+            ToolResponse response = outcome.getValue();
+            recordToolResponse(execution.id, response, success, error, responses);
+            if (response.isError()) {
+                ExecutionReporters.failed(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        execution.name,
+                        execution.entityMetadata,
+                        new RuntimeException(response.getError()),
+                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+            } else {
+                ExecutionReporters.succeeded(
+                        ctx,
+                        ExecutionReporter.EntityTypes.TOOL,
+                        execution.name,
+                        execution.entityMetadata);
+            }
+        }
+    }
+
+    private static void recordInlineResponse(
+            String id,
+            ToolResponse response,
+            String diagnosticError,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        recordToolResponse(id, response, success, error, responses);
+        if (diagnosticError != null) {
+            error.put(id, diagnosticError);
+        }
+    }
+
+    private static void recordExecutionException(
+            ToolCallExecution execution,
+            Exception exception,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        success.put(execution.id, false);
+        responses.put(
+                execution.id,
+                ToolResponse.error(String.format("Tool %s execute failed.", execution.name)));
+        error.put(execution.id, exception.getMessage());
+    }
+
+    private static void recordToolResponse(
+            String id,
+            ToolResponse response,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        success.put(id, response.isSuccess());
+        responses.put(id, response);
+        if (!response.isSuccess() && response.getError() != null) {
+            error.put(id, response.getError());
+        }
+    }
+
+    private static final class ToolCallExecution {
+        private final String id;
+        private final String name;
+        private final DurableCallable<ToolResponse> callable;
+        private final Map<String, Object> entityMetadata;
+
+        private ToolCallExecution(
+                String id,
+                String name,
+                DurableCallable<ToolResponse> callable,
+                Map<String, Object> entityMetadata) {
+            this.id = id;
+            this.name = name;
+            this.callable = callable;
+            this.entityMetadata = entityMetadata;
+        }
+    }
+
+    private static Map<String, Object> toolEntityMetadata(
+            UUID toolRequestEventId,
+            String toolCallId,
+            String externalId,
+            String toolName,
+            Tool tool,
+            ToolParameters parameters) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put(
+                ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID, toolRequestEventId.toString());
+        metadata.put(ToolExecutionMetadataKeys.TOOL_CALL_ID, toolCallId);
+        if (externalId != null) {
+            metadata.put(ToolExecutionMetadataKeys.EXTERNAL_ID, externalId);
+        }
+        ToolType toolType = tool == null ? null : tool.getToolType();
+        if (toolType != null) {
+            metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, toolType.getValue());
+        }
+        if (tool instanceof ToolExecutionMetadataProvider) {
+            Map<String, Object> extra;
+            try {
+                extra = ((ToolExecutionMetadataProvider) tool).getToolExecutionMetadata(parameters);
+            } catch (RuntimeException e) {
+                LOG.debug("Failed to collect execution metadata for tool {}.", toolName, e);
+                extra = Map.of();
+            }
+            if (extra != null && !extra.isEmpty()) {
+                mergeSupplementalMetadata(metadata, extra);
+            }
+        }
+        return metadata;
+    }
+
+    private static void mergeSupplementalMetadata(
+            Map<String, Object> target, Map<String, Object> supplemental) {
+        for (Map.Entry<String, Object> entry : supplemental.entrySet()) {
+            if (entry.getKey() != null && entry.getValue() != null) {
+                target.putIfAbsent(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     private static Map<String, Object> resolveInjectedArguments(Tool tool, RunnerContext ctx)

@@ -106,8 +106,9 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @return List of Ollama compatible tool specifications
      * @throws RuntimeException if schema parsing or conversion fails
      */
+    // Package-visible for unit testing of the schema conversion.
     @SuppressWarnings("unchecked")
-    private List<Tools.Tool> convertToOllamaTools(List<Tool> tools) {
+    List<Tools.Tool> convertToOllamaTools(List<Tool> tools) {
         final ObjectMapper mapper = new ObjectMapper();
         final List<Tools.Tool> ollamaTools = new ArrayList<>();
         try {
@@ -118,7 +119,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
 
                 final Map<String, Map<String, String>> properties =
                         (Map<String, Map<String, String>>) schema.get("properties");
-                final List<String> required = (List<String>) schema.get("required");
+                // "required" is optional in JSON Schema, and SchemaUtils only emits it when at
+                // least one parameter is required — treat a missing list as empty (#1014).
+                final List<String> required =
+                        (List<String>) schema.getOrDefault("required", Collections.emptyList());
 
                 Map<String, Tools.Property> propertiesMap = new HashMap<>();
 

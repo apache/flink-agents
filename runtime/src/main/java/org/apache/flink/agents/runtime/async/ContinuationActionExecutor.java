@@ -17,7 +17,14 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.api.context.Outcome;
+
+import java.time.Duration;
+import java.util.Arrays;
+import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Executor for Java actions that supports asynchronous execution.
@@ -54,6 +61,37 @@ public class ContinuationActionExecutor {
     public <T> T executeAsync(ContinuationContext context, Supplier<T> supplier) {
         // JDK 11: Fall back to synchronous execution
         return supplier.get();
+    }
+
+    /**
+     * Executes all suppliers as one batch. In JDK 11, this falls back to serial execution and
+     * captures each supplier's success or failure as an {@link Outcome}.
+     *
+     * @param context the continuation context
+     * @param suppliers the suppliers to execute
+     * @param timeout ignored in the JDK 11 fallback
+     * @param <T> the result type
+     * @return outcomes in supplier order
+     */
+    public <T> BatchExecutionResult<T> executeAllAsync(
+            ContinuationContext context,
+            List<Callable<T>> suppliers,
+            Duration timeout,
+            int maxParallelism) {
+        List<Outcome<T>> outcomes =
+                suppliers.stream()
+                        .map(
+                                supplier -> {
+                                    try {
+                                        return Outcome.success(supplier.call());
+                                    } catch (Exception e) {
+                                        return Outcome.<T>failure(e);
+                                    }
+                                })
+                        .collect(Collectors.toList());
+        boolean[] started = new boolean[suppliers.size()];
+        Arrays.fill(started, true);
+        return new BatchExecutionResult<>(outcomes, started);
     }
 
     public void close() {}

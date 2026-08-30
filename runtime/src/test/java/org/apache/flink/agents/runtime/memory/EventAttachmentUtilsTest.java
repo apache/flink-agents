@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -34,8 +35,10 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -254,6 +257,16 @@ class EventAttachmentUtilsTest {
         @Override
         public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
             return callable.call();
+        }
+
+        @Override
+        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+                throws Exception {
+            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
+            for (DurableCallable<T> callable : callables) {
+                outcomes.add(Outcome.success(callable.call()));
+            }
+            return outcomes;
         }
 
         @Override

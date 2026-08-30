@@ -41,6 +41,7 @@ os.environ["PYTHONPATH"] = (
     f"{_purelib}{os.pathsep}{_extra_pythonpath}" if _extra_pythonpath else _purelib
 )
 
+
 class MemoryWritingAgent(Agent):
     """Agent whose input action writes short-term memory."""
 
@@ -78,7 +79,7 @@ def test_memory_event_logging(tmp_path: Path) -> None:
     agents_env.get_config().set_str("baseLogDir", str(event_log_dir))
     # Memory operation events stay at defaults; run-begin snapshots are opt-in.
     agents_env.get_config().set(AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT, True)
-    # VERBOSE keeps the full event subtree.
+    # VERBOSE keeps the full event payload.
     agents_env.get_config().set_str("event-log.level", "VERBOSE")
 
     input_datastream = env.from_collection(inputs)
@@ -98,15 +99,15 @@ def test_memory_event_logging(tmp_path: Path) -> None:
     assert EventType.ShortTermWriteEvent in types
 
     write = next(r for r in records if r["eventType"] == EventType.ShortTermWriteEvent)
-    assert write["event"]["attributes"]["value"]["user.tier"] == "gold"
-    assert write["event"]["attributes"]["key"] == "7"
+    assert write["eventAttributes"]["value"]["user.tier"] == "gold"
+    assert write["eventAttributes"]["key"] == "7"
 
     begins = [r for r in records if r["eventType"] == EventType.AgentRunBeginEvent]
     assert len(begins) == len(inputs)
-    assert {event["event"]["attributes"]["key"] for event in begins} == {"7"}
+    assert {event["eventAttributes"]["key"] for event in begins} == {"7"}
     # First run-begin: empty STM; a later one contains the previous run's write.
-    assert begins[0]["event"]["attributes"]["value"] == {}
-    assert begins[-1]["event"]["attributes"]["value"].get("user.tier") == "gold"
+    assert begins[0]["eventAttributes"]["value"] == {}
+    assert begins[-1]["eventAttributes"]["value"].get("user.tier") == "gold"
 
     # Adjacency: each run-begin line directly follows its InputEvent line (both are
     # emitted synchronously back-to-back) — the reconstruction anchor.

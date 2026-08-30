@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.event.MemoryEvent;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
@@ -31,7 +32,10 @@ import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
@@ -46,9 +50,11 @@ import java.util.Map;
  * <ul>
  *   <li>The shared (Java) {@link RunnerContextImpl} that is reused across action tasks via {@link
  *       RunnerContextImpl#switchActionContext}.
- *   <li>Three per-{@link ActionTask} maps that survive across the boundary between a finishing
- *       action and the action it generates: memory contexts, continuation contexts (for async Java
+ *   <li>Three per-{@link ActionTask} maps that survive across the boundary between one task and its
+ *       generated continuation task: memory contexts, continuation contexts (for async Java
  *       actions), and Python awaitable references.
+ *   <li>Active child-execution reports, keyed by Action execution id, that pair start and terminal
+ *       reports across continuation tasks without entering Flink state.
  *   <li>The {@link ContinuationActionExecutor} thread pool used to run async Java continuations.
  * </ul>
  *
@@ -73,13 +79,15 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, RunnerContextImpl.MemoryContext> actionTaskMemoryContexts;
     private final Map<ActionTask, ContinuationContext> continuationContexts;
     private final Map<ActionTask, String> pythonAwaitableRefs;
-
-    private ContinuationActionExecutor continuationActionExecutor;
+    private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
+            activeReportedExecutionsByActionExecutionId;
+    private final ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
         this.continuationContexts = new HashMap<>();
         this.pythonAwaitableRefs = new HashMap<>();
+        this.activeReportedExecutionsByActionExecutionId = new HashMap<>();
         this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
     }
 
@@ -148,8 +156,9 @@ class ActionTaskContextManager implements AutoCloseable {
      *   <li>Selects a Java or Python runner context based on the action's {@code Exec} type.
      *   <li>Reuses any existing {@link RunnerContextImpl.MemoryContext} for this task; otherwise
      *       builds a fresh one backed by the supplied sensory/short-term memory states.
+     *   <li>Wires the runtime-level execution event sink onto the runner context.
      *   <li>Calls {@link RunnerContextImpl#switchActionContext} so the shared context now points at
-     *       this action's name, memory, and key namespace.
+     *       this action's name, memory, key namespace, trace context, and reported-execution state.
      *   <li>For Java contexts, attaches a continuation context (re-used if the task is resuming
      *       from an async suspend, fresh otherwise).
      *   <li>For Python contexts, attaches the per-task awaitable reference (or {@code null} if the
@@ -179,7 +188,8 @@ class ActionTaskContextManager implements AutoCloseable {
             MapState<String, MemoryObjectImpl.MemoryItem> sensoryMemState,
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
             PythonRunnerContextImpl pythonRunnerContext,
-            @Nullable InteranlBaseLongTermMemory longTermMemory) {
+            @Nullable InteranlBaseLongTermMemory longTermMemory,
+            @Nullable ExecutionEventSink executionEventSink) {
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -207,6 +217,7 @@ class ActionTaskContextManager implements AutoCloseable {
             throw new IllegalStateException(
                     "Unsupported action type: " + actionTask.action.getExec().getClass());
         }
+        context.setExecutionEventSink(executionEventSink);
 
         RunnerContextImpl.MemoryContext memoryContext;
         if (actionTaskMemoryContexts.containsKey(actionTask)) {
@@ -223,7 +234,9 @@ class ActionTaskContextManager implements AutoCloseable {
                 memoryContext,
                 contextKey,
                 actionTask.getObservationId(),
-                MemoryEvent.isMemoryType(actionTask.event.getType()));
+                MemoryEvent.isMemoryType(actionTask.event.getType()),
+                actionTask.getTraceContext(),
+                getOrCreateActiveReportedExecutions(actionTask));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -271,6 +284,7 @@ class ActionTaskContextManager implements AutoCloseable {
     void transferContexts(
             ActionTask fromTask, ActionTask toTask, DurableExecutionManager durableExecManager) {
         putMemoryContext(toTask, fromTask.getRunnerContext().getMemoryContext());
+        toTask.inheritLifecycleState(fromTask);
         RunnerContextImpl.DurableExecutionContext durableContext =
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
@@ -288,6 +302,21 @@ class ActionTaskContextManager implements AutoCloseable {
                 this.putPythonAwaitableRef(toTask, awaitableRef);
             }
         }
+    }
+
+    void completeActionExecution(ActionTask actionTask) {
+        activeReportedExecutionsByActionExecutionId.remove(
+                actionTask.getTraceContext().getExecutionId());
+    }
+
+    private Map<ReportedExecutionKey, ExecutionTraceContext> getOrCreateActiveReportedExecutions(
+            ActionTask actionTask) {
+        String executionId = actionTask.getTraceContext().getExecutionId();
+        if (executionId == null) {
+            throw new IllegalStateException("Action execution id must not be null.");
+        }
+        return activeReportedExecutionsByActionExecutionId.computeIfAbsent(
+                executionId, ignored -> new HashMap<>());
     }
 
     @Nullable
@@ -322,15 +351,33 @@ class ActionTaskContextManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        // Close the continuation executor even when the runner context fails to close. The first
+        // failure is rethrown with the later one suppressed.
+        //
+        // The ladder catches Throwable, not Exception, so a non-Exception Throwable from the
+        // runner context cannot strand the executor's thread pool. Neither type implements
+        // AutoCloseable, so the aggregation is spelled out rather than delegated. Both rungs go
+        // through firstOrSuppressed even though the first one cannot yet have a previous failure,
+        // so that a close inserted above it later suppresses rather than overwrites.
+        Throwable firstFailure = null;
         if (runnerContext != null) {
             try {
                 runnerContext.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             } finally {
                 runnerContext = null;
             }
         }
         if (continuationActionExecutor != null) {
-            continuationActionExecutor.close();
+            try {
+                continuationActionExecutor.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }

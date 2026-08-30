@@ -26,10 +26,14 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.JsonUtils;
@@ -44,6 +48,8 @@ import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,9 +68,9 @@ import java.util.concurrent.Callable;
  * The implementation class of {@link RunnerContext}, which serves as the execution context for
  * actions.
  */
-public class RunnerContextImpl implements RunnerContext {
+public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
-    private static final ObjectMapper OBJECT_MAPPER =
+    protected static final ObjectMapper OBJECT_MAPPER =
             new ObjectMapper().registerModule(new JavaTimeModule());
 
     public static class MemoryContext {
@@ -145,6 +151,10 @@ public class RunnerContextImpl implements RunnerContext {
     /** Whether the fixed job-level configuration enables any LTM observation. */
     private final boolean ltmObservationConfigured;
 
+    @Nullable protected ExecutionTraceContext actionTraceContext;
+    @Nullable protected ExecutionEventSink executionEventSink;
+    @Nullable private Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions;
+
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
 
@@ -176,15 +186,55 @@ public class RunnerContextImpl implements RunnerContext {
             String contextKey,
             String observationId,
             boolean observationSuppressed) {
+        switchActionContext(
+                actionName,
+                memoryContext,
+                contextKey,
+                observationId,
+                observationSuppressed,
+                null,
+                null);
+    }
+
+    public void switchActionContext(
+            String actionName,
+            MemoryContext memoryContext,
+            String contextKey,
+            @Nullable ExecutionTraceContext actionTraceContext,
+            @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
+        switchActionContext(
+                actionName,
+                memoryContext,
+                contextKey,
+                null,
+                false,
+                actionTraceContext,
+                activeReportedExecutions);
+    }
+
+    public void switchActionContext(
+            String actionName,
+            MemoryContext memoryContext,
+            String contextKey,
+            @Nullable String observationId,
+            boolean observationSuppressed,
+            @Nullable ExecutionTraceContext actionTraceContext,
+            @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
         this.contextKey = contextKey;
         this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
         this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
+        this.actionTraceContext = actionTraceContext;
+        this.activeReportedExecutions = activeReportedExecutions;
         if (ltm != null) {
             ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
+    }
+
+    public void setExecutionEventSink(@Nullable ExecutionEventSink executionEventSink) {
+        this.executionEventSink = executionEventSink;
     }
 
     public MemoryContext getMemoryContext() {
@@ -324,6 +374,81 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     @Override
+    public void reportExecutionStarted(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionStarted());
+    }
+
+    @Override
+    public void reportExecutionSucceeded(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionFinished());
+    }
+
+    @Override
+    public void reportExecutionFailed(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionFailed(error, problemCategory));
+    }
+
+    protected void reportChildExecution(
+            String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
+        mailboxThreadChecker.run();
+        if (actionTraceContext == null
+                || executionEventSink == null
+                || activeReportedExecutions == null) {
+            return;
+        }
+
+        ReportedExecutionKey key = new ReportedExecutionKey(entityType, entityName, entityMetadata);
+        ExecutionTraceContext reportTraceContext;
+        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+            reportTraceContext =
+                    actionTraceContext.childExecution(
+                            entityType, entityName, key.getEntityMetadata());
+            ExecutionTraceContext previous = activeReportedExecutions.put(key, reportTraceContext);
+            if (previous != null) {
+                LOG.debug(
+                        "Execution start report for {}:{} replaced an active report with the same metadata.",
+                        entityType,
+                        entityName);
+            }
+        } else {
+            reportTraceContext = activeReportedExecutions.remove(key);
+            if (reportTraceContext == null) {
+                LOG.debug(
+                        "Execution terminal report for {}:{} has no matching start report; emitting it with a new execution id.",
+                        entityType,
+                        entityName);
+                reportTraceContext =
+                        actionTraceContext.childExecution(
+                                entityType, entityName, key.getEntityMetadata());
+            }
+        }
+
+        executionEventSink.emit(event, reportTraceContext);
+    }
+
+    @Override
     public MemoryObject getSensoryMemory() throws Exception {
         mailboxThreadChecker.run();
         List<MemoryValueObservation> memoryReads = null;
@@ -376,6 +501,11 @@ public class RunnerContextImpl implements RunnerContext {
     }
 
     @Override
+    public boolean hasResource(String name, ResourceType type) {
+        return resourceCache != null && resourceCache.hasResource(name, type);
+    }
+
+    @Override
     public ReadableConfiguration getConfig() {
         return agentPlan.getConfig();
     }
@@ -409,6 +539,20 @@ public class RunnerContextImpl implements RunnerContext {
         return durableExecute(callable);
     }
 
+    @Override
+    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+            throws Exception {
+        List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
+        for (DurableCallable<T> callable : callables) {
+            try {
+                outcomes.add(Outcome.success(durableExecute(callable)));
+            } catch (Exception e) {
+                outcomes.add(Outcome.failure(e));
+            }
+        }
+        return outcomes;
+    }
+
     /**
      * Executes a durable call using the completion-only state machine.
      *
@@ -422,6 +566,11 @@ public class RunnerContextImpl implements RunnerContext {
         String functionId = durableCallable.getId();
         // argsDigest is empty because DurableCallable encapsulates all arguments internally
         String argsDigest = "";
+
+        CallResult current = getCurrentCallResult();
+        if (current != null && current.matches(functionId, argsDigest) && current.isPending()) {
+            return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
+        }
 
         Optional<T> cachedResult =
                 tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
@@ -476,6 +625,27 @@ public class RunnerContextImpl implements RunnerContext {
         }
 
         public Exception toException() {
+            if (exceptionClass == null) {
+                return new RuntimeException(message);
+            }
+            try {
+                ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+                if (classLoader == null) {
+                    classLoader = RunnerContextImpl.class.getClassLoader();
+                }
+                Class<?> clazz = Class.forName(exceptionClass, true, classLoader);
+                if (Exception.class.isAssignableFrom(clazz)) {
+                    @SuppressWarnings("unchecked")
+                    Class<? extends Exception> exceptionClazz = (Class<? extends Exception>) clazz;
+                    try {
+                        return exceptionClazz.getConstructor(String.class).newInstance(message);
+                    } catch (NoSuchMethodException ignored) {
+                        return new RuntimeException(exceptionClass + ": " + message);
+                    }
+                }
+            } catch (ReflectiveOperationException ignored) {
+                // Fall back to a generic wrapper below.
+            }
             return new RuntimeException(exceptionClass + ": " + message);
         }
     }
@@ -561,6 +731,13 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
+    public void reservePendingBatch(List<String> functionIds, List<String> argsDigests) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null && !functionIds.isEmpty()) {
+            durableExecutionContext.reservePendingBatch(functionIds, argsDigests);
+        }
+    }
+
     /** Finalizes the pending durable call slot at the current call index. */
     public void finalizeCurrentCall(
             String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
@@ -568,6 +745,26 @@ public class RunnerContextImpl implements RunnerContext {
         if (durableExecutionContext != null) {
             durableExecutionContext.finalizeCurrentCall(
                     functionId, argsDigest, resultPayload, exceptionPayload);
+        }
+    }
+
+    public void finalizeCallAt(
+            int index,
+            String functionId,
+            String argsDigest,
+            byte[] resultPayload,
+            byte[] exceptionPayload) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.finalizeCallAt(
+                    index, functionId, argsDigest, resultPayload, exceptionPayload);
+        }
+    }
+
+    public void advanceCallIndexBy(int count) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.advanceCallIndexBy(count);
         }
     }
 
@@ -581,12 +778,23 @@ public class RunnerContextImpl implements RunnerContext {
         }
     }
 
-    /**
-     * Returns the current durable call result as an array of fields for bridge consumers, or null
-     * if no persisted slot exists at the current call index.
-     */
-    public Object[] getCurrentCallResultFields() {
-        CallResult current = getCurrentCallResult();
+    public void clearCallResultsFromAndPersist(int index) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            durableExecutionContext.clearCallResultsFromAndPersist(index);
+        }
+    }
+
+    public int getCurrentCallIndex() {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext == null) {
+            return 0;
+        }
+        return durableExecutionContext.getCurrentCallIndex();
+    }
+
+    public Object[] getCallResultFieldsAt(int index) {
+        CallResult current = getCallResultAt(index);
         if (current == null) {
             return null;
         }
@@ -599,10 +807,57 @@ public class RunnerContextImpl implements RunnerContext {
         };
     }
 
+    /**
+     * Returns the current durable call result as an array of fields for bridge consumers, or null
+     * if no persisted slot exists at the current call index.
+     */
+    public Object[] getCurrentCallResultFields() {
+        if (durableExecutionContext == null) {
+            return null;
+        }
+        return getCallResultFieldsAt(durableExecutionContext.getCurrentCallIndex());
+    }
+
+    protected <T> Outcome<T> readTerminalOutcomeAt(
+            int index, String functionId, String argsDigest, Class<T> resultClass)
+            throws Exception {
+        CallResult callResult = getCallResultAt(index);
+        if (callResult == null || callResult.isPending()) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Expected a terminal durable call result at index %s for "
+                                    + "functionId=%s, argsDigest=%s",
+                            index, functionId, argsDigest));
+        }
+        try {
+            if (callResult.getExceptionPayload() != null) {
+                DurableExecutionException exception =
+                        OBJECT_MAPPER.readValue(
+                                callResult.getExceptionPayload(), DurableExecutionException.class);
+                return Outcome.failure(exception.toException());
+            }
+            if (callResult.getResultPayload() == null) {
+                return Outcome.success(null);
+            }
+            return Outcome.success(
+                    OBJECT_MAPPER.readValue(callResult.getResultPayload(), resultClass));
+        } catch (JsonProcessingException e) {
+            return Outcome.failure(e);
+        }
+    }
+
     protected CallResult getCurrentCallResult() {
         mailboxThreadChecker.run();
         if (durableExecutionContext != null) {
             return durableExecutionContext.getCurrentCallResult();
+        }
+        return null;
+    }
+
+    protected CallResult getCallResultAt(int index) {
+        mailboxThreadChecker.run();
+        if (durableExecutionContext != null) {
+            return durableExecutionContext.getCallResultAt(index);
         }
         return null;
     }
@@ -781,8 +1036,12 @@ public class RunnerContextImpl implements RunnerContext {
          * yet have a persisted slot.
          */
         public CallResult getCurrentCallResult() {
-            if (currentCallIndex < recoveryCallResults.size()) {
-                return recoveryCallResults.get(currentCallIndex);
+            return getCallResultAt(currentCallIndex);
+        }
+
+        public CallResult getCallResultAt(int index) {
+            if (index < recoveryCallResults.size()) {
+                return recoveryCallResults.get(index);
             }
             return null;
         }
@@ -800,6 +1059,15 @@ public class RunnerContextImpl implements RunnerContext {
                 CallResult result = recoveryCallResults.get(currentCallIndex);
 
                 if (result.matches(functionId, argsDigest)) {
+                    if (result.isPending()) {
+                        LOG.debug(
+                                "Pending CallResult at index {} treated as cache miss: "
+                                        + "functionId={}, argsDigest={}",
+                                currentCallIndex,
+                                functionId,
+                                argsDigest);
+                        return null;
+                    }
                     LOG.debug(
                             "CallResult hit at index {}: functionId={}, argsDigest={}",
                             currentCallIndex,
@@ -882,6 +1150,21 @@ public class RunnerContextImpl implements RunnerContext {
                     argsDigest);
         }
 
+        public void reservePendingBatch(List<String> functionIds, List<String> argsDigests) {
+            if (functionIds.size() != argsDigests.size()) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "functionIds size (%s) must match argsDigests size (%s)",
+                                functionIds.size(), argsDigests.size()));
+            }
+            for (int i = 0; i < functionIds.size(); i++) {
+                CallResult pending = CallResult.pending(functionIds.get(i), argsDigests.get(i));
+                actionState.addCallResult(pending);
+                recoveryCallResults.add(pending);
+            }
+            persistActionState();
+        }
+
         /**
          * Replaces the current persisted slot with a terminal call result and advances the current
          * call index.
@@ -891,42 +1174,52 @@ public class RunnerContextImpl implements RunnerContext {
                 String argsDigest,
                 byte[] resultPayload,
                 byte[] exceptionPayload) {
-            CallResult current = getCurrentCallResult();
+            finalizeCallAt(
+                    currentCallIndex, functionId, argsDigest, resultPayload, exceptionPayload);
+            currentCallIndex++;
+        }
+
+        public void finalizeCallAt(
+                int index,
+                String functionId,
+                String argsDigest,
+                byte[] resultPayload,
+                byte[] exceptionPayload) {
+            CallResult current = getCallResultAt(index);
             if (current == null) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because no persisted "
-                                        + "slot exists",
-                                currentCallIndex));
+                                "Cannot finalize call at index %s because no persisted slot exists",
+                                index));
             }
             if (!current.matches(functionId, argsDigest)) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because the persisted "
-                                        + "slot does not match functionId=%s, argsDigest=%s",
-                                currentCallIndex, functionId, argsDigest));
+                                "Cannot finalize call at index %s because the persisted slot does not match functionId=%s, argsDigest=%s",
+                                index, functionId, argsDigest));
             }
             if (!current.isPending()) {
                 throw new IllegalStateException(
                         String.format(
-                                "Cannot finalize current call at index %s because the persisted "
-                                        + "slot is not pending",
-                                currentCallIndex));
+                                "Cannot finalize call at index %s because the persisted slot is not pending",
+                                index));
             }
 
             CallResult terminal =
                     new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
-            actionState.replaceCallResult(currentCallIndex, terminal);
-            recoveryCallResults.set(currentCallIndex, terminal);
+            actionState.replaceCallResult(index, terminal);
+            recoveryCallResults.set(index, terminal);
             persistActionState();
 
             LOG.debug(
                     "Finalized and persisted CallResult at index {}: functionId={}, argsDigest={}",
-                    currentCallIndex,
+                    index,
                     functionId,
                     argsDigest);
+        }
 
-            currentCallIndex++;
+        public void advanceCallIndexBy(int count) {
+            currentCallIndex += count;
         }
 
         /**
@@ -938,12 +1231,21 @@ public class RunnerContextImpl implements RunnerContext {
             persistActionState();
         }
 
-        private void clearCallResultsFromCurrentIndex() {
-            actionState.clearCallResultsFrom(currentCallIndex);
+        public void clearCallResultsFromAndPersist(int index) {
+            clearCallResultsFrom(index);
+            persistActionState();
+        }
+
+        public void clearCallResultsFrom(int index) {
+            actionState.clearCallResultsFrom(index);
             recoveryCallResults =
                     new ArrayList<>(
                             recoveryCallResults.subList(
-                                    0, Math.min(currentCallIndex, recoveryCallResults.size())));
+                                    0, Math.min(index, recoveryCallResults.size())));
+        }
+
+        private void clearCallResultsFromCurrentIndex() {
+            clearCallResultsFrom(currentCallIndex);
         }
 
         private void persistActionState() {

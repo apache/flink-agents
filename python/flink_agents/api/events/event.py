@@ -75,7 +75,8 @@ class Event(BaseModel, extra="allow"):
     Attributes:
     ----------
     id : UUID
-        Random version 4 UUID generated when the Event is created.
+        Random version 4 UUID generated when the Event is created. An omitted or
+        explicit ``None`` id is replaced with a new UUID, matching Java.
     type : str
         Event type string used for routing. Required for all events.
     attributes : Dict[str, Any]
@@ -102,6 +103,12 @@ class Event(BaseModel, extra="allow"):
         validation_alias=AliasChoices("upstream_action_name", "upstreamActionName"),
         serialization_alias="upstreamActionName",
     )
+
+    @field_validator("id", mode="before")
+    @classmethod
+    def generate_id_when_explicitly_none(cls, value: Any) -> Any:
+        """Treat explicit None like an omitted id and mint a per-occurrence UUID."""
+        return uuid4() if value is None else value
 
     @field_validator("attachments", mode="before")
     @classmethod

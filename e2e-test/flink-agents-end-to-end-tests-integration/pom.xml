@@ -82,11 +82,6 @@ under the License.
         </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
-            <artifactId>flink-agents-integrations-chat-models-azureai</artifactId>
-            <version>${project.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-integrations-chat-models-openai</artifactId>
             <version>${project.version}</version>
         </dependency>
@@ -121,6 +116,40 @@ under the License.
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-test-utils</artifactId>
             <version>${flink.version}</version>
+            <scope>test</scope>
+            <exclusions>
+                <!-- Keep log4j versions aligned with flink-agents-dist (2.23.1). -->
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-api</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-core</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-slf4j-impl</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- Aligned log4j for Slf4jEventLogger / ContinuationActionExecutor in tests. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>${log4j2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+            <version>${log4j2.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -189,6 +218,19 @@ under the License.
                 <flink.version>${flink.2.2.version}</flink.version>
                 <flink.agents.dist.artifactId>flink-agents-dist-flink-2.2</flink.agents.dist.artifactId>
                 <flink.log4j2.version>2.24.3</flink.log4j2.version>
+            </properties>
+        </profile>
+
+        <!-- Flink 2.3 Profile -->
+        <!-- No flink.log4j2.version override here: the profile-less build of
+             this module is itself Flink 2.3, so the parent's value is the one
+             this line needs. The older profiles override it only because their
+             Flink lines require an older log4j2. -->
+        <profile>
+            <id>flink-2.3</id>
+            <properties>
+                <flink.version>${flink.2.3.version}</flink.version>
+                <flink.agents.dist.artifactId>flink-agents-dist-flink-2.3</flink.agents.dist.artifactId>
             </properties>
         </profile>
     </profiles>

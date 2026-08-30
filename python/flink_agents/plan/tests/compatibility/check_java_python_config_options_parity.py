@@ -90,7 +90,9 @@ def _java_type_matches_python(java_type_name: str, python_config_type: type) -> 
     return python_config_type.__name__ == java_simple_name
 
 
-def normalize_java_default(java_default: Any, python_config_type: type) -> Any:
+def normalize_java_default(
+    java_default: Any, java_type_name: str, python_config_type: type
+) -> Any:
     """Convert a Java default value into a Python-comparable form."""
     if java_default is None:
         return None
@@ -130,6 +132,7 @@ def assert_python_option_matches_java(
     python_default = python_option.get_default_value()
     java_default = normalize_java_default(
         java_option.getDefaultValue(),
+        java_type_name,
         python_config_type,
     )
     assert python_default == java_default, (

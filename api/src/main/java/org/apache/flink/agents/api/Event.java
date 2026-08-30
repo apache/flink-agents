@@ -97,7 +97,8 @@ public class Event {
         if (type == null || type.isEmpty()) {
             throw new IllegalArgumentException("Event 'type' must not be null or empty.");
         }
-        this.id = id;
+        // Explicit null matches an omitted id: both mint a per-occurrence UUID.
+        this.id = id != null ? id : UUID.randomUUID();
         this.type = type;
         this.attributes = attributes != null ? new HashMap<>(attributes) : new HashMap<>();
         this.attachments = attachments != null ? new HashMap<>(attachments) : new HashMap<>();

@@ -36,6 +36,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.python.env.PythonDependencyInfo;
+import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import pemja.core.PythonInterpreter;
@@ -96,10 +97,12 @@ class PythonBridgeManager implements AutoCloseable {
      * <p>Scans the agent plan for any {@link PythonFunction} action or {@link
      * PythonResourceProvider}. If neither is present, this method is a no-op and {@link
      * #isInitialized()} stays {@code false}. Otherwise it builds the {@link
-     * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, constructs the shared
-     * {@link PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
+     * PythonEnvironmentManager}, opens an embedded {@link PythonInterpreter}, refreshes the shared
+     * import state for the current dependency generation, constructs the shared {@link
+     * PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
      * initializes the Python action executor and the Python resource adapter (each only when the
-     * corresponding component is present in the plan).
+     * corresponding component is present in the plan). The generation guard runs immediately after
+     * interpreter construction and before any user module import.
      *
      * @param agentPlan the agent plan describing actions and resources.
      * @param resourceCache the resource cache visible to both languages.
@@ -154,6 +157,20 @@ class PythonBridgeManager implements AutoCloseable {
             pythonEnvironmentManager.open();
             EmbeddedPythonEnvironment env = pythonEnvironmentManager.createEnvironment();
             pythonInterpreter = env.getInterpreter();
+            String dependencyGeneration = pythonEnvironmentManager.getBaseDirectory();
+            String pythonPath = env.getEnv().get("PYTHONPATH");
+            boolean dependencyGenerationChanged =
+                    PythonDependencyGenerationManager.ensurePythonDependencyGeneration(
+                            pythonInterpreter,
+                            jobId,
+                            dependencyGeneration,
+                            pythonPath == null ? "" : pythonPath);
+            if (dependencyGenerationChanged) {
+                LOG.info(
+                        "Activated Python dependency generation {} for job {}.",
+                        dependencyGeneration,
+                        jobId);
+            }
             pythonRunnerContext =
                     new PythonRunnerContextImpl(
                             metricGroup,
@@ -299,14 +316,29 @@ class PythonBridgeManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        if (pythonActionExecutor != null) {
-            pythonActionExecutor.close();
+        // Close every component even when an earlier one fails, so a failing action executor
+        // cannot leak the interpreter or the environment manager. The first failure is
+        // rethrown with the later ones suppressed.
+        //
+        // The ladder catches Throwable, not Exception, and IOUtils.closeAll is deliberately not
+        // used: both stop at the first non-Exception Throwable without closing what follows, and
+        // what follows here is the native Python state.
+        Throwable firstFailure = null;
+        for (AutoCloseable closeable :
+                new AutoCloseable[] {
+                    pythonActionExecutor, pythonInterpreter, pythonEnvironmentManager
+                }) {
+            if (closeable == null) {
+                continue;
+            }
+            try {
+                closeable.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
         }
-        if (pythonInterpreter != null) {
-            pythonInterpreter.close();
-        }
-        if (pythonEnvironmentManager != null) {
-            pythonEnvironmentManager.close();
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }

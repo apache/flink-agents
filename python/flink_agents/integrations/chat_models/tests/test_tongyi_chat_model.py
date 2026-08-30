@@ -41,7 +41,7 @@ api_key_available = "DASHSCOPE_API_KEY" in os.environ
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
 def test_tongyi_chat() -> None:
     """Test basic chat functionality of TongyiChatModelConnection."""
-    connection = TongyiChatModelConnection(name="tongyi")
+    connection = TongyiChatModelConnection()
     response = connection.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
@@ -77,7 +77,7 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
 def test_tongyi_chat_with_tools() -> None:
     """Test chat functionality with tool calling."""
-    connection = TongyiChatModelConnection(name="tongyi")
+    connection = TongyiChatModelConnection()
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
@@ -89,7 +89,6 @@ def test_tongyi_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     llm = TongyiChatModelSetup(
-        name="tongyi",
         model=test_model,
         connection="tongyi",
         tools=["add"],
@@ -146,7 +145,6 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     )
 
     connection = TongyiChatModelConnection(
-        name="tongyi",
         api_key=os.environ.get("DASHSCOPE_API_KEY", "fake-key"),
     )
 
@@ -157,7 +155,6 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     mock_ctx.get_resource = get_resource
 
     llm = TongyiChatModelSetup(
-        name="tongyi",
         model=test_model,
         connection="tongyi",
         extract_reasoning=True,

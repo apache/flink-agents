@@ -129,28 +129,24 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
-        try {
-            ResponseCreateParams params = buildRequest(messages, tools, modelParams);
-            Response response = client.responses().create(params);
-            ChatMessage result = convertResponse(response);
+        ResponseCreateParams params = buildRequest(messages, tools, modelParams);
+        Response response = client.responses().create(params);
+        ChatMessage result = convertResponse(response);
 
-            if (response.usage().isPresent()) {
-                String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-                if (modelName == null || modelName.isBlank()) {
-                    modelName = this.defaultModel;
-                }
-                if (modelName != null && !modelName.isBlank()) {
-                    result.getExtraArgs().put("model_name", modelName);
-                    result.getExtraArgs().put("promptTokens", response.usage().get().inputTokens());
-                    result.getExtraArgs()
-                            .put("completionTokens", response.usage().get().outputTokens());
-                }
+        if (response.usage().isPresent()) {
+            String modelName = modelParams != null ? (String) modelParams.get("model") : null;
+            if (modelName == null || modelName.isBlank()) {
+                modelName = this.defaultModel;
             }
-
-            return result;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to call OpenAI Responses API.", e);
+            if (modelName != null && !modelName.isBlank()) {
+                result.getExtraArgs().put("model_name", modelName);
+                result.getExtraArgs().put("promptTokens", response.usage().get().inputTokens());
+                result.getExtraArgs()
+                        .put("completionTokens", response.usage().get().outputTokens());
+            }
         }
+
+        return result;
     }
 
     private ResponseCreateParams buildRequest(

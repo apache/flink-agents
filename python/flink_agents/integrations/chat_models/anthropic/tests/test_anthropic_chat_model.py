@@ -38,7 +38,7 @@ api_key = os.environ.get("TEST_API_KEY")
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_anthropic_chat_model() -> None:
-    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
+    connection = AnthropicChatModelConnection(api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -50,7 +50,6 @@ def test_anthropic_chat_model() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = AnthropicChatModelSetup(
-        name="anthropic",
         model=test_model,
         connection="anthropic_server",
         resource_context=mock_ctx,
@@ -80,7 +79,7 @@ def add(a: int, b: int) -> int:
 
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_anthropic_chat_with_tools() -> None:
-    connection = AnthropicChatModelConnection(name="anthropic_server", api_key=api_key)
+    connection = AnthropicChatModelConnection(api_key=api_key)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.CHAT_MODEL_CONNECTION:
@@ -92,7 +91,6 @@ def test_anthropic_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     chat_model = AnthropicChatModelSetup(
-        name="anthropic",
         model=test_model,
         connection="anthropic_server",
         tools=["add"],

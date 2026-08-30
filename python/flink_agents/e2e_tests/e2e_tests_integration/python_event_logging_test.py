@@ -119,7 +119,9 @@ def test_python_event_logging(tmp_path: Path) -> None:
                 if line.strip():
                     record = json.loads(line)
                     record_line = line
-                    event_payload = record.get("event", {})
+                    event_payload = record.get("eventAttributes")
+                    if event_payload is None:
+                        event_payload = record.get("event", {}).get("attributes", {})
                     if "processed_review" in json.dumps(event_payload):
                         has_processed_review = True
                         break
@@ -130,18 +132,18 @@ def test_python_event_logging(tmp_path: Path) -> None:
     assert record_line is not None, "Event log file is empty."
     assert "timestamp" in record
     assert "logLevel" in record
+    assert "eventId" in record
     assert "eventType" in record
-    assert "event" in record
-    assert "eventType" in record["event"]
+    assert "eventAttributes" in record
     assert has_processed_review, "Log should contain processed review content"
 
+    event_id_idx = record_line.find('"eventId"')
     event_type_idx = record_line.find('"eventType"')
-    id_idx = record_line.find('"id"')
-    attributes_idx = record_line.find('"attributes"')
+    attributes_idx = record_line.find('"eventAttributes"')
+    assert event_id_idx != -1
     assert event_type_idx != -1
-    assert id_idx != -1
     assert attributes_idx != -1
-    assert event_type_idx < id_idx < attributes_idx
+    assert event_id_idx < event_type_idx < attributes_idx
 
 
 def _run_event_logging_pipeline(
@@ -234,15 +236,17 @@ def test_event_lineage_reconstructs_trace_trees_from_runtime_logs(
     tmp_path: Path,
 ) -> None:
     """Test a real PyFlink job produces logs consumable by the Trace Tree reader."""
-    event_log_dir = _run_event_logging_pipeline(tmp_path)
+    event_log_dir = _run_event_logging_pipeline(
+        tmp_path, config_overrides={"event-log.trace.enabled": "true"}
+    )
     records = _read_log_records(event_log_dir)
     input_event_ids = {
-        record["event"]["id"]
+        record["eventId"]
         for record in records
         if record["eventType"] == InputEvent.EVENT_TYPE
     }
     output_event_ids = {
-        record["event"]["id"]
+        record["eventId"]
         for record in records
         if record["eventType"] == OutputEvent.EVENT_TYPE
     }
@@ -253,6 +257,7 @@ def test_event_lineage_reconstructs_trace_trees_from_runtime_logs(
 
     assert input_event_ids
     assert len(output_event_ids) == len(input_event_ids)
+    assert any(record["eventType"] == "_execution_started_event" for record in records)
     assert set(trace_forest["roots"]) == input_event_ids
     assert set(trace_forest["nodes"]) == input_event_ids | output_event_ids
     assert trace_forest["warnings"] == []

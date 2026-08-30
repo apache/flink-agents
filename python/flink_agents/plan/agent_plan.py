@@ -72,6 +72,7 @@ class AgentPlan(BaseModel):
 
     actions: Dict[str, Action]
     resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None = None
+    agent_name: str | None = None
     config: AgentConfiguration | None = None
 
     @field_serializer("resource_providers")
@@ -135,7 +136,9 @@ class AgentPlan(BaseModel):
         return self
 
     @staticmethod
-    def from_agent(agent: Agent, config: AgentConfiguration) -> "AgentPlan":
+    def from_agent(
+        agent: Agent, config: AgentConfiguration, agent_name: str | None = None
+    ) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
         actions = {}
         for action in _get_actions(agent) + BUILT_IN_ACTIONS:
@@ -155,6 +158,7 @@ class AgentPlan(BaseModel):
         return AgentPlan(
             actions=actions,
             resource_providers=resource_providers,
+            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
             config=config,
         )
 
@@ -440,14 +444,13 @@ def _add_mcp_server(
         ]
     )
 
-    resource_providers.extend(
-        [
+    for tool in mcp_server.list_tools():
+        tool.mcp_server_name = name
+        resource_providers.append(
             PythonSerializableResourceProvider.from_resource(
                 name=tool.name, resource=tool
             )
-            for tool in mcp_server.list_tools()
-        ]
-    )
+        )
 
     mcp_server.close()
 

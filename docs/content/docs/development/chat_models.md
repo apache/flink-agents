@@ -292,6 +292,7 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `tools` | List[str] | None | List of tool names available to the model |
 | `max_tokens` | int | `1024` | Maximum number of tokens to generate |
 | `temperature` | float | `0.1` | Sampling temperature (0.0 to 1.0) |
+| `json_prefill` | bool | `False` | Prefill assistant response with "{" to enforce JSON output (applies only on models that accept assistant-message prefilling; disabled when tools are used, or when the request carries an `output_config`) |
 | `additional_kwargs` | dict | `{}` | Additional Anthropic API parameters |
 
 {{< /tab >}}
@@ -306,9 +307,9 @@ Anthropic provides cloud-based chat models featuring the Claude family, known fo
 | `tools` | List<String> | None | List of tool names available to the model |
 | `max_tokens` | long | `1024` | Maximum number of tokens to generate |
 | `temperature` | double | `0.1` | Sampling temperature (0.0 to 1.0) |
-| `json_prefill` | boolean | `true` | Prefill assistant response with "{" to enforce JSON output (disabled when tools are used) |
+| `json_prefill` | boolean | `false` | Prefill assistant response with "{" to enforce JSON output (applies only on models that accept assistant-message prefilling; disabled when tools are used, or when the request carries an `output_config`) |
 | `strict_tools` | boolean | `false` | Enable strict mode for tool calling schemas |
-| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences) |
+| `additional_kwargs` | Map<String, Object> | `{}` | Additional Anthropic API parameters (top_k, top_p, stop_sequences); an `output_config` supplied here takes precedence over one derived from an output schema |
 
 {{< /tab >}}
 
@@ -390,105 +391,25 @@ Some popular options include:
 Model availability and specifications may change. Always check the official Anthropic documentation for the latest information before implementing in production.
 {{< /hint >}}
 
-### Azure AI
-
-Azure AI provides cloud-based chat models through Azure AI Inference API, supporting various models including Llama, Mistral, Phi, and other models deployed via Azure AI Studio.
-
-{{< hint info >}}
-Azure AI is only supported in Java currently. To use Azure AI from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
-{{< hint warning >}}
-**Azure AI vs Azure OpenAI:** Azure AI uses the Azure AI Inference API to access models deployed via Azure AI Studio (Llama, Mistral, Phi, etc.). If you want to use OpenAI models (GPT-4, etc.) hosted on Azure, see [Azure OpenAI](#azure-openai) instead.
-{{< /hint >}}
-
-#### Prerequisites
-
-1. Create an Azure AI resource in the [Azure Portal](https://portal.azure.com/)
-2. Obtain your endpoint URL and API key from the Azure AI resource
-
-#### AzureAIChatModelConnection Parameters
-
-{{< tabs "AzureAIChatModelConnection Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter | Type   | Default  | Description                            |
-|-----------|--------|----------|----------------------------------------|
-| `endpoint` | String | Required | Azure AI service endpoint URL          |
-| `apiKey`   | String | Required | Azure AI API key for authentication   |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### AzureAIChatModelSetup Parameters
-
-{{< tabs "AzureAIChatModelSetup Parameters" >}}
-
-{{< tab "Java" >}}
-
-| Parameter    | Type             | Default  | Description                                      |
-|--------------|------------------|----------|--------------------------------------------------|
-| `connection` | String           | Required | Reference to connection method name              |
-| `model`      | String           | Required | Name of the chat model to use (e.g., "gpt-4o")   |
-| `prompt`     | Prompt \| String | None     | Prompt template or reference to prompt resource  |
-| `tools`      | List[String]     | None     | List of tool names available to the model        |
-
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Usage Example
-
-{{< tabs "Azure AI Usage Example" >}}
-
-{{< tab "Java" >}}
-```java
-public class MyAgent extends Agent {
-    @ChatModelConnection
-    public static ResourceDescriptor azureAIConnection() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_CONNECTION)
-                .addInitialArgument("endpoint", "https://your-resource.inference.ai.azure.com")
-                .addInitialArgument("apiKey", "your-api-key-here")
-                .build();
-    }
-
-    @ChatModelSetup
-    public static ResourceDescriptor azureAIChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_SETUP)
-                .addInitialArgument("connection", "azureAIConnection")
-                .addInitialArgument("model", "gpt-4o")
-                .build();
-    }
-    
-    ...
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-#### Available Models
-
-Azure AI supports various models through the Azure AI Inference API. Visit the [Azure AI Model Catalog](https://ai.azure.com/explore/models) for the complete and up-to-date list of available models.
-
-Some popular options include:
-- **GPT-4o** (gpt-4o)
-- **GPT-4** (gpt-4)
-- **GPT-4 Turbo** (gpt-4-turbo)
-- **GPT-3.5 Turbo** (gpt-3.5-turbo)
-
-{{< hint warning >}}
-Model availability and specifications may change. Always check the official Azure AI documentation for the latest information before implementing in production.
-{{< /hint >}}
-
 ### Azure OpenAI
 
 Azure OpenAI provides access to OpenAI models (GPT-4, GPT-4o, etc.) through Azure's cloud infrastructure, using the same OpenAI SDK with Azure-specific authentication and endpoints. This offers enterprise security, compliance, and regional availability while using familiar OpenAI APIs.
 
 {{< hint warning >}}
-**Azure OpenAI vs Azure AI:** Azure OpenAI uses the OpenAI SDK to access OpenAI models (GPT-4, etc.) hosted on Azure. If you want to use other models like Llama, Mistral, or Phi deployed via Azure AI Studio, see [Azure AI](#azure-ai) instead.
+**Migrating from Azure AI:** `AzureAIChatModelConnection` and `AzureAIChatModelSetup` have been removed. Replace them with `OpenAICompletionsConnection` and `OpenAICompletionsSetup` (see [OpenAI](#openai)), pointed at a Microsoft Foundry OpenAI v1 endpoint. There are two declarations to change, not one.
+
+On the connection, `AzureAIChatModelConnection` → `OpenAICompletionsConnection`:
+
+- `endpoint` becomes `api_base_url`, **and the value changes shape, not just the key**: `https://<resource>.services.ai.azure.com/models` becomes `https://<resource>.openai.azure.com/openai/v1/`. `https://<resource>.services.ai.azure.com/openai/v1/` is also accepted. Carrying the old value over unchanged will not work.
+- `apiKey` becomes `api_key`.
+
+On the setup, `AzureAIChatModelSetup` → `OpenAICompletionsSetup`:
+
+- Set `model` explicitly to your Foundry deployment name. Leaving it out is **not** reported as a configuration error: `OpenAICompletionsSetup` substitutes its own OpenAI default (`gpt-4o-mini`), and on the OpenAI v1 route that value is read as a deployment name. If no deployment on the resource carries that name, the request fails later at the provider; if one does, it is used silently in place of the deployment you meant.
+
+In YAML, `clazz: azure` no longer resolves to anything. Use `clazz: openai_completions` with `type: java`, in both `chat_model_connections` and `chat_model_setups`.
+
+The target is `OpenAICompletionsConnection` rather than `AzureOpenAIChatModelConnection` because the `/openai/v1/` route uses implicit versioning and takes no `api-version`, which `AzureOpenAIChatModelConnection` requires.
 {{< /hint >}}
 
 #### Prerequisites
@@ -1319,6 +1240,163 @@ public class MyAgent extends Agent {
 #### Available Models
 
 A vLLM server serves the model(s) it was started with. Query `GET /v1/models` on the server to list them; the `model` value in the setup must match one of the returned names.
+
+### Watsonx (IBM watsonx.ai)
+
+IBM watsonx.ai provides cloud-based chat models, including the IBM Granite series, with enterprise-grade governance and deployment options on IBM Cloud.
+
+#### Prerequisites
+
+1. Create an account on [IBM Cloud](https://cloud.ibm.com/) and provision a [watsonx.ai](https://www.ibm.com/products/watsonx-ai) instance
+2. Create a watsonx.ai project or deployment space
+2. On Developer access, select your Project ID and create API Key
+4. Note the generated API Key, Project ID and watsonx.ai URL for configuring your connection
+
+#### WatsonxChatModelConnection Parameters
+
+{{< tabs "WatsonxChatModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | str | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
+| `api_key` | str | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
+| `token` | str | `$WATSONX_TOKEN` | Caller-provided bearer token; it is not refreshed automatically and must remain valid for the job lifetime; configure exactly one of `api_key` and `token` |
+| `project_id` | str | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
+| `space_id` | str | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
+| `request_timeout` | float | `120.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum retries for transport failures and HTTP 408, 429, 500, 502, 503, and 504 responses |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `url` | String | `$WATSONX_URL` | watsonx.ai service endpoint of your region |
+| `api_key` | String | `$WATSONX_API_KEY` | IBM Cloud API key; configure exactly one of `api_key` and `token` |
+| `token` | String | `$WATSONX_TOKEN` | Caller-provided bearer token; it is not refreshed automatically and must remain valid for the job lifetime; configure exactly one of `api_key` and `token` |
+| `project_id` | String | `$WATSONX_PROJECT_ID` | watsonx.ai project id (or use `space_id`) |
+| `space_id` | String | `$WATSONX_SPACE_ID` | Deployment space id, as an alternative to `project_id` |
+| `api_version` | String | `"2025-04-23"` | watsonx.ai REST API version date |
+| `iam_url` | String | `"https://iam.cloud.ibm.com"` | IAM endpoint used to exchange the API key for a token |
+| `request_timeout` | double | `120.0` | HTTP request timeout in seconds |
+| `max_retries` | int | `3` | Maximum retries for transport failures and HTTP 408, 429, 500, 502, 503, and 504 responses |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### WatsonxChatModelSetup Parameters
+
+{{< tabs "WatsonxChatModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | str | Required | Reference to connection method name |
+| `model` | str | `"ibm/granite-4-h-small"` | watsonx.ai model id to use |
+| `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
+| `tools` | List[str] | None | List of tool names available to the model |
+| `temperature` | float | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | int | None | Maximum number of tokens to generate |
+| `extract_reasoning` | bool | `False` | Extract reasoning content (e.g. `<think>` blocks) from response |
+| `additional_kwargs` | dict | `{}` | Additional watsonx.ai chat parameters (e.g. `top_p`, `time_limit`, `seed`) |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | `"ibm/granite-4-h-small"` | watsonx.ai model id to use |
+| `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
+| `tools` | List[String] | None | List of tool names available to the model |
+| `temperature` | Double | `0.1` | Sampling temperature (0.0 to 2.0) |
+| `max_tokens` | Integer | None | Maximum number of tokens to generate |
+| `extract_reasoning` | Boolean | `false` | Extract reasoning content (e.g. `<think>` blocks) from response |
+| `additional_kwargs` | Map | `{}` | Additional watsonx.ai chat parameters (e.g. `top_p`, `time_limit`, `seed`) |
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Usage Example
+
+{{< tabs "Watsonx Usage Example" >}}
+
+{{< tab "Python" >}}
+```python
+class MyAgent(Agent):
+
+    @chat_model_connection
+    @staticmethod
+    def watsonx_connection() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.WATSONX_CONNECTION,
+            url="https://us-south.ml.cloud.ibm.com",  # set WATSONX_URL env var
+            api_key="your-api-key-here",  # set WATSONX_API_KEY env var
+            project_id="your-project-id",  # set WATSONX_PROJECT_ID env var
+        )
+
+    @chat_model_setup
+    @staticmethod
+    def watsonx_chat_model() -> ResourceDescriptor:
+        return ResourceDescriptor(
+            clazz=ResourceName.ChatModel.WATSONX_SETUP,
+            connection="watsonx_connection",
+            model="ibm/granite-4-h-small",
+            temperature=0.1,
+            max_tokens=1024
+        )
+
+    ...
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @ChatModelConnection
+    public static ResourceDescriptor watsonxConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.WATSONX_CONNECTION)
+                .addInitialArgument("url", "https://us-south.ml.cloud.ibm.com")
+                .addInitialArgument("api_key", "your-api-key-here")
+                .addInitialArgument("project_id", "your-project-id")
+                .build();
+    }
+
+    @ChatModelSetup
+    public static ResourceDescriptor watsonxChatModel() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.WATSONX_SETUP)
+                .addInitialArgument("connection", "watsonxConnection")
+                .addInitialArgument("model", "ibm/granite-4-h-small")
+                .addInitialArgument("temperature", 0.1)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+#### Available Models
+
+Visit the [watsonx.ai foundation models documentation](https://www.ibm.com/products/watsonx-ai/foundation-models) for the complete and up-to-date list of available chat models.
+
+Some popular options include:
+- **ibm/granite** series (ibm/granite-4-h-small, ibm/granite-3-3-8b-instruct)
+- **meta-llama** series (meta-llama/llama-3-3-70b-instruct)
+- **mistralai** series (mistralai/mistral-large)
+
+{{< hint warning >}}
+Model availability and specifications may change. Always check the official IBM watsonx.ai documentation for the latest information before implementing in production.
+{{< /hint >}}
 
 ## Using Cross-Language Providers
 

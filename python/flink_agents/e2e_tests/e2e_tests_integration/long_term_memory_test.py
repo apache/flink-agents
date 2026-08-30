@@ -148,7 +148,7 @@ class LongTermMemoryAgent(Agent):
             clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             api_key=API_KEY,
             api_base_url=BASE_URL,
-            request_timeout=300,
+            timeout=300,
         )
 
     @chat_model_setup
@@ -159,8 +159,6 @@ class LongTermMemoryAgent(Agent):
             clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             connection="openai_connection",
             model=MODEL,
-            extract_reasoning=True,
-            think=False,
         )
 
     @embedding_model_connection

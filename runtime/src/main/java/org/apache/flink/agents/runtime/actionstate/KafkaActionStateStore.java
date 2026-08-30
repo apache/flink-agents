@@ -17,12 +17,12 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import org.apache.beam.sdk.util.Preconditions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.Preconditions;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
@@ -91,28 +92,43 @@ public class KafkaActionStateStore implements ActionStateStore {
     // Kafka topic that stores action states
     private final String topic;
 
+    // When set, only records whose key-group is accepted by this predicate are kept in the
+    // in-memory cache during rebuildState; null means retain all keys (default).
+    private IntPredicate ownershipFilter;
+
+    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
+    private final int maxParallelism;
+
     @VisibleForTesting
     KafkaActionStateStore(
             Map<String, ActionState> actionStates,
             AgentConfiguration agentConfiguration,
             Producer<String, ActionState> producer,
             Consumer<String, ActionState> consumer,
-            String topic) {
+            String topic,
+            int maxParallelism) {
         this.actionStates = actionStates;
         this.producer = producer;
         this.consumer = consumer;
         this.topic = topic;
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
+        this.maxParallelism = maxParallelism;
     }
 
     /** Constructs a new KafkaActionStateStore with custom Kafka configuration. */
-    public KafkaActionStateStore(AgentConfiguration agentConfiguration) {
+    public KafkaActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
+        Preconditions.checkArgument(
+                maxParallelism > 0,
+                "maxParallelism must be positive but was %s; it must be set to the operator's max"
+                        + " parallelism so key-groups match Flink's key-group assignment.",
+                maxParallelism);
+        this.maxParallelism = maxParallelism;
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.topic =
-                Preconditions.checkArgumentNotNull(
+                Preconditions.checkNotNull(
                         agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
                         "Kafka action state topic must be configured");
         // create the topic if not exists
@@ -132,7 +148,7 @@ public class KafkaActionStateStore implements ActionStateStore {
             return;
         }
 
-        String stateKey = generateKey(key, seqNum, action, event);
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
@@ -150,7 +166,7 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
 
         LOG.debug(
                 "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",
@@ -159,29 +175,16 @@ public class KafkaActionStateStore implements ActionStateStore {
                 stateKey,
                 actionStates.keySet());
 
-        boolean hasDivergence = checkDivergence(key.toString(), seqNum);
+        boolean hasDivergence = checkDivergence(key, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
+            // Clean up this key's states with sequence number greater than the requested seqNum.
             actionStates
-                    .entrySet()
+                    .keySet()
                     .removeIf(
-                            entry -> {
-                                // Extract key and sequence number from the state key
-                                try {
-                                    List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                    if (parts.size() >= 2) {
-                                        long stateSeqNum = Long.parseLong(parts.get(1));
-                                        // clean up any states with sequence number greater than
-                                        // the requested seqNum
-                                        return stateSeqNum > seqNum;
-                                    }
-                                } catch (NumberFormatException e) {
-                                    LOG.warn(
-                                            "Failed to parse sequence number from state key: {}",
-                                            stateKey);
-                                }
-                                return false;
-                            });
+                            cachedKey ->
+                                    ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                                            cachedKey, key, stateSeqNum -> stateSeqNum > seqNum));
         }
 
         ActionState result = actionStates.get(stateKey);
@@ -194,9 +197,9 @@ public class KafkaActionStateStore implements ActionStateStore {
         return result;
     }
 
-    private boolean checkDivergence(String key, long seqNum) {
+    private boolean checkDivergence(Object key, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
+                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
                         .count()
                 > 1;
     }
@@ -255,6 +258,9 @@ public class KafkaActionStateStore implements ActionStateStore {
 
                 for (ConsumerRecord<String, ActionState> record : records) {
                     try {
+                        if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
+                            continue;
+                        }
                         actionStates.put(record.key(), record.value());
                     } catch (Exception e) {
                         LOG.warn(
@@ -274,33 +280,22 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     @Override
+    public void setOwnershipFilter(IntPredicate ownershipFilter) {
+        this.ownershipFilter = ownershipFilter;
+    }
+
+    @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
         // Remove states from in-memory cache for this key up to the specified sequence
         // number
         actionStates
-                .entrySet()
+                .keySet()
                 .removeIf(
-                        entry -> {
-                            String stateKey = entry.getKey();
-                            // Extract key and sequence number from the state key
-                            // State key format: "key_seqNum_action_event"
-                            if (stateKey.startsWith(key.toString() + "_")) {
-                                try {
-                                    List<String> parts = ActionStateUtil.parseKey(stateKey);
-                                    if (parts.size() >= 2) {
-                                        long stateSeqNum = Long.parseLong(parts.get(1));
-                                        return stateSeqNum <= seqNum;
-                                    }
-                                } catch (NumberFormatException e) {
-                                    LOG.warn(
-                                            "Failed to parse sequence number from state key: {}",
-                                            stateKey);
-                                }
-                            }
-                            return false;
-                        });
+                        cachedKey ->
+                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                                        cachedKey, key, stateSeqNum -> stateSeqNum <= seqNum));
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }

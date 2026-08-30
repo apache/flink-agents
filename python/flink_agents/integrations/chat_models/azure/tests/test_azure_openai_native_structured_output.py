@@ -73,7 +73,6 @@ def _connection(
     api_version: str = CAPABLE_API_VERSION,
 ) -> AzureOpenAIChatModelConnection:
     conn = AzureOpenAIChatModelConnection(
-        name="azure_openai",
         api_key="test-key",
         azure_endpoint="https://example.openai.azure.com",
         api_version=api_version,

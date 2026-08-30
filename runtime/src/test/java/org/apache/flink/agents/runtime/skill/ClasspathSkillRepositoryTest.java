@@ -22,11 +22,14 @@ import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
@@ -87,6 +90,85 @@ class ClasspathSkillRepositoryTest {
                         .map(AgentSkill::getName)
                         .sorted()
                         .collect(Collectors.toList()));
+    }
+
+    @Test
+    void loadFromRelativeJarUrl(@TempDir Path tempDir) throws IOException {
+        // A Flink deployment can add user-code JARs relative to the TaskManager working directory,
+        // so the class loader exposes the jar through a relative file: URL such as
+        // file:../../flink/usrlib/job.jar. new File(URI) rejects that opaque URI; the repository
+        // must still resolve and load the skills. Regression test for GH-966.
+        Path jar = tempDir.resolve("relative-skills.jar");
+        zipDirIntoJarUnderPrefix(resourcesRoot(), jar, "embedded-skills");
+
+        Path relativeJar = Path.of("").toAbsolutePath().relativize(jar);
+        URL relativeUrl =
+                new URL("file:" + relativeJar.toString().replace(File.separatorChar, '/'));
+        URLClassLoader loader = new URLClassLoader(new URL[] {relativeUrl}, /* parent */ null);
+
+        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        assertEquals(
+                List.of("github", "nano-banana-pro"),
+                repo.getSkills().stream()
+                        .map(AgentSkill::getName)
+                        .sorted()
+                        .collect(Collectors.toList()));
+    }
+
+    @Test
+    void loadFromDirectRelativeJarUrl(@TempDir Path tempDir) throws IOException {
+        // Some class loaders return from getResources() the exact (relative) jar: URL they were
+        // configured with, rather than an absolute one. This drives the jar branch of materialize
+        // straight into SkillMaterializer.copyJarEntries with a relative inner file: URL, without
+        // going through the URLClassLoader fallback scan. Regression test for GH-966.
+        Path jar = tempDir.resolve("relative-skills.jar");
+        zipDirIntoJarUnderPrefix(resourcesRoot(), jar, "embedded-skills");
+
+        Path relativeJar = Path.of("").toAbsolutePath().relativize(jar);
+        String relativeFileUrl = "file:" + relativeJar.toString().replace(File.separatorChar, '/');
+        URL directJarUrl = new URL("jar:" + relativeFileUrl + "!/embedded-skills");
+        ClassLoader loader = resourcesReturning("embedded-skills", directJarUrl);
+
+        ClasspathSkillRepository repo = new ClasspathSkillRepository("embedded-skills", loader);
+        assertEquals(
+                List.of("github", "nano-banana-pro"),
+                repo.getSkills().stream()
+                        .map(AgentSkill::getName)
+                        .sorted()
+                        .collect(Collectors.toList()));
+    }
+
+    @Test
+    void loadFromDirectRelativeDirectoryUrl() throws IOException {
+        // getResources() returns a relative file: directory URL, driving
+        // ClasspathSkillRepository.materializeFileUrl through LocalUrls. Regression test for
+        // GH-966. src/test/resources/skills is the module-relative directory holding the skills.
+        URL directDirUrl = new URL("file:src/test/resources/skills");
+        ClassLoader loader = resourcesReturning("skills", directDirUrl);
+
+        ClasspathSkillRepository repo = new ClasspathSkillRepository("skills", loader);
+        assertEquals(
+                List.of("github", "nano-banana-pro"),
+                repo.getSkills().stream()
+                        .map(AgentSkill::getName)
+                        .sorted()
+                        .collect(Collectors.toList()));
+    }
+
+    /**
+     * A plain (non-{@link URLClassLoader}) class loader whose {@link ClassLoader#getResources}
+     * hands back exactly {@code url} for {@code expectedResource}. Being non-{@code URLClassLoader}
+     * suppresses the fallback scan, so a test exercises only the direct {@code getResources} path.
+     */
+    private static ClassLoader resourcesReturning(String expectedResource, URL url) {
+        return new ClassLoader(null) {
+            @Override
+            public Enumeration<URL> getResources(String name) {
+                return expectedResource.equals(name)
+                        ? Collections.enumeration(List.of(url))
+                        : Collections.emptyEnumeration();
+            }
+        };
     }
 
     @Test

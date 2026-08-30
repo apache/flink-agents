@@ -40,7 +40,7 @@ class Person(BaseModel):
 
 def _connection() -> OpenAIChatModelConnection:
     conn = OpenAIChatModelConnection(
-        name="openai", api_key="test-key", api_base_url="http://localhost"
+        api_key="test-key", api_base_url="http://localhost"
     )
     mock_client = MagicMock()
     mock_message = MagicMock()

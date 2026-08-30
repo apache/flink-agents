@@ -35,6 +35,7 @@ from flink_agents.api.function import (
 from flink_agents.api.function import (
     PythonFunction as ApiPythonFunction,
 )
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -44,6 +45,7 @@ from flink_agents.plan.function import (
 from flink_agents.plan.function import (
     PythonFunction as PlanPythonFunction,
 )
+from flink_agents.plan.resource_provider import JavaResourceProvider
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -407,3 +409,34 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
         "k_str": "v1",
     }
     assert list(restored.actions) == ["first", "second"]
+
+
+def test_python_can_deserialize_plan_with_java_model_router() -> None:
+    """A Java agent may declare a MODEL_ROUTER resource (Java-side in-chat routing).
+
+    Python routing execution is a follow-up, but the Python side must still
+    deserialize such plans: a mixed job (Java router + any Python action) parses the
+    whole resource map against ResourceType, so a missing enum member fails the job
+    at operator open with a ValidationError.
+    """
+    provider = JavaResourceProvider(
+        name="router",
+        type=ResourceType.MODEL_ROUTER,
+        descriptor=ResourceDescriptor(
+            target_module="java",
+            target_clazz=(
+                "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
+            ),
+            arguments={"candidates": ["small", "big"]},
+        ),
+    )
+    plan = AgentPlan(
+        actions={},
+        resource_providers={ResourceType.MODEL_ROUTER: {"router": provider}},
+    )
+    restored = AgentPlan.model_validate_json(_plan_dump_json(plan))
+    assert ResourceType.MODEL_ROUTER in restored.resource_providers
+    assert isinstance(
+        restored.resource_providers[ResourceType.MODEL_ROUTER]["router"],
+        JavaResourceProvider,
+    )

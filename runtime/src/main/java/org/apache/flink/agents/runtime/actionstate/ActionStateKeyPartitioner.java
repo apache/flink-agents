@@ -40,16 +40,16 @@ public class ActionStateKeyPartitioner implements Partitioner {
         if (!(key instanceof String)) {
             throw new IllegalArgumentException("Key must be a String");
         }
-        String[] keyParts = ((String) key).split("_");
-        if (keyParts.length < 4) {
+
+        String businessKey = ActionStateUtil.businessKeyOf((String) key);
+        if (businessKey == null) {
             throw new IllegalArgumentException("Key format is invalid");
         }
-
-        if ("".equalsIgnoreCase(keyParts[0])) {
-            throw new IllegalArgumentException("First part of the key cannot be empty");
+        if (businessKey.isEmpty()) {
+            throw new IllegalArgumentException("Business key part of the key cannot be empty");
         }
 
-        return MathUtils.murmurHash(keyParts[0].hashCode()) % numPartitions;
+        return MathUtils.murmurHash(businessKey.hashCode()) % numPartitions;
     }
 
     @Override

@@ -213,6 +213,27 @@ public class AgentPlanJsonSerializerTest {
 
         // Verify that config data from AgentConfiguration is present
         assertThat(json).contains("\"conf_data\":{\"config.key\":\"config.value\"}");
+        assertThat(json).contains("\"agent_name\":\"TestAgent\"");
+    }
+
+    @Test
+    public void testSerializeDeserializeAgentName() throws Exception {
+        AgentPlan original =
+                new AgentPlan(new TestAgent(), new AgentConfiguration(), "named-agent");
+
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(original);
+        AgentPlan deserialized = mapper.readValue(json, AgentPlan.class);
+
+        assertThat(json).contains("\"agent_name\":\"named-agent\"");
+        assertThat(deserialized.getAgentName()).isEqualTo("named-agent");
+    }
+
+    @Test
+    public void testExplicitEmptyAgentNameIsPreserved() throws Exception {
+        AgentPlan plan = new AgentPlan(new TestAgent(), new AgentConfiguration(), "");
+
+        assertThat(plan.getAgentName()).isEqualTo("");
     }
 
     @Test

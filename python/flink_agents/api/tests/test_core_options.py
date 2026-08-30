@@ -17,6 +17,7 @@
 #################################################################################
 import ast
 import importlib
+import os
 import sys
 import types
 from pathlib import Path
@@ -108,6 +109,7 @@ def test_agent_config_options_are_explicitly_declared() -> None:
     assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
+    assert options["EVENT_LOG_TRACE_ENABLED"].get_default_value() is False
     condition_failure = options["CONDITION_EVALUATION_FAILURE_STRATEGY"]
     assert (
         condition_failure.get_key()
@@ -118,6 +120,18 @@ def test_agent_config_options_are_explicitly_declared() -> None:
         condition_failure.get_default_value()
         is ConditionEvaluationFailureStrategy.WARN_AND_SKIP
     )
+
+
+def test_agent_execution_options_include_parallel_tool_call_options() -> None:
+    from flink_agents.api.core_options import AgentExecutionOptions
+
+    options = _collect_config_options(AgentExecutionOptions)
+    assert options["TOOL_CALL_ASYNC"].get_key() == "tool-call.async"
+    assert options["TOOL_CALL_ASYNC"].get_default_value() is True
+    assert options["TOOL_CALL_PARALLELISM"].get_key() == "tool-call.parallelism"
+    assert options["TOOL_CALL_PARALLELISM"].get_default_value() == os.cpu_count()
+    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_key() == "tool-call.batch.timeout.ms"
+    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_default_value() == -1
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

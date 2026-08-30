@@ -20,9 +20,12 @@ package org.apache.flink.agents.api.logger;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+
+import javax.annotation.Nullable;
 
 /**
- * Interface for logging action events in the Flink Agents framework.
+ * Interface for logging events in the Flink Agents framework.
  *
  * <p>EventLogger provides a unified interface for capturing, filtering, and persisting events as
  * they flow through the agent execution pipeline. Implementations can target different storage
@@ -49,11 +52,24 @@ public interface EventLogger extends AutoCloseable {
      * should perform the append operation efficiently, as it may be called frequently during event
      * processing.
      *
-     * @param context metadata and other contextual information associated with the event
+     * @param eventContext runtime context associated with the event occurrence
      * @param event the event to be logged
      * @throws Exception if the append operation fails
      */
-    void append(EventContext context, Event event) throws Exception;
+    void append(EventContext eventContext, Event event) throws Exception;
+
+    /**
+     * Appends an event with runtime event context and optional trace context.
+     *
+     * <p>Implementations that persist trace context should override this method. Existing
+     * implementations can keep implementing {@link #append(EventContext, Event)}; the default
+     * behavior preserves the previous contract and ignores the optional trace context.
+     */
+    default void append(
+            EventContext eventContext, Event event, @Nullable ExecutionTraceContext traceContext)
+            throws Exception {
+        append(eventContext, event);
+    }
 
     /**
      * Flush any buffered events to the underlying storage.
