@@ -43,7 +43,7 @@ class AnthropicChatModelSetupTest {
         Map<String, Object> params =
                 new AnthropicChatModelSetup(base().build(), NOOP).getParameters();
 
-        assertThat(params).containsEntry("model", "claude-sonnet-4-5");
+        assertThat(params).containsEntry("model", "claude-sonnet-4-6");
         assertThat(params).containsEntry("temperature", 0.1d);
         assertThat(params).containsEntry("max_tokens", 1024L);
         assertThat(params).containsEntry("strict_tools", false);

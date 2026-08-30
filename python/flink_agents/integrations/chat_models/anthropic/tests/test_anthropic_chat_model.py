@@ -25,7 +25,6 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
-    DEFAULT_ANTHROPIC_MODEL,
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
 )
@@ -118,4 +117,4 @@ def test_model_field_roundtrip() -> None:
 def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
     setup = AnthropicChatModelSetup(connection="conn")
-    assert setup.model == DEFAULT_ANTHROPIC_MODEL
+    assert setup.model == "claude-sonnet-4-6"

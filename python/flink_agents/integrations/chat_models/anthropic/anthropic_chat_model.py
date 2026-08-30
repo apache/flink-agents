@@ -450,7 +450,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
                 self._client = None
 
 
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_TEMPERATURE = 0.1
 DEFAULT_JSON_PREFILL = False
