@@ -266,9 +266,7 @@ class BaseChatModelConnection(Resource, ABC):
             when some other condition has already ruled the native branch out.
 
             A ``BaseModel`` subclass that renders but declares no fields is sent as
-            rendered, leaving the receiving provider to accept or refuse it. It is
-            refused only where the rendered document is itself the deliverable, as on
-            the ReAct prompt path, which pastes it into the instruction prompt.
+            rendered, leaving the receiving provider to accept or refuse it.
 
             An implementation with no native structured-output translation at all is a
             separate case, not the ``RowTypeInfo`` skip above: it rejects *every*

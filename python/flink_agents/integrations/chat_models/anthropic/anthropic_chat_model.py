@@ -24,7 +24,7 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_provider_output_schema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -224,7 +224,7 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     return {
         "format": {
             "type": "json_schema",
-            "schema": render_provider_output_schema(model, transform_schema),
+            "schema": render_output_schema(model, transform_schema),
         }
     }
 

@@ -29,7 +29,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_provider_output_schema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -132,7 +132,7 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
         "type": "json_schema",
         "json_schema": {
             "name": model.__name__,
-            "schema": render_provider_output_schema(model, to_strict_json_schema),
+            "schema": render_output_schema(model, to_strict_json_schema),
             "strict": True,
         },
     }

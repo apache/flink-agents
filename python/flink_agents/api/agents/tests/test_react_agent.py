@@ -48,13 +48,7 @@ class Unrenderable(BaseModel):
 
 
 class FieldLess(BaseModel):
-    """A schema declaring no fields, so it constrains nothing."""
-
-
-class Labelled(BaseModel):
-    """A schema whose only member is a free-form map, a legitimate constraint."""
-
-    labels: dict[str, str]
+    """A schema declaring no fields."""
 
 
 def _agent(output_schema: Any) -> ReActAgent:
@@ -81,21 +75,15 @@ def test_unrenderable_output_schema_raises_naming_the_model() -> None:
         _agent(Unrenderable)
 
 
-def test_field_less_output_schema_raises_naming_the_model() -> None:
-    """A schema declaring no fields would instruct the model to match nothing."""
-    with pytest.raises(TypeError, match="FieldLess renders to a JSON Schema"):
-        _agent(FieldLess)
-
-
-def test_map_member_output_schema_is_accepted() -> None:
-    """A free-form map is a legitimate constraint and reaches the prompt intact."""
-    assert _schema_prompt(_agent(Labelled)) == _expected_prompt(
-        Labelled.model_json_schema()
+def test_field_less_output_schema_reaches_the_schema_prompt() -> None:
+    """A schema declaring no fields renders, and reaches the prompt as rendered."""
+    assert _schema_prompt(_agent(FieldLess)) == _expected_prompt(
+        FieldLess.model_json_schema()
     )
 
 
 def test_renderable_output_schema_keeps_the_schema_prompt() -> None:
-    """An ordinary schema still yields exactly the prompt it did before."""
+    """An ordinary schema yields the prompt built from its rendered JSON Schema."""
     assert _schema_prompt(_agent(Person)) == _expected_prompt(
         Person.model_json_schema()
     )
@@ -108,6 +96,6 @@ def test_row_type_info_output_schema_keeps_the_prompt_fallback() -> None:
 
 
 def test_unsupported_output_schema_type_reports_the_type() -> None:
-    """A schema of neither supported kind is rejected before any render is attempted."""
-    with pytest.raises(TypeError, match="is not supported"):
+    """A schema of neither supported kind is rejected, named by the type received."""
+    with pytest.raises(TypeError, match=r"<class 'str'> is not supported"):
         _agent("not-a-schema")

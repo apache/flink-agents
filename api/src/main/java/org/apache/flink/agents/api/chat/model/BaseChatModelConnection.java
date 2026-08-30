@@ -109,12 +109,10 @@ public abstract class BaseChatModelConnection extends Resource {
      * connections wrap that. A schema the SDK does render is sent as rendered even when it declares
      * no properties; whether such a document is usable is the receiving provider's to judge.
      *
-     * <p>The ReAct prompt path is the one place either failure is refused, and it renders through a
-     * different generator, Jackson, rather than through any provider SDK. Its output is pasted
-     * verbatim into the instruction prompt and is therefore the deliverable, so a POJO Jackson
-     * cannot render, and one it renders without constraining anything, are both rejected there.
-     * Because the two paths use different generators, neither rejection says anything about what a
-     * connection does with the same POJO.
+     * <p>The ReAct prompt path renders through a different generator, Jackson, rather than through
+     * any provider SDK, and a POJO Jackson cannot render is rejected there rather than reaching the
+     * prompt. Because the two paths use different generators, that rejection says nothing about
+     * what a connection does with the same POJO.
      *
      * @param messages the input chat messages
      * @param tools the tools can be called by the model

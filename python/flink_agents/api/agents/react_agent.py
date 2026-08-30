@@ -24,10 +24,7 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import RowTypeInfo
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
-from flink_agents.api.agents.types import (
-    OutputSchema,
-    render_constraining_output_schema,
-)
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -129,16 +126,14 @@ class ReActAgent(Agent):
         ------
         TypeError
             If the schema is neither a RowTypeInfo nor a BaseModel subclass, or if a
-            BaseModel schema cannot be rendered as a JSON Schema, or renders to one
-            that constrains nothing. Instructing the model to match such a schema
-            would leave every response acceptable.
+            BaseModel schema cannot be rendered as a JSON Schema.
         """
         super().__init__()
         self.add_resource(_DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, chat_model)
 
         if output_schema:
             if isinstance(output_schema, type) and issubclass(output_schema, BaseModel):
-                json_schema = render_constraining_output_schema(
+                json_schema = render_output_schema(
                     output_schema, lambda model: model.model_json_schema()
                 )
             elif isinstance(output_schema, RowTypeInfo):

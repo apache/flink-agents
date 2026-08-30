@@ -280,10 +280,9 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
 @pytest.mark.parametrize("schema", [_FieldLess, _NestsFieldLess, _MapsToFieldLess])
 def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
     # A schema declaring no fields renders, so the provider decides on it, not this
-    # connection. Fails if a check for a schema that renders but constrains nothing is
-    # ever added back here, which would refuse a request that works today. The nested
-    # cases are the ones a root-only check would still let through, so they pin the
-    # whole document rather than its top level.
+    # connection. The document reaches the request exactly as rendered rather than
+    # being refused here. The nested cases carry the field-less model below the root,
+    # so the assertion covers the whole document rather than only its top level.
     output_config = _request_kwargs(
         model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=schema)
     )["output_config"]
@@ -292,9 +291,9 @@ def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
 
 
 def test_map_member_schema_is_accepted_and_sent_whole() -> None:
-    # This renderer rewrites a map member into an object with an empty properties,
-    # which is exactly the shape a field-less model produces. Checking the renderer's
-    # output rather than the model's would therefore reject every map-typed member.
+    # This renderer rewrites a map member into an object with an empty properties. The
+    # rewritten document is what reaches the request, so the member survives the
+    # normalization rather than being dropped or flattened.
     output_config = _request_kwargs(
         model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Labelled)
     )["output_config"]

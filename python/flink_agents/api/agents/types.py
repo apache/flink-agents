@@ -67,56 +67,24 @@ class OutputSchema(BaseModel):
         return self
 
 
-def render_provider_output_schema(
+def render_output_schema(
     model: type[BaseModel], render: Callable[[type[BaseModel]], dict[str, Any]]
 ) -> dict[str, Any]:
-    """Render an output schema for a provider, reporting a render failure clearly.
+    """Render an output schema, reporting a render failure clearly.
 
-    The renderer is supplied by the caller because each chat model translates a
-    schema with its own vendor renderer, and this module may not depend on any of
-    them. The model's own render runs first so that a model no JSON Schema can
-    express is reported as exactly that: a vendor renderer renders the model
-    itself, so it would otherwise surface the same failure worded as a translation
-    failure. The vendor render is wrapped in turn because it rejects models the
-    model's own render accepts, such as one carrying an untyped member that renders
-    to a document with no ``type``.
+    The caller supplies ``render`` because callers differ in the wire format they
+    need, and this module cannot depend on the renderers that produce it.
 
-    A schema that renders but declares no fields is returned as rendered. Whether
-    such a document is usable is the receiving provider's to judge, and refusing it
-    here would fail a request that succeeds today. Callers whose deliverable is the
-    rendered document itself have no provider to defer to and use
-    ``render_constraining_output_schema`` instead.
+    The model's own render runs first so that a model no JSON Schema can express is
+    reported as exactly that. ``render`` renders the model itself, so without that
+    first attempt the same failure would surface worded as a translation failure.
+    The call to ``render`` is wrapped in turn because a renderer can reject a model
+    the model's own render accepts, such as one carrying an untyped member that
+    renders to a document with no ``type``.
 
-    Args:
-        model: The model class describing the shape the response must take.
-        render: Renders ``model`` in the wire format the chat model expects.
-
-    Returns:
-        The document ``render`` produced.
-
-    Raises:
-        TypeError: If ``model`` has no JSON Schema, or if ``render`` fails or returns
-            something other than a document.
-    """
-    return _render_output_schema(model, render, reject_unconstrained=False)
-
-
-def render_constraining_output_schema(
-    model: type[BaseModel], render: Callable[[type[BaseModel]], dict[str, Any]]
-) -> dict[str, Any]:
-    """Render an output schema, refusing one that cannot constrain the response.
-
-    For a caller that consumes the rendered document itself rather than sending it
-    to a provider, such as one pasting it into an instruction prompt. A document
-    describing an object with no fields instructs the model to match nothing, and
-    every response then satisfies it.
-
-    Whether a model expresses a constraint is a property of the model, not of a
-    provider's wire format, so the check runs against the model's own JSON Schema
-    and only the returned document comes from ``render``. That keeps the check
-    independent of how any SDK normalizes a schema: one renderer rewrites every
-    map-typed member into an empty object, which is indistinguishable from a model
-    that declares no fields at all.
+    Whatever ``render`` produces is returned as produced. A document that declares
+    no fields is not refused here: whether it is usable belongs to the caller that
+    consumes it, and refusing it would fail a request that succeeds today.
 
     Args:
         model: The model class describing the shape the response must take.
@@ -126,22 +94,12 @@ def render_constraining_output_schema(
         The document ``render`` produced.
 
     Raises:
-        TypeError: Everything ``render_provider_output_schema`` raises, and
-            additionally if ``model`` renders to a JSON Schema containing an object
-            that declares no properties and so constrains nothing.
+        TypeError: If ``model`` has no JSON Schema, or if ``render`` fails or returns
+            something other than a document.
     """
-    return _render_output_schema(model, render, reject_unconstrained=True)
-
-
-def _render_output_schema(
-    model: type[BaseModel],
-    render: Callable[[type[BaseModel]], dict[str, Any]],
-    *,
-    reject_unconstrained: bool,
-) -> dict[str, Any]:
-    """Back the two public renderers, which differ only in the emptiness check."""
     try:
-        document = model.model_json_schema()
+        # Run for its failure, not for its value.
+        model.model_json_schema()
     except Exception as e:
         msg = (
             f"Output schema {model.__module__}.{model.__qualname__} cannot be"
@@ -151,18 +109,12 @@ def _render_output_schema(
         )
         raise TypeError(msg) from e
 
-    if reject_unconstrained:
-        defs = document.get("$defs")
-        _reject_empty_objects(
-            document, "$", defs if isinstance(defs, dict) else {}, set(), model
-        )
-
     try:
         schema = render(model)
     except Exception as e:
         msg = (
             f"Output schema {model.__module__}.{model.__qualname__} cannot be"
-            " translated for this chat model, so it cannot constrain the response."
+            " translated by the renderer in use, so it cannot constrain the response."
             " Use a schema whose fields are all JSON-Schema-renderable, or pass no"
             f" output schema. The renderer reported: {e}"
         )
@@ -176,66 +128,3 @@ def _render_output_schema(
         )
         raise TypeError(msg)
     return schema
-
-
-def _reject_empty_objects(
-    node: Any,
-    path: str,
-    defs: dict[str, Any],
-    visited: set[int],
-    model: type[BaseModel],
-) -> None:
-    """Raise if any object below ``node`` declares an empty ``properties``.
-
-    ``properties`` present and empty is an object that admits every response and
-    rejects none. ``properties`` absent is a free-form map such as
-    ``dict[str, str]``, which is a legitimate constraint and is left alone.
-
-    An empty ``properties`` still constrains something when ``additionalProperties``
-    carries a schema, which bounds every extra member, or ``True``, which admits
-    them deliberately. Only an absent or ``False`` ``additionalProperties`` leaves
-    the object expressing nothing. The tests are identity comparisons because a
-    JSON Schema document may hold ``{}`` there, which is a legitimate schema and is
-    falsy in Python.
-
-    Descends through ``properties``, ``items``, ``prefixItems``, a schema-valued
-    ``additionalProperties``, the ``anyOf``/``oneOf``/``allOf`` branches, and any
-    ``$defs`` entry a ``$ref`` reaches.
-    """
-    if not isinstance(node, dict) or id(node) in visited:
-        return
-    visited.add(id(node))
-
-    ref = node.get("$ref")
-    if isinstance(ref, str):
-        prefix = "#/$defs/"
-        target = defs.get(ref[len(prefix) :]) if ref.startswith(prefix) else None
-        _reject_empty_objects(target, path, defs, visited, model)
-        return
-
-    properties = node.get("properties")
-    additional = node.get("additionalProperties")
-    if (
-        node.get("type") == "object"
-        and (additional is None or additional is False)
-        and isinstance(properties, dict)
-        and not properties
-    ):
-        msg = (
-            f"Output schema {model.__module__}.{model.__qualname__} renders to a"
-            " JSON Schema that cannot constrain the response: the object at path"
-            f" {path} has no properties. Use a schema whose objects each declare at"
-            " least one field, or pass no output schema."
-        )
-        raise TypeError(msg)
-
-    if isinstance(properties, dict):
-        for name, child in properties.items():
-            _reject_empty_objects(child, f"{path}.{name}", defs, visited, model)
-    _reject_empty_objects(node.get("items"), path, defs, visited, model)
-    _reject_empty_objects(node.get("additionalProperties"), path, defs, visited, model)
-    for keyword in ("prefixItems", "anyOf", "oneOf", "allOf"):
-        branches = node.get(keyword)
-        if isinstance(branches, list):
-            for branch in branches:
-                _reject_empty_objects(branch, path, defs, visited, model)

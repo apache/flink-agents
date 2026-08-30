@@ -252,10 +252,9 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
 def test_field_less_schema_is_accepted_and_sent_whole(schema: type[BaseModel]) -> None:
     """A schema declaring no fields renders, so the provider decides on it, not us.
 
-    Fails if a check for a schema that renders but constrains nothing is ever added
-    back here: the provider accepts these documents, and refusing one would fail a
-    request that works today. The nested cases are the ones a root-only check would
-    still let through, so they pin the whole document rather than its top level.
+    The document reaches the request exactly as rendered rather than being refused
+    here. The nested cases carry the field-less model below the root, so the
+    assertion covers the whole document rather than only its top level.
     """
     conn = _connection()
     _chat_with_schema(conn, schema)

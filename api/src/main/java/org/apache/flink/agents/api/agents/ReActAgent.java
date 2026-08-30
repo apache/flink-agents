@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.agents;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.commons.lang3.ClassUtils;
 import org.apache.flink.agents.api.Event;
@@ -71,9 +70,8 @@ public class ReActAgent extends Agent {
                 outputSchema = new OutputSchema((RowTypeInfo) outputSchema);
             } else if (outputSchema instanceof Class) {
                 Class<?> schemaClass = (Class<?>) outputSchema;
-                JsonNode schemaNode;
                 try {
-                    schemaNode = mapper.generateJsonSchema(schemaClass).getSchemaNode();
+                    jsonSchema = mapper.generateJsonSchema(schemaClass).getSchemaNode().toString();
                 } catch (JsonMappingException | IllegalArgumentException e) {
                     // Both are reachable: a class whose getters disagree on a property name fails
                     // the mapping, and one that would not serialize as a JSON object at all is
@@ -87,14 +85,12 @@ public class ReActAgent extends Agent {
                                     schemaClass.getName(), e.getMessage()),
                             e);
                 }
-                // Deliberately outside the catch above: the check throws an
-                // IllegalArgumentException of its own naming the offending member's path, and
-                // re-wrapping it would bury that path in the cause.
-                OutputSchema.rejectUnconstrainedSchema(schemaNode, schemaClass.getName());
-                jsonSchema = schemaNode.toString();
             } else {
                 throw new IllegalArgumentException(
-                        "Output schema must be RowTypeInfo or Pojo class.");
+                        String.format(
+                                "Output schema %s is not supported. It must be a RowTypeInfo or"
+                                        + " a Pojo class.",
+                                outputSchema.getClass().getName()));
             }
             Prompt schemaPrompt =
                     Prompt.fromText(
