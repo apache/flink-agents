@@ -173,6 +173,9 @@ def ltm(mock_ctx):
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
     )
+    # Operations refuse an absent or empty key, so the fixture runs under the key an
+    # action would have switched to.
+    mem0_ltm.switch_context("test_key", observation_id="test-action")
     return mem0_ltm
 
 
@@ -336,9 +339,6 @@ def test_switch_context(ltm) -> None:
     # A set obtained under key_b is scoped to key_b, so key_a's items in the
     # same-named set are not visible through it.
     assert len(ltm.get_memory_set(name="context_set").get()) == 0
-
-    # Reset context
-    ltm.switch_context("", observation_id="action-empty")
 
 
 class MockChatModelWithTokenUsage:

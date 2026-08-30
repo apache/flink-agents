@@ -52,6 +52,9 @@ public class Mem0LongTermMemoryTest {
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
         ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
+        // Operations refuse an absent or empty key, so every test that does not manage its
+        // own context runs under the key an action would have switched to.
+        ltm.switchContext("a-key", "an-action", false);
         when(mockAdapter.invoke(
                         eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any()))
                 .thenReturn(mockPyMemorySet);
@@ -247,7 +250,43 @@ public class Mem0LongTermMemoryTest {
         assertThatThrownBy(() -> ltm.add(unbound, List.of("hello"), null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("not bound to a partition key");
-        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("add"), any());
+        verify(mockAdapter, never())
+                .invoke(eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any());
+    }
+
+    @Test
+    void testEmptyKeyedSetIsRefusedRatherThanWidened() {
+        MemorySet emptyKeyed = new MemorySet("notes");
+        emptyKeyed.setLtm(ltm);
+        emptyKeyed.setActionContext("", "an-action", false);
+
+        assertThatThrownBy(() -> ltm.add(emptyKeyed, List.of("hello"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        verify(mockAdapter, never())
+                .invoke(eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any());
+    }
+
+    @Test
+    void testMemorySetManagementIsRefusedForAnEmptyKey() {
+        ltm.switchContext("", "an-action", false);
+
+        assertThatThrownBy(() -> ltm.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        assertThatThrownBy(() -> ltm.deleteMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("delete_memory_set"), any());
+    }
+
+    @Test
+    void testMemorySetIsRefusedBeforeAnyContextSwitch() {
+        Mem0LongTermMemory fresh = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
+
+        assertThatThrownBy(() -> fresh.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no partition key in scope");
     }
 
     @Test

@@ -192,28 +192,46 @@ def test_context_switch_changes_observation_owner_and_current_suppression() -> N
     assert ltm._search_observation_enabled is True
 
 
-def test_empty_context_key_is_used_consistently_for_mem0_operations() -> None:
+def test_empty_partition_key_is_refused_by_set_operations() -> None:
     mem0 = MagicMock()
-    mem0.add.return_value = {"results": []}
-    mem0.get_all.return_value = {"results": []}
-    mem0.search.return_value = {"results": []}
     ltm = _make_ltm(mem0)
+    empty_keyed = MemorySet(name="prefs", ltm=ltm, partition_key="")
 
+    for op in (
+        lambda: ltm.add(empty_keyed, "input"),
+        lambda: ltm.get(empty_keyed),
+        lambda: ltm.delete(empty_keyed),
+        lambda: ltm.search(empty_keyed, "query", limit=5),
+    ):
+        with pytest.raises(ValueError, match="empty partition key"):
+            op()
+
+    mem0.add.assert_not_called()
+    mem0.get_all.assert_not_called()
+    mem0.delete_all.assert_not_called()
+    mem0.search.assert_not_called()
+
+
+def test_empty_partition_key_is_refused_by_memory_set_management() -> None:
+    mem0 = MagicMock()
+    ltm = _make_ltm(mem0)
     ltm.switch_context("", observation_id="empty-action")
-    memory_set = ltm.get_memory_set("prefs")
-    ltm.add(memory_set, "input")
-    ltm.get(memory_set)
-    ltm.search(memory_set, "query", limit=5)
-    ltm.delete(memory_set)
-    ltm.delete_memory_set("prefs")
 
-    assert mem0.add.call_args.kwargs["agent_id"] == ""
-    assert mem0.get_all.call_args.kwargs["agent_id"] == ""
-    assert mem0.search.call_args.kwargs["agent_id"] == ""
-    assert [call.kwargs["agent_id"] for call in mem0.delete_all.call_args_list] == [
-        "",
-        "",
-    ]
+    with pytest.raises(ValueError, match="empty partition key"):
+        ltm.get_memory_set("prefs")
+    with pytest.raises(ValueError, match="empty partition key"):
+        ltm.delete_memory_set("prefs")
+
+    mem0.delete_all.assert_not_called()
+
+
+def test_memory_set_management_before_any_context_switch_is_refused() -> None:
+    ltm = Mem0LongTermMemory.model_construct(
+        ctx=MagicMock(), job_id="job", metric_group=None
+    )
+
+    with pytest.raises(ValueError, match="no partition key in scope"):
+        ltm.get_memory_set("prefs")
 
 
 def test_memory_set_stays_on_its_own_key_after_the_owner_switches() -> None:

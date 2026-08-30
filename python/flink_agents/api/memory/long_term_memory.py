@@ -165,9 +165,10 @@ class BaseLongTermMemory(ABC, BaseModel):
 
         The returned set is bound to the calling action, so call this from the action
         body itself, not from a callback running on another thread, and obtain one per
-        action rather than holding one across actions. Operating on a set that carries
-        no binding raises rather than silently widening the operation to every
-        partition key.
+        action rather than holding one across actions. Operating on a set whose
+        partition key is absent or empty raises rather than silently widening the
+        operation to every partition key, and this method itself raises unless a
+        non-empty partition key is in scope.
 
         Args:
             name: The name of the memory set.
@@ -183,7 +184,7 @@ class BaseLongTermMemory(ABC, BaseModel):
         Unlike the set-scoped operations, this takes a name and applies to the key
         currently in scope, so it must be called from the action body rather than from
         another thread, and can target a different key than ``MemorySet.delete`` on a
-        same-named set would.
+        same-named set would. It raises unless a non-empty partition key is in scope.
 
         Args:
             name: The name of the memory set.

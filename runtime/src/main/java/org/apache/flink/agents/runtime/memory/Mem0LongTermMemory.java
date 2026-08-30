@@ -46,9 +46,9 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     private final PythonResourceAdapter adapter;
     private PyObject pyMem0;
 
-    // Defaults mirror the Python side's own defaults, so a set obtained before any
-    // context switch forwards the same values Python would have used itself.
-    private String partitionKey = "";
+    // Null until the first context switch, mirroring the Python side's own default. A
+    // memory set obtained before then carries no key and is refused rather than forwarded.
+    private String partitionKey;
     private String observationId = "";
     private boolean observationSuppressed;
 
@@ -65,7 +65,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         // from a worker thread stay scoped to the action that obtained it.
         MemorySet ms = new MemorySet(name);
         ms.setLtm(this);
-        ms.setActionContext(partitionKey, observationId, observationSuppressed);
+        ms.setActionContext(currentPartitionKey(), observationId, observationSuppressed);
         return ms;
     }
 
@@ -74,6 +74,9 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         // Takes a name rather than a MemorySet, so it has no bound context and the Python
         // side uses the key currently in scope. It is therefore only correct on the mailbox
         // thread, and can target a different key than MemorySet.delete on a same-named set.
+        // Checked here so a Java caller gets the failure in Java rather than marshalled
+        // back from Python, which reads the same key on its own side.
+        currentPartitionKey();
         return (Boolean) adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name));
     }
 
@@ -196,8 +199,8 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
 
     private Object buildPyMemorySet(MemorySet memorySet) {
         // Mem0 ignores a falsy agent_id rather than matching on it, so forwarding an
-        // unbound set would widen the operation to every key sharing the job id and set
-        // name, which for a delete means deleting another key's items.
+        // unbound or empty-keyed set would widen the operation to every key sharing the job
+        // id and set name, which for a delete means deleting another key's items.
         if (memorySet.getPartitionKey() == null) {
             throw new IllegalStateException(
                     String.format(
@@ -206,12 +209,35 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
                                     + " constructing it directly or reusing one across actions.",
                             memorySet.getName()));
         }
+        requireNonEmptyPartitionKey(memorySet.getPartitionKey());
         return adapter.invoke(
                 TO_PYTHON_MEMORY_SET,
                 memorySet.getName(),
                 memorySet.getPartitionKey(),
                 memorySet.getObservationId(),
                 memorySet.isObservationSuppressed());
+    }
+
+    /** Returns the partition key in scope, refusing what Mem0 cannot scope an operation to. */
+    private String currentPartitionKey() {
+        if (partitionKey == null) {
+            throw new IllegalStateException(
+                    "Long-term memory has no partition key in scope. Call this from an action"
+                            + " body, which always runs under a partition key, rather than before"
+                            + " the first action has run.");
+        }
+        return requireNonEmptyPartitionKey(partitionKey);
+    }
+
+    private static String requireNonEmptyPartitionKey(String key) {
+        if (key.isEmpty()) {
+            throw new IllegalStateException(
+                    "Long-term memory cannot be scoped to an empty partition key. Mem0 ignores"
+                            + " an empty agent_id, so the operation would reach every key sharing"
+                            + " the job id and set name, and added items would be stored"
+                            + " unattributed. Key the stream by a non-empty value.");
+        }
+        return key;
     }
 
     @SuppressWarnings("unchecked")

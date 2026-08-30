@@ -123,12 +123,30 @@ def _create_flink_agents_config_classes() -> tuple:
     return _FlinkAgentsLlmConfig, _FlinkAgentsEmbedderConfig
 
 
+def _reject_empty_partition_key(key: str) -> str:
+    """Return ``key`` unless it is empty, which cannot scope an operation.
+
+    Mem0 matches on ``agent_id`` only when it is truthy, so an empty key widens
+    every operation to all keys sharing the job id and set name, and stores added
+    items with no ``agent_id`` at all.
+    """
+    if not key:
+        msg = (
+            "Long-term memory cannot be scoped to an empty partition key. Mem0 "
+            "ignores an empty agent_id, so the operation would reach every key "
+            "sharing the job id and set name, and added items would be stored "
+            "unattributed. Key the stream by a non-empty value."
+        )
+        raise ValueError(msg)
+    return key
+
+
 def _bound_partition_key(memory_set: MemorySet) -> str:
     """Return the partition key the set is scoped to.
 
-    Mem0 ignores a falsy ``agent_id`` rather than matching on it, so an unbound set
-    would widen every operation to all keys sharing the job id and set name, which
-    for a delete means deleting another key's items. Refuse the operation instead.
+    An unbound set would widen every operation to all keys sharing the job id and
+    set name, which for a delete means deleting another key's items. Refuse the
+    operation instead.
     """
     if memory_set.partition_key is None:
         msg = (
@@ -137,7 +155,7 @@ def _bound_partition_key(memory_set: MemorySet) -> str:
             "than constructing it directly or reusing one across actions."
         )
         raise ValueError(msg)
-    return memory_set.partition_key
+    return _reject_empty_partition_key(memory_set.partition_key)
 
 
 class Mem0LongTermMemory(InternalBaseLongTermMemory):
@@ -155,8 +173,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
     job_id: str = Field(description="Unique identifier for the job.")
 
-    key: str = Field(
-        default="", description="Unique identifier for the keyed partition."
+    key: str | None = Field(
+        default=None,
+        description="Keyed partition currently in scope, or None before the first "
+        "context switch.",
     )
 
     chat_model_name: str = Field(
@@ -442,6 +462,21 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         return json.dumps([record.to_wire() for record in records], ensure_ascii=False)
 
+    def _current_partition_key(self) -> str:
+        """Return the partition key currently in scope.
+
+        Whole-set management operations read the key from the memory rather than
+        from a set, so they are only correct once an action has switched context.
+        """
+        if self.key is None:
+            msg = (
+                "Long-term memory has no partition key in scope. Call this from "
+                "an action body, which always runs under a partition key, rather "
+                "than before the first action has run."
+            )
+            raise ValueError(msg)
+        return _reject_empty_partition_key(self.key)
+
     @override
     def get_memory_set(self, name: str) -> MemorySet:
         """Get the memory set by name.
@@ -455,11 +490,14 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         Returns:
             The memory set.
+
+        Raises:
+            ValueError: If no non-empty partition key is in scope.
         """
         return MemorySet(
             name=name,
             ltm=self,
-            partition_key=self.key,
+            partition_key=self._current_partition_key(),
             observation_id=self._observation_id,
             observation_suppressed=self._observation_suppressed,
         )
@@ -478,8 +516,11 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         Returns:
             True if the memory set was deleted.
+
+        Raises:
+            ValueError: If no non-empty partition key is in scope.
         """
-        observation_key = self.key
+        observation_key = self._current_partition_key()
         observation_id = self._observation_id
         observation_enabled = (
             self._update_observation_enabled and not self._observation_suppressed
