@@ -44,10 +44,15 @@ under the License.
             <version>${ollama4j.version}</version>
         </dependency>
 
-        <!-- Version managed by the victools BOM imported in the root pom. -->
+        <!-- Versions managed by the victools BOM imported in the root pom. -->
         <dependency>
             <groupId>com.github.victools</groupId>
             <artifactId>jsonschema-generator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-module-jackson</artifactId>
         </dependency>
     </dependencies>
 

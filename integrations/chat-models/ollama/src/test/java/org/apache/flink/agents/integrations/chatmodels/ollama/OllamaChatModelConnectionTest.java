@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.ollama;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import io.github.ollama4j.models.chat.OllamaChatRequest;
 import io.github.ollama4j.tools.Tools;
@@ -70,6 +72,21 @@ class OllamaChatModelConnectionTest {
         public String getDerived() {
             return summary + total;
         }
+    }
+
+    /**
+     * Output schema fixture shaped to expose Jackson's property model.
+     *
+     * <p>{@code name} is deserialized from {@code full_name} rather than from the Java field name,
+     * and {@code secret} is not deserialized at all.
+     */
+    public static class Profile {
+        @JsonProperty("full_name")
+        public String name;
+
+        @JsonIgnore public String secret;
+
+        public int age;
     }
 
     private static OllamaChatModelConnection connection() {
@@ -214,6 +231,24 @@ class OllamaChatModelConnectionTest {
         // Every field is required except the one the caller declared omissible.
         assertThat(textValues(schema.path("required")))
                 .containsExactlyInAnyOrder("summary", "counts", "total");
+    }
+
+    @Test
+    @DisplayName("The generated schema names properties the way Jackson deserializes them")
+    void generatedSchemaFollowsJacksonPropertyNames() {
+        OllamaChatRequest request =
+                connection()
+                        .buildRequest(userMessage(), List.of(), params("qwen3:4b"), Profile.class);
+        JsonNode schema = (JsonNode) request.getFormat();
+
+        // The response is read back with an ObjectMapper, which accepts the renamed property and
+        // rejects the Java field name, and which discards an ignored property the schema would
+        // otherwise force the model to fabricate.
+        assertThat(schema.path("properties").fieldNames())
+                .toIterable()
+                .containsExactly("full_name", "age");
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("full_name", "age");
     }
 
     @ParameterizedTest

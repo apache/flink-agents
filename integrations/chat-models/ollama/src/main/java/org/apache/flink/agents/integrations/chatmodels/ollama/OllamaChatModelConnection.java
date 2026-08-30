@@ -27,6 +27,7 @@ import com.github.victools.jsonschema.generator.SchemaGenerator;
 import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
 import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
+import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
@@ -345,6 +346,12 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     //   - The required check marks every field required except an Optional one. The default marks
     //     nothing required, which lets a model omit fields at will, while marking everything
     //     required would force the fields a caller declared omissible.
+    //   - The Jackson module makes the schema name properties the way Jackson names them. The
+    //     response is read back into the same class with an ObjectMapper, so a property that
+    //     @JsonProperty renames or @JsonIgnore drops has to be stated in the schema under the name
+    //     the mapper reads, or a response that satisfies the schema still fails to deserialize.
+    //     It is applied with no JacksonOption, so it contributes property naming and visibility
+    //     only: the required set and the property order stay the ones configured below.
     //
     // Two settings are deliberately absent:
     //
@@ -360,7 +367,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         SchemaGeneratorConfigBuilder configBuilder =
                 new SchemaGeneratorConfigBuilder(
                                 SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES);
+                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
+                        .with(new JacksonModule());
         configBuilder
                 .forTypesInGeneral()
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
