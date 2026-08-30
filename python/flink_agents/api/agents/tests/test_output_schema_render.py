@@ -66,6 +66,19 @@ class Renderable(BaseModel):
     x: int
 
 
+class SelfReferential(BaseModel):
+    name: str
+    child: "SelfReferential | None" = None
+
+
+class MutualA(BaseModel):
+    b: "MutualB | None" = None
+
+
+class MutualB(BaseModel):
+    a: "MutualA | None" = None
+
+
 def test_unrenderable_member_raises_naming_the_model() -> None:
     """A member no JSON Schema can express is reported as a failure to render it.
 
@@ -102,6 +115,23 @@ def test_field_less_model_is_returned_as_rendered() -> None:
     not refused here.
     """
     assert render_output_schema(FieldLess, _render) == _render(FieldLess)
+
+
+@pytest.mark.parametrize("model", [SelfReferential, MutualA], ids=["direct", "mutual"])
+def test_self_referential_model_is_returned_as_rendered(
+    model: type[BaseModel],
+) -> None:
+    """A model reachable from itself renders and is returned as rendered.
+
+    Pydantic emits the cycle as a ``$ref`` into ``$defs`` and terminates, so there
+    is nothing to report. It hoists the root into ``$defs`` and renders it as a bare
+    ``$ref`` only when the root itself lies on the cycle, which is what separates
+    these models from one that merely nests another.
+    """
+    schema = render_output_schema(model, _render)
+
+    assert "$ref" in schema
+    assert schema == _render(model)
 
 
 def test_return_value_is_the_renderer_output_not_the_model_schema() -> None:

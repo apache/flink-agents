@@ -63,6 +63,16 @@ public class ReActAgentTest {
     }
 
     @Test
+    @DisplayName("An agent built on a self-referential schema reports the self-reference")
+    public void testAgentRejectsSelfReferentialSchema() {
+        assertThatThrownBy(() -> agentWithSchema(SelfReferential.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("SelfReferential")
+                .hasMessageContaining("self-referential")
+                .hasCauseInstanceOf(StackOverflowError.class);
+    }
+
+    @Test
     @DisplayName("An agent built on a member that renders to no properties still prompts with it")
     public void testAgentAcceptsSchemaWithFieldLessMember() {
         assertThat(schemaPromptOf(agentWithSchema(WithCallback.class)))
@@ -113,5 +123,11 @@ public class ReActAgentTest {
     /** A member that renders to a concrete type. */
     public static class WithCount {
         public int count;
+    }
+
+    /** A class reachable from itself, which the generator recurses on until the stack is gone. */
+    public static class SelfReferential {
+        public String name;
+        public SelfReferential next;
     }
 }

@@ -84,6 +84,19 @@ public class ReActAgent extends Agent {
                                             + " output schema. Rendering it reported: %s",
                                     schemaClass.getName(), e.getMessage()),
                             e);
+                } catch (StackOverflowError e) {
+                    // The generator carries no cycle guard, so a class that reaches itself
+                    // through its own members recurses until the stack is gone. A separate clause
+                    // rather than another type on the union above because the error carries no
+                    // message to quote, so this case has to name the cause itself.
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Output schema %s is self-referential, so rendering it as a"
+                                            + " JSON Schema does not terminate and it cannot"
+                                            + " constrain the response. Use a schema that does not"
+                                            + " refer back to itself, or pass no output schema.",
+                                    schemaClass.getName()),
+                            e);
                 }
             } else {
                 throw new IllegalArgumentException(
