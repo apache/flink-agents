@@ -443,26 +443,37 @@ public class MCPServer extends Resource {
      * @param toolName The name of the tool to call
      * @param arguments The arguments to pass to the tool
      * @return The result as a list of content items
+     * @throws IllegalStateException if the MCP response reports a protocol-level tool error
      */
     public List<Object> callTool(String toolName, Map<String, Object> arguments) {
-        return getRetryExecutor()
-                .execute(
-                        () -> {
-                            McpSyncClient mcpClient = getClient();
-                            McpSchema.CallToolRequest request =
-                                    new McpSchema.CallToolRequest(
-                                            toolName,
-                                            arguments != null ? arguments : new HashMap<>());
-                            McpSchema.CallToolResult result = mcpClient.callTool(request);
+        McpSchema.CallToolResult result =
+                getRetryExecutor()
+                        .execute(
+                                () -> {
+                                    McpSyncClient mcpClient = getClient();
+                                    McpSchema.CallToolRequest request =
+                                            new McpSchema.CallToolRequest(
+                                                    toolName,
+                                                    arguments != null
+                                                            ? arguments
+                                                            : new HashMap<>());
+                                    return mcpClient.callTool(request);
+                                },
+                                "callTool:" + toolName);
+        return extractToolContent(toolName, result);
+    }
 
-                            List<Object> content = new ArrayList<>();
-                            for (var item : result.content()) {
-                                content.add(MCPContentExtractor.extractContentItem(item));
-                            }
-
-                            return content;
-                        },
-                        "callTool:" + toolName);
+    static List<Object> extractToolContent(
+            String toolName, McpSchema.CallToolResult callToolResult) {
+        List<Object> content = new ArrayList<>();
+        for (var item : callToolResult.content()) {
+            content.add(MCPContentExtractor.extractContentItem(item));
+        }
+        if (Boolean.TRUE.equals(callToolResult.isError())) {
+            throw new IllegalStateException(
+                    "MCP tool '" + toolName + "' returned an error: " + content);
+        }
+        return content;
     }
 
     /**

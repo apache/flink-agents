@@ -20,6 +20,8 @@ package org.apache.flink.agents.plan.tools;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.junit.jupiter.api.Test;
@@ -36,6 +38,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class FunctionToolSetPythonAdapterTest {
+
+    private static final ToolMetadata PYTHON_TOOL_METADATA =
+            new ToolMetadata("notify", "Send a notification.", "{\"properties\":{}}");
 
     @Test
     void replacesPlaceholderMetadataForPythonFunction() {
@@ -109,6 +114,57 @@ class FunctionToolSetPythonAdapterTest {
         assertThat(tool.getMetadata()).isSameAs(original);
         verify(adapter, never())
                 .getPythonToolMetadata(Mockito.anyString(), Mockito.anyString(), anyList());
+    }
+
+    @Test
+    void preservesExplicitPythonToolFailure() {
+        PythonFunction function = new PythonFunction("pkg.mod", "notify");
+        FunctionTool tool = new FunctionTool(PYTHON_TOOL_METADATA, function);
+        PythonResourceAdapter adapter = pythonAdapter();
+        when(adapter.invokePythonTool(eq("pkg.mod"), eq("notify"), eq(Map.of("id", "1"))))
+                .thenReturn(
+                        Map.of(
+                                "__flink_agents_tool_result__", "response",
+                                "success", false,
+                                "error", "recipient not found",
+                                "execution_time_ms", 7L,
+                                "tool_name", "notify"));
+        tool.setPythonResourceAdapter(adapter);
+
+        ToolResponse response = tool.call(new ToolParameters(Map.of("id", "1")));
+
+        assertThat(response.isError()).isTrue();
+        assertThat(response.getError()).isEqualTo("recipient not found");
+        assertThat(response.getExecutionTimeMs()).isEqualTo(7L);
+        assertThat(response.getToolName()).isEqualTo("notify");
+    }
+
+    @Test
+    void unwrapsRawPythonToolResultEnvelope() {
+        PythonFunction function = new PythonFunction("pkg.mod", "notify");
+        FunctionTool tool = new FunctionTool(PYTHON_TOOL_METADATA, function);
+        PythonResourceAdapter adapter = pythonAdapter();
+        Map<String, Object> rawResult =
+                Map.of("__flink_agents_tool_result__", "response", "value", "raw");
+        when(adapter.invokePythonTool(eq("pkg.mod"), eq("notify"), eq(Map.of("id", "1"))))
+                .thenReturn(Map.of("__flink_agents_tool_result__", "raw", "result", rawResult));
+        tool.setPythonResourceAdapter(adapter);
+
+        ToolResponse response = tool.call(new ToolParameters(Map.of("id", "1")));
+
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getResult()).isEqualTo(rawResult);
+    }
+
+    private static PythonResourceAdapter pythonAdapter() {
+        PythonResourceAdapter adapter = Mockito.mock(PythonResourceAdapter.class);
+        when(adapter.getPythonToolMetadata(eq("pkg.mod"), eq("notify"), anyList()))
+                .thenReturn(
+                        Map.of(
+                                "name", "notify",
+                                "description", "Send a notification.",
+                                "inputSchema", "{\"properties\":{}}"));
+        return adapter;
     }
 
     /** Helper static method to back JavaFunction in the no-op test. */

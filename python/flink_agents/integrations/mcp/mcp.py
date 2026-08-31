@@ -39,7 +39,7 @@ from typing_extensions import override
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.tools import ToolExecutionMetadataProvider
+from flink_agents.api.tools import ToolExecutionMetadataProvider, ToolResponse
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.api.trace import (
     ToolExecutionMetadataKeys,
@@ -65,12 +65,20 @@ class MCPTool(Tool, ToolExecutionMetadataProvider):
     def call(self, *args: Any, **kwargs: Any) -> Any:
         """Call the MCP tool with the given arguments."""
         if self.mcp_server is None:
-            msg = "MCP tool call requires a reference to the MCP server"
-            raise ValueError(msg)
+            return ToolResponse.failure(
+                "MCP tool call requires a reference to the MCP server",
+                tool_name=self.metadata.name,
+            )
 
-        return asyncio.run(
-            self.mcp_server.call_tool_async(self.metadata.name, *args, **kwargs)
-        )
+        try:
+            return asyncio.run(
+                self.mcp_server.call_tool_async(self.metadata.name, *args, **kwargs)
+            )
+        except Exception as e:
+            return ToolResponse.failure(
+                f"Error calling MCP tool '{self.metadata.name}': {e}",
+                tool_name=self.metadata.name,
+            )
 
     @override
     def get_tool_execution_metadata(
@@ -225,7 +233,11 @@ class MCPServer(Resource, ABC):
             pass
 
     async def call_tool_async(self, tool_name: str, *args: Any, **kwargs: Any) -> Any:
-        """Call a tool on the MCP server asynchronously."""
+        """Call a tool on the MCP server asynchronously.
+
+        Raises:
+            RuntimeError: If the MCP response marks the tool result as an error.
+        """
         async with self._get_session() as session:
             arguments = kwargs if kwargs else (args[0] if args else {})
 
@@ -236,6 +248,10 @@ class MCPServer(Resource, ABC):
             )
 
             content = [extract_mcp_content_item(item) for item in result.content]
+
+            if result.isError:
+                msg = f"MCP tool '{tool_name}' returned an error: {content}"
+                raise RuntimeError(msg)
 
         return content
 
