@@ -38,11 +38,19 @@ cleanup_tmpfiles() {
         rm -rf "$f" 2>/dev/null || true
     done
 }
-trap cleanup_tmpfiles EXIT
-# Some interactive read combinations (notably `read -e` under stdin redirection)
-# can swallow SIGINT, leaving the user pressing Ctrl+C with no effect. Install
-# an explicit INT trap so Ctrl+C always lands.
-trap 'die_cancelled' INT
+# Traps belong to a run, not to a source. The test suite and the e2e scripts
+# source this file under FLINK_AGENTS_INSTALL_SH_NO_RUN=1 to call individual
+# functions, and a top-level `trap` replaces the handlers whoever sourced us
+# already installed: bats in particular reports a failing or skipped result from
+# inside its own EXIT trap, so displacing it makes that result vanish from the
+# output.
+if [[ "${FLINK_AGENTS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    trap cleanup_tmpfiles EXIT
+    # Some interactive read combinations (notably `read -e` under stdin
+    # redirection) can swallow SIGINT, leaving the user pressing Ctrl+C with no
+    # effect. Install an explicit INT trap so Ctrl+C always lands.
+    trap 'die_cancelled' INT
+fi
 
 mktempfile() {
     local f
@@ -379,7 +387,10 @@ on_error() {
     } >&2
     exit "$rc"
 }
-trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+# Armed only for a run, for the reason given at the EXIT and INT traps above.
+if [[ "${FLINK_AGENTS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+fi
 
 INSTALL_STAGE_TOTAL=5
 INSTALL_STAGE_CURRENT=0

@@ -2,15 +2,8 @@
 
 setup() {
     load '../helpers/load'
-    # The bash 3.x test skips when no such interpreter is present, and sourcing
-    # install.sh replaces bats' EXIT trap, which `skip` needs in order to report.
-    # That test reaches edit_plan_quote through a child interpreter, so it wants
-    # nothing loaded here. Removing the trap instead of leaving it alone does not
-    # help; the skip is swallowed either way.
-    if [[ "$BATS_TEST_DESCRIPTION" != *"bash 3.x"* ]]; then
-        load_install_sh
-        reset_install_sh_state
-    fi
+    load_install_sh
+    reset_install_sh_state
 }
 
 # Probes the usual bash locations and prints the first one whose major version
