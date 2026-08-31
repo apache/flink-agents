@@ -583,6 +583,21 @@ def test_tool_call_reports_explicit_tool_response_failure() -> None:
     ctx.report_execution_succeeded.assert_not_called()
 
 
+def test_tool_call_preserves_empty_tool_response_error() -> None:
+    tool = MagicMock()
+    tool.tool_type.return_value = ToolType.FUNCTION
+    tool.call = MagicMock(return_value=ToolResponse.error(""))
+    ctx, sent_events = trace_context(tool)
+    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+
+    asyncio.run(process_tool_request(request, ctx))
+
+    response = ToolResponseEvent.from_event(sent_events[0])
+    assert response.responses["call-1"] == ""
+    assert response.success["call-1"] is False
+    assert response.error["call-1"] == ""
+
+
 def test_tool_call_includes_provider_metadata() -> None:
     class MetadataTool(ToolExecutionMetadataProvider):
         @staticmethod

@@ -49,6 +49,10 @@ def failed_python_tool(value: str) -> ToolResponse:
     return ToolResponse.error(value, execution_time_ms=7, tool_name="failed")
 
 
+def successful_python_tool(value: str) -> ToolResponse:
+    return ToolResponse.success(value, execution_time_ms=5, tool_name="successful")
+
+
 def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     flat = get_python_tool_metadata(
         __name__, "decorated_python_tool", injected_args=["request_id"]
@@ -79,6 +83,19 @@ def test_invoke_python_tool_preserves_explicit_failure() -> None:
         "error": "failed",
         "execution_time_ms": 7,
         "tool_name": "failed",
+    }
+
+
+def test_invoke_python_tool_preserves_explicit_success() -> None:
+    result = invoke_python_tool(__name__, "successful_python_tool", {"value": "ok"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": "ok",
+        "success": True,
+        "error": None,
+        "execution_time_ms": 5,
+        "tool_name": "successful",
     }
 
 
