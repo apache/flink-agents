@@ -735,7 +735,14 @@ public class AgentPlan implements Serializable {
             }
             String typeTag = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
             if (typeTag == null) {
-                continue;
+                // Fail here, not per record on the TaskManager: ModelRouter's constructor
+                // unconditionally rejects a descriptor without a strategy, and a throwing
+                // construction is never cached, so it would re-throw on every routed request.
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' declares no routing strategy ('%s' missing"
+                                        + " from its descriptor).",
+                                provider.getName(), ModelRouter.STRATEGY_TYPE_KEY));
             }
             // The declaration constructor re-validates the per-type argument rules, so a
             // structurally invalid configuration (e.g. a judge without a judge model) fails

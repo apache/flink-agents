@@ -20,7 +20,6 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
@@ -34,7 +33,6 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceType;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -244,73 +242,87 @@ final class ModelRoutingResolver {
         judgeMetadata.put("judge_model", judgeModel);
         String verdictModel = null;
         String abstainReason = null;
-        try {
-            boolean[] truncated = new boolean[1];
-            List<ChatMessage> judgeInput =
-                    LlmJudgeRoutingExecutor.buildJudgeMessages(
-                            strategy,
-                            routingContext,
-                            effectiveJudgeMessages(router, routingContext, ctx),
-                            truncated);
-            if (truncated[0]) {
-                judgeMetadata.put(LlmJudgeRoutingExecutor.CONTEXT_TRUNCATED_KEY, true);
-            }
-            ChatModelInvoker.ChatAttemptResult judgeResult =
-                    ChatModelInvoker.chatWithRetries(
-                            requestId,
-                            judgeModel,
-                            "judge:" + model,
-                            judgeInput,
-                            Map.of(),
-                            null,
-                            ctx,
-                            errorStrategy,
-                            numRetries,
-                            retryWaitIntervalSec);
-            ChatModelAction.recordAttemptRetryStats(
-                    ctx,
-                    requestId,
-                    judgeResult.chatModel,
-                    judgeResult.retryCount,
-                    judgeResult.totalRetryWaitSec);
-            ChatMessage reply = judgeResult.response;
-            Object promptTokens = reply.getExtraArgs().get("promptTokens");
-            Object completionTokens = reply.getExtraArgs().get("completionTokens");
-            if (promptTokens != null) {
-                judgeMetadata.put("judge_prompt_tokens", promptTokens);
-            }
-            if (completionTokens != null) {
-                judgeMetadata.put("judge_completion_tokens", completionTokens);
-            }
-            verdictModel =
-                    LlmJudgeRoutingExecutor.parseVerdict(
-                                    reply.getContent(), router.getCandidateNames())
-                            .orElse(null);
-            abstainReason = verdictModel == null ? "judge verdict was not a candidate name" : null;
-        } catch (InterruptedException cancellation) {
-            // Cancellation surfacing from the between-retries backoff sleep.
-            Thread.currentThread().interrupt();
-            throw cancellation;
-        } catch (ChatModelInvoker.ChatAttemptFailed failure) {
-            ChatModelAction.recordAttemptRetryStats(
-                    ctx,
-                    requestId,
-                    failure.chatModel,
-                    failure.retryCount,
-                    failure.totalRetryWaitSec);
-            // Cancellation surfacing from inside the judge attempt (the invoker wraps every
-            // attempt exception): it must propagate, never persist as a routing outcome.
-            if (isCancellation(failure)) {
-                Thread.currentThread().interrupt();
-                throw failure;
-            }
-            // A judge that exhausted its retries honors the request's error-handling strategy,
-            // exactly like a throwing rule/custom strategy (see class javadoc).
-            if (errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
-                throw failure;
-            }
-            abstainReason = "judge call failed: " + failure.error;
+        // Runtime backstop to the plan-time check: plan validation only sees descriptor-carried
+        // bindings, so a setup that binds a prompt/tools/skills at the instance level (or via a
+        // non-Java provider) is caught here. Same policy as a failed judge call: FAIL is loud
+        // (a config error should not hide), IGNORE abstains so the default model keeps answering.
+        String misconfigured = judgeSetupMisconfiguration(judgeModel, ctx);
+        if (misconfigured != null && errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
+            throw new IllegalStateException(misconfigured);
         }
+        if (misconfigured != null) {
+            abstainReason = misconfigured;
+        } else
+            try {
+                boolean[] truncated = new boolean[1];
+                List<ChatMessage> effective = effectiveJudgeMessages(router, routingContext, ctx);
+                List<ChatMessage> judgeInput =
+                        LlmJudgeRoutingExecutor.buildJudgeMessages(
+                                strategy,
+                                routingContext,
+                                effective,
+                                pinnedRenderedIndices(routingContext.getMessages(), effective),
+                                truncated);
+                if (truncated[0]) {
+                    judgeMetadata.put(LlmJudgeRoutingExecutor.CONTEXT_TRUNCATED_KEY, true);
+                }
+                ChatModelInvoker.ChatAttemptResult judgeResult =
+                        ChatModelInvoker.chatWithRetries(
+                                requestId,
+                                judgeModel,
+                                "judge:" + model,
+                                judgeInput,
+                                Map.of(),
+                                null,
+                                ctx,
+                                errorStrategy,
+                                numRetries,
+                                retryWaitIntervalSec);
+                ChatModelAction.recordAttemptRetryStats(
+                        ctx,
+                        requestId,
+                        judgeResult.chatModel,
+                        judgeResult.retryCount,
+                        judgeResult.totalRetryWaitSec);
+                ChatMessage reply = judgeResult.response;
+                Object promptTokens = reply.getExtraArgs().get("promptTokens");
+                Object completionTokens = reply.getExtraArgs().get("completionTokens");
+                if (promptTokens != null) {
+                    judgeMetadata.put("judge_prompt_tokens", promptTokens);
+                }
+                if (completionTokens != null) {
+                    judgeMetadata.put("judge_completion_tokens", completionTokens);
+                }
+                verdictModel =
+                        LlmJudgeRoutingExecutor.parseVerdict(
+                                        reply.getContent(), router.getCandidateNames())
+                                .orElse(null);
+                abstainReason =
+                        verdictModel == null ? "judge verdict was not a candidate name" : null;
+            } catch (InterruptedException cancellation) {
+                // Cancellation surfacing from the between-retries backoff sleep.
+                Thread.currentThread().interrupt();
+                throw cancellation;
+            } catch (ChatModelInvoker.ChatAttemptFailed failure) {
+                ChatModelAction.recordAttemptRetryStats(
+                        ctx,
+                        requestId,
+                        failure.chatModel,
+                        failure.retryCount,
+                        failure.totalRetryWaitSec);
+                // Cancellation surfacing from inside the judge attempt (the invoker wraps every
+                // attempt exception): it must propagate, never persist as a routing outcome.
+                if (isCancellation(failure)) {
+                    Thread.currentThread().interrupt();
+                    throw failure;
+                }
+                // A judge that exhausted its retries honors the request's error-handling strategy,
+                // exactly like a throwing rule/custom strategy (see class javadoc).
+                if (errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
+                    throw failure;
+                }
+                abstainReason = "judge call failed: " + failure.error;
+            }
 
         RoutingDecision computed;
         if (verdictModel != null) {
@@ -369,33 +381,80 @@ final class ModelRoutingResolver {
             ModelRouter router, RoutingContext routingContext, RunnerContext ctx) {
         List<ChatMessage> messages = routingContext.getMessages();
         String anchor = router.getDefaultModel().orElse(router.getCandidateNames().get(0));
-        Object boundPrompt;
         try {
             BaseChatModelSetup setup =
                     (BaseChatModelSetup) ctx.getResource(anchor, ResourceType.CHAT_MODEL);
-            boundPrompt = setup.getPrompt();
+            // One shared implementation with the chat path (prepareRequestMessages), so the
+            // judge's view cannot drift from what the selected model receives. Candidates binding
+            // DIFFERENT prompts see their own rendering only at answer time — the anchor (default
+            // candidate, where abstains resolve) is a documented approximation.
+            return setup.prepareRequestMessages(messages, routingContext.getPromptArgs());
         } catch (Exception unresolvable) {
             // An unresolvable candidate surfaces on the real chat path with its normal policy.
             return messages;
         }
-        if (!(boundPrompt instanceof Prompt)) {
-            return messages;
+    }
+
+    /**
+     * Indices of effective messages that were <i>generated</i> by the anchor's request shaping
+     * (rendered template, skill-discovery prompt) rather than taken from the conversation —
+     * identified by object identity, since {@code prepareRequestMessages} appends the original
+     * message instances unchanged. They carry the task definition, so the context cap pins them.
+     */
+    private static java.util.Set<Integer> pinnedRenderedIndices(
+            List<ChatMessage> original, List<ChatMessage> effective) {
+        if (effective == original) {
+            return java.util.Set.of();
         }
-        Map<String, String> stringified = new HashMap<>();
-        for (Map.Entry<String, Object> entry : routingContext.getPromptArgs().entrySet()) {
-            stringified.put(
-                    entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : "");
-        }
-        List<ChatMessage> rendered =
-                new ArrayList<>(
-                        ((Prompt) boundPrompt).formatMessages(MessageRole.USER, stringified));
-        for (ChatMessage message : messages) {
-            if ((message.getContent() != null && !message.getContent().isEmpty())
-                    || message.getRole() == MessageRole.ASSISTANT) {
-                rendered.add(message);
+        java.util.Set<ChatMessage> originals =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        originals.addAll(original);
+        java.util.Set<Integer> pinned = new java.util.LinkedHashSet<>();
+        for (int i = 0; i < effective.size(); i++) {
+            if (!originals.contains(effective.get(i))) {
+                pinned.add(i);
             }
         }
-        return rendered;
+        return pinned;
+    }
+
+    /**
+     * The judge must be a plain chat model — nothing may rewrite the judge conversation. A bound
+     * prompt would prepend an (unfilled) task prompt ahead of the verdict contract, bound tools
+     * divert the reply into tool calls, and skills inject both a discovery prompt and tools — each
+     * silently breaks verdict parsing on every request. Plan-time validation catches
+     * descriptor-carried bindings; this backstop catches instance-level ones. Returns a diagnostic
+     * when misconfigured, {@code null} when the setup is plain (or cannot be resolved — an
+     * unresolvable judge takes the ChatAttemptFailed path with its normal policy).
+     */
+    private static String judgeSetupMisconfiguration(String judgeModel, RunnerContext ctx) {
+        BaseChatModelSetup judgeSetup;
+        try {
+            judgeSetup = (BaseChatModelSetup) ctx.getResource(judgeModel, ResourceType.CHAT_MODEL);
+        } catch (Exception resolutionHandledByInvoker) {
+            return null;
+        }
+        List<String> skills = judgeSetup.getSkills();
+        if (skills != null && !skills.isEmpty()) {
+            return String.format(
+                    "Judge model '%s' has skills %s configured; Strategies.llm requires a plain"
+                            + " chat model (register the judge without skills).",
+                    judgeModel, skills);
+        }
+        if (judgeSetup.getPrompt() != null) {
+            return String.format(
+                    "Judge model '%s' has a bound prompt; Strategies.llm requires a plain"
+                            + " chat model (register the judge without a prompt).",
+                    judgeModel);
+        }
+        List<String> toolNames = judgeSetup.getToolNames();
+        if (toolNames != null && !toolNames.isEmpty()) {
+            return String.format(
+                    "Judge model '%s' has bound tools %s; Strategies.llm requires a plain"
+                            + " chat model (register the judge without tools).",
+                    judgeModel, toolNames);
+        }
+        return null;
     }
 
     /**

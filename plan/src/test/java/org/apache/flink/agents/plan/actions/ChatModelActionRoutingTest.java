@@ -397,9 +397,9 @@ public class ChatModelActionRoutingTest {
         assertThat(event.getMetadata()).doesNotContainKey("decision_source");
         // judge call is durable under its own id; the decision persists under the route id
         assertThat(ctx.durableCallIds).contains("judge:router", "route:router");
-        // the anchor candidate resolves first (bound-prompt rendering check), then the judge,
-        // then the winner answers
-        assertThat(ctx.resolvedChatModels).containsExactly("small", "judge", "big");
+        // resolution order: the plain-judge backstop check, the anchor candidate (bound-prompt
+        // rendering), the judge call itself, then the winner answers
+        assertThat(ctx.resolvedChatModels).containsExactly("judge", "small", "judge", "big");
         assertThat(ctx.hasChatResponse()).isTrue();
     }
 
@@ -1226,5 +1226,45 @@ public class ChatModelActionRoutingTest {
         assertThat(judgeInput).contains("USER: current question");
         assertThat(judgeInput).doesNotContain(oldTurn);
         assertThat(ctx.routingEvent().getMetadata()).containsEntry("judge_context_truncated", true);
+    }
+
+    /**
+     * Runtime backstop (review): plan-time validation only sees descriptor-carried bindings, so a
+     * judge setup that binds a prompt at the INSTANCE level must still be caught at request time —
+     * under IGNORE it degrades to the default model instead of silently corrupting every verdict.
+     */
+    @Test
+    void llmJudgePromptBoundSetupAbstainsToDefaultUnderIgnore() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
+                        .register("judge", new TemplateBoundChatModel("bound task prompt"))
+                        .register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("bound prompt");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    @Test
+    void llmJudgeRejectsInstanceLevelPromptBoundJudgeSetupUnderFail() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", new TemplateBoundChatModel("bound task prompt"))
+                        .register("small", new FakeChatModel());
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                                        ctx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("bound prompt");
     }
 }

@@ -133,24 +133,23 @@ public abstract class BaseChatModelSetup extends Resource {
         modelGroup.getCounter("completionTokens").inc(completionTokens);
     }
 
-    public ChatMessage chat(List<ChatMessage> messages) {
-        return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
-    }
-
-    public ChatMessage chat(
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
-            Map<String, Object> modelParams) {
-        Preconditions.checkNotNull(
-                connection,
-                "Connection is not initialized. Ensure open() is called before chat().");
-
-        // Format input messages if set prompt.
-        if (this.prompt != null) {
+    /**
+     * The setup's request-shaping step, shared by {@link #chat} and by the model-routing judge
+     * (which must route on exactly what the selected model will receive): renders the bound {@link
+     * Prompt} (if any) with the prompt args and prepends it to the non-empty conversation messages,
+     * then injects the skill-discovery prompt (if any). Returns the input unchanged when neither is
+     * configured.
+     */
+    public List<ChatMessage> prepareRequestMessages(
+            List<ChatMessage> messages, Map<String, Object> promptArgs) {
+        // Format input messages if set prompt. Read via the accessor so subclasses that override
+        // getPrompt() are honored — the same contract the routing layer inspects.
+        Object boundPrompt = getPrompt();
+        if (boundPrompt != null) {
             Preconditions.checkState(
-                    prompt instanceof Prompt,
+                    boundPrompt instanceof Prompt,
                     "Prompt is not initialized. Ensure open() is called before chat().");
-            Prompt prompt = (Prompt) this.prompt;
+            Prompt prompt = (Prompt) boundPrompt;
             Map<String, String> stringified = new HashMap<>();
             if (promptArgs != null) {
                 for (Map.Entry<String, Object> entry : promptArgs.entrySet()) {
@@ -177,6 +176,22 @@ public abstract class BaseChatModelSetup extends Resource {
             mutated.add(idx + 1, new ChatMessage(MessageRole.SYSTEM, this.skillDiscoveryPrompt));
             messages = mutated;
         }
+        return messages;
+    }
+
+    public ChatMessage chat(List<ChatMessage> messages) {
+        return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            Map<String, Object> modelParams) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chat().");
+
+        messages = prepareRequestMessages(messages, promptArgs);
 
         Map<String, Object> params = this.getParameters();
         if (modelParams != null) {

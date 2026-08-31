@@ -176,8 +176,17 @@ public class ModelRouter extends Resource {
                                     key,
                                     value == null ? "null" : value.getClass().getSimpleName()));
                 }
-                compiled.put(
-                        (String) key, Pattern.compile((String) value, Pattern.CASE_INSENSITIVE));
+                try {
+                    compiled.put(
+                            (String) key,
+                            Pattern.compile((String) value, Pattern.CASE_INSENSITIVE));
+                } catch (PatternSyntaxException e) {
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Routing rule pattern '%s' for candidate '%s' is not a valid regex.",
+                                    value, key),
+                            e);
+                }
             }
         }
         return Collections.unmodifiableMap(compiled);
@@ -293,38 +302,20 @@ public class ModelRouter extends Resource {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
-            // Rule keys are candidate names and rule values are regex patterns; validate both
-            // here, where the full map is in hand, so a typo fails at the registration call site
-            // instead of throwing per record at runtime (an invalid pattern is never cached by
-            // the resource cache, so it would otherwise re-throw on every routed request).
+            // Rule maps have ONE validation/compilation path (compileRules), shared with the
+            // router constructor so the diagnostics are identical whether the descriptor came
+            // through this builder or was hand-built/deserialized. build() additionally checks
+            // rule keys against the candidate set — only here is the full candidate list in
+            // hand — so a typo fails at the registration call site instead of per record at
+            // runtime (an invalid pattern is never cached by the resource cache, so it would
+            // otherwise re-throw on every routed request).
             if (strategy.getType() == RoutingStrategyType.RULE_BASED) {
-                Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
-                if (rules instanceof Map) {
-                    for (Map.Entry<?, ?> rule : ((Map<?, ?>) rules).entrySet()) {
-                        if (!candidates.contains(String.valueOf(rule.getKey()))) {
-                            throw new IllegalArgumentException(
-                                    String.format(
-                                            "Routing rule key '%s' is not one of the candidates %s.",
-                                            rule.getKey(), candidates));
-                        }
-                        if (!(rule.getValue() instanceof String)) {
-                            throw new IllegalArgumentException(
-                                    String.format(
-                                            "Routing rule pattern for candidate '%s' must be a non-null String, got %s.",
-                                            rule.getKey(),
-                                            rule.getValue() == null
-                                                    ? "null"
-                                                    : rule.getValue().getClass().getSimpleName()));
-                        }
-                        try {
-                            Pattern.compile((String) rule.getValue());
-                        } catch (PatternSyntaxException e) {
-                            throw new IllegalArgumentException(
-                                    String.format(
-                                            "Routing rule pattern '%s' for candidate '%s' is not a valid regex.",
-                                            rule.getValue(), rule.getKey()),
-                                    e);
-                        }
+                for (String ruleKey : compileRules(strategy).keySet()) {
+                    if (!candidates.contains(ruleKey)) {
+                        throw new IllegalArgumentException(
+                                String.format(
+                                        "Routing rule key '%s' is not one of the candidates %s.",
+                                        ruleKey, candidates));
                     }
                 }
             }

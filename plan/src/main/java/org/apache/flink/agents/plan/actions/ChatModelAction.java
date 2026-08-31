@@ -597,11 +597,11 @@ public class ChatModelAction {
                             event.getPromptArgs(),
                             ctx);
         } catch (Exception e) {
-            // Cancellation is never a routing failure to ignore — from either routing path:
-            // the judge path re-sets the interrupt flag before rethrowing, and a blocking
-            // custom strategy surfaces the raw InterruptedException with the flag cleared, so
-            // check both. Let the action loop stop instead of dropping the request.
-            if (ModelRoutingResolver.isCancellation(e) || Thread.currentThread().isInterrupted()) {
+            // Cancellation is never a routing failure to ignore: isCancellation consults the
+            // thread's interrupt flag first (the judge path re-sets it before rethrowing) and
+            // the explicit cancellation types (a blocking custom executor surfaces a raw
+            // InterruptedException). Let the action loop stop instead of dropping the request.
+            if (ModelRoutingResolver.isCancellation(e)) {
                 throw e;
             }
             // A routing-strategy failure honors the same error-handling strategy as the chat

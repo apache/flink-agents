@@ -108,10 +108,13 @@ public final class RoutingStrategy implements Serializable {
                 }
                 break;
             case RULE_BASED:
-            default:
                 // Rule keys/patterns are validated against the candidate set in
                 // ModelRouter.Builder#build(), where the candidates are in hand.
                 break;
+            default:
+                // A new type must opt into validation explicitly (mirrors the executor
+                // dispatch, which also throws on unhandled types).
+                throw new IllegalStateException("Unvalidated routing strategy type: " + type);
         }
         if (type != RoutingStrategyType.CUSTOM && executorClass != null) {
             throw new IllegalArgumentException(
