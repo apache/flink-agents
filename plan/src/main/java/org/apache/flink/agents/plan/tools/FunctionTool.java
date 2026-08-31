@@ -57,6 +57,7 @@ import java.util.Map;
 public class FunctionTool extends Tool {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String PYTHON_TOOL_RESULT_MARKER = "__flink_agents_tool_result__";
 
     private final Function function;
     private Map<String, ToolParameterInjection> injectedArgs;
@@ -185,7 +186,31 @@ public class FunctionTool extends Tool {
         }
         Object result =
                 pythonResourceAdapter.invokePythonTool(pf.getModule(), pf.getQualName(), kwargs);
+        if (result instanceof Map) {
+            Map<?, ?> response = (Map<?, ?>) result;
+            Object resultKind = response.get(PYTHON_TOOL_RESULT_MARKER);
+            if ("raw".equals(resultKind)) {
+                return ToolResponse.success(response.get("result"));
+            }
+            if ("response".equals(resultKind)) {
+                long executionTimeMs = numberValue(response.get("execution_time_ms"));
+                String toolName = stringValue(response.get("tool_name"));
+                if (Boolean.TRUE.equals(response.get("success"))) {
+                    return ToolResponse.success(response.get("result"), executionTimeMs, toolName);
+                }
+                return ToolResponse.error(
+                        stringValue(response.get("error")), executionTimeMs, toolName);
+            }
+        }
         return ToolResponse.success(result);
+    }
+
+    private static long numberValue(Object value) {
+        return value instanceof Number ? ((Number) value).longValue() : 0L;
+    }
+
+    private static String stringValue(Object value) {
+        return value == null ? null : String.valueOf(value);
     }
 
     public Function getFunction() {

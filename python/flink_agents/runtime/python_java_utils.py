@@ -191,12 +191,28 @@ def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> A
 
     Used by the Java-side ``PythonResourceAdapter.invokePythonTool`` so a Java host can
     dispatch a Python function tool from a Java chat model without the Python side
-    needing to know about Pemja's threading model.
+    needing to know about Pemja's threading model. The return value is wrapped in
+    an internal envelope so Java can distinguish a raw result from an explicit
+    ``ToolResponse`` without inspecting user payloads.
     """
     from flink_agents.api.function import PythonFunction
+    from flink_agents.api.tools import ToolResponse
 
     descriptor = PythonFunction(module=module, qualname=qual_name)
-    return descriptor.as_callable()(**kwargs)
+    result = descriptor.as_callable()(**kwargs)
+    if not isinstance(result, ToolResponse):
+        return {
+            "__flink_agents_tool_result__": "raw",
+            "result": result,
+        }
+    return {
+        "__flink_agents_tool_result__": "response",
+        "result": result.result,
+        "success": result.is_success(),
+        "error": result.error,
+        "execution_time_ms": result.execution_time_ms,
+        "tool_name": result.tool_name,
+    }
 
 
 def from_java_prompt(j_prompt: Any) -> JavaPrompt:

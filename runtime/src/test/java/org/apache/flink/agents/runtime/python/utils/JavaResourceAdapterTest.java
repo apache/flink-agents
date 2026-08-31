@@ -29,8 +29,9 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-class JavaResourceAdapterTest {
+public class JavaResourceAdapterTest {
 
     @Test
     void getJavaToolMetadataHidesInjectedArgsAndReturnsAnnotatedDeclaration() throws Exception {
@@ -58,6 +59,22 @@ class JavaResourceAdapterTest {
         assertThat(injectedArgs.get("tenant_id").get("key").asText()).isEqualTo("tenant.id");
     }
 
+    @Test
+    void invokeJavaToolPropagatesToolFailureToPythonCaller() {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
+
+        assertThatThrownBy(
+                        () ->
+                                adapter.invokeJavaTool(
+                                        JavaResourceAdapterTest.class.getName(),
+                                        "failingTool",
+                                        List.of(String.class.getName()),
+                                        Map.of("value", "input")))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("tool rejected input");
+    }
+
     @Tool(description = "Query order.")
     public static String queryOrder(
             @ToolParam(name = "order_id") String orderId,
@@ -69,5 +86,10 @@ class JavaResourceAdapterTest {
                     String tenantId,
             @ToolParam(name = "request_id") String requestId) {
         return tenantId + ":" + requestId + ":" + orderId;
+    }
+
+    @Tool(description = "Fail a tool call.")
+    public static String failingTool(@ToolParam(name = "value") String value) {
+        throw new IllegalStateException("tool rejected " + value);
     }
 }

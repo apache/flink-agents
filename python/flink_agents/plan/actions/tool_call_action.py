@@ -25,7 +25,7 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import DurableCall, Outcome, RunnerContext
-from flink_agents.api.tools import ToolExecutionMetadataProvider
+from flink_agents.api.tools import ToolExecutionMetadataProvider, ToolResponse
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     ToolParameterSource,
@@ -247,14 +247,7 @@ async def _execute_sequentially(
                     *call.args,
                     **(call.kwargs or {}),
                 )
-            responses[execution.id] = response
-            success[execution.id] = True
-            ExecutionReporters.succeeded(
-                ctx,
-                ExecutionEntityTypes.TOOL,
-                execution.name,
-                execution.entity_metadata,
-            )
+            _record_tool_response(execution, response, ctx, responses, success, error)
         except Exception as e:  # noqa: PERF203
             _record_execution_exception(execution, e, ctx, responses, success, error)
 
@@ -272,14 +265,41 @@ def _record_outcome(
             execution, outcome.error, ctx, responses, success, error
         )
     else:
-        responses[execution.id] = outcome.value
-        success[execution.id] = True
-        ExecutionReporters.succeeded(
+        _record_tool_response(execution, outcome.value, ctx, responses, success, error)
+
+
+def _record_tool_response(
+    execution: _ToolCallExecution,
+    value: Any,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    response = value if isinstance(value, ToolResponse) else ToolResponse.success(value)
+    if response.is_error():
+        message = response.error or f"Tool `{execution.name}` execute failed."
+        responses[execution.id] = message
+        success[execution.id] = False
+        error[execution.id] = message
+        ExecutionReporters.failed(
             ctx,
             ExecutionEntityTypes.TOOL,
             execution.name,
             execution.entity_metadata,
+            RuntimeError(message),
+            ExecutionProblemCategories.TOOL_CALL_FAILED,
         )
+        return
+
+    responses[execution.id] = response.result
+    success[execution.id] = True
+    ExecutionReporters.succeeded(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        execution.name,
+        execution.entity_metadata,
+    )
 
 
 def _record_execution_exception(

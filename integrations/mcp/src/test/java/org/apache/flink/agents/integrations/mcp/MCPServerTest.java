@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integrations.mcp;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.modelcontextprotocol.spec.McpSchema;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
@@ -305,5 +306,29 @@ class MCPServerTest {
 
         List<MCPPrompt> prompts = server.listPrompts();
         assertThat(prompts).isEmpty();
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    void protocolToolErrorIsNotReturnedAsSuccessfulContent() {
+        McpSchema.CallToolResult result =
+                McpSchema.CallToolResult.builder()
+                        .addTextContent("business failure")
+                        .isError(true)
+                        .build();
+
+        assertThatThrownBy(() -> MCPServer.extractToolContent("lookup", result))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("lookup")
+                .hasMessageContaining("business failure");
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_11)
+    void successfulProtocolToolResultReturnsContent() {
+        McpSchema.CallToolResult result =
+                McpSchema.CallToolResult.builder().addTextContent("result").build();
+
+        assertThat(MCPServer.extractToolContent("lookup", result)).containsExactly("result");
     }
 }

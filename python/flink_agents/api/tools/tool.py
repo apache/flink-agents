@@ -157,4 +157,7 @@ class Tool(SerializableResource, ABC):
         """Call the tools with arguments.
 
         This is the method that should be implemented by the tools' developer.
+        A raw return value represents success. Return
+        :class:`flink_agents.api.tools.ToolResponse` to report an explicit
+        tool-level failure without raising an exception.
         """

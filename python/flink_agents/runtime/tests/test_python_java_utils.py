@@ -25,11 +25,12 @@ from flink_agents.api.embedding_models.embedding_model import (
     EmbeddingTokenUsage,
 )
 from flink_agents.api.events.event import Event
-from flink_agents.api.tools import InjectedArg
+from flink_agents.api.tools import InjectedArg, ToolResponse
 from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
     convert_to_python_key_text,
     get_python_tool_metadata,
+    invoke_python_tool,
     wrap_to_input_event,
 )
 
@@ -38,6 +39,14 @@ from flink_agents.runtime.python_java_utils import (
 def decorated_python_tool(order_id: str, tenant_id: str, request_id: str) -> str:
     """Query order."""
     return f"{tenant_id}:{request_id}:{order_id}"
+
+
+def raw_python_tool(value: str) -> dict[str, object]:
+    return {"__flink_agents_tool_result__": "response", "value": value}
+
+
+def failed_python_tool(value: str) -> ToolResponse:
+    return ToolResponse.failure(value, execution_time_ms=7, tool_name="failed")
 
 
 def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
@@ -49,6 +58,28 @@ def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     assert set(schema["properties"]) == {"order_id"}
     injected_args = json.loads(flat["injectedArgs"])
     assert injected_args == {"tenant_id": {"source": "config", "key": "tenant.id"}}
+
+
+def test_invoke_python_tool_wraps_raw_payload_without_inspecting_it() -> None:
+    result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "raw",
+        "result": {"__flink_agents_tool_result__": "response", "value": "raw"},
+    }
+
+
+def test_invoke_python_tool_preserves_explicit_failure() -> None:
+    result = invoke_python_tool(__name__, "failed_python_tool", {"value": "failed"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": None,
+        "success": False,
+        "error": "failed",
+        "execution_time_ms": 7,
+        "tool_name": "failed",
+    }
 
 
 class _UsageAwareEmbeddingModel:

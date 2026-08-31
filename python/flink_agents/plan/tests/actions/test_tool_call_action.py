@@ -24,7 +24,11 @@ from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEve
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import Outcome
-from flink_agents.api.tools import InjectedArg, ToolExecutionMetadataProvider
+from flink_agents.api.tools import (
+    InjectedArg,
+    ToolExecutionMetadataProvider,
+    ToolResponse,
+)
 from flink_agents.api.tools.tool import ToolType
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
@@ -424,6 +428,24 @@ def test_tool_call_action_records_parallel_outcome_failure() -> None:
     assert response.error["call-2"] == "boom"
 
 
+def test_tool_call_action_records_parallel_tool_response_failure() -> None:
+    config = AgentConfiguration({"tenant_id": "tenant-1"})
+    config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    ctx = _Context(config=config)
+    ctx.durable_execute_all_async_outcomes = [
+        Outcome.success("ok"),
+        Outcome.success(ToolResponse.failure("business failure")),
+    ]
+
+    asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
+
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success == {"call-1": True, "call-2": False}
+    assert response.responses["call-2"] == "business failure"
+    assert response.error["call-2"] == "business failure"
+
+
 def test_tool_call_action_uses_sync_when_async_disabled_multi_tool() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
@@ -542,6 +564,23 @@ def test_tool_call_reports_failed() -> None:
     assert args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1"
     assert isinstance(args[3], RuntimeError)
     assert args[4] == ExecutionProblemCategories.TOOL_CALL_FAILED
+
+
+def test_tool_call_reports_explicit_tool_response_failure() -> None:
+    tool = MagicMock()
+    tool.tool_type.return_value = ToolType.FUNCTION
+    tool.call = MagicMock(return_value=ToolResponse.failure("business failure"))
+    ctx, sent_events = trace_context(tool)
+    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+
+    asyncio.run(process_tool_request(request, ctx))
+
+    response = ToolResponseEvent.from_event(sent_events[0])
+    assert response.responses["call-1"] == "business failure"
+    assert response.success["call-1"] is False
+    assert response.error["call-1"] == "business failure"
+    ctx.report_execution_failed.assert_called_once()
+    ctx.report_execution_succeeded.assert_not_called()
 
 
 def test_tool_call_includes_provider_metadata() -> None:
