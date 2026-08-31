@@ -26,6 +26,7 @@ public final class ToolExecutionMetadataKeys {
     public static final String TOOL_TYPE = "toolType";
     public static final String MCP_SERVER = "mcpServer";
     public static final String SKILL_NAME = "skillName";
+    public static final String SKILL_REGISTERED = "skillRegistered";
     public static final String SKILL_RESOURCE_PATH = "skillResourcePath";
 
     private ToolExecutionMetadataKeys() {}

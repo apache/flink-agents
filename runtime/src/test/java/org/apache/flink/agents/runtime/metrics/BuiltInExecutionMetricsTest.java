@@ -148,7 +148,11 @@ class BuiltInExecutionMetricsTest {
                 execution(
                         ExecutionReporter.EntityTypes.TOOL,
                         "load_skill",
-                        Map.of(ToolExecutionMetadataKeys.SKILL_NAME, "calculator"));
+                        Map.of(
+                                ToolExecutionMetadataKeys.SKILL_NAME,
+                                "calculator",
+                                ToolExecutionMetadataKeys.SKILL_REGISTERED,
+                                true));
         metrics.executionEventObserved(
                 ACTION_NAME, ExecutionLifecycleEvents.executionStarted(), loadSkill);
         nanoTime.addAndGet(12_000_000L);
@@ -167,6 +171,39 @@ class BuiltInExecutionMetricsTest {
         FlinkAgentsMetricGroupImpl tool = actionMetricGroup().getSubGroup("tool", "load_skill");
         assertThat(tool.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_SUCCEEDED).getCount())
                 .isEqualTo(1);
+    }
+
+    @Test
+    void aggregatesUnregisteredSkillNamesIntoUnknownScope() {
+        ExecutionTraceContext first =
+                execution(
+                        ExecutionReporter.EntityTypes.TOOL,
+                        "load_skill",
+                        Map.of(
+                                ToolExecutionMetadataKeys.SKILL_NAME,
+                                "hallucinated_one",
+                                ToolExecutionMetadataKeys.SKILL_REGISTERED,
+                                false));
+        ExecutionTraceContext second =
+                execution(
+                        ExecutionReporter.EntityTypes.TOOL,
+                        "load_skill",
+                        Map.of(
+                                ToolExecutionMetadataKeys.SKILL_NAME,
+                                "hallucinated_two",
+                                ToolExecutionMetadataKeys.SKILL_REGISTERED,
+                                false));
+
+        metrics.executionEventObserved(
+                ACTION_NAME, ExecutionLifecycleEvents.executionFinished(), first);
+        metrics.executionEventObserved(
+                ACTION_NAME, ExecutionLifecycleEvents.executionFinished(), second);
+
+        FlinkAgentsMetricGroupImpl unknown =
+                actionMetricGroup()
+                        .getSubGroup("skill", ToolExecutionMetricRecorder.UNKNOWN_SKILL_NAME);
+        assertThat(unknown.getCounter(ToolExecutionMetricRecorder.NUM_SKILL_LOADS).getCount())
+                .isEqualTo(2);
     }
 
     @Test
