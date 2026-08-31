@@ -140,6 +140,29 @@ class FunctionToolSetPythonAdapterTest {
     }
 
     @Test
+    void preservesExplicitPythonToolSuccess() {
+        PythonFunction function = new PythonFunction("pkg.mod", "notify");
+        FunctionTool tool = new FunctionTool(PYTHON_TOOL_METADATA, function);
+        PythonResourceAdapter adapter = pythonAdapter();
+        when(adapter.invokePythonTool(eq("pkg.mod"), eq("notify"), eq(Map.of("id", "1"))))
+                .thenReturn(
+                        Map.of(
+                                "__flink_agents_tool_result__", "response",
+                                "result", "sent",
+                                "success", true,
+                                "execution_time_ms", 5L,
+                                "tool_name", "notify"));
+        tool.setPythonResourceAdapter(adapter);
+
+        ToolResponse response = tool.call(new ToolParameters(Map.of("id", "1")));
+
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getResult()).isEqualTo("sent");
+        assertThat(response.getExecutionTimeMs()).isEqualTo(5L);
+        assertThat(response.getToolName()).isEqualTo("notify");
+    }
+
+    @Test
     void unwrapsRawPythonToolResultEnvelope() {
         PythonFunction function = new PythonFunction("pkg.mod", "notify");
         FunctionTool tool = new FunctionTool(PYTHON_TOOL_METADATA, function);

@@ -29,7 +29,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class JavaResourceAdapterTest {
 
@@ -60,19 +59,49 @@ public class JavaResourceAdapterTest {
     }
 
     @Test
-    void invokeJavaToolPropagatesToolFailureToPythonCaller() {
+    void invokeJavaToolPreservesSuccessResponseForPythonCaller() throws Exception {
         JavaResourceAdapter adapter =
                 new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
 
-        assertThatThrownBy(
-                        () ->
-                                adapter.invokeJavaTool(
-                                        JavaResourceAdapterTest.class.getName(),
-                                        "failingTool",
-                                        List.of(String.class.getName()),
-                                        Map.of("value", "input")))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("tool rejected input");
+        Map<String, Object> result =
+                adapter.invokeJavaTool(
+                        JavaResourceAdapterTest.class.getName(),
+                        "queryOrder",
+                        List.of(
+                                String.class.getName(),
+                                String.class.getName(),
+                                String.class.getName()),
+                        Map.of(
+                                "order_id", "order-1",
+                                "tenant_id", "tenant-1",
+                                "request_id", "request-1"));
+
+        assertThat(result)
+                .containsEntry("__flink_agents_tool_result__", "response")
+                .containsEntry("success", true)
+                .containsEntry("result", "tenant-1:request-1:order-1")
+                .containsEntry("execution_time_ms", 0L);
+        assertThat(result.get("error")).isNull();
+    }
+
+    @Test
+    void invokeJavaToolPreservesErrorResponseForPythonCaller() throws Exception {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
+
+        Map<String, Object> result =
+                adapter.invokeJavaTool(
+                        JavaResourceAdapterTest.class.getName(),
+                        "failingTool",
+                        List.of(String.class.getName()),
+                        Map.of("value", "input"));
+
+        assertThat(result)
+                .containsEntry("__flink_agents_tool_result__", "response")
+                .containsEntry("success", false)
+                .containsEntry("error", "tool rejected input")
+                .containsEntry("execution_time_ms", 0L);
+        assertThat(result.get("result")).isNull();
     }
 
     @Tool(description = "Query order.")

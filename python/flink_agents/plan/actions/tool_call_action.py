@@ -278,7 +278,7 @@ def _record_tool_response(
 ) -> None:
     response = value if isinstance(value, ToolResponse) else ToolResponse.success(value)
     if response.is_error():
-        message = response.error_message or f"Tool `{execution.name}` execute failed."
+        message = response.error_message
         responses[execution.id] = message
         success[execution.id] = False
         error[execution.id] = message
