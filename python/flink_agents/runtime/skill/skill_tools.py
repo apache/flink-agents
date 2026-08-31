@@ -92,7 +92,11 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
         """Describe the requested skill resource for execution tracing."""
         metadata = {}
         if "name" in parameters:
-            metadata[ToolExecutionMetadataKeys.SKILL_NAME] = str(parameters["name"])
+            skill_name = str(parameters["name"])
+            metadata[ToolExecutionMetadataKeys.SKILL_NAME] = skill_name
+            metadata[ToolExecutionMetadataKeys.SKILL_REGISTERED] = (
+                self._is_registered_skill(skill_name)
+            )
         metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] = (
             _normalize_skill_resource_path(
                 parameters.get("path"), missing="path" not in parameters
@@ -150,6 +154,13 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
             available = sorted(skill.get_resource_paths())
             return f"Resource '{resource_path}' not found in skill '{skill_name}', Available resources: {available}"
         return content
+
+    def _is_registered_skill(self, skill_name: str) -> bool:
+        try:
+            manager = self._get_skill_manager()
+            return manager is not None and skill_name in manager.get_all_skill_names()
+        except Exception:
+            return False
 
     def _get_skill_manager(self) -> SkillManager | None:
         from flink_agents.runtime.resource_context import ResourceContextImpl

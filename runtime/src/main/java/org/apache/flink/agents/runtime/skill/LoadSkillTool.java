@@ -69,9 +69,9 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
     public Map<String, Object> getToolExecutionMetadata(ToolParameters parameters) {
         Map<String, Object> metadata = new LinkedHashMap<>();
         if (parameters.hasParameter("name")) {
-            metadata.put(
-                    ToolExecutionMetadataKeys.SKILL_NAME,
-                    String.valueOf(parameters.getParameter("name")));
+            String skillName = String.valueOf(parameters.getParameter("name"));
+            metadata.put(ToolExecutionMetadataKeys.SKILL_NAME, skillName);
+            metadata.put(ToolExecutionMetadataKeys.SKILL_REGISTERED, isRegisteredSkill(skillName));
         }
         metadata.put(
                 ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH, normalizeResourcePath(parameters));
@@ -156,6 +156,15 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
             return ((ResourceContextImpl) resourceContext).getSkillManager();
         }
         return null;
+    }
+
+    private boolean isRegisteredSkill(String skillName) {
+        try {
+            SkillManager manager = resolveSkillManager();
+            return manager != null && manager.getAllSkillNames().contains(skillName);
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private static String normalizeResourcePath(ToolParameters parameters) {

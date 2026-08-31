@@ -38,6 +38,8 @@ import java.util.function.Predicate;
  */
 public class BuiltInMetrics {
 
+    private final FlinkAgentsMetricGroupImpl parentMetricGroup;
+
     private final Meter numOfEventProcessedPerSec;
 
     private final Meter numOfActionsExecutedPerSec;
@@ -66,6 +68,7 @@ public class BuiltInMetrics {
             FlinkAgentsMetricGroupImpl parentMetricGroup,
             AgentPlan agentPlan,
             Predicate<String> isRegisteredTool) {
+        this.parentMetricGroup = parentMetricGroup;
         Counter numOfEventsProcessed = parentMetricGroup.getCounter("numOfEventProcessed");
         this.numOfEventProcessedPerSec =
                 parentMetricGroup.getMeter("numOfEventProcessedPerSec", numOfEventsProcessed);
@@ -82,10 +85,7 @@ public class BuiltInMetrics {
 
         this.actionMetricGroups = new HashMap<>();
         for (String actionName : agentPlan.getActions().keySet()) {
-            actionMetricGroups.put(
-                    actionName,
-                    new BuiltInActionMetrics(
-                            parentMetricGroup.getSubGroup("action", actionName), System::nanoTime));
+            actionMetricGroups.put(actionName, createActionMetrics(actionName));
         }
     }
 
@@ -150,7 +150,7 @@ public class BuiltInMetrics {
 
     public void restoreActionTask(ExecutionTraceContext traceContext, boolean executionStarted) {
         inputRunMetrics.identifyRestoredActiveInputRun(traceContext.getInputRunId());
-        actionMetrics(traceContext.getEntityName())
+        restoredActionMetrics(traceContext.getEntityName())
                 .restoreActionTask(traceContext.getExecutionId(), executionStarted);
     }
 
@@ -179,5 +179,14 @@ public class BuiltInMetrics {
             throw new IllegalArgumentException("Unknown action: " + actionName);
         }
         return actionMetrics;
+    }
+
+    private BuiltInActionMetrics restoredActionMetrics(String actionName) {
+        return actionMetricGroups.computeIfAbsent(actionName, this::createActionMetrics);
+    }
+
+    private BuiltInActionMetrics createActionMetrics(String actionName) {
+        return new BuiltInActionMetrics(
+                parentMetricGroup.getSubGroup("action", actionName), System::nanoTime);
     }
 }

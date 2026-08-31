@@ -95,9 +95,12 @@ class TestLoadSkillTool:
             {"name": "github", "path": "README.md"}
         )
         assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
+        assert metadata[ToolExecutionMetadataKeys.SKILL_REGISTERED] is True
         assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "README.md"
 
-    def test_execution_metadata_normalizes_omitted_path(self, tool: LoadSkillTool) -> None:
+    def test_execution_metadata_normalizes_omitted_path(
+        self, tool: LoadSkillTool
+    ) -> None:
         metadata = tool.get_tool_execution_metadata({"name": "github"})
         assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
         assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "SKILL.md"
@@ -117,6 +120,13 @@ class TestLoadSkillTool:
         assert "not found" in result.lower()
         assert "github" in result
         assert "nano-banana-pro" in result
+
+    def test_execution_metadata_marks_unknown_skill_as_unregistered(
+        self, tool: LoadSkillTool
+    ) -> None:
+        metadata = tool.get_tool_execution_metadata({"name": "nonexistent-skill"})
+        assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "nonexistent-skill"
+        assert metadata[ToolExecutionMetadataKeys.SKILL_REGISTERED] is False
 
     # -- no skill manager ----------------------------------------------------
 

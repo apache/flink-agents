@@ -67,12 +67,12 @@ Execution metrics are derived from LLM and Tool execution lifecycle events. The 
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | The number of framework-observed model invocations that returned successfully. | Count |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | The number of framework-observed model invocations that failed. | Count |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Latency of each framework-observed model invocation, excluding structured-output parsing and retry wait time. | Histogram |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated by framework retry logic. Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated by framework-level retries. | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated when `ErrorHandlingStrategy.RETRY` is configured. Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated when `ErrorHandlingStrategy.RETRY` is configured. Only recorded when at least one retry occurs. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | The number of successful calls to the Tool. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | The number of failed calls to the Tool. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Tool call latency. | Histogram |
-| **Skill** | action.\<action_name\>.skill.\<skill_name\>.numOfSkillLoads | The number of completed explicit `load_skill` calls for the Skill. | Count |
+| **Skill** | action.\<action_name\>.skill.\<skill_name\>.numOfSkillLoads | The number of terminal explicit `load_skill` calls attributed to the Skill, regardless of outcome. | Count |
 | **Skill** | action.\<action_name\>.skill.\<skill_name\>.skillLoadLatencyMs | Latency of explicit `load_skill` calls. | Histogram |
 | **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsSucceeded | The number of successful Tool calls served by the MCP Server. | Count |
 | **MCP Server** | action.\<action_name\>.mcp_server.\<server_name\>.numOfMcpToolCallsFailed | The number of failed Tool calls served by the MCP Server. | Count |
@@ -80,13 +80,17 @@ Execution metrics are derived from LLM and Tool execution lifecycle events. The 
 
 An LLM metric represents one framework invocation of `ChatModel`. A framework retry that calls the model again produces another LLM outcome and latency sample; retries hidden inside a provider or connection are not observed. Every named Tool execution emits Tool metrics. Skill metrics are emitted only for explicit `load_skill` calls; subsequent Tool calls are not inferred to belong to a Skill. MCP metrics aggregate only Tool executions carrying an explicit MCP Server resource name. A `load_skill` or MCP Tool execution therefore contributes to both its Tool scope and the corresponding Skill or MCP Server scope.
 
-Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope to keep metric cardinality bounded. Their original requested names remain available in Agent Trace records.
+Execution metrics currently inherit Agent Trace's durable-replay behavior. During fine-grained recovery, a cached durable LLM or Tool result is reported as a new successful execution because child cache reuse is not exposed to execution reporting. The corresponding success counter therefore increments and the latency histogram may receive a near-zero sample even though the underlying model or Tool was not invoked. Distinguishing reused child executions is follow-up work.
+
+Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope. Requested Skill names that do not resolve in the runtime registry are similarly aggregated under `skill=unknown`. The original requested names remain available in Agent Trace records, while Metric scope cardinality remains bounded.
 
 Tool outcomes follow the existing language-specific Tool contracts. In both Java and Python, resource preparation or invocation exceptions are failures and a normal return is successful. Java additionally treats an unsuccessful `ToolResponse` as a failed Tool execution. Python Tools return arbitrary values and currently have no equivalent explicit error-result type, so the runtime does not infer failure from a normally returned Python value.
 
-Consequently, Tool and MCP outcome metrics use the same names and scopes in both runtimes, but explicit error-result semantics are not yet identical. This alignment is tracked in [Issue #956](https://github.com/apache/flink-agents/issues/956) and is planned after the parallel Tool-call work in [PR #926](https://github.com/apache/flink-agents/pull/926).
+`numOfSkillLoads` counts terminal calls rather than successful loads. Under the current Tool contracts, a `load_skill` not-found response returns normally and is therefore observed as a successful Tool outcome. Consequently, Tool and MCP outcome metrics use the same names and scopes in both runtimes, but explicit error-result semantics are not yet identical. This alignment, including explicit failure results for framework Tools such as `load_skill`, is tracked in [Issue #956](https://github.com/apache/flink-agents/issues/956).
 
 Execution latency tracking is process-local. A latency sample is recorded only when the execution start and terminal events are observed in the same task attempt; LLM and Tool terminal counters are still updated when a restored execution has no local start timestamp.
+
+In previous releases, `retryCount` and `retryWaitSec` used the `model.<connection_name>` scope. They now use `model_resource.<resource_name>` so retries are attributed to the configured ChatModel resource. Existing queries and dashboards for these two metrics must use the new scope.
 
 #### Token Usage Metrics
 
@@ -161,7 +165,7 @@ public class MyAgent extends Agent {
 
 ### How to check the metrics with Flink executor
 
-Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. For an agent operator, `<operator_name>` is the agent name. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
+Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. For an agent operator, `<operator_name>` is the agent name. If the Agent name is unavailable, the operator retains the previous `action-execute-operator` value as a fallback. This changes only the value of the existing `<operator_name>` scope; the Agent-specific metric hierarchy is unchanged. Queries and dashboards that filter on `operator_name=action-execute-operator` must use the Agent name after upgrading. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
 
 Additionally, we can check the metric results in the Flink Job WebUI using the metric identifier prefix `<subtask_index>.<operator_name>`.
 

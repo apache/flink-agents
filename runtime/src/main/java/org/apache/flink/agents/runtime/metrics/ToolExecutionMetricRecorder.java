@@ -30,6 +30,7 @@ import java.util.function.Predicate;
 final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
 
     static final String UNKNOWN_TOOL_NAME = "unknown";
+    static final String UNKNOWN_SKILL_NAME = "unknown";
 
     static final String NUM_TOOL_CALLS_SUCCEEDED = "numOfToolCallsSucceeded";
     static final String NUM_TOOL_CALLS_FAILED = "numOfToolCallsFailed";
@@ -74,8 +75,10 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
 
         String skillName = metadataValue(traceContext, ToolExecutionMetadataKeys.SKILL_NAME);
         if (!isBlank(skillName)) {
+            String metricSkillName =
+                    isRegisteredSkill(traceContext) ? skillName : UNKNOWN_SKILL_NAME;
             FlinkAgentsMetricGroupImpl skillMetricGroup =
-                    actionMetricGroup.getSubGroup("skill", skillName);
+                    actionMetricGroup.getSubGroup("skill", metricSkillName);
             skillMetricGroup.getCounter(NUM_SKILL_LOADS).inc();
             updateLatency(skillMetricGroup.getHistogram(SKILL_LOAD_LATENCY_MS), latencyMs);
         }
@@ -114,6 +117,11 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
     private static String metadataValue(ExecutionTraceContext traceContext, String metadataKey) {
         Object value = traceContext.getEntityMetadata().get(metadataKey);
         return value == null ? null : String.valueOf(value);
+    }
+
+    private static boolean isRegisteredSkill(ExecutionTraceContext traceContext) {
+        return Boolean.TRUE.equals(
+                traceContext.getEntityMetadata().get(ToolExecutionMetadataKeys.SKILL_REGISTERED));
     }
 
     private static boolean isBlank(String value) {

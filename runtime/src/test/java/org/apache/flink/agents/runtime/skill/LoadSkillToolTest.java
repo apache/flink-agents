@@ -103,7 +103,17 @@ class LoadSkillToolTest {
                 tool(contextWithSkills()).getToolExecutionMetadata(args("github", "README.md"));
 
         assertEquals("github", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals(true, metadata.get(ToolExecutionMetadataKeys.SKILL_REGISTERED));
         assertEquals("README.md", metadata.get(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH));
+    }
+
+    @Test
+    void executionMetadataMarksUnknownSkillAsUnregistered() {
+        Map<String, Object> metadata =
+                tool(contextWithSkills()).getToolExecutionMetadata(args("does-not-exist", null));
+
+        assertEquals("does-not-exist", metadata.get(ToolExecutionMetadataKeys.SKILL_NAME));
+        assertEquals(false, metadata.get(ToolExecutionMetadataKeys.SKILL_REGISTERED));
     }
 
     @Test
