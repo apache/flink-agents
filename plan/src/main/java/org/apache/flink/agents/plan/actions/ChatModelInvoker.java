@@ -200,7 +200,12 @@ final class ChatModelInvoker {
                             numRetries,
                             currentWaitSec);
                     if (currentWaitSec > 0) {
-                        Thread.sleep(currentWaitSec * 1000L);
+                        try {
+                            Thread.sleep(currentWaitSec * 1000L);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw ie;
+                        }
                         totalWaitTimeSec += currentWaitSec;
                     }
                     continue;

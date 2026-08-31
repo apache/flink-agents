@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -40,6 +41,14 @@ import static org.mockito.Mockito.when;
 
 /** Tests for {@link ChatModelInvoker}. */
 class ChatModelInvokerTest {
+
+    @AfterEach
+    void clearInterruptStatus() {
+        // Prevents a leftover interrupt flag (e.g. if the assertion below the interruption test
+        // ever fails before consuming it) from failing an unrelated later test's real Thread.sleep
+        // backoff with a spurious InterruptedException.
+        Thread.interrupted();
+    }
 
     @Test
     void testChatWithRetriesDoesNotRetryOnInterruption() throws Exception {

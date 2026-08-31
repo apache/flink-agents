@@ -26,6 +26,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -51,6 +52,13 @@ class RunnerContextImplDurableExecuteTest {
                         UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
         persistCallCount = new AtomicInteger();
         lastPersistedState = null;
+    }
+
+    @AfterEach
+    void clearInterruptStatus() {
+        // Prevents a leftover interrupt flag (e.g. if an assertion below one of the interruption
+        // tests ever fails before consuming it) from leaking into an unrelated later test.
+        Thread.interrupted();
     }
 
     @Test
