@@ -20,9 +20,12 @@ package org.apache.flink.agents.api.skills;
 
 import org.apache.flink.annotation.Internal;
 
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.URL;
 import java.util.Locale;
+import java.util.regex.Pattern;
 
 /**
  * Shared validation and redaction helpers for URL-backed skill sources. Internal contract shared
@@ -30,6 +33,9 @@ import java.util.Locale;
  */
 @Internal
 public final class SkillUrlUtils {
+
+    private static final String REDACTED = "<redacted>";
+    private static final Pattern INVALID_PERCENT_ESCAPE = Pattern.compile("%(?![0-9a-fA-F]{2})");
 
     private SkillUrlUtils() {}
 
@@ -41,6 +47,9 @@ public final class SkillUrlUtils {
     public static String validate(String url, boolean allowInsecureHttp) {
         if (url == null) {
             throw new IllegalArgumentException("skill URL must not be null");
+        }
+        if (INVALID_PERCENT_ESCAPE.matcher(url).find()) {
+            throw new IllegalArgumentException("Invalid skill URL: " + redact(url));
         }
         URI uri;
         try {
@@ -85,24 +94,49 @@ public final class SkillUrlUtils {
     /** Return {@code url} without user info, query parameters, or a fragment. */
     public static String redact(String url) {
         if (url == null) {
-            return "<redacted>";
+            return REDACTED;
         }
         try {
             URI uri = URI.create(url);
             if (uri.getScheme() == null || uri.getRawAuthority() == null) {
-                return "<redacted>";
+                return REDACTED;
             }
-            String authority = uri.getRawAuthority();
-            int userInfoEnd = authority.lastIndexOf('@');
-            if (userInfoEnd >= 0) {
-                authority = authority.substring(userInfoEnd + 1);
-            }
-            if (authority.isEmpty()) {
-                return "<redacted>";
-            }
-            return uri.getScheme() + "://" + authority + uri.getRawPath();
+            return redactParts(uri.getScheme(), uri.getRawAuthority(), uri.getRawPath());
         } catch (IllegalArgumentException ignored) {
-            return "<redacted>";
+            try {
+                URL parsed = new URL(url);
+                String authority = parsed.getAuthority();
+                String path = parsed.getPath();
+                if (authority == null
+                        || containsUnsafeLogCharacter(authority)
+                        || containsUnsafeLogCharacter(path)) {
+                    return REDACTED;
+                }
+                return redactParts(parsed.getProtocol(), authority, path);
+            } catch (MalformedURLException | IllegalArgumentException malformed) {
+                return REDACTED;
+            }
         }
+    }
+
+    private static String redactParts(String scheme, String authority, String path) {
+        int userInfoEnd = authority.lastIndexOf('@');
+        if (userInfoEnd >= 0) {
+            authority = authority.substring(userInfoEnd + 1);
+        }
+        if (authority.isEmpty()) {
+            return REDACTED;
+        }
+        return scheme + "://" + authority + (path == null ? "" : path);
+    }
+
+    private static boolean containsUnsafeLogCharacter(String value) {
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (c < 0x20 || c == 0x7f) {
+                return true;
+            }
+        }
+        return false;
     }
 }

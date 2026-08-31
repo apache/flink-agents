@@ -163,6 +163,7 @@ class URLSkillRepositoryTest {
                 List.of(
                         "https://exa_mple.com/skills.zip",
                         "https://tést.com/skills.zip",
+                        "https://\u212A.com/skills.zip",
                         "https://%65xample.com/skills.zip",
                         "https://-example.com/skills.zip",
                         "https://example-.com/skills.zip",
@@ -184,10 +185,13 @@ class URLSkillRepositoryTest {
     }
 
     @Test
-    void rawPercentEscapeIsRejectedByDownloader() {
-        assertThrows(
-                IOException.class,
-                () -> new URLSkillRepository("https://[fe80::1%eth0]/skills.zip"));
+    void rawPercentEscapeIsRejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https://[fe80::1%eth0]/skills.zip"));
+        assertEquals("Invalid skill URL: https://[fe80::1%eth0]/skills.zip", ex.getMessage());
+        assertNull(ex.getCause());
     }
 
     @Test

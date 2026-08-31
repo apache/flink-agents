@@ -45,6 +45,7 @@ class TestSkillsFactories:
             "https://[fe80::1%25eth0]/x.zip",
             "https://example.com./x.zip",
             "https://example.com:/x.zip",
+            "https://example.com:65535/x.zip",
             "https://999/x.zip",
             "https://1bar/x.zip",
             "https://999./x.zip",
@@ -130,7 +131,11 @@ class TestSkillsFactories:
 
     @pytest.mark.parametrize(
         "url",
-        ["https://skill_server/x.zip", "https://tést.com/x.zip"],
+        [
+            "https://skill_server/x.zip",
+            "https://tést.com/x.zip",
+            "https://\N{KELVIN SIGN}.com/x.zip",
+        ],
     )
     def test_from_url_rejects_compatibility_sensitive_hosts(self, url: str) -> None:
         with pytest.raises(ValueError, match="valid host"):

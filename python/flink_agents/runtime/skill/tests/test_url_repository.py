@@ -133,6 +133,7 @@ class TestURLSkillRepository:
         [
             "https://exa_mple.com/skills.zip",
             "https://tést.com/skills.zip",
+            "https://\N{KELVIN SIGN}.com/skills.zip",
             "https://%65xample.com/skills.zip",
             "https://-example.com/skills.zip",
             "https://example-.com/skills.zip",

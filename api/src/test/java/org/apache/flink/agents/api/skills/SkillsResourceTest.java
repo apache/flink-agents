@@ -63,6 +63,7 @@ class SkillsResourceTest {
                         "https://[fe80::1%25eth0]/x.zip",
                         "https://example.com./x.zip",
                         "https://example.com:/x.zip",
+                        "https://example.com:65535/x.zip",
                         "https://999/x.zip",
                         "https://1bar/x.zip",
                         "https://999./x.zip")) {
@@ -132,10 +133,41 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlRejectsMalformedUrl() {
-        for (String url : List.of("https://[::1/x.zip", "https://example.com/skills[1].zip")) {
+        IllegalArgumentException unparseable =
+                assertThrows(
+                        IllegalArgumentException.class, () -> Skills.fromUrl("https://[::1/x.zip"));
+        assertEquals("Invalid skill URL: <redacted>", unparseable.getMessage());
+
+        IllegalArgumentException unsafeForLogs =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> Skills.fromUrl("https://u:pw@example.com/a\nheader?token=SECRET"));
+        assertEquals("Invalid skill URL: <redacted>", unsafeForLogs.getMessage());
+        assertFalse(unsafeForLogs.getMessage().contains("pw"));
+        assertFalse(unsafeForLogs.getMessage().contains("SECRET"));
+
+        for (String url :
+                List.of("https://example.com/skills[1].zip", "https://[fe80::1%eth0]/x.zip")) {
             IllegalArgumentException ex =
                     assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
-            assertEquals("Invalid skill URL: <redacted>", ex.getMessage());
+            assertEquals("Invalid skill URL: " + url, ex.getMessage());
+        }
+    }
+
+    @Test
+    void fromUrlRedactsMalformedUrlWithoutLosingSafeContext() {
+        for (String path : List.of("a b.zip", "%zz")) {
+            IllegalArgumentException ex =
+                    assertThrows(
+                            IllegalArgumentException.class,
+                            () ->
+                                    Skills.fromUrl(
+                                            "https://u:pw@example.com/"
+                                                    + path
+                                                    + "?token=SECRET#fragment"));
+            assertEquals("Invalid skill URL: https://example.com/" + path, ex.getMessage());
+            assertFalse(ex.getMessage().contains("pw"));
+            assertFalse(ex.getMessage().contains("SECRET"));
         }
     }
 
@@ -192,7 +224,11 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlRejectsCompatibilitySensitiveHosts() {
-        for (String url : List.of("https://skill_server/x.zip", "https://tést.com/x.zip")) {
+        for (String url :
+                List.of(
+                        "https://skill_server/x.zip",
+                        "https://tést.com/x.zip",
+                        "https://\u212A.com/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
         }
     }

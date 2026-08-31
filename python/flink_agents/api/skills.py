@@ -129,6 +129,7 @@ def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
     bracketed_host = parsed.netloc.rsplit("@", 1)[-1].startswith("[")
     if (
         not hostname
+        or not parsed.netloc.isascii()
         or (bracketed_host and ":" not in hostname)
         or not _is_valid_hostname(hostname)
     ):
