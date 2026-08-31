@@ -601,8 +601,7 @@ public class ChatModelAction {
             // the judge path re-sets the interrupt flag before rethrowing, and a blocking
             // custom strategy surfaces the raw InterruptedException with the flag cleared, so
             // check both. Let the action loop stop instead of dropping the request.
-            if (ModelRoutingResolver.containsInterrupt(e)
-                    || Thread.currentThread().isInterrupted()) {
+            if (ModelRoutingResolver.isCancellation(e) || Thread.currentThread().isInterrupted()) {
                 throw e;
             }
             // A routing-strategy failure honors the same error-handling strategy as the chat

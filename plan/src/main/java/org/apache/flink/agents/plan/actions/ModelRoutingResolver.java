@@ -20,31 +20,42 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.chat.model.routing.LlmJudgeRoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceType;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Resolves a chat request's target into a {@link ResolvedModelRoute}: if {@code model} names a
- * {@link ModelRouter}, runs its strategy inside a durable {@code "route:<router>"} call, emits the
+ * {@link ModelRouter}, executes the declared strategy — dispatched by its language-neutral {@link
+ * RoutingStrategyType} — inside the durable {@code "route:<router>"} boundary, emits the
  * observability-only {@link ModelRoutingEvent}, and normalizes the decision; otherwise returns the
  * direct route.
+ *
+ * <p>The durable boundary is owned here, not by the executors: every decision — rules, custom,
+ * judge — is persisted by this class, so replay determinism is a property of the substrate rather
+ * than a per-executor discipline.
  */
 final class ModelRoutingResolver {
 
-    /** The durable-call id for the persisted routing decision — ONE definition for both paths. */
+    /** The durable-call id for the persisted routing decision — ONE definition for all paths. */
     private static String routeCallId(String model) {
         return "route:" + model;
     }
@@ -52,11 +63,11 @@ final class ModelRoutingResolver {
     private ModelRoutingResolver() {}
 
     /**
-     * If {@code model} names a {@link ModelRouter}, run its strategy (as a durable {@code "route"}
-     * call so the decision replays deterministically on recovery), normalize the result (abstain ->
-     * default model, non-candidate -> fail clearly), emit an observability-only {@link
-     * ModelRoutingEvent}, and return the selected concrete model. Otherwise returns a direct
-     * selection.
+     * If {@code model} names a {@link ModelRouter}, execute its declared strategy (persisted under
+     * the durable {@code "route"} call so the decision replays deterministically on recovery),
+     * normalize the result (abstain -> default model, non-candidate -> fail clearly), emit an
+     * observability-only {@link ModelRoutingEvent}, and return the selected concrete model.
+     * Otherwise returns a direct selection.
      *
      * <p>Routing runs once for the initial chat request; tool-call rounds reuse the selected
      * concrete model because it is saved in the tool-request context (see {@code
@@ -76,15 +87,10 @@ final class ModelRoutingResolver {
         ModelRouter router = (ModelRouter) ctx.getResource(model, ResourceType.MODEL_ROUTER);
         RoutingContext routingContext =
                 new RoutingContext(requestId, model, messages, promptArgs, router.getCandidates());
+        RoutingStrategy strategy = router.getStrategy();
 
-        if (router.getStrategy() instanceof LlmJudgeRoutingStrategy) {
-            return resolveViaJudge(
-                    requestId,
-                    model,
-                    router,
-                    (LlmJudgeRoutingStrategy) router.getStrategy(),
-                    routingContext,
-                    ctx);
+        if (strategy.getType() == RoutingStrategyType.LLM_JUDGE) {
+            return resolveViaJudge(requestId, model, router, strategy, routingContext, ctx);
         }
 
         DurableCallable<RoutingDecision> routeCallable =
@@ -107,9 +113,10 @@ final class ModelRoutingResolver {
                     @Override
                     public RoutingDecision call() throws Exception {
                         // Timed inside the durable call so the latency is persisted with the
-                        // decision: a replayed run reports the original strategy wall time.
+                        // decision: a replayed run reports the original strategy wall time — and
+                        // the strategy is never re-executed on replay.
                         long start = System.nanoTime();
-                        RoutingDecision decision = router.route(routingContext);
+                        RoutingDecision decision = executePure(router, strategy, routingContext);
                         return decision.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
                     }
                 };
@@ -118,6 +125,46 @@ final class ModelRoutingResolver {
         recordDecisionLatency(ctx, decision);
         return normalizeAndFinish(
                 requestId, model, router, decision, ModelRoutingEvent.SOURCE_STRATEGY, ctx);
+    }
+
+    /** Executes the pure (engine-free) strategy types: built-in rules, or the user's executor. */
+    private static RoutingDecision executePure(
+            ModelRouter router, RoutingStrategy strategy, RoutingContext routingContext)
+            throws Exception {
+        switch (strategy.getType()) {
+            case RULE_BASED:
+                return executeRules(router, routingContext);
+            case CUSTOM:
+                return router.getCustomExecutor().route(strategy, routingContext);
+            default:
+                throw new IllegalStateException(
+                        "Unhandled routing strategy type: " + strategy.getType());
+        }
+    }
+
+    /**
+     * Built-in keyword/regex rules: the first candidate whose pattern (pre-compiled by the router)
+     * matches the most recent user message wins, in declaration order; no match abstains so the
+     * router uses its default model.
+     */
+    private static RoutingDecision executeRules(ModelRouter router, RoutingContext context) {
+        String text = context.lastUserMessage();
+        if (text != null && !text.isEmpty()) {
+            for (Map.Entry<String, Pattern> entry : router.getCompiledRules().entrySet()) {
+                if (entry.getValue().matcher(text).find()) {
+                    if (!router.isCandidate(entry.getKey())) {
+                        throw new IllegalArgumentException(
+                                "Routing rule selected non-candidate model '"
+                                        + entry.getKey()
+                                        + "'.");
+                    }
+                    return RoutingDecision.builder(entry.getKey())
+                            .reason("matched rule: " + entry.getValue().pattern())
+                            .build();
+                }
+            }
+        }
+        return RoutingDecision.abstain();
     }
 
     /**
@@ -166,22 +213,23 @@ final class ModelRoutingResolver {
      * "judge:<router>"} so a recovered run replays the original verdict instead of re-calling the
      * judge (with a durable action-state store configured; without one the judge re-runs on replay,
      * like any non-deterministic strategy) — then derives the decision from the verdict as a pure
-     * function. The decision (including its wall time, which covers the judge call) is persisted
-     * under the standard {@code "route:<router>"} durable call, preserving the replay-fingerprint
-     * property. Verdict abstains are persisted <i>as abstains</i>, so a replay after a
-     * candidate-set change re-resolves to the current default exactly like the strategy path.
+     * function ({@link LlmJudgeRoutingExecutor}). The decision (including its wall time, which
+     * covers the judge call) is persisted under the standard {@code "route:<router>"} durable call,
+     * preserving the replay-fingerprint property. Verdict abstains are persisted <i>as
+     * abstains</i>, so a replay after a candidate-set change re-resolves to the current default
+     * exactly like the strategy path.
      *
      * <p>Failure policy: an unparseable or non-candidate verdict always abstains to the router's
      * default model. A judge call that exhausts its retries honors the request's error-handling
      * strategy, exactly like a throwing rule/custom strategy: {@code FAIL} surfaces the outage
-     * loudly, {@code IGNORE} degrades to the default with the cause recorded. Interrupts
-     * (cancellation) propagate and are never persisted as routing outcomes.
+     * loudly, {@code IGNORE} degrades to the default with the cause recorded. Cancellation
+     * propagates and is never persisted as a routing outcome.
      */
     private static ResolvedModelRoute resolveViaJudge(
             UUID requestId,
             String model,
             ModelRouter router,
-            LlmJudgeRoutingStrategy judge,
+            RoutingStrategy strategy,
             RoutingContext routingContext,
             RunnerContext ctx)
             throws Exception {
@@ -190,87 +238,84 @@ final class ModelRoutingResolver {
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
         int numRetries = ChatModelInvoker.configuredRetries(ctx, errorStrategy);
         int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx, errorStrategy);
+        String judgeModel = LlmJudgeRoutingExecutor.judgeModel(strategy);
 
         Map<String, Object> judgeMetadata = new LinkedHashMap<>();
-        judgeMetadata.put("judge_model", judge.getJudgeModel());
+        judgeMetadata.put("judge_model", judgeModel);
         String verdictModel = null;
         String abstainReason = null;
-        // A misconfigured judge follows the same policy as a failed judge call: FAIL is loud
-        // (a config error should not hide), IGNORE abstains so the default model keeps
-        // answering. Under IGNORE a replayed request is unaffected either way — the stored
-        // decision below wins over the freshly computed abstain.
-        String misconfigured = judgeSetupMisconfiguration(judge.getJudgeModel(), ctx);
-        if (misconfigured != null && errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
-            throw new IllegalStateException(misconfigured);
-        }
-        if (misconfigured != null) {
-            abstainReason = misconfigured;
-        } else {
-            try {
-                ChatModelInvoker.ChatAttemptResult judgeResult =
-                        ChatModelInvoker.chatWithRetries(
-                                requestId,
-                                judge.getJudgeModel(),
-                                "judge:" + model,
-                                judge.buildJudgeMessages(routingContext),
-                                Map.of(),
-                                null,
-                                ctx,
-                                errorStrategy,
-                                numRetries,
-                                retryWaitIntervalSec);
-                ChatModelAction.recordAttemptRetryStats(
-                        ctx,
-                        requestId,
-                        judgeResult.chatModel,
-                        judgeResult.retryCount,
-                        judgeResult.totalRetryWaitSec);
-                ChatMessage reply = judgeResult.response;
-                Object promptTokens = reply.getExtraArgs().get("promptTokens");
-                Object completionTokens = reply.getExtraArgs().get("completionTokens");
-                if (promptTokens != null) {
-                    judgeMetadata.put("judge_prompt_tokens", promptTokens);
-                }
-                if (completionTokens != null) {
-                    judgeMetadata.put("judge_completion_tokens", completionTokens);
-                }
-                verdictModel =
-                        judge.parseVerdict(reply.getContent(), router.getCandidateNames())
-                                .orElse(null);
-                abstainReason =
-                        verdictModel == null ? "judge verdict was not a candidate name" : null;
-            } catch (InterruptedException cancellation) {
-                // Cancellation surfacing from the between-retries backoff sleep.
-                Thread.currentThread().interrupt();
-                throw cancellation;
-            } catch (ChatModelInvoker.ChatAttemptFailed failure) {
-                ChatModelAction.recordAttemptRetryStats(
-                        ctx,
-                        requestId,
-                        failure.chatModel,
-                        failure.retryCount,
-                        failure.totalRetryWaitSec);
-                // Cancellation surfacing from inside the judge attempt (the invoker wraps every
-                // attempt exception): it must propagate, never persist as a routing outcome.
-                if (containsInterrupt(failure)) {
-                    Thread.currentThread().interrupt();
-                    throw failure;
-                }
-                // A judge that exhausted its retries honors the request's error-handling strategy,
-                // exactly like a throwing rule/custom strategy (see class javadoc).
-                if (errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
-                    throw failure;
-                }
-                abstainReason = "judge call failed: " + failure.error;
+        try {
+            boolean[] truncated = new boolean[1];
+            List<ChatMessage> judgeInput =
+                    LlmJudgeRoutingExecutor.buildJudgeMessages(
+                            strategy,
+                            routingContext,
+                            effectiveJudgeMessages(router, routingContext, ctx),
+                            truncated);
+            if (truncated[0]) {
+                judgeMetadata.put(LlmJudgeRoutingExecutor.CONTEXT_TRUNCATED_KEY, true);
             }
+            ChatModelInvoker.ChatAttemptResult judgeResult =
+                    ChatModelInvoker.chatWithRetries(
+                            requestId,
+                            judgeModel,
+                            "judge:" + model,
+                            judgeInput,
+                            Map.of(),
+                            null,
+                            ctx,
+                            errorStrategy,
+                            numRetries,
+                            retryWaitIntervalSec);
+            ChatModelAction.recordAttemptRetryStats(
+                    ctx,
+                    requestId,
+                    judgeResult.chatModel,
+                    judgeResult.retryCount,
+                    judgeResult.totalRetryWaitSec);
+            ChatMessage reply = judgeResult.response;
+            Object promptTokens = reply.getExtraArgs().get("promptTokens");
+            Object completionTokens = reply.getExtraArgs().get("completionTokens");
+            if (promptTokens != null) {
+                judgeMetadata.put("judge_prompt_tokens", promptTokens);
+            }
+            if (completionTokens != null) {
+                judgeMetadata.put("judge_completion_tokens", completionTokens);
+            }
+            verdictModel =
+                    LlmJudgeRoutingExecutor.parseVerdict(
+                                    reply.getContent(), router.getCandidateNames())
+                            .orElse(null);
+            abstainReason = verdictModel == null ? "judge verdict was not a candidate name" : null;
+        } catch (InterruptedException cancellation) {
+            // Cancellation surfacing from the between-retries backoff sleep.
+            Thread.currentThread().interrupt();
+            throw cancellation;
+        } catch (ChatModelInvoker.ChatAttemptFailed failure) {
+            ChatModelAction.recordAttemptRetryStats(
+                    ctx,
+                    requestId,
+                    failure.chatModel,
+                    failure.retryCount,
+                    failure.totalRetryWaitSec);
+            // Cancellation surfacing from inside the judge attempt (the invoker wraps every
+            // attempt exception): it must propagate, never persist as a routing outcome.
+            if (isCancellation(failure)) {
+                Thread.currentThread().interrupt();
+                throw failure;
+            }
+            // A judge that exhausted its retries honors the request's error-handling strategy,
+            // exactly like a throwing rule/custom strategy (see class javadoc).
+            if (errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
+                throw failure;
+            }
+            abstainReason = "judge call failed: " + failure.error;
         }
 
         RoutingDecision computed;
         if (verdictModel != null) {
             RoutingDecision.Builder builder =
                     RoutingDecision.builder(verdictModel).reason("llm judge verdict");
-            builder.metadata(
-                    ModelRoutingEvent.DECISION_SOURCE_KEY, ModelRoutingEvent.SOURCE_LLM_JUDGE);
             for (Map.Entry<String, Object> entry : judgeMetadata.entrySet()) {
                 builder.metadata(entry.getKey(), entry.getValue());
             }
@@ -279,10 +324,9 @@ final class ModelRoutingResolver {
             // Persisted as a real abstain: replay resolves to the router's *current* default, so
             // a candidate-set change across a restart degrades gracefully (like the strategy
             // path) instead of failing the non-candidate guard.
-            Map<String, Object> abstainMetadata = new LinkedHashMap<>(judgeMetadata);
-            abstainMetadata.put(
-                    ModelRoutingEvent.DECISION_SOURCE_KEY, ModelRoutingEvent.SOURCE_DEFAULT);
-            computed = new RoutingDecision(null, true, abstainReason, null, abstainMetadata, null);
+            computed =
+                    new RoutingDecision(
+                            null, true, abstainReason, null, new HashMap<>(judgeMetadata), null);
         }
         final RoutingDecision toStore =
                 computed.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
@@ -314,55 +358,60 @@ final class ModelRoutingResolver {
     }
 
     /**
-     * The judge must be a plain chat model — nothing may rewrite the judge conversation. A bound
-     * prompt would prepend an (unfilled) task prompt ahead of the verdict contract, bound tools
-     * divert the reply into tool calls, and skills inject both a discovery prompt and tools — each
-     * silently breaks verdict parsing on every request. Returns a diagnostic when misconfigured,
-     * {@code null} when the setup is plain (or cannot be resolved — an unresolvable judge takes the
-     * ChatAttemptFailed path with its normal policy).
+     * The judge routes on what the selected model will actually receive. When the target setup
+     * binds a {@link Prompt}, this mirrors {@code BaseChatModelSetup#chat}: the template is
+     * rendered with the request's prompt args and prepended to the non-empty conversation messages.
+     * The rendering anchor is the router's default candidate (or the first candidate) — where
+     * abstains resolve, and in practice the workload-level prompt shared by the candidates. If the
+     * anchor can't be resolved or binds no prompt, the raw message list is used unchanged.
      */
-    private static String judgeSetupMisconfiguration(String judgeModel, RunnerContext ctx) {
-        BaseChatModelSetup judgeSetup;
+    private static List<ChatMessage> effectiveJudgeMessages(
+            ModelRouter router, RoutingContext routingContext, RunnerContext ctx) {
+        List<ChatMessage> messages = routingContext.getMessages();
+        String anchor = router.getDefaultModel().orElse(router.getCandidateNames().get(0));
+        Object boundPrompt;
         try {
-            judgeSetup = (BaseChatModelSetup) ctx.getResource(judgeModel, ResourceType.CHAT_MODEL);
-        } catch (Exception resolutionHandledByInvoker) {
-            return null;
+            BaseChatModelSetup setup =
+                    (BaseChatModelSetup) ctx.getResource(anchor, ResourceType.CHAT_MODEL);
+            boundPrompt = setup.getPrompt();
+        } catch (Exception unresolvable) {
+            // An unresolvable candidate surfaces on the real chat path with its normal policy.
+            return messages;
         }
-        List<String> skills = judgeSetup.getSkills();
-        if (skills != null && !skills.isEmpty()) {
-            return String.format(
-                    "Judge model '%s' has skills %s configured; Strategies.llm requires a plain"
-                            + " chat model (register the judge without skills).",
-                    judgeModel, skills);
+        if (!(boundPrompt instanceof Prompt)) {
+            return messages;
         }
-        if (judgeSetup.getPrompt() != null) {
-            return String.format(
-                    "Judge model '%s' has a bound prompt; Strategies.llm requires a plain"
-                            + " chat model (register the judge without a prompt).",
-                    judgeModel);
+        Map<String, String> stringified = new HashMap<>();
+        for (Map.Entry<String, Object> entry : routingContext.getPromptArgs().entrySet()) {
+            stringified.put(
+                    entry.getKey(), entry.getValue() != null ? entry.getValue().toString() : "");
         }
-        List<String> toolNames = judgeSetup.getToolNames();
-        if (toolNames != null && !toolNames.isEmpty()) {
-            return String.format(
-                    "Judge model '%s' has bound tools %s; Strategies.llm requires a plain"
-                            + " chat model (register the judge without tools).",
-                    judgeModel, toolNames);
+        List<ChatMessage> rendered =
+                new ArrayList<>(
+                        ((Prompt) boundPrompt).formatMessages(MessageRole.USER, stringified));
+        for (ChatMessage message : messages) {
+            if ((message.getContent() != null && !message.getContent().isEmpty())
+                    || message.getRole() == MessageRole.ASSISTANT) {
+                rendered.add(message);
+            }
         }
-        return null;
+        return rendered;
     }
 
     /**
-     * Whether the failed attempt was caused by thread interruption (cancellation) — including the
-     * shapes HTTP stacks surface it as, which carry no {@link InterruptedException} in the chain.
+     * Whether the failed attempt was caused by cancellation. Determined from the thread's interrupt
+     * state plus the explicit cancellation types; IO shapes like {@code InterruptedIOException} are
+     * deliberately NOT treated as cancellation — HTTP stacks (e.g. Okio) raise a bare {@code
+     * InterruptedIOException("timeout")} for ordinary network timeouts, which must keep following
+     * the normal failure policy.
      */
-    static boolean containsInterrupt(Throwable failure) {
+    static boolean isCancellation(Throwable failure) {
+        if (Thread.currentThread().isInterrupted()) {
+            return true;
+        }
         int depth = 0;
         for (Throwable t = failure; t != null && depth < 64; t = t.getCause(), depth++) {
-            // SocketTimeoutException extends InterruptedIOException but is an ordinary network
-            // timeout, not a cancellation — it must keep following the failure policy.
             if (t instanceof InterruptedException
-                    || (t instanceof java.io.InterruptedIOException
-                            && !(t instanceof java.net.SocketTimeoutException))
                     || t instanceof java.nio.channels.ClosedByInterruptException
                     || t instanceof java.util.concurrent.CancellationException) {
                 return true;

@@ -30,8 +30,10 @@ import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
-import org.apache.flink.agents.api.chat.model.routing.LlmJudgeRoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -697,10 +699,21 @@ public class AgentPlan implements Serializable {
     }
 
     /**
-     * An LLM-judge router references its judge chat model by name, resolved at request time. A
-     * typo'd judge name would not fail the job: every judge call would fail and abstain to the
-     * default model, silently disabling routing. All resources are known here, so fail at
-     * plan-construction time instead (cf. {@link #checkNoRouterModelNameClash}).
+     * Static routing-strategy constraints fail at plan construction — never per record. The
+     * strategy travels as a language-neutral type tag plus arguments, so validation reads
+     * declaration data directly: no reflective instantiation, whose failure modes previously let a
+     * misconfigured strategy skip validation entirely.
+     *
+     * <p>{@code LLM_JUDGE}: the judge chat model must be registered (a typo'd name would otherwise
+     * fail-and-abstain on every request, silently disabling routing — cf. {@link
+     * #checkNoRouterModelNameClash}), and its descriptor must bind no prompt, tools, or skills — a
+     * bound prompt would prepend an (unfilled) task prompt ahead of the verdict contract, bound
+     * tools divert the reply into tool calls, and skills inject both a discovery prompt and tools,
+     * each silently breaking verdict parsing on every request.
+     *
+     * <p>{@code CUSTOM}: the executor class must exist, implement {@link CustomRoutingExecutor},
+     * and expose a supported constructor — checked without instantiation, so plan construction
+     * never runs user constructors (or their static initializers).
      */
     private void validateLlmJudgeReferences() {
         if (resourceProviders == null) {
@@ -720,52 +733,111 @@ public class AgentPlan implements Serializable {
             if (descriptor == null || descriptor.getInitialArguments() == null) {
                 continue;
             }
-            // Runtime parity: the resolver dispatches on the *instantiated* strategy
-            // (instanceof + getJudgeModel()), so validation instantiates the same way —
-            // subclasses with their own constructors or overrides are judged by what they
-            // actually return, not by raw descriptor args. Anything that cannot be instantiated
-            // here is left for the runtime's own instantiation error.
-            LlmJudgeRoutingStrategy judge =
-                    instantiateIfLlmJudge(
-                            descriptor.getArgument(ModelRouter.STRATEGY_CLAZZ_KEY),
-                            descriptor.getArgument(
-                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()));
-            if (judge == null) {
+            String typeTag = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
+            if (typeTag == null) {
                 continue;
             }
-            String judgeModel = judge.getJudgeModel();
-            if (judgeModel == null || !chatModels.containsKey(judgeModel)) {
-                throw new IllegalArgumentException(
-                        String.format(
-                                "Model router '%s' uses Strategies.llm with judge model '%s', but no"
-                                        + " CHAT_MODEL resource with that name is registered.",
-                                provider.getName(), judgeModel));
+            // The declaration constructor re-validates the per-type argument rules, so a
+            // structurally invalid configuration (e.g. a judge without a judge model) fails
+            // plan construction with the same message as build().
+            RoutingStrategy strategy =
+                    new RoutingStrategy(
+                            RoutingStrategyType.fromTag(typeTag),
+                            descriptor.getArgument(
+                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
+                            descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
+            switch (strategy.getType()) {
+                case LLM_JUDGE:
+                    validateJudge(provider.getName(), strategy, chatModels);
+                    break;
+                case CUSTOM:
+                    validateCustomExecutor(provider.getName(), strategy);
+                    break;
+                default:
+                    break;
             }
         }
     }
 
-    private static LlmJudgeRoutingStrategy instantiateIfLlmJudge(
-            String strategyClazz, Map<String, Object> strategyArgs) {
-        if (strategyClazz == null) {
-            return null;
+    private static void validateJudge(
+            String routerName, RoutingStrategy strategy, Map<String, ResourceProvider> chatModels) {
+        String judgeModel = (String) strategy.getArguments().get(RoutingStrategy.ARG_JUDGE_MODEL);
+        ResourceProvider judgeProvider = chatModels.get(judgeModel);
+        if (judgeProvider == null) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' uses Strategies.llm with judge model '%s', but no"
+                                    + " CHAT_MODEL resource with that name is registered.",
+                            routerName, judgeModel));
         }
-        try {
-            // Gate BEFORE constructing: plan construction must not run arbitrary custom-strategy
-            // constructors (or their static initializers — hence initialize=false); only classes
-            // that opted into judge semantics are instantiated, and those via the runtime's own
-            // contract (ModelRouter.instantiateStrategy) so validation judges exactly the object
-            // the runtime will use. Anything that fails to construct here is left to the
-            // runtime's own, louder error.
-            Class<?> clazz =
-                    Class.forName(
-                            strategyClazz, false, Thread.currentThread().getContextClassLoader());
-            if (!LlmJudgeRoutingStrategy.class.isAssignableFrom(clazz)) {
-                return null;
+        // The judge must be a plain chat model — nothing may rewrite the judge conversation.
+        // Only descriptor-carried bindings are visible here; a setup that is not introspectable
+        // at plan time surfaces its bindings on the judge's normal chat path.
+        if (!(judgeProvider instanceof JavaResourceProvider)) {
+            return;
+        }
+        ResourceDescriptor judgeDescriptor = ((JavaResourceProvider) judgeProvider).getDescriptor();
+        if (judgeDescriptor == null || judgeDescriptor.getInitialArguments() == null) {
+            return;
+        }
+        for (String binding : new String[] {"prompt", "tools", "skills"}) {
+            Object bound = judgeDescriptor.getArgument(binding);
+            boolean present =
+                    bound != null
+                            && (!(bound instanceof java.util.Collection)
+                                    || !((java.util.Collection<?>) bound).isEmpty());
+            if (present) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Judge model '%s' (router '%s') has '%s' configured; Strategies.llm"
+                                        + " requires a plain chat model (register the judge without"
+                                        + " %s).",
+                                judgeModel, routerName, binding, binding));
             }
-            return (LlmJudgeRoutingStrategy)
-                    ModelRouter.instantiateStrategy(strategyClazz, strategyArgs);
-        } catch (Exception | LinkageError notInstantiableHere) {
-            return null;
+        }
+    }
+
+    private static void validateCustomExecutor(String routerName, RoutingStrategy strategy) {
+        String executorClass = strategy.getExecutorClass();
+        Class<?> clazz;
+        try {
+            // initialize=false: plan construction must not run user static initializers.
+            clazz =
+                    Class.forName(
+                            executorClass, false, Thread.currentThread().getContextClassLoader());
+        } catch (ClassNotFoundException | LinkageError absent) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' references custom routing executor '%s', which is"
+                                    + " not on the classpath.",
+                            routerName, executorClass),
+                    absent);
+        }
+        if (!CustomRoutingExecutor.class.isAssignableFrom(clazz)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' references custom routing executor '%s', which does"
+                                    + " not implement CustomRoutingExecutor.",
+                            routerName, executorClass));
+        }
+        boolean hasSupportedCtor;
+        try {
+            clazz.getConstructor(Map.class);
+            hasSupportedCtor = true;
+        } catch (NoSuchMethodException noMapCtor) {
+            try {
+                clazz.getConstructor();
+                hasSupportedCtor = true;
+            } catch (NoSuchMethodException noArgCtor) {
+                hasSupportedCtor = false;
+            }
+        }
+        if (!hasSupportedCtor) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Custom routing executor '%s' (router '%s') must expose a"
+                                    + " (Map<String,Object>) or no-arg public constructor.",
+                            executorClass, routerName));
         }
     }
 

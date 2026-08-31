@@ -17,8 +17,11 @@
  */
 package org.apache.flink.agents.plan;
 
-import org.apache.flink.agents.api.chat.model.routing.LlmJudgeRoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
+import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -27,28 +30,24 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Plan-construction validation for {@code Strategies.llm(...)} judge references. */
+/** Plan-construction validation of routing-strategy declarations. */
 public class AgentPlanLlmJudgeValidationTest {
 
     private static Map<ResourceType, Map<String, ResourceProvider>> providers(
             boolean withJudgeModel) {
         Map<ResourceType, Map<String, ResourceProvider>> providers = new HashMap<>();
-        ResourceDescriptor routerDescriptor =
+        setRouter(
+                providers,
                 ModelRouter.of("small", "big")
                         .strategy(Strategies.llm("judge"))
                         .defaultModel("small")
-                        .build();
-        providers
-                .computeIfAbsent(ResourceType.MODEL_ROUTER, k -> new HashMap<>())
-                .put(
-                        "router",
-                        new JavaResourceProvider(
-                                "router", ResourceType.MODEL_ROUTER, routerDescriptor));
+                        .build());
         Map<String, ResourceProvider> chatModels = new HashMap<>();
         ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());
         chatModels.put("small", new JavaResourceProvider("small", ResourceType.CHAT_MODEL, model));
@@ -61,6 +60,17 @@ public class AgentPlanLlmJudgeValidationTest {
         return providers;
     }
 
+    private static void setRouter(
+            Map<ResourceType, Map<String, ResourceProvider>> providers,
+            ResourceDescriptor routerDescriptor) {
+        providers
+                .computeIfAbsent(ResourceType.MODEL_ROUTER, k -> new HashMap<>())
+                .put(
+                        "router",
+                        new JavaResourceProvider(
+                                "router", ResourceType.MODEL_ROUTER, routerDescriptor));
+    }
+
     @Test
     void typoedJudgeModelFailsAtPlanConstruction() {
         // Without this check the job would run with every judge call failing and every request
@@ -71,101 +81,123 @@ public class AgentPlanLlmJudgeValidationTest {
                 .hasMessageContaining("router");
     }
 
-    /** A subclass takes the judge runtime path (instanceof), so it must be validated too. */
-    public static class CustomJudge extends LlmJudgeRoutingStrategy {
-        public CustomJudge(java.util.Map<String, Object> args) {
-            super(args);
-        }
-    }
-
+    /**
+     * A judge declaration with structurally invalid arguments (here: no judge model) must fail plan
+     * construction, not per record at runtime. The descriptor is built by hand to simulate a plan
+     * produced outside the builder (e.g. deserialized), where the factory validation never ran.
+     */
     @Test
-    void judgeSubclassIsValidatedByAssignability() {
-        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
-        ResourceDescriptor routerDescriptor =
-                ModelRouter.of("small", "big")
-                        .strategy(
-                                org.apache.flink.agents.api.chat.model.routing.Strategies.of(
-                                        CustomJudge.class.getName(),
-                                        Map.of(
-                                                LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL,
-                                                "missing-judge")))
-                        .defaultModel("small")
-                        .build();
-        providers
-                .get(ResourceType.MODEL_ROUTER)
-                .put(
-                        "router",
-                        new JavaResourceProvider(
-                                "router", ResourceType.MODEL_ROUTER, routerDescriptor));
+    void judgeWithMissingJudgeModelFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put("default_model", "small");
+        args.put("fallback", false);
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "llm_judge");
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of());
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
         assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("missing-judge");
+                .hasMessageContaining(RoutingStrategy.ARG_JUDGE_MODEL);
     }
 
-    /** A no-arg-constructor subclass supplies its judge internally; validation must use it. */
-    public static class SelfConfiguredJudge extends LlmJudgeRoutingStrategy {
-        public SelfConfiguredJudge() {
-            super(java.util.Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
-        }
+    /**
+     * The judge must be a plain chat model: a bound prompt/tools/skills silently breaks verdict
+     * parsing on every request, so it fails at plan construction (W5 — static config constraint).
+     */
+    @Test
+    void judgeWithBoundPromptFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
+        ResourceDescriptor promptBound =
+                new ResourceDescriptor("some.Clazz", Map.of("prompt", "review-prompt"));
+        providers
+                .get(ResourceType.CHAT_MODEL)
+                .put(
+                        "judge",
+                        new JavaResourceProvider("judge", ResourceType.CHAT_MODEL, promptBound));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("plain chat model")
+                .hasMessageContaining("prompt");
     }
 
     @Test
-    void noArgJudgeSubclassIsValidatedByItsInstance() {
-        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
-        ResourceDescriptor routerDescriptor =
-                ModelRouter.of("small", "big")
-                        .strategy(
-                                org.apache.flink.agents.api.chat.model.routing.Strategies.of(
-                                        SelfConfiguredJudge.class))
-                        .defaultModel("small")
-                        .build();
+    void judgeWithBoundToolsFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
+        ResourceDescriptor toolBound =
+                new ResourceDescriptor("some.Clazz", Map.of("tools", List.of("calculator")));
         providers
-                .get(ResourceType.MODEL_ROUTER)
+                .get(ResourceType.CHAT_MODEL)
                 .put(
-                        "router",
-                        new JavaResourceProvider(
-                                "router", ResourceType.MODEL_ROUTER, routerDescriptor));
-        // "judge" is registered (providers(true)) and the instance reports it -> passes
-        assertThatCode(() -> new AgentPlan(Map.of(), providers)).doesNotThrowAnyException();
+                        "judge",
+                        new JavaResourceProvider("judge", ResourceType.CHAT_MODEL, toolBound));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("plain chat model")
+                .hasMessageContaining("tools");
     }
 
-    /** Plan construction must never run non-judge custom-strategy constructors. */
-    public static class SideEffectingStrategy
-            implements org.apache.flink.agents.api.chat.model.routing.RoutingStrategy {
+    /** Plan construction must never run custom-executor constructors. */
+    public static class SideEffectingExecutor implements CustomRoutingExecutor {
         static final java.util.concurrent.atomic.AtomicInteger CONSTRUCTIONS =
                 new java.util.concurrent.atomic.AtomicInteger();
 
-        public SideEffectingStrategy(java.util.Map<String, Object> args) {
+        public SideEffectingExecutor(Map<String, Object> args) {
             CONSTRUCTIONS.incrementAndGet();
         }
 
         @Override
-        public org.apache.flink.agents.api.chat.model.routing.RoutingDecision route(
-                org.apache.flink.agents.api.chat.model.routing.RoutingContext context) {
-            return org.apache.flink.agents.api.chat.model.routing.RoutingDecision.abstain();
+        public RoutingDecision route(RoutingStrategy strategy, RoutingContext context) {
+            return RoutingDecision.abstain();
         }
     }
 
     @Test
-    void nonJudgeCustomStrategyIsNotInstantiatedDuringPlanConstruction() throws Exception {
+    void customExecutorIsNotInstantiatedDuringPlanConstruction() throws Exception {
         Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
-        ResourceDescriptor routerDescriptor =
+        setRouter(
+                providers,
                 ModelRouter.of("small", "big")
-                        .strategy(
-                                org.apache.flink.agents.api.chat.model.routing.Strategies.of(
-                                        SideEffectingStrategy.class.getName(), Map.of()))
+                        .strategy(Strategies.custom(SideEffectingExecutor.class))
                         .defaultModel("small")
-                        .build();
-        providers
-                .get(ResourceType.MODEL_ROUTER)
-                .put(
-                        "router",
-                        new JavaResourceProvider(
-                                "router", ResourceType.MODEL_ROUTER, routerDescriptor));
-        int before = SideEffectingStrategy.CONSTRUCTIONS.get();
+                        .build());
+        int before = SideEffectingExecutor.CONSTRUCTIONS.get();
         new AgentPlan(Map.of(), providers);
         org.junit.jupiter.api.Assertions.assertEquals(
-                before, SideEffectingStrategy.CONSTRUCTIONS.get());
+                before, SideEffectingExecutor.CONSTRUCTIONS.get());
+    }
+
+    /** Not a CustomRoutingExecutor at all. */
+    public static class NotAnExecutor {
+        public NotAnExecutor() {}
+    }
+
+    @Test
+    void customClassNotImplementingExecutorFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        setRouter(
+                providers,
+                ModelRouter.of("small", "big")
+                        .strategy(Strategies.custom(NotAnExecutor.class.getName(), Map.of()))
+                        .defaultModel("small")
+                        .build());
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("does not implement CustomRoutingExecutor");
+    }
+
+    @Test
+    void customClassAbsentFromClasspathFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        setRouter(
+                providers,
+                ModelRouter.of("small", "big")
+                        .strategy(Strategies.custom("no.such.ExecutorClazz", Map.of()))
+                        .defaultModel("small")
+                        .build());
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not on the classpath");
     }
 
     @Test

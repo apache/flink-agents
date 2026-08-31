@@ -23,18 +23,26 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.condition.TriggerCondition.ExpressionCondition;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -254,6 +262,56 @@ class AgentPlanCrossLanguageTest {
                         + ". Regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
 
         AgentPlan plan = compileWithPythonAction();
+        JsonNode actual = MAPPER.readTree(MAPPER.writeValueAsString(plan));
+        JsonNode expected = MAPPER.readTree(Files.readString(committed));
+        assertThat(actual).isEqualTo(expected);
+    }
+
+    /** A plan whose only resources are a judge-strategy router and its chat models. */
+    private static AgentPlan compileWithJudgeRouter() throws Exception {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = new LinkedHashMap<>();
+        ResourceDescriptor routerDescriptor =
+                ModelRouter.of("small", "big")
+                        .describe("big", "code and sql")
+                        .strategy(Strategies.llm("judge"))
+                        .defaultModel("small")
+                        .fallback(true)
+                        .build();
+        Map<String, ResourceProvider> routers = new LinkedHashMap<>();
+        routers.put(
+                "router",
+                new JavaResourceProvider("router", ResourceType.MODEL_ROUTER, routerDescriptor));
+        providers.put(ResourceType.MODEL_ROUTER, routers);
+        Map<String, ResourceProvider> chatModels = new LinkedHashMap<>();
+        ResourceDescriptor model = new ResourceDescriptor("some.Clazz", Map.of());
+        chatModels.put("small", new JavaResourceProvider("small", ResourceType.CHAT_MODEL, model));
+        chatModels.put("big", new JavaResourceProvider("big", ResourceType.CHAT_MODEL, model));
+        chatModels.put("judge", new JavaResourceProvider("judge", ResourceType.CHAT_MODEL, model));
+        providers.put(ResourceType.CHAT_MODEL, chatModels);
+        return new AgentPlan(Map.of(), providers);
+    }
+
+    @Test
+    void regenerateJavaPlanWithJudgeRouterSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        AgentPlan plan = compileWithJudgeRouter();
+        String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(plan);
+
+        Path target = snapshotDir.resolve("java/agent_plan_with_judge_router.json");
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, json + "\n");
+    }
+
+    @Test
+    void javaPlanWithJudgeRouterSnapshotIsStable() throws Exception {
+        Path committed = snapshotDir.resolve("java/agent_plan_with_judge_router.json");
+        assertTrue(
+                Files.exists(committed),
+                "Judge-router plan snapshot missing from "
+                        + committed
+                        + ". Regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
+
+        AgentPlan plan = compileWithJudgeRouter();
         JsonNode actual = MAPPER.readTree(MAPPER.writeValueAsString(plan));
         JsonNode expected = MAPPER.readTree(Files.readString(committed));
         assertThat(actual).isEqualTo(expected);

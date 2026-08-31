@@ -29,12 +29,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Read-only view a {@link RoutingStrategy} sees when deciding which model to route to.
+ * Read-only view a routing executor sees when deciding which model to route to.
  *
- * <p>v1 exposes the request id, the request messages, prompt args, and the router's candidates
- * (name + description). It intentionally does <b>not</b> expose a chat-invocation API, so a
- * strategy cannot make a hidden synchronous model call; observable LLM-as-router is provided by the
- * framework-managed {@link LlmJudgeRoutingStrategy} instead.
+ * <p>It exposes the request id, the request messages, prompt args, and the router's candidates
+ * (name + description). It intentionally does <b>not</b> expose a chat-invocation API, so a {@link
+ * CustomRoutingExecutor} cannot make a hidden synchronous model call; observable LLM-as-router is
+ * provided by the framework-managed {@code Strategies.llm(...)} strategy instead.
  *
  * <p>The isolation boundary is deliberate and one level deep: the message list, each message's
  * tool-call maps and extra args, and the prompt-args map are defensive copies, but values

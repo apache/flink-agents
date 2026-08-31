@@ -52,20 +52,21 @@ class RoutingTest {
     }
 
     @Test
-    void ruleMatchSelectsCandidate() throws Exception {
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
-        RoutingDecision decision = strategy.route(ctx("please write some SQL for me"));
-        assertFalse(decision.isAbstain());
-        assertEquals("big", decision.getSelectedModel());
+    void rulesDeclarationCompilesPatternsOnTheRouter() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
+        assertTrue(router.getCompiledRules().containsKey("big"));
+        assertTrue(router.getCompiledRules().get("big").matcher("write some sql").find());
     }
 
     @Test
-    void ruleMatchesLatestUserMessageNotFirst() throws Exception {
-        // Multi-turn: turn 1 asked for SQL, but the current question is small talk. The rule
-        // strategy must route on the most recent user message, not the oldest.
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
+    void routingContextExposesLatestAndFirstUserMessage() {
         RoutingContext multiTurn =
                 new RoutingContext(
                         REQUEST_ID,
@@ -76,22 +77,12 @@ class RoutingTest {
                                 new ChatMessage(MessageRole.USER, "thanks, how is the weather?")),
                         Map.of(),
                         List.of(new RoutingCandidate("small"), new RoutingCandidate("big")));
-        assertTrue(strategy.route(multiTurn).isAbstain());
         assertEquals("thanks, how is the weather?", multiTurn.lastUserMessage());
         assertEquals("please write some SQL for me", multiTurn.firstUserMessage());
     }
 
     @Test
-    void ruleNoMatchAbstains() throws Exception {
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
-        RoutingDecision decision = strategy.route(ctx("hello, how are you?"));
-        assertTrue(decision.isAbstain());
-        assertNull(decision.getSelectedModel());
-    }
-
-    @Test
-    void modelRouterBuildsAndRoutes() throws Exception {
+    void modelRouterBuildsFromDeclaration() throws Exception {
         ResourceDescriptor descriptor =
                 ModelRouter.of("small", "big")
                         .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
@@ -107,6 +98,7 @@ class RoutingTest {
         assertTrue(router.isCandidate("big"));
         assertFalse(router.isCandidate("unknown"));
 
+        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
         RoutingContext context =
                 new RoutingContext(
                         REQUEST_ID,
@@ -114,7 +106,6 @@ class RoutingTest {
                         List.of(new ChatMessage(MessageRole.USER, "write code")),
                         Map.of(),
                         router.getCandidates());
-        assertEquals("big", router.route(context).getSelectedModel());
         assertEquals(REQUEST_ID, context.getRequestId());
     }
 
@@ -277,151 +268,37 @@ class RoutingTest {
 
     @Test
     void strategiesLlmRequiresJudgeModel() {
+        // The declaration validates at the factory call site — before any builder is involved.
+        assertThrows(IllegalArgumentException.class, () -> Strategies.llm(""));
+    }
+
+    @Test
+    void withMaxContextCharsRequiresPositiveValueAndJudgeType() {
         assertThrows(
                 IllegalArgumentException.class,
-                () ->
-                        ModelRouter.of("small", "big")
-                                .strategy(Strategies.llm(""))
-                                .defaultModel("small")
-                                .build());
-    }
-
-    @Test
-    void llmJudgeRouteIsFrameworkManaged() {
-        LlmJudgeRoutingStrategy judge =
-                new LlmJudgeRoutingStrategy(
-                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
-        assertThrows(UnsupportedOperationException.class, () -> judge.route(null));
-    }
-
-    @Test
-    void llmJudgeParseVerdictAcceptsOnlyCandidates() {
-        LlmJudgeRoutingStrategy judge =
-                new LlmJudgeRoutingStrategy(
-                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
-        java.util.List<String> candidates = java.util.List.of("small", "big");
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.of("big"),
-                judge.parseVerdict("{\"model\": \"big\"}", candidates));
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.of("small"), judge.parseVerdict("  small  ", candidates));
-        // several DISTINCT candidates in JSON form is ambiguous (verdict-first and
-        // reasoning-first shapes are mirror images): abstain rather than guess an order
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.empty(),
-                judge.parseVerdict(
-                        "Not {\"model\": \"small\"} — this needs SQL: {\"model\": \"big\"}",
-                        candidates));
-        // repeating the SAME candidate stays unambiguous
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.of("big"),
-                judge.parseVerdict(
-                        "{\"model\": \"big\"} — yes, {\"model\": \"big\"}.", candidates));
-        // a chatty judge may quote the format contract before answering; scan all matches
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.of("big"),
-                judge.parseVerdict(
-                        "The format {\"model\": \"<candidate name>\"} means I pick one."
-                                + " {\"model\": \"big\"}",
-                        candidates));
-        // a verdict naming a non-candidate abstains rather than guessing
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.empty(),
-                judge.parseVerdict("{\"model\": \"gpt-attacker\"}", candidates));
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.empty(),
-                judge.parseVerdict("use whichever is cheapest", candidates));
-        org.junit.jupiter.api.Assertions.assertEquals(
-                java.util.Optional.empty(), judge.parseVerdict(null, candidates));
-    }
-
-    @Test
-    void llmJudgeMessagesIncludePromptArgs() {
-        // The framework's canonical request shape may carry content in promptArgs with an empty
-        // user message (a setup-bound Prompt renders it later); the judge must still see it.
-        LlmJudgeRoutingStrategy judge =
-                new LlmJudgeRoutingStrategy(
-                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
-        RoutingContext ctx =
-                new RoutingContext(
-                        java.util.UUID.randomUUID(),
-                        "router",
-                        java.util.List.of(
-                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
-                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
-                                        "")),
-                        Map.of("input", "write some sql for active users"),
-                        java.util.List.of(new RoutingCandidate("small", "cheap")));
-        String userMessage = judge.buildJudgeMessages(ctx).get(1).getContent();
-        org.junit.jupiter.api.Assertions.assertTrue(
-                userMessage.contains("write some sql for active users"));
-    }
-
-    @Test
-    void builderRejectsEmptyJudgeTemplate() {
+                () -> Strategies.llm("judge").withMaxContextChars(0));
         assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        ModelRouter.of("small", "big")
-                                .strategy(Strategies.llm("judge", ""))
-                                .defaultModel("small")
-                                .build());
+                IllegalStateException.class,
+                () -> Strategies.rules(Map.of()).withMaxContextChars(100));
+        assertEquals(
+                4096,
+                Strategies.llm("judge")
+                        .withMaxContextChars(4096)
+                        .getArguments()
+                        .get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS));
     }
 
     @Test
-    void llmJudgeTemplateSubstitutesCandidatesAndRejectsEmpty() {
-        LlmJudgeRoutingStrategy judge =
-                new LlmJudgeRoutingStrategy(
-                        Map.of(
-                                LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge",
-                                LlmJudgeRoutingStrategy.ARG_PROMPT_TEMPLATE,
-                                        "Pick from:\n{candidates}Reply {\"model\": \"...\"}"));
-        RoutingContext ctx =
-                new RoutingContext(
-                        java.util.UUID.randomUUID(),
-                        "router",
-                        java.util.List.of(
-                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
-                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
-                                        "hi")),
-                        Map.of(),
-                        java.util.List.of(new RoutingCandidate("small", "cheap")));
-        String system = judge.buildJudgeMessages(ctx).get(0).getContent();
-        org.junit.jupiter.api.Assertions.assertTrue(system.contains("- small: cheap"));
-        org.junit.jupiter.api.Assertions.assertFalse(system.contains("{candidates}"));
-        assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                        new LlmJudgeRoutingStrategy(
-                                Map.of(
-                                        LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge",
-                                        LlmJudgeRoutingStrategy.ARG_PROMPT_TEMPLATE, "")));
+    void strategyTypeTagRoundTrips() {
+        for (RoutingStrategyType type : RoutingStrategyType.values()) {
+            assertEquals(type, RoutingStrategyType.fromTag(type.tag()));
+        }
+        assertEquals("llm_judge", RoutingStrategyType.LLM_JUDGE.tag());
     }
 
     @Test
-    void llmJudgeMessagesCarryCandidatesAndVerdictContract() {
-        LlmJudgeRoutingStrategy judge =
-                new LlmJudgeRoutingStrategy(
-                        Map.of(LlmJudgeRoutingStrategy.ARG_JUDGE_MODEL, "judge"));
-        RoutingContext ctx =
-                new RoutingContext(
-                        java.util.UUID.randomUUID(),
-                        "router",
-                        java.util.List.of(
-                                new org.apache.flink.agents.api.chat.messages.ChatMessage(
-                                        org.apache.flink.agents.api.chat.messages.MessageRole.USER,
-                                        "write some sql")),
-                        Map.of(),
-                        java.util.List.of(
-                                new RoutingCandidate("small", "cheap chit-chat"),
-                                new RoutingCandidate("big", "code and sql")));
-        var messages = judge.buildJudgeMessages(ctx);
-        org.junit.jupiter.api.Assertions.assertEquals(2, messages.size());
-        String system = messages.get(0).getContent();
-        org.junit.jupiter.api.Assertions.assertTrue(system.contains("big: code and sql"));
-        org.junit.jupiter.api.Assertions.assertTrue(system.contains("{\"model\""));
-        org.junit.jupiter.api.Assertions.assertEquals(
-                "write some sql", messages.get(1).getContent());
+    void factoryRejectsEmptyJudgeTemplate() {
+        assertThrows(IllegalArgumentException.class, () -> Strategies.llm("judge", ""));
     }
 
     @Test
@@ -454,20 +331,36 @@ class RoutingTest {
     }
 
     @Test
-    void ruleStrategyRejectsNullRuleValue() {
+    void routerConstructionRejectsNullRuleValue() {
+        // A descriptor built outside the builder (e.g. deserialized) is re-validated when the
+        // router compiles its patterns: String.valueOf(null) would otherwise become the literal
+        // pattern "null".
         Map<String, Object> rules = new HashMap<>();
         rules.put("big", null);
-        // String.valueOf(null) would otherwise compile the literal pattern "null".
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, rules));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new RuleBasedRoutingStrategy(Map.of("rules", rules)));
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
     }
 
     @Test
-    void ruleStrategyRejectsNonStringRuleValue() {
+    void routerConstructionRejectsNonStringRuleValue() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(
+                ModelRouter.STRATEGY_ARGS_KEY,
+                Map.of(RoutingStrategy.ARG_RULES, Map.of("big", 42)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", 42))));
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
     }
 
     @Test
