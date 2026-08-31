@@ -65,7 +65,7 @@ class MCPTool(Tool, ToolExecutionMetadataProvider):
     def call(self, *args: Any, **kwargs: Any) -> Any:
         """Call the MCP tool with the given arguments."""
         if self.mcp_server is None:
-            return ToolResponse.failure(
+            return ToolResponse.error(
                 "MCP tool call requires a reference to the MCP server",
                 tool_name=self.metadata.name,
             )
@@ -75,7 +75,7 @@ class MCPTool(Tool, ToolExecutionMetadataProvider):
                 self.mcp_server.call_tool_async(self.metadata.name, *args, **kwargs)
             )
         except Exception as e:
-            return ToolResponse.failure(
+            return ToolResponse.error(
                 f"Error calling MCP tool '{self.metadata.name}': {e}",
                 tool_name=self.metadata.name,
             )
