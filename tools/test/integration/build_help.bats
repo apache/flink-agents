@@ -21,7 +21,7 @@
 BUILD_SCRIPT="${BATS_TEST_DIRNAME}/../../build.sh"
 
 @test "build --help prints usage and exits 0" {
-    run bash "$BUILD_SCRIPT" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" --help
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Build Flink Agents Java and Python artifacts"* ]] || false
@@ -31,14 +31,14 @@ BUILD_SCRIPT="${BATS_TEST_DIRNAME}/../../build.sh"
 }
 
 @test "build -h prints usage and exits 0" {
-    run bash "$BUILD_SCRIPT" -h
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" -h
 
     [ "$status" -eq 0 ]
     [[ "$output" == *"Usage:"* ]] || false
 }
 
 @test "build rejects an unknown option with usage" {
-    run bash "$BUILD_SCRIPT" --no-such-option
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" --no-such-option
 
     [ "$status" -eq 1 ]
     [[ "$output" == *"Error: Unknown option '--no-such-option'"* ]] || false

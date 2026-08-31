@@ -55,14 +55,50 @@ clone_pinned() {
 
 mkdir -p "$CACHE"
 
+# Interpreter used to spawn the scripts under test, kept separate from the one
+# the harness runs on. The pin below resolves the default `bash` to this shell,
+# so leaving it alone keeps the behaviour the suite has always had. Set it to an
+# absolute path to exercise the subjects elsewhere: an absolute path is not a
+# PATH lookup, so the pin does not intercept it, and the scripts then run on the
+# interpreter their own users have rather than on the one this suite's
+# assertions need. Each spawn site repeats the `:-bash` default so a .bats file
+# invoked through bats directly, without this script, still names one.
+#
+# A value that is set has to name something that runs as a bash. The spawn sites
+# would otherwise carry it to a subject that cannot start, and a subject that
+# cannot start still satisfies every assertion written as "this must fail" --
+# so the suite would report a green run over nothing. Probe rather than test for
+# execute permission: /bin/echo is executable and answers this with its own
+# arguments instead of a version.
+if [ -n "${FLINK_AGENTS_SUT_BASH+set}" ]; then
+    sut_major=""
+    if [ -n "$FLINK_AGENTS_SUT_BASH" ]; then
+        # shellcheck disable=SC2016  # the expansion belongs to the child
+        sut_major="$("$FLINK_AGENTS_SUT_BASH" \
+            -c 'printf %s "${BASH_VERSINFO[0]}"' 2>/dev/null || true)"
+    fi
+    case "$sut_major" in
+        ''|*[!0-9]*)
+            echo "ERROR: FLINK_AGENTS_SUT_BASH is set to '${FLINK_AGENTS_SUT_BASH}'," >&2
+            echo "which did not report a bash version." >&2
+            echo "It names the interpreter the scripts under test are spawned on, so a" >&2
+            echo "value that is empty, missing, or not a bash leaves the suite covering" >&2
+            echo "nothing. Point it at a bash, or unset it to spawn the scripts on the" >&2
+            echo "interpreter running this suite." >&2
+            exit 1
+            ;;
+    esac
+fi
+export FLINK_AGENTS_SUT_BASH="${FLINK_AGENTS_SUT_BASH:-bash}"
+
 # Pin the interpreter bats resolves, by putting a `bash` symlink to this shell
 # ahead of everything else on PATH. $BASH is the interpreter the gate above
 # accepted. $CACHE is gitignored, so the symlink does not show up in git status.
 #
-# This also re-interprets the scripts under test, which start with
-# `#!/usr/bin/env bash` themselves: while the pin is in place the suite runs
-# them under this interpreter instead of the one the developer's own PATH
-# selects.
+# This also reaches the scripts under test, which start with
+# `#!/usr/bin/env bash` themselves: a spawn site naming a bare `bash` runs the
+# subject on this interpreter instead of on the one the developer's own PATH
+# selects. That reach is what FLINK_AGENTS_SUT_BASH above exists to override.
 #
 # Build the link under a temp name and rename it into place. Renaming within a
 # directory replaces the name in one step, so a lookup running concurrently

@@ -16,7 +16,7 @@ esac
 }
 
 @test "--dry-run --non-interactive prints plan and makes no external calls" {
-    run bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --non-interactive
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --non-interactive
     [ "$status" -eq 0 ]
     case "$output" in *"Installation plan"*) ;; *) false ;; esac
     case "$output" in *"Dry run complete"*) ;; *) false ;; esac
@@ -26,7 +26,7 @@ esac
 }
 
 @test "--dry-run --install-flink --non-interactive shows Install Flink: Yes" {
-    run bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
     [ "$status" -eq 0 ]
     case "$output" in *"Install Flink"*) ;; *) false ;; esac
     case "$output" in *"Yes"*) ;; *) false ;; esac
@@ -35,20 +35,20 @@ esac
 
 @test "INSTALL_DIR=. does not produce a double-slash FLINK_HOME (review feedback guard)" {
     cd "$BATS_TEST_TMPDIR"
-    run env INSTALL_DIR="." bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    run env INSTALL_DIR="." "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
     [ "$status" -eq 0 ]
     case "$output" in *".//flink-"*) false ;; *) ;; esac
 }
 
 @test "INSTALL_DIR with trailing slash does not produce double-slash (review #7b)" {
-    run env INSTALL_DIR="/tmp/flink-test/" bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    run env INSTALL_DIR="/tmp/flink-test/" "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
     [ "$status" -eq 0 ]
     case "$output" in *"//"*) false ;; *) ;; esac
     case "$output" in *"/tmp/flink-test"*) ;; *) false ;; esac
 }
 
 @test "INSTALL_DIR with consecutive slashes is collapsed (review #7b)" {
-    run env INSTALL_DIR="/tmp//flink-test" bash "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
+    run env INSTALL_DIR="/tmp//flink-test" "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --dry-run --install-flink --non-interactive
     [ "$status" -eq 0 ]
     case "$output" in *"//flink-"*) false ;; *) ;; esac
 }

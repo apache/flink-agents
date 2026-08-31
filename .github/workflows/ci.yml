@@ -68,6 +68,47 @@ jobs:
       - name: Run tools script tests
         run: bash tools/test/run.sh
 
+  # install.sh and ut.sh both run on the bash macOS ships at /bin/bash for their
+  # own users: install.sh is documented as `curl ... | bash`, and ut.sh is
+  # invoked by path from the macOS jobs below. run.sh pins `bash` to the newer
+  # interpreter the harness itself needs, and that pin reaches the scripts under
+  # test as well, so this leg points them back at the one they ship against.
+  tools_script_tests_bash32:
+    name: tools script tests (macos-latest, subject on bash 3.2)
+    runs-on: macos-latest
+    # Declared once for the whole job so the check below and the run below read
+    # the same value. Setting it on the run step alone would let a misspelled
+    # key pass the check and then leave the suite spawning the subjects on the
+    # harness bash, which is the green-over-nothing outcome the check exists to
+    # prevent.
+    env:
+      FLINK_AGENTS_SUT_BASH: /bin/bash
+    steps:
+      - uses: actions/checkout@v4
+      # Only the subjects move; the harness keeps the version its own
+      # assertions need.
+      - name: Install bash 4.1+ for the harness
+        run: brew install bash
+      - name: Confirm the subject interpreter is the bash macOS ships
+        run: |
+          set -eu
+          echo "PATH bash: $(command -v bash)"
+          bash --version | head -1
+          : "${FLINK_AGENTS_SUT_BASH:?is not set, so run.sh would spawn the subjects on the harness bash and this job would cover nothing}"
+          echo "subject:   $FLINK_AGENTS_SUT_BASH"
+          "$FLINK_AGENTS_SUT_BASH" --version | head -1
+          major="$("$FLINK_AGENTS_SUT_BASH" -c 'printf %s "${BASH_VERSINFO[0]}"')"
+          if [ "$major" != "3" ]; then
+              echo "ERROR: $FLINK_AGENTS_SUT_BASH on this runner is bash ${major}.x," >&2
+              echo "not 3.x. This job exists to run the scripts under test on the" >&2
+              echo "bash that macOS ships. On a ${major}.x interpreter it repeats" >&2
+              echo "the default macOS job and covers nothing, so it fails here" >&2
+              echo "rather than report a green result it did not earn." >&2
+              exit 1
+          fi
+      - name: Run tools script tests with the subjects on the bash macOS ships
+        run: bash tools/test/run.sh
+
   build_backend_tests:
     name: ut-build-backend
     runs-on: ubuntu-latest

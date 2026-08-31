@@ -73,12 +73,12 @@ EOF
 }
 
 @test "-f with the Java unit tests is rejected, on stderr" {
-    run bash "$UT_SH" -j -f 1.20
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -j -f 1.20
     [ "$status" -eq 1 ]
     assert_rejected
     # Dropping stderr must drop the message with it: an error on stdout would
     # land in the middle of test output that gets parsed or piped.
-    run bash -c "bash '$UT_SH' -j -f 1.20 2>/dev/null"
+    run bash -c "'${FLINK_AGENTS_SUT_BASH:-bash}' '$UT_SH' -j -f 1.20 2>/dev/null"
     [ "$status" -eq 1 ]
     assert_not_rejected
 }
@@ -87,7 +87,7 @@ EOF
     # The Python tests do install the version they are given, so this is the
     # combination a scope check written around the Java suite alone would let
     # through -- and outside -e it is just as inapplicable.
-    run bash "$UT_SH" -p -f 1.20
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -p -f 1.20
     [ "$status" -eq 1 ]
     assert_rejected
 }
@@ -99,14 +99,14 @@ EOF
     # three-component value describes a precision the install does not have.
     local fake
     fake="$(make_fake_root_pinning 9.9.9 9.9)"
-    run bash "$fake/tools/ut.sh" -p -f 9.9
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh" -p -f 9.9
     [ "$status" -eq 1 ]
     case "$(flowed_output)" in *"apache-flink~=9.9.0"*) ;; *) false ;; esac
     case "$(flowed_output)" in *"9.9.9"*) false ;; *) ;; esac
 }
 
 @test "-f is accepted with the e2e tests, and still selects the version they use" {
-    run bash "$UT_SH" -j -e -f 1.20
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -j -e -f 1.20
     [ "$status" -eq 0 ]
     assert_not_rejected
     # Exit 0 alone would still hold if -f had become a no-op, so pin the two
@@ -114,7 +114,7 @@ EOF
     # profile the e2e run activates.
     case "$(shim_calls mvn)" in *"dist/flink-1.20"*) ;; *) false ;; esac
     case "$(shim_calls mvn)" in *"-Pflink-1.20"*) ;; *) false ;; esac
-    run bash "$UT_SH" -p -e -f 1.20
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -p -e -f 1.20
     [ "$status" -eq 0 ]
     assert_not_rejected
     case "$(shim_calls uv)" in *"apache-flink~=1.20.0"*) ;; *) false ;; esac
@@ -123,20 +123,20 @@ EOF
 @test "-e is honored after -f, not only before it" {
     # The guard reads the parse loop's final state rather than the order the
     # flags arrive in; folding it into the -f case branch would break this.
-    run bash "$UT_SH" -p -f 1.20 -e
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -p -f 1.20 -e
     [ "$status" -eq 0 ]
     assert_not_rejected
     case "$(shim_calls uv)" in *"apache-flink~=1.20.0"*) ;; *) false ;; esac
 }
 
 @test "a run that passes no -f is not rejected over the defaulted version" {
-    run bash "$UT_SH" -j
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -j
     [ "$status" -eq 0 ]
     assert_not_rejected
 }
 
 @test "an unsupported version outside -e is reported as a scope error, not an unsupported one" {
-    run bash "$UT_SH" -p -f 9.9
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -p -f 9.9
     [ "$status" -eq 1 ]
     assert_rejected
     # No value of -f applies here, so naming 9.9 as the problem would send the
@@ -149,7 +149,7 @@ EOF
     # neither shim may have been reached by the time the script exits. Driven
     # with no suite flag, which selects both, so a rejection reached from only
     # one of the two suite paths cannot pass this.
-    run bash "$UT_SH" -f 1.20
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -f 1.20
     [ "$status" -eq 1 ]
     assert_rejected
     [ "$(shim_call_count mvn)" -eq 0 ]
@@ -159,10 +159,10 @@ EOF
 @test "the script demonstrates no -f form it would itself reject" {
     # Both places -f usage is advertised: the help text, and the error shown
     # when -f is given no version, which prints the help after it.
-    run bash "$UT_SH" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" --help
     [ "$status" -eq 0 ]
     assert_no_rejectable_f_example
-    run bash -c "bash '$UT_SH' -f 2>&1"
+    run bash -c "'${FLINK_AGENTS_SUT_BASH:-bash}' '$UT_SH' -f 2>&1"
     [ "$status" -eq 1 ]
     assert_no_rejectable_f_example
 }

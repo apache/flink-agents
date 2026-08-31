@@ -26,7 +26,7 @@ esac
     : > "$foreign/unrelated.txt"
 
     run env VENV_DIR="$foreign" PYTHON_BIN=/no/such/python3 \
-        bash "${BATS_TEST_DIRNAME}/../../install.sh" \
+        "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" \
             --non-interactive --enable-pyflink
 
     [ "$status" -ne 0 ]
@@ -49,7 +49,7 @@ esac
     # plan_pyflink validation. Use --dry-run so plan succeeds and we
     # bail before stage 3.
     run env VENV_DIR="$venv" PYTHON_BIN=/no/such/python3 \
-        bash "${BATS_TEST_DIRNAME}/../../install.sh" \
+        "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" \
             --non-interactive --enable-pyflink --dry-run
     # Either the dry-run printout completes (status 0) or fails for an
     # unrelated reason (e.g. PYTHON_BIN missing in non-interactive resolve_python).

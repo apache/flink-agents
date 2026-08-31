@@ -13,7 +13,7 @@
     mkdir -p "$tmp"
     run env INSTALL_DIR="$tmp" FLINK_BASE_URL="https://dlcdn.apache.org/flink" \
         FLINK_VERSION=99.99.0 \
-        bash "${BATS_TEST_DIRNAME}/../../install.sh" \
+        "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" \
             --install-flink --non-interactive
     [ "$status" -ne 0 ]
     # Banner must name the stage by title.
@@ -31,7 +31,7 @@
     # die() uses `exit`, which doesn't trigger ERR. Reach it by giving
     # plan_flink a non-existent FLINK_HOME under --non-interactive.
     run env FLINK_HOME="" \
-        bash "${BATS_TEST_DIRNAME}/../../install.sh" --non-interactive
+        "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --non-interactive
     [ "$status" -ne 0 ]
     case "$output" in *"FLINK_HOME is not set"*) ;; *) false ;; esac
     # Banner box characters must NOT appear in a die() path.
