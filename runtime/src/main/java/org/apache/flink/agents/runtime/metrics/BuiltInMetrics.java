@@ -20,7 +20,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -53,16 +53,6 @@ public class BuiltInMetrics {
     private final BuiltInExecutionMetrics executionMetrics;
 
     private final Map<String, BuiltInActionMetrics> actionMetricGroups;
-
-    public BuiltInMetrics(FlinkAgentsMetricGroupImpl parentMetricGroup, AgentPlan agentPlan) {
-        this(
-                parentMetricGroup,
-                agentPlan,
-                toolName -> {
-                    Map<String, ?> tools = agentPlan.getResourceProviders().get(ResourceType.TOOL);
-                    return tools != null && tools.containsKey(toolName);
-                });
-    }
 
     public BuiltInMetrics(
             FlinkAgentsMetricGroupImpl parentMetricGroup,
@@ -158,6 +148,9 @@ public class BuiltInMetrics {
             String actionName, Event event, ExecutionTraceContext traceContext) {
         if (ExecutionReporter.EntityTypes.ACTION.equals(traceContext.getEntityType())) {
             actionMetrics(actionName).executionEventObserved(event, traceContext);
+            if (isTerminalExecutionEvent(event)) {
+                executionMetrics.actionExecutionTerminated(traceContext.getExecutionId());
+            }
         } else {
             executionMetrics.executionEventObserved(actionName, event, traceContext);
         }
@@ -188,5 +181,11 @@ public class BuiltInMetrics {
     private BuiltInActionMetrics createActionMetrics(String actionName) {
         return new BuiltInActionMetrics(
                 parentMetricGroup.getSubGroup("action", actionName), System::nanoTime);
+    }
+
+    private static boolean isTerminalExecutionEvent(Event event) {
+        return ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(event.getType())
+                || ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType())
+                || ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(event.getType());
     }
 }
