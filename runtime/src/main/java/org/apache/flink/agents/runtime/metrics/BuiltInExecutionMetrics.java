@@ -34,7 +34,8 @@ final class BuiltInExecutionMetrics {
     private final FlinkAgentsMetricGroupImpl agentMetricGroup;
     private final LongSupplier nanoTime;
     private final Map<String, ExecutionMetricRecorder> metricRecordersByEntityType;
-    private final Map<String, Long> activeExecutionStartNanos = new HashMap<>();
+    private final Map<String, Map<String, Long>> startNanosByActionExecutionId =
+            new HashMap<>();
 
     BuiltInExecutionMetrics(
             FlinkAgentsMetricGroupImpl agentMetricGroup,
@@ -62,9 +63,12 @@ final class BuiltInExecutionMetrics {
         }
 
         String executionId = traceContext.getExecutionId();
+        String actionExecutionId = traceContext.getParentExecutionId();
         if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
-            if (!isBlank(executionId)) {
-                activeExecutionStartNanos.putIfAbsent(executionId, nanoTime.getAsLong());
+            if (!isBlank(actionExecutionId) && !isBlank(executionId)) {
+                startNanosByActionExecutionId
+                        .computeIfAbsent(actionExecutionId, ignored -> new HashMap<>())
+                        .putIfAbsent(executionId, nanoTime.getAsLong());
             }
             return;
         }
@@ -77,8 +81,7 @@ final class BuiltInExecutionMetrics {
             return;
         }
 
-        Long startNanos =
-                isBlank(executionId) ? null : activeExecutionStartNanos.remove(executionId);
+        Long startNanos = removeExecutionStart(actionExecutionId, executionId);
         Long latencyMs =
                 startNanos == null
                         ? null
@@ -92,6 +95,30 @@ final class BuiltInExecutionMetrics {
                         ? ExecutionMetricRecorder.Outcome.SUCCEEDED
                         : ExecutionMetricRecorder.Outcome.FAILED;
         recorder.record(actionMetricGroup, traceContext, outcome, latencyMs);
+    }
+
+    void actionExecutionTerminated(String actionExecutionId) {
+        if (!isBlank(actionExecutionId)) {
+            startNanosByActionExecutionId.remove(actionExecutionId);
+        }
+    }
+
+    private Long removeExecutionStart(String actionExecutionId, String executionId) {
+        if (isBlank(actionExecutionId) || isBlank(executionId)) {
+            return null;
+        }
+
+        Map<String, Long> actionExecutionStarts =
+                startNanosByActionExecutionId.get(actionExecutionId);
+        if (actionExecutionStarts == null) {
+            return null;
+        }
+
+        Long startNanos = actionExecutionStarts.remove(executionId);
+        if (actionExecutionStarts.isEmpty()) {
+            startNanosByActionExecutionId.remove(actionExecutionId);
+        }
+        return startNanos;
     }
 
     private static boolean isBlank(String value) {

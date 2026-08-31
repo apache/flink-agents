@@ -72,6 +72,8 @@ public interface RunnerContext {
      * from inside a {@link #durableExecute} or {@link #durableExecuteAsync} callable, which runs on
      * a separate thread pool.
      *
+     * <p>Names used by built-in Agent metrics are reserved in this group.
+     *
      * @return the metric group shared across all actions.
      */
     FlinkAgentsMetricGroup getAgentMetricGroup();
@@ -82,6 +84,8 @@ public interface RunnerContext {
      * <p>The returned group must only be accessed from the operator/mailbox (action) thread, not
      * from inside a {@link #durableExecute} or {@link #durableExecuteAsync} callable, which runs on
      * a separate thread pool.
+     *
+     * <p>Names used by built-in Action metrics are reserved in this group.
      *
      * @return the individual metric group specific to the current action.
      */

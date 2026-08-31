@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.metrics.MetricGroup;
@@ -36,7 +37,8 @@ class BuiltInMetricsTest {
         MetricGroup parentMetricGroup =
                 UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup();
         FlinkAgentsMetricGroupImpl metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
-        BuiltInMetrics metrics = new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()));
+        BuiltInMetrics metrics =
+                new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()), ignored -> false);
         ExecutionTraceContext restoredAction =
                 ExecutionTraceContext.forAction(
                         ExecutionTraceContext.forInputRun("key", "agent"), "restored_action");
@@ -60,5 +62,45 @@ class BuiltInMetricsTest {
                                 .getValue())
                 .isEqualTo(0L);
         assertThat(actionMetricGroup.getCounter("numOfActionsExecuted").getCount()).isEqualTo(1L);
+    }
+
+    @Test
+    void actionTerminalDropsOnlyItsUnpairedChildLatencyState() {
+        MetricGroup parentMetricGroup =
+                UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup();
+        FlinkAgentsMetricGroupImpl metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
+        BuiltInMetrics metrics =
+                new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()), ignored -> false);
+        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+        ExecutionTraceContext completedAction =
+                ExecutionTraceContext.forAction(inputRun, "restored_action");
+        ExecutionTraceContext activeAction =
+                ExecutionTraceContext.forAction(inputRun, "restored_action");
+        ExecutionTraceContext completedActionLlm =
+                completedAction.childExecution(ExecutionReporter.EntityTypes.LLM, "primary_model");
+        ExecutionTraceContext activeActionLlm =
+                activeAction.childExecution(ExecutionReporter.EntityTypes.LLM, "primary_model");
+        metrics.restoreActionTask(completedAction, false);
+
+        metrics.markExecutionEvent(
+                "restored_action", ExecutionLifecycleEvents.executionStarted(), completedActionLlm);
+        metrics.markExecutionEvent(
+                "restored_action", ExecutionLifecycleEvents.executionStarted(), activeActionLlm);
+        metrics.markExecutionEvent(
+                "restored_action", ExecutionLifecycleEvents.executionFinished(), completedAction);
+        metrics.markExecutionEvent(
+                "restored_action",
+                ExecutionLifecycleEvents.executionFinished(),
+                completedActionLlm);
+        metrics.markExecutionEvent(
+                "restored_action", ExecutionLifecycleEvents.executionFinished(), activeActionLlm);
+
+        assertThat(
+                        metricGroup
+                                .getSubGroup("action", "restored_action")
+                                .getSubGroup("model_resource", "primary_model")
+                                .getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getCount())
+                .isEqualTo(1L);
     }
 }

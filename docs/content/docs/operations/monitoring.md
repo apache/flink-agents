@@ -105,6 +105,8 @@ Token usage metrics are automatically recorded when chat models are invoked thro
 
 In Flink Agents, users implement their logic by defining custom Actions that respond to various Events throughout the Agent lifecycle. To support user-defined metrics, we introduce two new properties: `agent_metric_group` and `action_metric_group` in the RunnerContext. These properties allow users to create or update global metrics and independent metrics for actions. For an introduction to metric types, please refer to the [Metric types documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types).
 
+Metric names listed in the built-in tables above are reserved in their corresponding scopes. Custom metrics must use different names within the same scope.
+
 Here is the user case example:
 
 {{< tabs "Custom Metrics" >}}
