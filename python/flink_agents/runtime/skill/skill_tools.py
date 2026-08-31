@@ -113,7 +113,7 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
 
         manager = self._get_skill_manager()
         if manager is None:
-            return ToolResponse.failure(
+            return ToolResponse.error(
                 "Skill manager not available. No skills have been registered."
             )
 
@@ -124,7 +124,7 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
             available_str = (
                 ", ".join(available) if available else "No skills available."
             )
-            return ToolResponse.failure(
+            return ToolResponse.error(
                 f"Skill '{skill_name}' not found. Available skills: {available_str}"
             )
 
@@ -152,7 +152,7 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
         content = skill.get_resource(resource_path)
         if content is None:
             available = sorted(skill.get_resource_paths())
-            return ToolResponse.failure(
+            return ToolResponse.error(
                 f"Resource '{resource_path}' not found in skill '{skill_name}', Available resources: {available}"
             )
         return content

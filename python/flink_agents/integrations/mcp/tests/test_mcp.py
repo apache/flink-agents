@@ -212,7 +212,7 @@ def test_mcp_protocol_error_maps_to_tool_failure() -> None:
 
     assert isinstance(response, ToolResponse)
     assert response.is_error()
-    assert "business failure" in response.error
+    assert "business failure" in response.error_message
 
 
 def test_mcp_tool_success_preserves_raw_result() -> None:

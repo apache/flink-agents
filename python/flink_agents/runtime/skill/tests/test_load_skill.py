@@ -87,8 +87,8 @@ class TestLoadSkillTool:
         result = tool.call(name="nano-banana-pro", path="nonexistent.txt")
         assert isinstance(result, ToolResponse)
         assert result.is_error()
-        assert "not found" in result.error.lower()
-        assert "scripts/generate_image.py" in result.error
+        assert "not found" in result.error_message.lower()
+        assert "scripts/generate_image.py" in result.error_message
 
     def test_execution_metadata_describes_requested_resource(
         self, tool: LoadSkillTool
@@ -121,9 +121,9 @@ class TestLoadSkillTool:
         result = tool.call(name="nonexistent-skill")
         assert isinstance(result, ToolResponse)
         assert result.is_error()
-        assert "not found" in result.error.lower()
-        assert "github" in result.error
-        assert "nano-banana-pro" in result.error
+        assert "not found" in result.error_message.lower()
+        assert "github" in result.error_message
+        assert "nano-banana-pro" in result.error_message
 
     # -- no skill manager ----------------------------------------------------
 
@@ -134,7 +134,7 @@ class TestLoadSkillTool:
         result = tool.call(name="github")
         assert isinstance(result, ToolResponse)
         assert result.is_error()
-        assert "not available" in result.error
+        assert "not available" in result.error_message
 
     # -- positional args -----------------------------------------------------
 

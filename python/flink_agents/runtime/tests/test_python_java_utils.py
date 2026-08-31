@@ -46,7 +46,7 @@ def raw_python_tool(value: str) -> dict[str, object]:
 
 
 def failed_python_tool(value: str) -> ToolResponse:
-    return ToolResponse.failure(value, execution_time_ms=7, tool_name="failed")
+    return ToolResponse.error(value, execution_time_ms=7, tool_name="failed")
 
 
 def test_get_python_tool_metadata_merges_callable_injected_args() -> None:

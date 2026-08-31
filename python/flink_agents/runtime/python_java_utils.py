@@ -209,7 +209,7 @@ def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> A
         "__flink_agents_tool_result__": "response",
         "result": result.result,
         "success": result.is_success(),
-        "error": result.error,
+        "error": result.error_message,
         "execution_time_ms": result.execution_time_ms,
         "tool_name": result.tool_name,
     }

@@ -24,12 +24,12 @@ class ToolResponse:
     """Represents the result and status of one Python tool execution.
 
     Python tools may continue returning raw values, which the runtime treats as
-    successful results. Return ``ToolResponse.failure(...)`` when a tool call
+    successful results. Return ``ToolResponse.error(...)`` when a tool call
     completed normally but the tool operation itself failed.
     """
 
     result: Any = None
-    error: str | None = None
+    error_message: str | None = None
     execution_time_ms: int = 0
     tool_name: str | None = None
 
@@ -48,7 +48,7 @@ class ToolResponse:
         )
 
     @classmethod
-    def failure(
+    def error(
         cls,
         error: str,
         execution_time_ms: int = 0,
@@ -59,18 +59,18 @@ class ToolResponse:
             msg = "error cannot be None"
             raise ValueError(msg)
         return cls(
-            error=error,
+            error_message=error,
             execution_time_ms=execution_time_ms,
             tool_name=tool_name,
         )
 
     def is_success(self) -> bool:
         """Return whether the tool operation succeeded."""
-        return self.error is None
+        return self.error_message is None
 
     def is_error(self) -> bool:
         """Return whether the tool operation failed."""
         return not self.is_success()
 
     def __str__(self) -> str:
-        return str(self.result) if self.is_success() else str(self.error)
+        return str(self.result) if self.is_success() else str(self.error_message)

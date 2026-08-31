@@ -28,9 +28,9 @@ def test_tool_response_represents_success() -> None:
 
 
 def test_tool_response_represents_failure() -> None:
-    response = ToolResponse.failure("not found", tool_name="lookup")
+    response = ToolResponse.error("not found", tool_name="lookup")
 
     assert response.is_error()
     assert not response.is_success()
-    assert response.error == "not found"
+    assert response.error_message == "not found"
     assert str(response) == "not found"

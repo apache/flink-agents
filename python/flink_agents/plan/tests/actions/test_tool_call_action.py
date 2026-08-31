@@ -435,7 +435,7 @@ def test_tool_call_action_records_parallel_tool_response_failure() -> None:
     ctx = _Context(config=config)
     ctx.durable_execute_all_async_outcomes = [
         Outcome.success("ok"),
-        Outcome.success(ToolResponse.failure("business failure")),
+        Outcome.success(ToolResponse.error("business failure")),
     ]
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
@@ -569,7 +569,7 @@ def test_tool_call_reports_failed() -> None:
 def test_tool_call_reports_explicit_tool_response_failure() -> None:
     tool = MagicMock()
     tool.tool_type.return_value = ToolType.FUNCTION
-    tool.call = MagicMock(return_value=ToolResponse.failure("business failure"))
+    tool.call = MagicMock(return_value=ToolResponse.error("business failure"))
     ctx, sent_events = trace_context(tool)
     request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
 
