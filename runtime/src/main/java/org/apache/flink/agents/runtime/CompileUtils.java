@@ -24,17 +24,32 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
+import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
+
+import static org.apache.flink.util.Preconditions.checkArgument;
 
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
+
+    private static final int PYTHON_VALUE_FIELD_INDEX = 1;
 
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
             KeyedStream<Row, Row> inputDataStream, String agentPlanJson)
             throws JsonProcessingException {
+        TypeInformation<?> inputType = inputDataStream.getType();
+        checkArgument(
+                isPickledPythonFieldType(inputType, PYTHON_VALUE_FIELD_INDEX),
+                "Flink Agents only supports PyFlink input values serialized with "
+                        + "PickledByteArrayTypeInfo. Convert raw byte-array inputs with a Python "
+                        + "operator using the default pickle output type before connecting them "
+                        + "to Flink Agents, but got %s",
+                inputType);
+
         // deserialize agent plan json.
         AgentPlan agentPlan = new ObjectMapper().readValue(agentPlanJson, AgentPlan.class);
         return connectToAgent(inputDataStream, agentPlan, TypeInformation.of(byte[].class), false);
@@ -81,5 +96,23 @@ public class CompileUtils {
                                 outTypeInformation,
                                 new ActionExecutionOperatorFactory(agentPlan, inputIsJava))
                         .setParallelism(keyedInputStream.getParallelism());
+    }
+
+    /** Returns whether a PyFlink Row field uses its default pickle representation. */
+    static boolean isPickledPythonFieldType(TypeInformation<?> typeInformation, int fieldIndex) {
+        checkArgument(fieldIndex >= 0, "Field index must not be negative, but got %s", fieldIndex);
+        checkArgument(
+                typeInformation instanceof RowTypeInfo,
+                "Expected PyFlink type to be a RowTypeInfo, but got %s",
+                typeInformation);
+        RowTypeInfo rowType = (RowTypeInfo) typeInformation;
+        int expectedArity = fieldIndex + 1;
+        checkArgument(
+                rowType.getArity() == expectedArity,
+                "Expected PyFlink type to contain %s fields, but got arity %s",
+                expectedArity,
+                rowType.getArity());
+        TypeInformation<?> fieldType = rowType.getTypeAt(fieldIndex);
+        return fieldType instanceof PickledByteArrayTypeInfo;
     }
 }
