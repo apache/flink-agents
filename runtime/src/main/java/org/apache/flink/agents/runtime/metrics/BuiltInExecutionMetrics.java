@@ -34,8 +34,7 @@ final class BuiltInExecutionMetrics {
     private final FlinkAgentsMetricGroupImpl agentMetricGroup;
     private final LongSupplier nanoTime;
     private final Map<String, ExecutionMetricRecorder> metricRecordersByEntityType;
-    private final Map<String, Map<String, Long>> startNanosByActionExecutionId =
-            new HashMap<>();
+    private final Map<String, Map<String, Long>> startNanosByActionExecutionId = new HashMap<>();
 
     BuiltInExecutionMetrics(
             FlinkAgentsMetricGroupImpl agentMetricGroup,
