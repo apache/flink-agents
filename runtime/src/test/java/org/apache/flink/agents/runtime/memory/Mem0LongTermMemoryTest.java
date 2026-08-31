@@ -96,7 +96,7 @@ public class Mem0LongTermMemoryTest {
     }
 
     @Test
-    void testAddForwardsKwargsAndReturnsIds() throws Exception {
+    void testAddForwardsKwargsAndReleasesTemporaryMemorySet() throws Exception {
         MemorySet ms = ltm.getMemorySet("notes");
         when(mockAdapter.callMethod(eq(mockPyMem0), eq("add"), any()))
                 .thenReturn(List.of("a", "b"));
@@ -108,6 +108,7 @@ public class Mem0LongTermMemoryTest {
         assertThat(captureKwargs("add"))
                 .containsKeys("memory_set", "memory_items", "metadatas")
                 .containsEntry("memory_set", mockPyMemorySet);
+        verify(mockPyMemorySet).close();
     }
 
     @Test

@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
@@ -113,16 +114,34 @@ public class PythonResourceProvider extends ResourceProvider {
             }
         }
 
-        PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
         Constructor<?> constructor =
                 clazz.getConstructor(
                         PythonResourceAdapter.class,
                         PyObject.class,
                         ResourceDescriptor.class,
                         ResourceContext.class);
-        return (Resource)
-                constructor.newInstance(
-                        pythonResourceAdapter, pyResource, descriptor, resourceContext);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            PyObject pyResource =
+                    scope.own(pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs));
+            try {
+                Resource resource =
+                        (Resource)
+                                constructor.newInstance(
+                                        pythonResourceAdapter,
+                                        pyResource,
+                                        descriptor,
+                                        resourceContext);
+                scope.release(pyResource);
+                return resource;
+            } catch (Exception creationFailure) {
+                try {
+                    scope.closeResource(pythonResourceAdapter, pyResource);
+                } catch (Exception closeFailure) {
+                    creationFailure.addSuppressed(closeFailure);
+                }
+                throw creationFailure;
+            }
+        }
     }
 
     @Override

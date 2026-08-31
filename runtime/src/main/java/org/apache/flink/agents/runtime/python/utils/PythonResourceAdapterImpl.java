@@ -80,6 +80,9 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
 
     static final String INVOKE_PYTHON_TOOL = PYTHON_MODULE_PREFIX + "invoke_python_tool";
 
+    static final String MATERIALIZE_PYTHON_VALUE =
+            PYTHON_MODULE_PREFIX + "materialize_python_value";
+
     private final ResourceContext resourceContext;
     private final PythonInterpreter interpreter;
     private final JavaResourceAdapter javaResourceAdapter;
@@ -176,12 +179,7 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     public List<Document> fromPythonDocuments(List<PyObject> pythonDocuments) {
         List<Document> documents = new ArrayList<>();
         for (PyObject pythonDocument : pythonDocuments) {
-            Document document =
-                    new Document(
-                            pythonDocument.getAttr("content").toString(),
-                            (Map<String, Object>) pythonDocument.getAttr("metadata", Map.class),
-                            pythonDocument.getAttr("id").toString());
-            documents.add(document);
+            documents.add(fromMaterializedPythonDocument(materializePythonValue(pythonDocument)));
         }
         return documents;
     }
@@ -194,9 +192,15 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     @Override
     public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
             PyObject pythonVectorStoreQueryResult) {
-        List<PyObject> pythonDocuments =
-                (List<PyObject>) pythonVectorStoreQueryResult.getAttr("documents", List.class);
-        return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
+        Map<String, Object> result =
+                (Map<String, Object>) materializePythonValue(pythonVectorStoreQueryResult);
+        List<Map<String, Object>> pythonDocuments =
+                (List<Map<String, Object>>) result.get("documents");
+        List<Document> documents = new ArrayList<>(pythonDocuments.size());
+        for (Map<String, Object> pythonDocument : pythonDocuments) {
+            documents.add(fromMaterializedPythonDocument(pythonDocument));
+        }
+        return new VectorStoreQueryResult(documents);
     }
 
     @Override
@@ -246,5 +250,19 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     @Override
     public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
         return interpreter.invoke(INVOKE_PYTHON_TOOL, module, qualName, kwargs);
+    }
+
+    @Override
+    public Object materializePythonValue(Object pythonValue) {
+        return interpreter.invoke(MATERIALIZE_PYTHON_VALUE, pythonValue);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Document fromMaterializedPythonDocument(Object pythonDocument) {
+        Map<String, Object> values = (Map<String, Object>) pythonDocument;
+        return new Document(
+                (String) values.get("content"),
+                (Map<String, Object>) values.get("metadata"),
+                (String) values.get("id"));
     }
 }

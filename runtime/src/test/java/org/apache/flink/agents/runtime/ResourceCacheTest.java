@@ -40,6 +40,8 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.agents.runtime.skill.AgentSkill;
 import org.apache.flink.agents.runtime.skill.SkillManager;
@@ -57,6 +59,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -466,5 +469,68 @@ public class ResourceCacheTest {
                 throw (Exception) failure;
             }
         }
+    }
+
+    @Test
+    void closesPartiallyOpenedResourceWhenOpenThrowsError() {
+        OutOfMemoryError openFailure = new OutOfMemoryError("open failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        AtomicInteger closeCalls = new AtomicInteger();
+        Resource resource =
+                new Resource(null, null) {
+                    @Override
+                    public ResourceType getResourceType() {
+                        return ResourceType.TOOL;
+                    }
+
+                    @Override
+                    public void open() {
+                        throw openFailure;
+                    }
+
+                    @Override
+                    public void close() {
+                        closeCalls.incrementAndGet();
+                        throw closeFailure;
+                    }
+                };
+        ResourceProvider provider =
+                new ResourceProvider("failing", ResourceType.TOOL) {
+                    @Override
+                    public Resource provide(ResourceContext resourceContext) {
+                        return resource;
+                    }
+                };
+        ResourceCache cache =
+                new ResourceCache(Map.of(ResourceType.TOOL, Map.of("failing", provider)));
+
+        assertThatThrownBy(() -> cache.getResource("failing", ResourceType.TOOL))
+                .isSameAs(openFailure)
+                .satisfies(
+                        failure ->
+                                assertThat(failure.getSuppressed()).containsExactly(closeFailure));
+        assertThat(closeCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void closesResourceWhenRuntimeConfigurationFails() throws Exception {
+        RuntimeException configurationFailure = new RuntimeException("configuration failed");
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        FunctionTool resource = mock(FunctionTool.class);
+        ResourceProvider provider =
+                new ResourceProvider("failing", ResourceType.TOOL) {
+                    @Override
+                    public Resource provide(ResourceContext resourceContext) {
+                        return resource;
+                    }
+                };
+        ResourceCache cache =
+                new ResourceCache(Map.of(ResourceType.TOOL, Map.of("failing", provider)));
+        cache.setPythonResourceAdapter(adapter);
+        doThrow(configurationFailure).when(resource).setPythonResourceAdapter(adapter);
+
+        assertThatThrownBy(() -> cache.getResource("failing", ResourceType.TOOL))
+                .isSameAs(configurationFailure);
+        verify(resource).close();
     }
 }

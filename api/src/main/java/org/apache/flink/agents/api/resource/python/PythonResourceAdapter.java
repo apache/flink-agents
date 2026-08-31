@@ -178,4 +178,19 @@ public interface PythonResourceAdapter {
      * @return the raw return value from the Python callable
      */
     Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs);
+
+    /**
+     * Materializes a Python value into primitives, lists, and maps that can safely outlive the
+     * Pemja call that produced it.
+     *
+     * <p>Adapters that support Python tool results must override this method. Returning the input
+     * unchanged is unsafe because the caller releases every Pemja reference after materialization.
+     *
+     * @param pythonValue value returned by Python
+     * @return an equivalent Java-safe value
+     */
+    default Object materializePythonValue(Object pythonValue) {
+        throw new UnsupportedOperationException(
+                "Python value materialization is not supported by this adapter.");
+    }
 }

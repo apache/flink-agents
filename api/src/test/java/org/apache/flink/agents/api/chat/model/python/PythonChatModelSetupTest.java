@@ -90,7 +90,7 @@ public class PythonChatModelSetupTest {
     }
 
     @Test
-    void testChat() {
+    void testChat() throws Exception {
         ChatMessage inputMessage = mock(ChatMessage.class);
         ChatMessage outputMessage = mock(ChatMessage.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
@@ -100,8 +100,8 @@ public class PythonChatModelSetupTest {
         modelParams.put("temperature", 0.7);
         modelParams.put("max_tokens", 100);
 
-        Object pythonInputMessage = new Object();
-        Object pythonOutputMessage = new Object();
+        PyObject pythonInputMessage = mock(PyObject.class);
+        PyObject pythonOutputMessage = mock(PyObject.class);
 
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
         when(mockAdapter.callMethod(eq(mockChatModelSetup), eq("chat"), any(Map.class)))
@@ -132,6 +132,8 @@ public class PythonChatModelSetupTest {
                                     return true;
                                 }));
         verify(mockAdapter).fromPythonChatMessage(pythonOutputMessage);
+        verify(pythonInputMessage).close();
+        verify(pythonOutputMessage).close();
     }
 
     @Test
