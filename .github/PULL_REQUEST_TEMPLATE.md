@@ -10,6 +10,10 @@ Linked issue: #xxx
 
 <!-- What is the purpose of this change? -->
 
+### Implementation Description
+
+<!-- For non-trivial code changes: interaction decisions, behavioral contracts, and failure behavior. See `contribution-guides/ai-assisted-pr.md`. Leave empty for a change whose diff is already prose, such as documentation, comments, or site content. -->
+
 ### Tests
 
 <!-- How is this change verified? -->
