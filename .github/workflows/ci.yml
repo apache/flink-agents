@@ -29,16 +29,16 @@ jobs:
     name: Code Style Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check License Header
         run: tools/check-license.sh
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: 3.12
       - name: Install uv
@@ -61,7 +61,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install bash 4.1+ (macOS)
         if: runner.os == 'macOS'
         run: brew install bash
@@ -72,9 +72,9 @@ jobs:
     name: ut-build-backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install uv
@@ -100,14 +100,14 @@ jobs:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         java-version: ["11", "17", "21"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install uv
@@ -136,14 +136,14 @@ jobs:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         python-version: [ '3.10', '3.11', '3.12' ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
@@ -181,14 +181,14 @@ jobs:
             python-version: '3.12'
             flink-version: "2.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
@@ -230,9 +230,9 @@ jobs:
             java-version: "17"
             flink-version: "2.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
@@ -258,7 +258,7 @@ jobs:
         python-version: [ '3.12' ]
         java-version: [ '21' ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Free disk space to ensure Elasticsearch has sufficient space for indexing operations
       # This step removes unnecessary pre-installed tools (~30GB) to prevent disk watermark warnings
       - name: Free disk space
@@ -271,12 +271,12 @@ jobs:
           large-packages: true
           docker-images: true
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
