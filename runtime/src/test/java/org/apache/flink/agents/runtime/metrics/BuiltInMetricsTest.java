@@ -79,7 +79,7 @@ class BuiltInMetricsTest {
         ExecutionTraceContext completedActionLlm =
                 completedAction.childExecution(ExecutionReporter.EntityTypes.LLM, "primary_model");
         ExecutionTraceContext activeActionLlm =
-                activeAction.childExecution(ExecutionReporter.EntityTypes.LLM, "primary_model");
+                activeAction.childExecution(ExecutionReporter.EntityTypes.LLM, "secondary_model");
         metrics.restoreActionTask(completedAction, false);
 
         metrics.markExecutionEvent(
@@ -99,6 +99,13 @@ class BuiltInMetricsTest {
                         metricGroup
                                 .getSubGroup("action", "restored_action")
                                 .getSubGroup("model_resource", "primary_model")
+                                .getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getCount())
+                .isZero();
+        assertThat(
+                        metricGroup
+                                .getSubGroup("action", "restored_action")
+                                .getSubGroup("model_resource", "secondary_model")
                                 .getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
                                 .getCount())
                 .isEqualTo(1L);
