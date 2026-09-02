@@ -38,6 +38,10 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
 _TEMP_DIR_PREFIX = "flink-agents-skills-"
+MAX_DOWNLOAD_BYTES: int = 512 * 1024 * 1024
+MAX_EXTRACT_ENTRY_BYTES: int = 200 * 1024 * 1024
+MAX_EXTRACT_TOTAL_BYTES: int = 1024 * 1024 * 1024
+MAX_EXTRACT_ENTRIES: int = 10_000
 logger = logging.getLogger(__name__)
 
 
@@ -179,14 +183,100 @@ def extract_zip_safely(zip_path: Path) -> Materialized:
     # Construct the handle before validation so the (empty) tempdir is always reclaimed,
     # even if validation raises.
     materialized = Materialized(extract_dir)
-    with zipfile.ZipFile(zip_path) as zf:
-        for member in zf.infolist():
-            target = (extract_dir / member.filename).resolve()
-            if not target.is_relative_to(extract_dir):
-                msg = f"Unsafe zip entry: {member.filename}"
-                raise ValueError(msg)
-        zf.extractall(extract_dir)
+    try:
+        _extract_zip_to_dir(zip_path, extract_dir)
+    except Exception:
+        materialized.close()
+        raise
     return materialized
+
+def _validate_zip_members(members: list, extract_dir: Path) -> None:
+    if len(members) > MAX_EXTRACT_ENTRIES:
+        msg = (
+            f"Skill archive contains {len(members)} entries, "
+            f"exceeding the limit of {MAX_EXTRACT_ENTRIES}"
+        )
+        raise ValueError(msg)
+
+    for member in members:
+        target = (extract_dir / member.filename).resolve()
+        if not target.is_relative_to(extract_dir):
+            msg = f"Unsafe zip entry: {member.filename}"
+            raise ValueError(msg)
+
+    total_declared = 0
+    for member in members:
+        if member.is_dir():
+            continue
+        declared = member.file_size
+        if declared > MAX_EXTRACT_ENTRY_BYTES:
+            msg = (
+                f"Skill archive entry '{member.filename}' declared size {declared} "
+                f"exceeds the per-entry limit of {MAX_EXTRACT_ENTRY_BYTES} bytes"
+            )
+            raise ValueError(msg)
+        if declared > 0:
+            total_declared += declared
+    if total_declared > MAX_EXTRACT_TOTAL_BYTES:
+        msg = (
+            f"Skill archive declared total uncompressed size {total_declared} "
+            f"exceeds the limit of {MAX_EXTRACT_TOTAL_BYTES} bytes"
+        )
+        raise ValueError(msg)
+
+def _extract_zip_to_dir(zip_path: Path, extract_dir: Path) -> None:
+    with zipfile.ZipFile(zip_path) as zf:
+                members = zf.infolist()
+                _validate_zip_members(members, extract_dir)
+                buf = bytearray(65536)
+                total_written = 0
+                for member in members:
+                    target = (extract_dir / member.filename).resolve()
+                    if member.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        continue
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    per_entry_written = 0
+                    with zf.open(member) as src, target.open("xb") as dst:
+                        while True:
+                            n = src.readinto(buf)
+                            if not n:
+                                break
+                            _check_entry_size(member.filename, per_entry_written, n)
+                            _check_total_size(total_written, n)
+                            dst.write(buf[:n])
+                            per_entry_written += n
+                            total_written += n
+
+def _check_entry_size(filename: str, already_written: int, chunk: int) -> None:
+    if already_written + chunk > MAX_EXTRACT_ENTRY_BYTES:
+        msg = (
+            f"Skill archive entry '{filename}' exceeds the "
+            f"per-entry limit of {MAX_EXTRACT_ENTRY_BYTES} bytes"
+        )
+        raise ValueError(msg)
+
+def _check_total_size(already_written: int, chunk: int) -> None:
+    if already_written + chunk > MAX_EXTRACT_TOTAL_BYTES:
+        msg = (
+            f"Skill archive total extracted size exceeds the limit of "
+            f"{MAX_EXTRACT_TOTAL_BYTES} bytes"
+        )
+        raise ValueError(msg)
+
+def _check_declared_download_size(content_length: int | None) -> None:
+    if content_length is not None and content_length > MAX_DOWNLOAD_BYTES:
+        msg = (
+            f"Skill archive download size declared as {content_length} bytes, "
+            f"exceeding the limit of {MAX_DOWNLOAD_BYTES} bytes"
+        )
+        raise ValueError(msg)
+
+def _check_download_size(already_written: int, chunk: int) -> None:
+    if already_written + chunk > MAX_DOWNLOAD_BYTES:
+        msg = f"Skill archive download exceeded the limit of {MAX_DOWNLOAD_BYTES} bytes"
+        raise ValueError(msg)
+
 
 
 def download_to_tempfile(
@@ -239,7 +329,21 @@ def download_to_tempfile(
                     redact_skill_url(url),
                     redact_skill_url(final_url),
                 )
-            shutil.copyfileobj(resp, out)
+            raw_cl = resp.headers.get("Content-Length")
+            if raw_cl is not None:
+                try:
+                    content_length = int(raw_cl)
+                except ValueError:
+                    content_length = None
+                _check_declared_download_size(content_length)
+            written = 0
+            while True:
+                chunk = resp.read(65536)
+                if not chunk:
+                    break
+                _check_download_size(written, len(chunk))
+                out.write(chunk)
+                written += len(chunk)
     except Exception:
         tmp_path.unlink(missing_ok=True)
         raise
