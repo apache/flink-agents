@@ -197,6 +197,8 @@ public static ResourceDescriptor mathModel() {
 **Key points:**
 - `skills` lists the skill names (matching the `name` field in each `SKILL.md`) the agent may use.
 - `allowed_commands` is a whitelist of shell command names the built-in `bash` tool may execute. Any command not on the list is rejected, so keep it as narrow as the skills require (for example `echo` and `bc` for arithmetic).
+- The `bash` tool rejects redirects to files by default. File-descriptor duplication and closure, such as `2>&1` and `2>&-`, remain available.
+- Assignments to environment variables that can change command resolution or executable loading, including `PATH`, `BASH_ENV`, `ENV`, `SHELLOPTS`, `CDPATH`, `LD_*`, and `DYLD_*`, are rejected. The command allowlist is a validation boundary, not a general-purpose operating-system sandbox; do not allow shells, privilege wrappers, or other commands that can launch arbitrary executables.
 - The `load_skill` and `bash` tools are added automatically — you do not declare them in `tools`. They are added alongside any tools you do declare.
 - Make sure the system prompt instructs the agent to load the relevant skill before acting, for example: *"You must load the skill first and strictly follow its instructions."* Without this nudge, smaller models may answer directly instead of consulting the skill.
 

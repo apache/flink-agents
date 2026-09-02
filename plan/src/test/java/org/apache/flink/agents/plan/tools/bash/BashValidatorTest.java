@@ -108,6 +108,25 @@ class BashValidatorTest {
     }
 
     @Test
+    void executionChangingVariableAssignmentsRejected() {
+        for (String name :
+                List.of(
+                        "PATH",
+                        "BASH_ENV",
+                        "ENV",
+                        "SHELLOPTS",
+                        "CDPATH",
+                        "LD_PRELOAD",
+                        "LD_LIBRARY_PATH",
+                        "DYLD_INSERT_LIBRARIES")) {
+            assertEquals(
+                    Optional.of("Environment variable assignment '" + name + "' is not allowed."),
+                    BashValidator.validate(
+                            name + "=unsafe echo hi", List.of("echo"), List.of(), null));
+        }
+    }
+
+    @Test
     void commandSubstitutionRejected() {
         Optional<String> r =
                 BashValidator.validate("echo $(rm /etc/passwd)", List.of("echo"), List.of(), null);
@@ -132,10 +151,35 @@ class BashValidatorTest {
     }
 
     @Test
-    void redirectAllowed() {
-        // basic redirect of allowed command should pass
-        Optional<String> r =
-                BashValidator.validate("echo hi > /tmp/x", List.of("echo"), List.of(), null);
-        assertEquals(Optional.empty(), r);
+    void fileRedirectsRejected() {
+        for (String command :
+                List.of(
+                        "echo hi > /tmp/out",
+                        "echo hi >> /tmp/out",
+                        "echo hi 2> /tmp/err",
+                        "echo hi < /tmp/in",
+                        "echo hi >2",
+                        "echo hi >&/tmp/out")) {
+            assertEquals(
+                    Optional.of(
+                            "File redirects are not allowed; only file-descriptor duplication and "
+                                    + "closure are permitted."),
+                    BashValidator.validate(command, List.of("echo"), List.of(), null));
+        }
+    }
+
+    @Test
+    void fileDescriptorOnlyRedirectsAllowed() {
+        for (String command :
+                List.of(
+                        "echo hi 2>&1",
+                        "echo hi >&2",
+                        "echo hi <&0",
+                        "echo hi 2>&-",
+                        "echo hi 3>&1-")) {
+            assertEquals(
+                    Optional.empty(),
+                    BashValidator.validate(command, List.of("echo"), List.of(), null));
+        }
     }
 }

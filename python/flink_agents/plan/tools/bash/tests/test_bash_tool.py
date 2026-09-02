@@ -113,6 +113,24 @@ class TestValidateCommand:
     def test_allow_env_prefix(self) -> None:
         assert validate_command("FOO=bar echo hi", ["echo"], []) is None
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "PATH",
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "CDPATH",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+        ],
+    )
+    def test_reject_execution_changing_env_prefix(self, name: str) -> None:
+        assert validate_command(f"{name}=unsafe echo hi", ["echo"], []) == (
+            f"Environment variable assignment '{name}' is not allowed."
+        )
+
     def test_reject_env_prefix_command_not_whitelisted(self) -> None:
         assert validate_command("FOO=bar rm -rf /", ["echo"], []) is not None
 
@@ -192,11 +210,35 @@ class TestValidateCommand:
     def test_allow_brace_expansion(self) -> None:
         assert validate_command("echo {a,b,c}", ["echo"], []) is None
 
-    def test_allow_redirect_to_file(self) -> None:
-        assert validate_command("echo hi > /tmp/out", ["echo"], []) is None
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo hi > /tmp/out",
+            "echo hi >> /tmp/out",
+            "echo hi 2> /tmp/err",
+            "echo hi < /tmp/in",
+            "echo hi >2",
+            "echo hi >&/tmp/out",
+        ],
+    )
+    def test_reject_file_redirect(self, command: str) -> None:
+        assert validate_command(command, ["echo"], []) == (
+            "File redirects are not allowed; only file-descriptor duplication "
+            "and closure are permitted."
+        )
 
-    def test_allow_stderr_redirect(self) -> None:
-        assert validate_command("echo hi 2>&1", ["echo"], []) is None
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo hi 2>&1",
+            "echo hi >&2",
+            "echo hi <&0",
+            "echo hi 2>&-",
+            "echo hi 3>&1-",
+        ],
+    )
+    def test_allow_fd_only_redirect(self, command: str) -> None:
+        assert validate_command(command, ["echo"], []) is None
 
 
 class TestBashTool:
