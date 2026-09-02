@@ -86,6 +86,49 @@ class ChatModelInvokerTest {
     }
 
     @Test
+    void testChatWithRetriesRestoresInterruptFlagFromRetryBackoffSleep() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+        // The interrupt fires from within the retry backoff's Thread.sleep, not from the call
+        // itself: set the flag first so Thread.sleep throws immediately, at no wall-clock cost.
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        invocation -> {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException("transient failure");
+                        });
+
+        assertThrows(
+                InterruptedException.class,
+                () ->
+                        ChatModelInvoker.chatWithRetries(
+                                UUID.randomUUID(),
+                                "test-model",
+                                "durable-call-id",
+                                List.of(),
+                                Map.of(),
+                                null,
+                                ctx,
+                                Agent.ErrorHandlingStrategy.RETRY,
+                                1,
+                                1));
+
+        // Only the first attempt should have run: the sleep before the retry throws before a
+        // second call is made.
+        verify(ctx, times(1)).durableExecute(any());
+        // This is the only assertion that distinguishes the fix from the pre-fix code: the
+        // ChatAttemptFailed/times(1) shape above passes either way, since Thread.sleep still
+        // aborts the retry loop on both. Only the restored flag proves the backoff sleep's catch
+        // block restores it instead of leaving it cleared.
+        assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+    }
+
+    @Test
     void testChatWithRetriesRetriesOnOrdinaryFailure() throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
         BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
