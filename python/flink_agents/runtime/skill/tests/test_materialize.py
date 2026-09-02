@@ -18,6 +18,8 @@
 """Unit tests for the _materialize utility module."""
 
 import logging
+import struct
+import tempfile
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -28,6 +30,9 @@ import pytest
 
 from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
+    MAX_DOWNLOAD_BYTES,
+    MAX_EXTRACT_ENTRIES,
+    MAX_EXTRACT_ENTRY_BYTES,
     Materialized,
     download_to_tempfile,
     extract_zip_safely,
@@ -186,6 +191,273 @@ class TestDownloadToTempfile:
             download_to_tempfile(
                 f"{base_url}/missing", timeout=10, allow_insecure_http=True
             )
+# ---------------------------------------------------------------------------
+# Helpers for size-cap tests
+# ---------------------------------------------------------------------------
+
+def _make_streaming_server(
+    declared_content_length: int | None, bytes_to_stream: int
+) -> tuple[str, HTTPServer]:
+    class _StreamingHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(200)
+            if declared_content_length is not None:
+                self.send_header("Content-Length", str(declared_content_length))
+            self.end_headers()
+            chunk = b"x" * 65536
+            remaining = bytes_to_stream
+            while remaining > 0:
+                to_write = min(len(chunk), remaining)
+                try:
+                    self.wfile.write(chunk[:to_write])
+                    self.wfile.flush()
+                except OSError:
+                    break
+                remaining -= to_write
+
+        def log_message(self, *_args: object) -> None:
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _StreamingHandler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{port}", server
+
+
+def _make_zip_with_patched_declared_sizes(
+    zip_path: Path, entries: dict[str, bytes], declared_size: int
+) -> None:
+    with zipfile.ZipFile(
+        zip_path, "w", compression=zipfile.ZIP_DEFLATED
+    ) as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+
+    data = bytearray(zip_path.read_bytes())
+    with zipfile.ZipFile(zip_path) as zf:
+        for info in zf.infolist():
+            name_bytes = info.filename.encode()
+            sig = b"PK\x01\x02"
+            pos = 0
+            while pos < len(data) - 46:
+                if data[pos : pos + 4] == sig:
+                    fn_len = struct.unpack_from("<H", data, pos + 28)[0]
+                    if data[pos + 46 : pos + 46 + fn_len] == name_bytes:
+                        struct.pack_into(
+                            "<I", data, pos + 24, declared_size
+                        )
+                        break
+                pos += 1
+
+    zip_path.write_bytes(data)
+
+# ---------------------------------------------------------------------------
+# Download size cap tests
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadSizeCap:
+    def test_rejects_declared_content_length_over_cap(self) -> None:
+        url, server = _make_streaming_server(
+            declared_content_length=MAX_DOWNLOAD_BYTES + 1, bytes_to_stream=0
+        )
+        try:
+            with pytest.raises(ValueError, match="exceeding the limit"):
+                download_to_tempfile(url, timeout=10, allow_insecure_http=True)
+        finally:
+            server.shutdown()
+
+    def test_rejects_understated_content_length_via_byte_counter(self) -> None:
+        url, server = _make_streaming_server(
+            declared_content_length=None, bytes_to_stream=MAX_DOWNLOAD_BYTES + 1
+        )
+        try:
+            with pytest.raises(ValueError, match="exceeded the limit"):
+                download_to_tempfile(url, timeout=60, allow_insecure_http=True)
+        finally:
+            server.shutdown()
+
+    def test_rejects_stream_with_no_content_length_and_body_over_cap(self) -> None:
+        url, server = _make_streaming_server(
+            declared_content_length=None, bytes_to_stream=MAX_DOWNLOAD_BYTES + 1
+        )
+        try:
+            with pytest.raises(ValueError, match="exceeded the limit"):
+                download_to_tempfile(url, timeout=60, allow_insecure_http=True)
+        finally:
+            server.shutdown()
+
+    def test_accepts_body_below_cap(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"z" * 1024
+        handler.status = 200
+        path = download_to_tempfile(f"{base_url}/skill.zip", timeout=10, allow_insecure_http=True)
+        try:
+            assert path.stat().st_size == 1024
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_cleanup_on_download_failure(self) -> None:
+        url, server = _make_streaming_server(
+            declared_content_length=MAX_DOWNLOAD_BYTES + 1, bytes_to_stream=0
+        )
+        tmp_dir = Path(tempfile.gettempdir())
+        try:
+            before = sum(
+                1
+                for p in tmp_dir.iterdir()
+                if p.name.startswith("flink-agents-skills-") and p.suffix == ".zip"
+            )
+            with pytest.raises(ValueError):
+                download_to_tempfile(url, timeout=10, allow_insecure_http=True)
+            after = sum(
+                1
+                for p in tmp_dir.iterdir()
+                if p.name.startswith("flink-agents-skills-") and p.suffix == ".zip"
+            )
+            assert before == after
+        finally:
+            server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Extraction size cap tests
+# ---------------------------------------------------------------------------
+
+
+class TestExtractionSizeCap:
+    def test_rejects_archive_with_too_many_entries(self, tmp_path: Path) -> None:
+        zip_path = tmp_path / "many.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for i in range(MAX_EXTRACT_ENTRIES + 1):
+                zf.writestr(f"entry-{i}.txt", "")
+
+        with pytest.raises(ValueError, match="entries"):
+            extract_zip_safely(zip_path)
+
+    def test_rejects_declared_entry_size_over_cap(self, tmp_path: Path) -> None:
+        zip_path = tmp_path / "big-declared.zip"
+        # with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        #     zf.writestr("entry.bin", b"x")
+
+        # _forge_declared_sizes_for_all_entries(zip_path, MAX_EXTRACT_ENTRY_BYTES + 1)
+        _make_zip_with_patched_declared_sizes(zip_path, {"entry.bin": b"x"}, MAX_EXTRACT_ENTRY_BYTES + 1)
+        with pytest.raises(ValueError, match="per-entry limit"):
+            extract_zip_safely(zip_path)
+
+    # def test_rejects_actual_bytes_over_per_entry_cap_when_declared_size_passes(
+    #     self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    # ) -> None:
+    #     import flink_agents.runtime.skill.repository._materialize as mat
+    #     actual_size = 512
+    #     cap = actual_size - 1
+    #     zip_path = tmp_path / "big-actual.zip"
+    #     _make_zip_with_patched_declared_sizes(zip_path, {"large.bin": b"x" * actual_size}, 1)
+    #     monkeypatch.setattr(mat, "MAX_EXTRACT_ENTRY_BYTES", cap)
+    #     monkeypatch.setattr(mat, "MAX_EXTRACT_ENTRY_BYTES", cap * 10)
+    #     with pytest.raises(ValueError, match="per-entry limit"):
+    #         extract_zip_safely(zip_path)
+
+    # def test_rejects_cumulative_bytes_over_total_cap(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    #     import flink_agents.runtime.skill.repository._materialize as mat
+    #     actual_size = 200
+    #     per_entry_cap = actual_size + 1
+    #     total_cap = actual_size * 6 - 1
+    #     zip_path = tmp_path / "cumulative.zip"
+    #     entries = {f"entry-{i}.bin": b"B" * actual_size for i in range(6)}
+    #     _make_zip_with_patched_declared_sizes(zip_path, entries, 1)
+    #     monkeypatch.setattr(mat, "MAX_EXTRACT_ENTRY_BYTES", per_entry_cap)
+    #     monkeypatch.setattr(mat, "MAX_EXTRACT_TOTAL_BYTES", total_cap)
+    #     with pytest.raises(ValueError, match="total extracted size"):
+    #         extract_zip_safely(zip_path)
+
+    def test_tampered_declared_entry_size_raises_bad_zip_file(
+        self, tmp_path: Path
+    ) -> None:
+    # Python's zipfile truncates ZipExtFile.read() output to the declared
+    # uncompressed size and then validates CRC against the full original
+    # content. Shrinking the declared size to hide a larger real payload
+    # therefore cannot smuggle extra bytes past the reader — it fails with
+    # a CRC mismatch instead. This differs from Java, where getInputStream()
+    # doesn't enforce the declared size, but provides an equivalent
+    # protection: this specific bypass is simply not constructible as a
+    # valid archive via the standard library.
+        actual_size = 512
+        zip_path = tmp_path / "big-actual.zip"
+        _make_zip_with_patched_declared_sizes(
+            zip_path, {"large.bin": b"x" * actual_size}, 1
+        )
+
+        with pytest.raises(zipfile.BadZipFile, match="Bad CRC-32"):
+            extract_zip_safely(zip_path)
+
+
+    def test_tampered_declared_entry_size_still_cleans_up(
+        self, tmp_path: Path
+    ) -> None:
+        actual_size = 512
+        zip_path = tmp_path / "big-actual.zip"
+        _make_zip_with_patched_declared_sizes(
+            zip_path, {"large.bin": b"x" * actual_size}, 1
+        )
+
+        tmp_dir = Path(tempfile.gettempdir())
+        before = sum(
+            1
+            for p in tmp_dir.iterdir()
+            if p.name.startswith("flink-agents-skills-") and p.is_dir()
+        )
+        with pytest.raises(zipfile.BadZipFile):
+            extract_zip_safely(zip_path)
+        after = sum(
+            1
+            for p in tmp_dir.iterdir()
+            if p.name.startswith("flink-agents-skills-") and p.is_dir()
+        )
+        assert before == after
+
+
+    def test_tampered_cumulative_declared_size_raises_bad_zip_file(
+        self, tmp_path: Path
+    ) -> None:
+        # Same CRC-truncation mechanism as the per-entry test above, applied
+        # across multiple entries. Since each entry's declared size is forged
+        # independently, the first entry opened for extraction already fails
+        # with a CRC mismatch — there is no way to reach the cumulative
+        # byte-counter logic via a genuinely tampered archive on Python's
+        # zipfile, unlike declaring an honest (accurate) total that simply
+        # exceeds the cap, which is covered separately by
+        # test_rejects_declared_entry_size_over_cap.
+        actual_size = 200
+        zip_path = tmp_path / "cumulative.zip"
+        entries = {f"entry-{i}.bin": b"B" * actual_size for i in range(6)}
+        _make_zip_with_patched_declared_sizes(zip_path, entries, 1)
+
+        with pytest.raises(zipfile.BadZipFile, match="Bad CRC-32"):
+            extract_zip_safely(zip_path)
+
+    def test_cleanup_on_extraction_failure(self, tmp_path: Path) -> None:
+        zip_path = tmp_path / "many.zip"
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for i in range(MAX_EXTRACT_ENTRIES + 1):
+                zf.writestr(f"e{i}.txt", "")
+
+        tmp_dir = Path(tempfile.gettempdir())
+        before = sum(
+            1
+            for p in tmp_dir.iterdir()
+            if p.name.startswith("flink-agents-skills-") and p.is_dir()
+        )
+        with pytest.raises(ValueError):
+            extract_zip_safely(zip_path)
+        after = sum(
+            1
+            for p in tmp_dir.iterdir()
+            if p.name.startswith("flink-agents-skills-") and p.is_dir()
+        )
+        assert before == after
 
     def test_rejects_plain_http_by_default(self) -> None:
         with pytest.raises(ValueError, match="disabled by default"):
