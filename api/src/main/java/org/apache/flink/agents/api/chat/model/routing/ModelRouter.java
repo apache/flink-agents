@@ -52,6 +52,9 @@ import java.util.regex.PatternSyntaxException;
  */
 public class ModelRouter extends Resource {
 
+    /** Descriptor key carrying the candidate model names. */
+    public static final String CANDIDATES_KEY = "candidates";
+
     /** Descriptor key carrying the strategy type tag ({@link RoutingStrategyType#tag()}). */
     public static final String STRATEGY_TYPE_KEY = "strategy_type";
 
@@ -71,7 +74,7 @@ public class ModelRouter extends Resource {
     public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext)
             throws Exception {
         super(descriptor, resourceContext);
-        List<String> names = descriptor.getArgument("candidates");
+        List<String> names = descriptor.getArgument(CANDIDATES_KEY);
         if (names == null || names.isEmpty()) {
             throw new IllegalArgumentException("ModelRouter requires at least one candidate.");
         }
@@ -113,8 +116,9 @@ public class ModelRouter extends Resource {
     }
 
     /**
-     * Instantiates the user's {@link CustomRoutingExecutor} once per router instance (routers are
-     * cached per TaskManager), preserving executor instance state across requests. The construction
+     * Instantiates the user's {@link CustomRoutingExecutor} once per router instance. Routers are
+     * cached per subtask — at parallelism N that is N router (and executor) instances, so executor
+     * instance state spans the requests of one subtask, not the whole TaskManager. The construction
      * contract is a {@code (Map<String,Object>)} constructor fed the declaration's arguments, then
      * a no-arg constructor, via the thread context classloader — plan-time validation checks the
      * same contract without instantiating.
@@ -149,11 +153,14 @@ public class ModelRouter extends Resource {
     }
 
     /**
-     * Pre-compiles the rule patterns once per router instance (routers are cached per TaskManager),
-     * so rule evaluation stays regex-match-only per request. Patterns were validated at build();
-     * this re-validates defensively for descriptors constructed outside the builder.
+     * The single validation/compilation path for rule maps: null/empty keys, non-String values and
+     * invalid regex all fail here with the same diagnostics everywhere it is called — the builder
+     * ({@code build()}), the router constructor, and plan-time validation ({@code
+     * AgentPlan#validateRuleKeys}). Called once per router instance (routers are cached per
+     * subtask), so rule evaluation stays regex-match-only per request. Patterns were validated at
+     * build(); this re-validates defensively for descriptors constructed outside the builder.
      */
-    private static Map<String, Pattern> compileRules(RoutingStrategy strategy) {
+    public static Map<String, Pattern> compileRules(RoutingStrategy strategy) {
         if (strategy.getType() != RoutingStrategyType.RULE_BASED) {
             return Collections.emptyMap();
         }
@@ -305,10 +312,9 @@ public class ModelRouter extends Resource {
             // Rule maps have ONE validation/compilation path (compileRules), shared with the
             // router constructor so the diagnostics are identical whether the descriptor came
             // through this builder or was hand-built/deserialized. build() additionally checks
-            // rule keys against the candidate set — only here is the full candidate list in
-            // hand — so a typo fails at the registration call site instead of per record at
-            // runtime (an invalid pattern is never cached by the resource cache, so it would
-            // otherwise re-throw on every routed request).
+            // rule keys against the candidate set so a typo fails at the registration call
+            // site; descriptors that skip the builder get the same checks at plan
+            // construction (AgentPlan#validateRuleKeys, with a router-scoped message).
             if (strategy.getType() == RoutingStrategyType.RULE_BASED) {
                 for (String ruleKey : compileRules(strategy).keySet()) {
                     if (!candidates.contains(ruleKey)) {
@@ -320,7 +326,7 @@ public class ModelRouter extends Resource {
                 }
             }
             Map<String, Object> args = new HashMap<>();
-            args.put("candidates", new ArrayList<>(candidates));
+            args.put(CANDIDATES_KEY, new ArrayList<>(candidates));
             if (!descriptions.isEmpty()) {
                 args.put("candidate_descriptions", new HashMap<>(descriptions));
             }

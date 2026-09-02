@@ -15,16 +15,44 @@
 #  See the License for the specific language governing permissions and
 #  limitations under the License.
 ################################################################################
+
+from typing import NoReturn
+
 import pytest
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceType
 
 
-def test_python_model_router_registration_is_an_explicit_error() -> None:
+class _StubExecutionEnvironment(AgentsExecutionEnvironment):
+    """Minimal concrete env: add_resource is inherited, the rest is unused here."""
+
+    def get_config(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotImplementedError
+
+    def from_datastream(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotImplementedError
+
+    def from_table(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotImplementedError
+
+    def execute(self, *args: object, **kwargs: object) -> NoReturn:
+        raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    "registrar_type",
+    [Agent, _StubExecutionEnvironment],
+    ids=["agent", "execution_environment"],
+)
+def test_python_model_router_registration_is_an_explicit_error(
+    registrar_type: type,
+) -> None:
     """MODEL_ROUTER exists in the enum so Java plans deserialize, but Python-side
-    registration must fail loudly instead of dropping silently (see PR #964 review).
+    registration must fail loudly instead of dropping silently (see PR #964 review) —
+    at every entry point that registers resources (they share one guard helper).
     """
-    agent = Agent()
+    registrar = registrar_type()
     with pytest.raises(NotImplementedError, match="Java side"):
-        agent.add_resource("router", ResourceType.MODEL_ROUTER, object())
+        registrar.add_resource("router", ResourceType.MODEL_ROUTER, object())

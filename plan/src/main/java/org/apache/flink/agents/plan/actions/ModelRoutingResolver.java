@@ -285,12 +285,14 @@ final class ModelRoutingResolver {
                         judgeResult.retryCount,
                         judgeResult.totalRetryWaitSec);
                 ChatMessage reply = judgeResult.response;
+                // Same both-or-neither guard as the metrics reader of these extraArgs keys
+                // (ChatModelAction#recordChatTokenMetrics): a half-populated or non-Number pair
+                // must not leak into the durable decision metadata, so metrics and routing
+                // metadata always agree about the same judge call.
                 Object promptTokens = reply.getExtraArgs().get("promptTokens");
                 Object completionTokens = reply.getExtraArgs().get("completionTokens");
-                if (promptTokens != null) {
+                if (promptTokens instanceof Number && completionTokens instanceof Number) {
                     judgeMetadata.put("judge_prompt_tokens", promptTokens);
-                }
-                if (completionTokens != null) {
                     judgeMetadata.put("judge_completion_tokens", completionTokens);
                 }
                 verdictModel =

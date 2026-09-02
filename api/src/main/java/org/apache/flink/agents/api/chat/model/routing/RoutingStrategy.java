@@ -108,8 +108,9 @@ public final class RoutingStrategy implements Serializable {
                 }
                 break;
             case RULE_BASED:
-                // Rule keys/patterns are validated against the candidate set in
-                // ModelRouter.Builder#build(), where the candidates are in hand.
+                // Rule keys/patterns are validated against the candidate set where the
+                // candidates are in hand: ModelRouter.Builder#build() for the fluent path,
+                // AgentPlan#validateRuleKeys for descriptor-built plans.
                 break;
             default:
                 // A new type must opt into validation explicitly (mirrors the executor

@@ -114,7 +114,7 @@ public class AgentPlan implements Serializable {
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
-        validateLlmJudgeReferences();
+        validateRoutingStrategies();
     }
 
     public AgentPlan(
@@ -133,7 +133,7 @@ public class AgentPlan implements Serializable {
         this.resourceProviders = resourceProviders;
         this.config = config;
         this.agentName = agentName;
-        validateLlmJudgeReferences();
+        validateRoutingStrategies();
     }
 
     /**
@@ -159,7 +159,7 @@ public class AgentPlan implements Serializable {
         extractResourceProvidersFromAgent(agent);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.agentName = agentName != null ? agentName : defaultAgentName(agent);
-        validateLlmJudgeReferences();
+        validateRoutingStrategies();
     }
 
     public Map<String, Action> getActions() {
@@ -714,8 +714,12 @@ public class AgentPlan implements Serializable {
      * <p>{@code CUSTOM}: the executor class must exist, implement {@link CustomRoutingExecutor},
      * and expose a supported constructor — checked without instantiation, so plan construction
      * never runs user constructors (or their static initializers).
+     *
+     * <p>{@code RULE_BASED}: the rule map must compile ({@link ModelRouter#compileRules} — the
+     * shared path, so diagnostics match the builder's) and every rule key must name a declared
+     * candidate.
      */
-    private void validateLlmJudgeReferences() {
+    private void validateRoutingStrategies() {
         if (resourceProviders == null) {
             return;
         }
@@ -760,8 +764,41 @@ public class AgentPlan implements Serializable {
                 case CUSTOM:
                     validateCustomExecutor(provider.getName(), strategy);
                     break;
+                case RULE_BASED:
+                    validateRuleKeys(
+                            provider.getName(),
+                            strategy,
+                            descriptor.getArgument(ModelRouter.CANDIDATES_KEY));
+                    break;
                 default:
                     break;
+            }
+        }
+    }
+
+    /**
+     * Rule declarations are static constraints like the judge checks above: the fluent builder
+     * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
+     * hand-built) never went through the builder. Without this arm they would surface only per
+     * record at request time — inside the durable call — where the IGNORE error policy silently
+     * drops every matching record. {@link ModelRouter#compileRules} is the single
+     * validation/compilation path (invalid patterns, non-String values, empty keys), so those
+     * diagnostics are identical to the builder's; the key-vs-candidate check mirrors build().
+     */
+    private static void validateRuleKeys(
+            String routerName, RoutingStrategy strategy, Object candidates) {
+        if (!(candidates instanceof List)) {
+            // A missing or mis-shaped 'candidates' argument gets the router constructor's own
+            // message ("requires at least one candidate") instead of a ClassCastException here.
+            return;
+        }
+        for (String ruleKey : ModelRouter.compileRules(strategy).keySet()) {
+            if (!((List<?>) candidates).contains(ruleKey)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' has routing rule key '%s' which is not one of"
+                                        + " the candidates %s.",
+                                routerName, ruleKey, candidates));
             }
         }
     }

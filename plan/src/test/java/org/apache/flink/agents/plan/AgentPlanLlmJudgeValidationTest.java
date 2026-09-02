@@ -200,6 +200,68 @@ public class AgentPlanLlmJudgeValidationTest {
                 .hasMessageContaining("not on the classpath");
     }
 
+    /**
+     * Rule keys are validated at plan construction for descriptor-built plans too (review: only the
+     * fluent builder checked them, so a deserialized descriptor with a typo'd rule key passed plan
+     * construction and failed per record at request time — where IGNORE silently drops every
+     * matching record).
+     */
+    @Test
+    void ruleKeyNamingNonCandidateFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put("default_model", "small");
+        args.put("fallback", false);
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(
+                ModelRouter.STRATEGY_ARGS_KEY,
+                Map.of(RoutingStrategy.ARG_RULES, Map.of("huge", "\\bsql\\b")));
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("rule key")
+                .hasMessageContaining("huge");
+    }
+
+    /**
+     * Invalid rule patterns fail at plan construction too: validation reuses {@code
+     * ModelRouter.compileRules} — the same path as the builder — so a descriptor-built plan gets
+     * the identical diagnostic instead of a per-record throw on the TaskManager.
+     */
+    @Test
+    void invalidRulePatternFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put("default_model", "small");
+        args.put("fallback", false);
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(
+                ModelRouter.STRATEGY_ARGS_KEY,
+                Map.of(RoutingStrategy.ARG_RULES, Map.of("big", "\\b(code|sql\\b")));
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not a valid regex");
+    }
+
+    /** The same rule declaration with keys that ARE candidates passes plan construction. */
+    @Test
+    void ruleKeysNamingCandidatesPassValidation() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put("default_model", "small");
+        args.put("fallback", false);
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(
+                ModelRouter.STRATEGY_ARGS_KEY,
+                Map.of(RoutingStrategy.ARG_RULES, Map.of("big", "\\bsql\\b")));
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatCode(() -> new AgentPlan(Map.of(), providers)).doesNotThrowAnyException();
+    }
+
     @Test
     void nullResourceProvidersStillConstruct() {
         assertThatCode(() -> new AgentPlan(Map.of(), null)).doesNotThrowAnyException();

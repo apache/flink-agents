@@ -322,6 +322,41 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.resolvedChatModels).containsExactly("small");
     }
 
+    /**
+     * Regression (review: the restructure dropped the only multi-turn rule test): rules match the
+     * MOST RECENT user message, not the first — an early SQL turn must not pin later small talk to
+     * the big model, and a late SQL turn must route big regardless of how the conversation began.
+     */
+    @Test
+    void ruleMatchesLatestUserMessageNotFirst() throws Exception {
+        FakeRunnerContext earlySqlLateChat = new FakeRunnerContext(router());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router",
+                        List.of(
+                                new ChatMessage(MessageRole.USER, "please write some sql for me"),
+                                new ChatMessage(MessageRole.ASSISTANT, "SELECT 1;"),
+                                new ChatMessage(MessageRole.USER, "thanks, how is the weather?"))),
+                earlySqlLateChat);
+        assertThat(earlySqlLateChat.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(earlySqlLateChat.routingEvent().getDecisionSource())
+                .isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(earlySqlLateChat.resolvedChatModels).containsExactly("small");
+
+        FakeRunnerContext earlyChatLateSql = new FakeRunnerContext(router());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router",
+                        List.of(
+                                new ChatMessage(MessageRole.USER, "hello there"),
+                                new ChatMessage(MessageRole.ASSISTANT, "hi!"),
+                                new ChatMessage(MessageRole.USER, "now write some sql"))),
+                earlyChatLateSql);
+        assertThat(earlyChatLateSql.routingEvent().getSelectedModel()).isEqualTo("big");
+        assertThat(earlyChatLateSql.routingEvent().getDecisionSource())
+                .isEqualTo(ModelRoutingEvent.SOURCE_STRATEGY);
+    }
+
     @Test
     void invalidCandidateFailsClearly() throws Exception {
         ModelRouter router =
@@ -1107,6 +1142,70 @@ public class ChatModelActionRoutingTest {
         assertThat(event.getSelectedModel()).isEqualTo("big");
         assertThat(event.getDecisionMs()).isEqualTo(42.0);
         assertThat(ctx.resolvedChatModels).containsExactly("big");
+    }
+
+    /**
+     * Replay for a judge router (review: both replay tests seeded a CUSTOM strategy, which takes
+     * the simple durable path). The judge path persists two records — the judge chat under {@code
+     * judge:<router>} and the decision under {@code route:<router>} — and on recovery both replay:
+     * the judge model is never re-invoked (it would throw here) and the original decision latency
+     * is reported, not a recomputation.
+     */
+    @Test
+    void judgeRouterReplayNeverReinvokesJudge() throws Exception {
+        RoutingDecision stored =
+                RoutingDecision.builder("big")
+                        .reason("stored verdict")
+                        .build()
+                        .withDecisionMs(42.0);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new RuntimeException("judge re-invoked on replay")))
+                        .register("big", new FakeChatModel())
+                        .seedDurable(
+                                "judge:router",
+                                new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"))
+                        .seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hard"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("big");
+        assertThat(event.getDecisionMs()).isEqualTo(42.0);
+        assertThat(ctx.durableCallIds).contains("judge:router", "route:router");
+        assertThat(ctx.hasChatResponse()).isTrue();
+    }
+
+    /**
+     * Non-numeric token values in the judge reply's extraArgs stay out of the decision metadata —
+     * same {@code instanceof Number} guard as the metrics reader of these keys (review).
+     */
+    @Test
+    void judgeNonNumericTokenCountsAreDropped() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new ChatMessage(
+                                                MessageRole.ASSISTANT,
+                                                "{\"model\": \"big\"}",
+                                                Map.of(
+                                                        "promptTokens", "12",
+                                                        "completionTokens", "3"))))
+                        .register("big", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hard"))),
+                ctx);
+
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getMetadata()).doesNotContainKey("judge_prompt_tokens");
+        assertThat(event.getMetadata()).doesNotContainKey("judge_completion_tokens");
+        assertThat(event.getSelectedModel()).isEqualTo("big");
     }
 
     /** Judge token accounting (review: both keys were never produced by any test). */
