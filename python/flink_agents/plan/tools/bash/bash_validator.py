@@ -47,8 +47,6 @@ _ALLOWED_NAMED = frozenset(
         "program",
         "command",
         "command_name",
-        # `export VAR=...`, `readonly`, `declare`, `local`, `typeset`
-        "declaration_command",
         "pipeline",
         "list",
         "redirected_statement",
@@ -67,7 +65,6 @@ _ALLOWED_NAMED = frozenset(
         "number",
         "simple_expansion",  # $VAR
         "expansion",  # ${VAR}
-        "arithmetic_expansion",  # $((...))
         "binary_expression",
         "unary_expression",
         "parenthesized_expression",
@@ -121,6 +118,10 @@ def _walk(
     if node.is_named and node.type not in _ALLOWED_NAMED:
         snippet = node.text.decode("utf-8", errors="replace")[:80]
         return f"Disallowed shell construct '{node.type}' in: {snippet!r}"
+    if node.type == "variable_assignment" and (
+        node.parent is None or node.parent.type != "command"
+    ):
+        return "Standalone variable assignment without an executable is not allowed."
     if node.type == "command":
         err = _validate_command_node(node, allowed_commands, allowed_script_dirs, cwd)
         if err is not None:
@@ -140,9 +141,9 @@ def _validate_command_node(
 ) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
-        # Commands without a resolvable name (edge case, e.g. bare
-        # variable-assignment parsed as `command`) — nothing to validate.
-        return None
+        # Fail closed for constructs such as bare variable assignments. Bash
+        # can later reinterpret their values in arithmetic contexts.
+        return "Command without an executable is not allowed."
     executable = name_node.text.decode("utf-8", errors="replace")
     if executable in allowed_commands:
         return None

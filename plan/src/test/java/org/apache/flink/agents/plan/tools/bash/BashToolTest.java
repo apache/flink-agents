@@ -23,12 +23,15 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BashToolTest {
@@ -68,6 +71,34 @@ class BashToolTest {
                 tool().call(args("for i in 1 2 3; do echo $i; done", List.of("echo"), List.of()));
         String out = (String) r.getResult();
         assertTrue(out.startsWith("Command rejected:"));
+    }
+
+    @Test
+    void integerDeclarationCannotReevaluateCommandSubstitution(@TempDir Path tempDir) {
+        Path marker = tempDir.resolve("integer-declaration-marker");
+        ToolResponse r =
+                tool().call(
+                                args(
+                                        "declare -i VALUE='$(touch " + marker + ")'",
+                                        List.of(),
+                                        List.of()));
+        String out = (String) r.getResult();
+        assertTrue(out.startsWith("Command rejected:"));
+        assertFalse(marker.toFile().exists());
+    }
+
+    @Test
+    void arithmeticExpansionCannotReevaluateAssignedValue(@TempDir Path tempDir) {
+        Path marker = tempDir.resolve("arithmetic-expansion-marker");
+        ToolResponse r =
+                tool().call(
+                                args(
+                                        "VALUE='$(touch " + marker + ")'; echo $((VALUE))",
+                                        List.of("echo"),
+                                        List.of()));
+        String out = (String) r.getResult();
+        assertTrue(out.startsWith("Command rejected:"));
+        assertFalse(marker.toFile().exists());
     }
 
     @Test

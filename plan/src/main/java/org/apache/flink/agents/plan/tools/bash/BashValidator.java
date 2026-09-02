@@ -56,8 +56,6 @@ public final class BashValidator {
                     "program",
                     "command",
                     "command_name",
-                    // `export VAR=...`, `readonly`, `declare`, `local`, `typeset`
-                    "declaration_command",
                     "pipeline",
                     "list",
                     "redirected_statement",
@@ -76,7 +74,6 @@ public final class BashValidator {
                     "number",
                     "simple_expansion", // $VAR
                     "expansion", // ${VAR}
-                    "arithmetic_expansion", // $((...))
                     "binary_expression",
                     "unary_expression",
                     "parenthesized_expression",
@@ -143,6 +140,12 @@ public final class BashValidator {
             return Optional.of(
                     "Disallowed shell construct '" + node.getType() + "' in: '" + snippet + "'");
         }
+        TSNode parent = node.getParent();
+        if ("variable_assignment".equals(node.getType())
+                && (parent == null || parent.isNull() || !"command".equals(parent.getType()))) {
+            return Optional.of(
+                    "Standalone variable assignment without an executable is not allowed.");
+        }
         if ("command".equals(node.getType())) {
             Optional<String> err =
                     validateCommand(node, command, allowedCommands, allowedScriptDirs, cwd);
@@ -168,8 +171,9 @@ public final class BashValidator {
             @Nullable String cwd) {
         TSNode nameNode = commandNode.getChildByFieldName("name");
         if (nameNode == null || nameNode.isNull()) {
-            // Bare variable-assignment parsed as command — nothing to validate.
-            return Optional.empty();
+            // Fail closed for constructs such as bare variable assignments. Bash can later
+            // reinterpret their values in arithmetic contexts.
+            return Optional.of("Command without an executable is not allowed.");
         }
         String executable = nodeText(nameNode, command);
         if (allowedCommands.contains(executable)) {

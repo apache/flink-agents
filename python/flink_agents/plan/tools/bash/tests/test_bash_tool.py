@@ -116,6 +116,11 @@ class TestValidateCommand:
     def test_reject_env_prefix_command_not_whitelisted(self) -> None:
         assert validate_command("FOO=bar rm -rf /", ["echo"], []) is not None
 
+    def test_reject_standalone_variable_assignment(self) -> None:
+        error = validate_command("VALUE='1 + 2'", ["echo"], [])
+        assert error is not None
+        assert "executable" in error
+
     # -- injection vectors: MUST be rejected ------------------------------
 
     def test_reject_dollar_paren_substitution(self) -> None:
@@ -164,6 +169,16 @@ class TestValidateCommand:
     def test_reject_function_definition(self) -> None:
         error = validate_command("f() { echo hi; }", ["echo"], [])
         assert error is not None
+
+    def test_reject_declaration_command(self) -> None:
+        error = validate_command("declare -i VALUE='1 + 2'", ["echo"], [])
+        assert error is not None
+        assert "declaration_command" in error
+
+    def test_reject_arithmetic_expansion(self) -> None:
+        error = validate_command("echo $((1 + 2))", ["echo"], [])
+        assert error is not None
+        assert "arithmetic_expansion" in error
 
     def test_reject_heredoc(self) -> None:
         error = validate_command("cat <<EOF\n$(rm /)\nEOF", ["cat"], [])
@@ -236,6 +251,32 @@ class TestBashTool:
             allowed_script_dirs=[],
         )
         assert "Command rejected" in result
+
+    def test_reject_substitution_re_evaluated_by_integer_declaration(
+        self, tool: BashTool, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "integer-declaration-marker"
+        result = tool.call(
+            command=f"declare -i VALUE='$(touch {marker})'",
+            timeout=10,
+            allowed_commands=[],
+            allowed_script_dirs=[],
+        )
+        assert "Command rejected" in result
+        assert not marker.exists()
+
+    def test_reject_substitution_re_evaluated_by_arithmetic_expansion(
+        self, tool: BashTool, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "arithmetic-expansion-marker"
+        result = tool.call(
+            command=f"VALUE='$(touch {marker})'; echo $((VALUE))",
+            timeout=10,
+            allowed_commands=["echo"],
+            allowed_script_dirs=[],
+        )
+        assert "Command rejected" in result
+        assert not marker.exists()
 
     def test_no_allowed_commands_rejects_everything(self, tool: BashTool) -> None:
         result = tool.call(command="echo hello", timeout=10)

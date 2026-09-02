@@ -76,10 +76,35 @@ class BashValidatorTest {
     }
 
     @Test
-    void arithmeticExpansionAllowed() {
+    void arithmeticExpansionRejected() {
+        Optional<String> r =
+                BashValidator.validate("echo $((1+2))", List.of("echo"), List.of(), null);
+        assertTrue(r.isPresent());
+        assertTrue(r.get().contains("arithmetic_expansion"));
+    }
+
+    @Test
+    void declarationCommandRejected() {
+        Optional<String> r =
+                BashValidator.validate(
+                        "declare -i VALUE='1 + 2'", List.of("echo"), List.of(), null);
+        assertTrue(r.isPresent());
+        assertTrue(r.get().contains("declaration_command"));
+    }
+
+    @Test
+    void standaloneVariableAssignmentRejected() {
+        Optional<String> r =
+                BashValidator.validate("VALUE='1 + 2'", List.of("echo"), List.of(), null);
+        assertTrue(r.isPresent());
+        assertTrue(r.get().contains("executable"));
+    }
+
+    @Test
+    void variableAssignmentPrefixWithAllowedCommandPasses() {
         assertEquals(
                 Optional.empty(),
-                BashValidator.validate("echo $((1+2))", List.of("echo"), List.of(), null));
+                BashValidator.validate("VALUE=abc echo hi", List.of("echo"), List.of(), null));
     }
 
     @Test
