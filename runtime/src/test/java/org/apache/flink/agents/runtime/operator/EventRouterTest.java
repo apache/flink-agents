@@ -288,6 +288,6 @@ class EventRouterTest {
         FlinkAgentsMetricGroupImpl metricGroup =
                 mock(FlinkAgentsMetricGroupImpl.class, RETURNS_DEEP_STUBS);
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
-        return new BuiltInMetrics(metricGroup, plan);
+        return new BuiltInMetrics(metricGroup, plan, ignored -> false);
     }
 }

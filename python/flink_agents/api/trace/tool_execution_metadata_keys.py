@@ -27,4 +27,5 @@ class ToolExecutionMetadataKeys:
     TOOL_TYPE = "toolType"
     MCP_SERVER = "mcpServer"
     SKILL_NAME = "skillName"
+    SKILL_REGISTERED = "skillRegistered"
     SKILL_RESOURCE_PATH = "skillResourcePath"

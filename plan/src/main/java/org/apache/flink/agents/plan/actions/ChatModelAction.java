@@ -203,15 +203,16 @@ public class ChatModelAction {
     }
 
     private static void recordRetryMetrics(
-            RunnerContext ctx, String model, int retryCount, int totalRetryWaitSec) {
+            RunnerContext ctx, String modelResource, int retryCount, int totalRetryWaitSec) {
         if (retryCount <= 0) {
             return;
         }
         FlinkAgentsMetricGroup metricGroup = ctx.getActionMetricGroup();
         if (metricGroup != null) {
-            FlinkAgentsMetricGroup modelGroup = metricGroup.getSubGroup("model", model);
-            modelGroup.getCounter("retryCount").inc(retryCount);
-            modelGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
+            FlinkAgentsMetricGroup modelResourceGroup =
+                    metricGroup.getSubGroup("model_resource", modelResource);
+            modelResourceGroup.getCounter("retryCount").inc(retryCount);
+            modelResourceGroup.getCounter("retryWaitSec").inc(totalRetryWaitSec);
         }
     }
 
@@ -412,7 +413,7 @@ public class ChatModelAction {
                 recordAttemptRetryStats(
                         ctx,
                         initialRequestId,
-                        result.chatModel,
+                        result.model,
                         result.retryCount,
                         result.totalRetryWaitSec);
                 if (selection.isRouter) {
@@ -481,7 +482,7 @@ public class ChatModelAction {
                 return;
             } catch (ChatModelInvoker.ChatAttemptFailed e) {
                 recordAttemptRetryStats(
-                        ctx, initialRequestId, e.chatModel, e.retryCount, e.totalRetryWaitSec);
+                        ctx, initialRequestId, e.model, e.retryCount, e.totalRetryWaitSec);
                 // Keep every candidate's failure: chain the previous error into the new one so
                 // exhaustion surfaces A's and B's errors as suppressed of C's, not just C's.
                 if (lastError != null && lastError != e.error) {
@@ -525,7 +526,7 @@ public class ChatModelAction {
     private static void recordAttemptRetryStats(
             RunnerContext ctx,
             UUID initialRequestId,
-            BaseChatModelSetup chatModel,
+            String modelResource,
             int retryCount,
             int retryWaitSec)
             throws Exception {
@@ -533,12 +534,7 @@ public class ChatModelAction {
             return;
         }
         accumulateRetryStats(ctx.getSensoryMemory(), initialRequestId, retryCount, retryWaitSec);
-        String metricModel = chatModel == null ? null : chatModel.getConnectionName();
-        recordRetryMetrics(
-                ctx,
-                metricModel == null || metricModel.isEmpty() ? "unknown" : metricModel,
-                retryCount,
-                retryWaitSec);
+        recordRetryMetrics(ctx, modelResource, retryCount, retryWaitSec);
     }
 
     /**
