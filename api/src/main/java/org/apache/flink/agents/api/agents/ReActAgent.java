@@ -205,7 +205,7 @@ public class ReActAgent extends Agent {
         if (response.getExtraArgs().containsKey(STRUCTURED_OUTPUT)) {
             output = response.getExtraArgs().get(STRUCTURED_OUTPUT);
         } else {
-            output = String.valueOf(response.getContent());
+            output = response.getText();
         }
 
         ctx.sendEvent(new OutputEvent(output));

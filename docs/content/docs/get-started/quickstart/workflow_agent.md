@@ -154,7 +154,7 @@ class ReviewAnalysisAgent(Agent):
         """Process chat response event and send output event."""
         chat_response = ChatResponseEvent.from_event(event)
         try:
-            json_content = json.loads(chat_response.response.content)
+            json_content = json.loads(chat_response.response.text)
             ctx.send_event(
                 OutputEvent(
                     output=ProductReviewAnalysisRes(
@@ -166,7 +166,7 @@ class ReviewAnalysisAgent(Agent):
             )
         except Exception:
             logging.exception(
-                f"Error processing chat response {chat_response.response.content}"
+                f"Error processing chat response {chat_response.response.text}"
             )
 
             # To fail the agent, you can raise an exception here.

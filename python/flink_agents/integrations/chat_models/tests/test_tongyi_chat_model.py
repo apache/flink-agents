@@ -43,11 +43,11 @@ def test_tongyi_chat() -> None:
     """Test basic chat functionality of TongyiChatModelConnection."""
     connection = TongyiChatModelConnection()
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+        [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
     assert response is not None
-    assert response.content is not None
-    assert response.content.strip() != ""
+    assert response.text is not None
+    assert response.text.strip() != ""
     assert response.role == MessageRole.ASSISTANT
 
 
@@ -99,9 +99,7 @@ def test_tongyi_chat_with_tools() -> None:
 
     response = llm.chat(
         [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="Could you help me calculate the sum of 1 and 2?",
+            ChatMessage.of(MessageRole.USER, "Could you help me calculate the sum of 1 and 2?",
             )
         ]
     )
@@ -164,13 +162,13 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     llm.open()
 
     response = llm.chat(
-        [ChatMessage(role=MessageRole.USER, content="What's the meaning of life?")]
+        [ChatMessage.of(MessageRole.USER, "What's the meaning of life?")]
     )
 
     mock_call.assert_called_once()
 
     assert (
-        response.content
+        response.text
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
     assert "reasoning" in response.extra_args

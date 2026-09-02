@@ -47,7 +47,7 @@ client = pull_model(test_model)
 def test_ollama_chat() -> None:
     server = OllamaChatModelConnection(request_timeout=120.0)
     response = server.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+        [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
     assert response is not None
     assert str(response).strip() != ""
@@ -101,9 +101,7 @@ def test_ollama_chat_with_tools() -> None:
 
     response = llm.chat(
         [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="Could you help me calculate the sum of 1 and 2?",
+            ChatMessage.of(MessageRole.USER, "Could you help me calculate the sum of 1 and 2?",
             )
         ]
     )
@@ -219,9 +217,7 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     # Call the chat method
     response = llm.chat(
         [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="What's the meaning of life?",
+            ChatMessage.of(MessageRole.USER, "What's the meaning of life?",
             )
         ]
     )
@@ -231,7 +227,7 @@ def test_ollama_chat_with_extract_reasoning() -> None:
 
     # Check that the response content has been cleaned
     assert (
-        response.content
+        response.text
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
     # Check that the reasoning has been extracted and stored

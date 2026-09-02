@@ -132,9 +132,7 @@ class FlinkAgentsLLM(LLMBase):
             The generated response content as a string.
         """
         chat_messages = [
-            ChatMessage(
-                role=MessageRole(msg["role"]),
-                content=msg["content"],
+            ChatMessage.of(MessageRole(msg["role"]), msg["content"],
             )
             for msg in messages
         ]
@@ -146,7 +144,7 @@ class FlinkAgentsLLM(LLMBase):
 
         # Mem0 expects a plain string response from generate_response.
         # It handles JSON parsing internally via remove_code_blocks/json.loads.
-        return response.content
+        return response.text
 
 
 class _OutputData(BaseModel):

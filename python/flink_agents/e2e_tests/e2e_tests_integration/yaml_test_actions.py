@@ -112,7 +112,7 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
     ctx.send_event(
         ChatRequestEvent(
             model=model_name,
-            messages=[ChatMessage(role=MessageRole.USER, content=data.text)],
+            messages=[ChatMessage.of(MessageRole.USER, data.text)],
         )
     )
 
@@ -129,7 +129,7 @@ def chat_request(event: Event, ctx: RunnerContext) -> None:
     ctx.send_event(
         ChatRequestEvent(
             model="chat_model",
-            messages=[ChatMessage(role=MessageRole.USER, content=data.text)],
+            messages=[ChatMessage.of(MessageRole.USER, data.text)],
         )
     )
 
@@ -138,11 +138,11 @@ def process_chat_response(event: Event, ctx: RunnerContext) -> None:
     """Emit the model's text response, tagged with the original input id."""
     chat_response = ChatResponseEvent.from_event(event)
     response = chat_response.response
-    if not response or not response.content:
+    if not response or not response.text:
         return
     input_id = ctx.short_term_memory.get("input_id")
     ctx.send_event(
-        OutputEvent(output=YamlChatOutput(id=input_id, answer=response.content))
+        OutputEvent(output=YamlChatOutput(id=input_id, answer=response.text))
     )
 
 
@@ -162,9 +162,7 @@ def commentary_request(event: Event, ctx: RunnerContext) -> None:
         ChatRequestEvent(
             model="chat_model",
             messages=[
-                ChatMessage(
-                    role=MessageRole.USER,
-                    content=(
+                ChatMessage.of(MessageRole.USER, (
                         "Here is a math answer from another assistant: "
                         f"{data.answer!r}. Reply with the numeric result only."
                     ),

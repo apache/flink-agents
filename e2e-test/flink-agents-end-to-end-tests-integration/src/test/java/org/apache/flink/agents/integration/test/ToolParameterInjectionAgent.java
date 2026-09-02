@@ -68,7 +68,7 @@ public class ToolParameterInjectionAgent extends Agent {
                 Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
-                return new ChatMessage(MessageRole.ASSISTANT, lastMessage.getContent());
+                return new ChatMessage(MessageRole.ASSISTANT, lastMessage.getText());
             }
 
             for (org.apache.flink.agents.api.tools.Tool tool : tools) {
@@ -78,7 +78,7 @@ public class ToolParameterInjectionAgent extends Agent {
                             "Injected argument leaked into tool schema: " + inputSchema);
                 }
             }
-            String orderId = lastMessage.getContent();
+            String orderId = lastMessage.getText();
             return new ChatMessage(
                     MessageRole.ASSISTANT,
                     "",
@@ -143,6 +143,6 @@ public class ToolParameterInjectionAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void emitResult(Event event, RunnerContext ctx) {
         ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
-        ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getText()));
     }
 }

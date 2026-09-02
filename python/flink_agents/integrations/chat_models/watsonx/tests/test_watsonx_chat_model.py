@@ -56,11 +56,11 @@ def test_watsonx_chat() -> None:
     """Test basic chat functionality of WatsonxChatModelConnection."""
     connection = WatsonxChatModelConnection()
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+        [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
     assert response is not None
-    assert response.content is not None
-    assert response.content.strip() != ""
+    assert response.text is not None
+    assert response.text.strip() != ""
     assert response.role == MessageRole.ASSISTANT
 
 
@@ -113,7 +113,7 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     llm.open()
 
     response = llm.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], top_p=0.5
+        [ChatMessage.of(MessageRole.USER, "Hello!")], top_p=0.5
     )
 
     mock_model.chat.assert_called_once()
@@ -126,7 +126,7 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     }
 
     assert response.role == MessageRole.ASSISTANT
-    assert response.content == "Hello there!"
+    assert response.text == "Hello there!"
     assert response.extra_args["model_name"] == test_model
     assert response.extra_args["promptTokens"] == 100
     assert response.extra_args["completionTokens"] == 50
@@ -160,7 +160,7 @@ def test_watsonx_tool_call_response_mocked(monkeypatch: pytest.MonkeyPatch) -> N
 
     connection = _fake_connection()
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="What is 1 + 2?")],
+        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")],
         model=test_model,
     )
 
@@ -203,10 +203,10 @@ def test_chat_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -> Non
 
     connection = _fake_connection(max_retries=3)
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+        [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
 
-    assert response.content == "Recovered!"
+    assert response.text == "Recovered!"
     assert mock_model.chat.call_count == 3
     assert [call.args[0] for call in sleep.call_args_list] == [5, 5]
 
@@ -218,7 +218,7 @@ def test_chat_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -> Non
     mock_model.chat.reset_mock()
     with pytest.raises(ApiRequestFailure):
         connection.chat(
-            [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+            [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
         )
     assert mock_model.chat.call_count == 1
 
@@ -260,8 +260,8 @@ def test_parse_tool_arguments_messy_formats() -> None:
 def test_convert_to_watsonx_messages_round_trip() -> None:
     """Test conversion of assistant tool calls and tool results to watsonx format."""
     messages = [
-        ChatMessage(role=MessageRole.SYSTEM, content="You are helpful."),
-        ChatMessage(role=MessageRole.USER, content="What is 1 + 2?"),
+        ChatMessage.of(MessageRole.SYSTEM, "You are helpful."),
+        ChatMessage.of(MessageRole.USER, "What is 1 + 2?"),
         ChatMessage(
             role=MessageRole.ASSISTANT,
             tool_calls=[
@@ -273,9 +273,7 @@ def test_convert_to_watsonx_messages_round_trip() -> None:
                 }
             ],
         ),
-        ChatMessage(
-            role=MessageRole.TOOL,
-            content="3",
+        ChatMessage.of(MessageRole.TOOL, "3",
             extra_args={"external_id": "call_abc123"},
         ),
     ]
@@ -359,7 +357,7 @@ def test_configuration_contract(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(ValueError, match="additional_kwargs"):
         _fake_connection().chat(
-            [ChatMessage(role=MessageRole.USER, content="Hello!")],
+            [ChatMessage.of(MessageRole.USER, "Hello!")],
             model=test_model,
             additional_kwargs={"temperature": 5.0},
         )
@@ -372,14 +370,14 @@ def test_additional_kwargs_reject_request_owned_fields(reserved_key: str) -> Non
     """Framework-owned request fields cannot be replaced by static configuration."""
     with pytest.raises(ValueError, match=reserved_key):
         _fake_connection().chat(
-            [ChatMessage(role=MessageRole.USER, content="Hello!")],
+            [ChatMessage.of(MessageRole.USER, "Hello!")],
             model=test_model,
             additional_kwargs={reserved_key: "override"},
         )
     if reserved_key not in {"messages", "tools"}:
         with pytest.raises(ValueError, match=reserved_key):
             _fake_connection().chat(
-                [ChatMessage(role=MessageRole.USER, content="Hello!")],
+                [ChatMessage.of(MessageRole.USER, "Hello!")],
                 model=test_model,
                 **{reserved_key: "override"},
             )

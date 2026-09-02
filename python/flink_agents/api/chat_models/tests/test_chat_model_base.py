@@ -66,7 +66,7 @@ class _RecordingConnection(BaseChatModelConnection):
         self.captured_messages = list(messages)
         self.captured_kwargs = dict(kwargs)
         self.captured_output_schema = output_schema
-        return ChatMessage(role=MessageRole.ASSISTANT, content="ok")
+        return ChatMessage.of(MessageRole.ASSISTANT, "ok")
 
 
 class _RecordingChatModelSetup(BaseChatModelSetup):
@@ -106,7 +106,7 @@ def test_chat_fills_template_from_prompt_args_parameter() -> None:
     setup.chat([], prompt_args={"key": "value"})
 
     assert len(connection.captured_messages) == 1
-    assert connection.captured_messages[0].content == "Task: value"
+    assert connection.captured_messages[0].text == "Task: value"
 
 
 def test_chat_does_not_read_template_vars_from_extra_args() -> None:
@@ -114,14 +114,13 @@ def test_chat_does_not_read_template_vars_from_extra_args() -> None:
     prompt = Prompt.from_text(text="Task: {key}")
     setup, connection = _build_setup(prompt)
 
-    user_message = ChatMessage(
-        role=MessageRole.USER, content="hello", extra_args={"key": "value"}
+    user_message = ChatMessage.of(MessageRole.USER, "hello", extra_args={"key": "value"}
     )
     setup.chat([user_message], prompt_args={})
 
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content == "Task: {key}"
-    assert connection.captured_messages[1].content == "hello"
+    assert connection.captured_messages[0].text == "Task: {key}"
+    assert connection.captured_messages[1].text == "hello"
 
 
 def test_chat_refills_template_on_subsequent_invocations() -> None:
@@ -131,13 +130,13 @@ def test_chat_refills_template_on_subsequent_invocations() -> None:
 
     setup.chat([], prompt_args={"key": "v1"})
     assert len(connection.captured_messages) == 1
-    assert connection.captured_messages[0].content == "Task: v1"
+    assert connection.captured_messages[0].text == "Task: v1"
 
-    tool_response = ChatMessage(role=MessageRole.TOOL, content="tool result")
+    tool_response = ChatMessage.of(MessageRole.TOOL, "tool result")
     setup.chat([tool_response], prompt_args={"key": "v1"})
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content == "Task: v1"
-    assert connection.captured_messages[1].content == "tool result"
+    assert connection.captured_messages[0].text == "Task: v1"
+    assert connection.captured_messages[1].text == "tool result"
 
 
 def test_default_capability_predicate_is_false() -> None:

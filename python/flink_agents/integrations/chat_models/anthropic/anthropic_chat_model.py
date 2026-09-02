@@ -62,7 +62,7 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
                 {
                     "type": "tool_result",
                     "tool_use_id": message.extra_args.get("external_id"),
-                    "content": message.content,
+                    "content": message.text,
                 }
             ],
         }
@@ -72,7 +72,7 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
         content = (
             anthropic_content_blocks
             if anthropic_content_blocks is not None
-            else message.content
+            else message.text
         )
         return {
             "role": message.role.value,
@@ -81,7 +81,7 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
     else:
         return {
             "role": message.role.value,
-            "content": message.content,
+            "content": message.text,
         }
 
 
@@ -110,7 +110,7 @@ def convert_to_anthropic_system_prompts(
         message for message in messages if message.role == MessageRole.SYSTEM
     ]
     return [
-        TextBlockParam(type="text", text=message.content) for message in system_messages
+        TextBlockParam(type="text", text=message.text) for message in system_messages
     ]
 
 
@@ -525,18 +525,14 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             ]
 
             extra_args["anthropic_content_blocks"] = message.content
-            return ChatMessage(
-                role=MessageRole(message.role),
-                content=text,
+            return ChatMessage.of(MessageRole(message.role), text,
                 tool_calls=tool_calls,
                 extra_args=extra_args,
             )
         else:
             # TODO: handle other stop_reason values according to Anthropic API:
             #  https://docs.anthropic.com/en/api/messages#response-stop-reason
-            return ChatMessage(
-                role=MessageRole(message.role),
-                content=text,
+            return ChatMessage.of(MessageRole(message.role), text,
                 extra_args=extra_args,
             )
 

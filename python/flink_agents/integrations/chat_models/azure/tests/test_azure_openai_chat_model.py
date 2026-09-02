@@ -64,7 +64,7 @@ def test_azure_openai_chat_model() -> None:
         connection="azure_openai",
         resource_context=mock_ctx,
     )
-    response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+    response = chat_model.chat([ChatMessage.of(MessageRole.USER, "Hello!")])
     assert response is not None
     assert str(response).strip() != ""
 
@@ -112,9 +112,7 @@ def test_azure_openai_chat_with_tools() -> None:
     )
     response = chat_model.chat(
         [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="You MUST use the add tool to calculate: What is 377 + 688?",
+            ChatMessage.of(MessageRole.USER, "You MUST use the add tool to calculate: What is 377 + 688?",
             )
         ]
     )
@@ -212,7 +210,7 @@ def test_chat_rejects_reserved_key_in_additional_kwargs() -> None:
     )
     with pytest.raises(ValueError, match="additional_kwargs"):
         connection.chat(
-            messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+            messages=[ChatMessage.of(MessageRole.USER, "hi")],
             model="my-deployment",
             temperature=0.3,
             additional_kwargs={"temperature": 5.0},

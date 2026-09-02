@@ -61,7 +61,7 @@ public final class RoutingContext {
         this.router = router;
         // Deep copy: the wrapping list is unmodifiable, but ChatMessage is mutable and the
         // caller passes the same instances that go to the model — a strategy calling
-        // setContent(...) on a shallow copy would silently rewrite the prompt actually sent.
+        // setText(...) on a shallow copy would silently rewrite the prompt actually sent.
         this.messages =
                 messages == null
                         ? Collections.emptyList()
@@ -97,7 +97,9 @@ public final class RoutingContext {
                     toolCalls.add(call == null ? null : new HashMap<>(call));
                 }
             }
-            copy.add(new ChatMessage(m.getRole(), m.getContent(), toolCalls, m.getExtraArgs()));
+            // The full constructor copies the block list; blocks themselves are shared, matching
+            // the copy depth used for extraArgs values.
+            copy.add(new ChatMessage(m.getRole(), m.getBlocks(), toolCalls, m.getExtraArgs()));
         }
         return copy;
     }
@@ -136,7 +138,7 @@ public final class RoutingContext {
     public String firstUserMessage() {
         for (ChatMessage message : messages) {
             if (message.getRole() == MessageRole.USER) {
-                return message.getContent() == null ? "" : message.getContent();
+                return message.getText();
             }
         }
         return "";
@@ -151,7 +153,7 @@ public final class RoutingContext {
         for (int i = messages.size() - 1; i >= 0; i--) {
             ChatMessage message = messages.get(i);
             if (message.getRole() == MessageRole.USER) {
-                return message.getContent() == null ? "" : message.getContent();
+                return message.getText();
             }
         }
         return "";

@@ -97,7 +97,7 @@ class MyAgent(Agent):
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
-        response_content = chat_response.response.content
+        response_content = chat_response.response.text
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -1480,7 +1480,7 @@ class MyAgent(Agent):
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
-        response_content = chat_response.response.content
+        response_content = chat_response.response.text
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```

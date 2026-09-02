@@ -72,6 +72,6 @@ public class TokenMetricsE2EAgent extends Agent {
 
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(event.getResponse().getText()));
     }
 }

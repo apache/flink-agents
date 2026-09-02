@@ -173,9 +173,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         if extract_reasoning and reasoning_content:
             extra_args["reasoning"] = reasoning_content
 
-        return ChatMessage(
-            role=MessageRole(response_message.get("role", "assistant")),
-            content=content,
+        return ChatMessage.of(
+            MessageRole(response_message.get("role", "assistant")),
+            content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )
@@ -188,7 +188,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         for message in messages:
             msg_dict: Dict[str, Any] = {
                 "role": message.role.value,
-                "content": message.content,
+                "content": message.text,
             }
 
             if message.tool_calls:

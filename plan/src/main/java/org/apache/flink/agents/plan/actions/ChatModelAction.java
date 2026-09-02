@@ -324,7 +324,7 @@ public class ChatModelAction {
     @SuppressWarnings("unchecked")
     static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
             throws JsonProcessingException {
-        String output = response.getContent();
+        String output = response.getText();
         output = cleanLlmResponse(output);
         Object structuredOutput;
         if (outputSchema instanceof Class) {

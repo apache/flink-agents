@@ -142,9 +142,7 @@ class MyMCPAgent(Agent):
             )
         else:
             # Send chat request asking to use the add tool
-            msg = ChatMessage(
-                role=MessageRole.USER,
-                content=f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
+            msg = ChatMessage.of(MessageRole.USER, f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
             )
             ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
 
@@ -153,8 +151,8 @@ class MyMCPAgent(Agent):
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response and output result."""
         response = ChatResponseEvent.from_event(event).response
-        if response and response.content:
-            ctx.send_event(OutputEvent(output=response.content))
+        if response and response.text:
+            ctx.send_event(OutputEvent(output=response.text))
 
 
 current_dir = Path(__file__).parent

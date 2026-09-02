@@ -217,7 +217,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(1, typed.getMessages().size(), "Expected one message.");
         ChatMessage msg = typed.getMessages().get(0);
         assertEquals(MessageRole.USER, msg.getRole(), "Role mismatch on Python-produced message.");
-        assertEquals("hello world", msg.getContent());
+        assertEquals("hello world", msg.getText());
     }
 
     /**
@@ -281,7 +281,7 @@ class CrossLanguageEventSnapshotTest {
         ChatMessage response = typed.getResponse();
         assertNotNull(response, "response field is null.");
         assertEquals(MessageRole.ASSISTANT, response.getRole(), "Role mismatch on response.");
-        assertEquals("hi there", response.getContent());
+        assertEquals("hi there", response.getText());
     }
 
     // ── ToolRequestEvent ───────────────────────────────────────────────────

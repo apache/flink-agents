@@ -68,9 +68,9 @@ def test_tool_use_response_without_leading_text() -> None:
         usage=_usage(),
     )
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="add 1 and 2")]
+        [ChatMessage.of(MessageRole.USER, "add 1 and 2")]
     )
-    assert response.content == ""
+    assert response.text == ""
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0]["function"]["name"] == "add"
 
@@ -90,9 +90,9 @@ def test_tool_use_response_keeps_leading_text() -> None:
         usage=_usage(),
     )
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="add 1 and 2")]
+        [ChatMessage.of(MessageRole.USER, "add 1 and 2")]
     )
-    assert response.content == "Let me add those."
+    assert response.text == "Let me add those."
     assert len(response.tool_calls) == 1
 
 
@@ -107,9 +107,9 @@ def test_plain_text_response() -> None:
         usage=_usage(),
     )
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")]
+        [ChatMessage.of(MessageRole.USER, "hi")]
     )
-    assert response.content == "Hello!"
+    assert response.text == "Hello!"
 
 
 def test_plain_text_response_keeps_token_usage() -> None:
@@ -126,7 +126,7 @@ def test_plain_text_response_keeps_token_usage() -> None:
         usage=Usage(input_tokens=7, output_tokens=3),
     )
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="claude-sonnet-4-5",
     )
     assert response.extra_args["model_name"] == "claude-sonnet-4-5"
@@ -148,7 +148,7 @@ def test_tool_use_response_keeps_token_usage() -> None:
         usage=Usage(input_tokens=7, output_tokens=3),
     )
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="add 1 and 2")],
+        [ChatMessage.of(MessageRole.USER, "add 1 and 2")],
         model="claude-sonnet-4-5",
     )
     assert response.extra_args["promptTokens"] == 7
@@ -252,7 +252,7 @@ def _request_kwargs(**chat_kwargs: Any) -> Dict[str, Any]:
         usage=_usage(),
     )
     connection = _connection_returning(message)
-    connection.chat([ChatMessage(role=MessageRole.USER, content="hi")], **chat_kwargs)
+    connection.chat([ChatMessage.of(MessageRole.USER, "hi")], **chat_kwargs)
     return connection.client.messages.create.call_args.kwargs
 
 
@@ -468,10 +468,10 @@ def _prefill_outcome(**chat_kwargs: Any) -> tuple:
     )
     connection = _connection_returning(message)
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")], **chat_kwargs
+        [ChatMessage.of(MessageRole.USER, "hi")], **chat_kwargs
     )
     sent = connection.client.messages.create.call_args.kwargs["messages"]
-    return sent[-1] == {"role": "assistant", "content": "{"}, response.content
+    return sent[-1] == {"role": "assistant", "content": "{"}, response.text
 
 
 def test_json_prefill_not_applied_by_default() -> None:

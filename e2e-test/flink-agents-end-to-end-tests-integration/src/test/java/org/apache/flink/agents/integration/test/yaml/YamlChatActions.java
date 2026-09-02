@@ -129,11 +129,11 @@ public final class YamlChatActions {
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         ChatMessage response = chatResponse.getResponse();
-        if (response == null || response.getContent() == null) {
+        if (response == null || response.getText() == null) {
             return;
         }
         Integer inputId = (Integer) ctx.getShortTermMemory().get("input_id").getValue();
-        ctx.sendEvent(new OutputEvent(new YamlChatOutput(inputId, response.getContent())));
+        ctx.sendEvent(new OutputEvent(new YamlChatOutput(inputId, response.getText())));
     }
 
     /**

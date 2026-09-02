@@ -106,7 +106,7 @@ def test_native_response_format_applied_for_qwen_model() -> None:
     connection._client = mock_client
 
     connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="Qwen/Qwen2.5-7B-Instruct",
         output_schema=OutputSchema(output_schema=_Person),
     )

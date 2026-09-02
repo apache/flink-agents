@@ -45,7 +45,7 @@ def test_refusal_is_preserved_in_extra_args(refusal: str) -> None:
 
     assert result.extra_args["refusal"] == refusal
     assert result.extra_args["promptTokens"] == 3
-    assert result.content == ""
+    assert result.text == ""
 
 
 def test_no_refusal_key_when_refusal_absent() -> None:

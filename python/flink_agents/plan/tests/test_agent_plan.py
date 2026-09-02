@@ -231,8 +231,7 @@ class MockChatModelImpl(BaseChatModelSetup):
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Testing Implementation."""
-        return ChatMessage(
-            role=MessageRole.ASSISTANT, content=self.host + " " + self.desc
+        return ChatMessage.of(MessageRole.ASSISTANT, self.host + " " + self.desc
         )
 
 
@@ -551,7 +550,7 @@ def test_get_resource() -> None:
     cache = ResourceCache(agent_plan.resource_providers, agent_plan.config)
     mock = cache.get_resource("mock", ResourceType.CHAT_MODEL)
     assert (
-        mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
+        mock.chat(ChatMessage.of(MessageRole.USER, "")).text
         == "8.8.8.8 mock resource just for testing."
     )
 

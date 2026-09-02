@@ -48,20 +48,19 @@ class SlowMockChatModel(BaseChatModelSetup):
     @override
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         time.sleep(5)  # Simulate network delay
-        if "sum" in messages[-1].content:
-            input = messages[-1].content
+        if "sum" in messages[-1].text:
+            input = messages[-1].text
             function = {"name": "add", "arguments": {"a": 1, "b": 2}}
             tool_call = {
                 "id": uuid.uuid4(),
                 "type": ToolType.FUNCTION,
                 "function": function,
             }
-            return ChatMessage(
-                role=MessageRole.ASSISTANT, content=input, tool_calls=[tool_call]
+            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call]
             )
         else:
-            content = "\n".join([message.content for message in messages])
-            return ChatMessage(role=MessageRole.ASSISTANT, content=content)
+            content = "\n".join([message.text for message in messages])
+            return ChatMessage.of(MessageRole.ASSISTANT, content)
 
 
 class AsyncTestAgent(Agent):
@@ -92,7 +91,7 @@ class AsyncTestAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="slow_chat_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=input)],
+                messages=[ChatMessage.of(MessageRole.USER, input)],
                 prompt_args={"task": input},
             )
         )
@@ -101,7 +100,7 @@ class AsyncTestAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         input = ChatResponseEvent.from_event(event).response
-        ctx.send_event(OutputEvent(output=input.content))
+        ctx.send_event(OutputEvent(output=input.text))
 
 
 def test_built_in_actions_async_execution() -> None:

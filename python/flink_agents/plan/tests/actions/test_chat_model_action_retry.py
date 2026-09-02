@@ -168,7 +168,7 @@ class TestChatModelActionRetry:
         """No retry needed: retry_count=0, total_retry_wait_sec=0, no metrics."""
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(role=MessageRole.ASSISTANT, content="hello")
+            return_value=ChatMessage.of(MessageRole.ASSISTANT, "hello")
         )
 
         ctx, sent_events, metric_group, _ = _create_mock_runner_context(chat_model)
@@ -178,7 +178,7 @@ class TestChatModelActionRetry:
             chat(
                 request_id,
                 chat_model.connection,
-                [ChatMessage(role=MessageRole.USER, content="hi")],
+                [ChatMessage.of(MessageRole.USER, "hi")],
                 {},
                 None,
                 ctx,
@@ -215,7 +215,7 @@ class TestChatModelActionRetry:
             if call_count <= 1:
                 err_msg = "transient error"
                 raise RuntimeError(err_msg)
-            return ChatMessage(role=MessageRole.ASSISTANT, content="success")
+            return ChatMessage.of(MessageRole.ASSISTANT, "success")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -230,7 +230,7 @@ class TestChatModelActionRetry:
             chat(
                 request_id,
                 "test-model",
-                [ChatMessage(role=MessageRole.USER, content="hi")],
+                [ChatMessage.of(MessageRole.USER, "hi")],
                 {},
                 None,
                 ctx,
@@ -277,7 +277,7 @@ class TestChatModelActionRetry:
                 chat(
                     request_id,
                     "test-model",
-                    [ChatMessage(role=MessageRole.USER, content="hi")],
+                    [ChatMessage.of(MessageRole.USER, "hi")],
                     {},
                     None,
                     ctx,
@@ -299,8 +299,8 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             side_effect=[
-                ChatMessage(role=MessageRole.ASSISTANT, content="not-json"),
-                ChatMessage(role=MessageRole.ASSISTANT, content='{"result": 42}'),
+                ChatMessage.of(MessageRole.ASSISTANT, "not-json"),
+                ChatMessage.of(MessageRole.ASSISTANT, '{"result": 42}'),
             ]
         )
 
@@ -312,7 +312,7 @@ class TestChatModelActionRetry:
             chat(
                 uuid4(),
                 "test-model",
-                [ChatMessage(role=MessageRole.USER, content="hi")],
+                [ChatMessage.of(MessageRole.USER, "hi")],
                 {},
                 OutputSchema(output_schema=_StructuredResult),
                 ctx,
@@ -549,7 +549,7 @@ class TestChatResponseEventRetryFields:
         """Default construction has retry_count=0, total_retry_wait_sec=0."""
         event = ChatResponseEvent(
             request_id=uuid4(),
-            response=ChatMessage(role=MessageRole.ASSISTANT, content="test"),
+            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
         )
         assert event.retry_count == 0
         assert event.total_retry_wait_sec == 0
@@ -558,7 +558,7 @@ class TestChatResponseEventRetryFields:
         """Full construction carries retry info."""
         event = ChatResponseEvent(
             request_id=uuid4(),
-            response=ChatMessage(role=MessageRole.ASSISTANT, content="test"),
+            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
             retry_count=5,
             total_retry_wait_sec=31,
         )
@@ -590,7 +590,7 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
             captured_prompt_args.append(kwargs.get("prompt_args"))
-            return ChatMessage(role=MessageRole.ASSISTANT, content="done")
+            return ChatMessage.of(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -619,7 +619,7 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage(role=MessageRole.USER, content="hi").model_dump(
+                    ChatMessage.of(MessageRole.USER, "hi").model_dump(
                         mode="json"
                     )
                 ]
@@ -648,7 +648,7 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
             captured_messages.append(messages)
-            return ChatMessage(role=MessageRole.ASSISTANT, content="done")
+            return ChatMessage.of(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -671,7 +671,7 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage(role=MessageRole.USER, content="hi").model_dump(
+                    ChatMessage.of(MessageRole.USER, "hi").model_dump(
                         mode="json"
                     )
                 ]
@@ -693,4 +693,4 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert captured_messages
         tool_message = captured_messages[0][-1]
         assert tool_message.role == MessageRole.TOOL
-        assert tool_message.content == "Tool `query_order` execute failed."
+        assert tool_message.text == "Tool `query_order` execute failed."

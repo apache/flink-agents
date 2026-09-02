@@ -115,7 +115,7 @@ class MathAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="math_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=question)],
+                messages=[ChatMessage.user(question)],
             )
         )
 
@@ -124,7 +124,7 @@ class MathAgent(Agent):
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send the answer as output."""
         chat_response = ChatResponseEvent.from_event(event)
-        ctx.send_event(OutputEvent(output=chat_response.response.content))
+        ctx.send_event(OutputEvent(output=chat_response.response.text))
 ```
 {{< /tab >}}
 

@@ -195,7 +195,7 @@ def _build_prompt(spec: PromptSpec) -> Prompt:
     if spec.text is not None:
         return Prompt.from_text(spec.text)
     messages = [
-        ChatMessage(role=MessageRole(m.role.value), content=m.content)
+        ChatMessage.of(MessageRole(m.role.value), m.content)
         for m in (spec.messages or [])
     ]
     return Prompt.from_messages(messages)
