@@ -15,18 +15,22 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from flink_agents.api.tools.tool_execution_metadata_provider import (
-    ToolExecutionMetadataProvider,
-)
-from flink_agents.api.tools.tool_parameter_injection import (
-    InjectedArg,
-    ToolParameterSource,
-)
-from flink_agents.api.tools.tool_response import ToolResponse
+from flink_agents.api.tools import ToolResponse
 
-__all__ = [
-    "InjectedArg",
-    "ToolExecutionMetadataProvider",
-    "ToolParameterSource",
-    "ToolResponse",
-]
+
+def test_tool_response_represents_success() -> None:
+    response = ToolResponse.success({"answer": 42}, tool_name="calculator")
+
+    assert response.is_success()
+    assert not response.is_error()
+    assert response.result == {"answer": 42}
+    assert str(response) == "{'answer': 42}"
+
+
+def test_tool_response_represents_failure() -> None:
+    response = ToolResponse.error("not found", tool_name="lookup")
+
+    assert response.is_error()
+    assert not response.is_success()
+    assert response.error_message == "not found"
+    assert str(response) == "not found"

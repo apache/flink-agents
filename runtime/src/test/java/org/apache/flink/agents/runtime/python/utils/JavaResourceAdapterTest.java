@@ -30,7 +30,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class JavaResourceAdapterTest {
+public class JavaResourceAdapterTest {
 
     @Test
     void getJavaToolMetadataHidesInjectedArgsAndReturnsAnnotatedDeclaration() throws Exception {
@@ -58,6 +58,52 @@ class JavaResourceAdapterTest {
         assertThat(injectedArgs.get("tenant_id").get("key").asText()).isEqualTo("tenant.id");
     }
 
+    @Test
+    void invokeJavaToolPreservesSuccessResponseForPythonCaller() throws Exception {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
+
+        Map<String, Object> result =
+                adapter.invokeJavaTool(
+                        JavaResourceAdapterTest.class.getName(),
+                        "queryOrder",
+                        List.of(
+                                String.class.getName(),
+                                String.class.getName(),
+                                String.class.getName()),
+                        Map.of(
+                                "order_id", "order-1",
+                                "tenant_id", "tenant-1",
+                                "request_id", "request-1"));
+
+        assertThat(result)
+                .containsEntry("__flink_agents_tool_result__", "response")
+                .containsEntry("success", true)
+                .containsEntry("result", "tenant-1:request-1:order-1")
+                .containsEntry("execution_time_ms", 0L);
+        assertThat(result.get("error")).isNull();
+    }
+
+    @Test
+    void invokeJavaToolPreservesErrorResponseForPythonCaller() throws Exception {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
+
+        Map<String, Object> result =
+                adapter.invokeJavaTool(
+                        JavaResourceAdapterTest.class.getName(),
+                        "failingTool",
+                        List.of(String.class.getName()),
+                        Map.of("value", "input"));
+
+        assertThat(result)
+                .containsEntry("__flink_agents_tool_result__", "response")
+                .containsEntry("success", false)
+                .containsEntry("error", "tool rejected input")
+                .containsEntry("execution_time_ms", 0L);
+        assertThat(result.get("result")).isNull();
+    }
+
     @Tool(description = "Query order.")
     public static String queryOrder(
             @ToolParam(name = "order_id") String orderId,
@@ -69,5 +115,10 @@ class JavaResourceAdapterTest {
                     String tenantId,
             @ToolParam(name = "request_id") String requestId) {
         return tenantId + ":" + requestId + ":" + orderId;
+    }
+
+    @Tool(description = "Fail a tool call.")
+    public static String failingTool(@ToolParam(name = "value") String value) {
+        throw new IllegalStateException("tool rejected " + value);
     }
 }

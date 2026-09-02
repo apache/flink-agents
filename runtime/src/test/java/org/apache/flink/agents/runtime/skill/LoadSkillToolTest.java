@@ -70,7 +70,8 @@ class LoadSkillToolTest {
     void unknownSkillReturnsAvailableList() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("does-not-exist", null));
-        String out = (String) resp.getResult();
+        assertTrue(resp.isError());
+        String out = resp.getError();
         assertTrue(out.contains("not found"));
         assertTrue(out.contains("github"));
         assertTrue(out.contains("nano-banana-pro"));
@@ -145,7 +146,8 @@ class LoadSkillToolTest {
     void missingResourceReportsAvailable() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("nano-banana-pro", "no-such.txt"));
-        String out = (String) resp.getResult();
+        assertTrue(resp.isError());
+        String out = resp.getError();
         assertTrue(out.contains("Resource 'no-such.txt' not found"));
         assertTrue(out.contains("Available resources"));
     }
@@ -156,7 +158,8 @@ class LoadSkillToolTest {
         ResourceContextImpl ctx = new ResourceContextImpl((name, type) -> null);
         LoadSkillTool t = tool(ctx);
         ToolResponse resp = t.call(args("anything", null));
+        assertTrue(resp.isError());
         assertEquals(
-                "Skill manager not available. No skills have been registered.", resp.getResult());
+                "Skill manager not available. No skills have been registered.", resp.getError());
     }
 }

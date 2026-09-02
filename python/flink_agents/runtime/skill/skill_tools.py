@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 from pydantic import BaseModel, Field
 
-from flink_agents.api.tools import ToolExecutionMetadataProvider
+from flink_agents.api.tools import ToolExecutionMetadataProvider, ToolResponse
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.api.trace import ToolExecutionMetadataKeys
 
@@ -100,7 +100,7 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
         )
         return metadata
 
-    def call(self, *args: Any, **kwargs: Any) -> str:
+    def call(self, *args: Any, **kwargs: Any) -> str | ToolResponse:
         """Call the tool to load a skill."""
         if args:
             parsed_args = LoadSkillArgs(name=args[0], **kwargs)
@@ -113,7 +113,9 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
 
         manager = self._get_skill_manager()
         if manager is None:
-            return "Skill manager not available. No skills have been registered."
+            return ToolResponse.error(
+                "Skill manager not available. No skills have been registered."
+            )
 
         try:
             skill = manager.get_skill(skill_name)
@@ -122,7 +124,9 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
             available_str = (
                 ", ".join(available) if available else "No skills available."
             )
-            return f"Skill '{skill_name}' not found. Available skills: {available_str}"
+            return ToolResponse.error(
+                f"Skill '{skill_name}' not found. Available skills: {available_str}"
+            )
 
         if resource_path is None or resource_path == "SKILL.md":
             skill_dir = manager.get_skill_dir(skill_name)
@@ -148,7 +152,9 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
         content = skill.get_resource(resource_path)
         if content is None:
             available = sorted(skill.get_resource_paths())
-            return f"Resource '{resource_path}' not found in skill '{skill_name}', Available resources: {available}"
+            return ToolResponse.error(
+                f"Resource '{resource_path}' not found in skill '{skill_name}', Available resources: {available}"
+            )
         return content
 
     def _get_skill_manager(self) -> SkillManager | None:

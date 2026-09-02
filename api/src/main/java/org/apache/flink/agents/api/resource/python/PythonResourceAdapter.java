@@ -175,7 +175,8 @@ public interface PythonResourceAdapter {
      * @param qualName the qualified name of the callable inside the module
      * @param kwargs keyword arguments to pass to the callable; LLM tool calls always arrive as
      *     keyword arguments
-     * @return the raw return value from the Python callable
+     * @return the bridge-encoded tool result; implementations may return a raw value for backward
+     *     compatibility
      */
     Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs);
 }

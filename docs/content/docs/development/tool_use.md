@@ -336,6 +336,8 @@ See [MCP]({{< ref "docs/development/mcp" >}}) for details.
 
 The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool call, it looks up the tool resource by function name, executes it through durable execution, and records whether it succeeded. After all tool calls in the batch have been processed, it sends a `ToolResponseEvent`.
 
+Python tools can continue returning raw values, which are treated as successful results. A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
+
 When the tool request comes from `chat_model_action`, the emitted `ToolResponseEvent` is automatically consumed by `chat_model_action` to continue the chat. See [Built-in Events and Actions in Chat Models]({{< ref "docs/development/chat_models#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
 
 Users can also send `ToolRequestEvent` directly when they want to invoke tools programmatically.

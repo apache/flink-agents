@@ -15,17 +15,23 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import multiprocessing
 import runpy
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from mcp.client.auth import OAuthClientProvider, TokenStorage
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.types import CallToolResult, TextContent
 from pydantic import AnyUrl
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.tools import ToolResponse
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.trace import ToolExecutionMetadataKeys
 from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
@@ -158,3 +164,65 @@ def test_mcp_tool_roundtrip_preserves_metadata() -> None:
     assert restored.get_tool_execution_metadata({}) == {
         ToolExecutionMetadataKeys.MCP_SERVER: "calculator_server"
     }
+
+
+class _ProtocolErrorSession:
+    async def call_tool(self, *args: object, **kwargs: object) -> CallToolResult:
+        return CallToolResult(
+            content=[TextContent(type="text", text="business failure")],
+            isError=True,
+        )
+
+
+class _ProtocolErrorServer(MCPServer):
+    @asynccontextmanager
+    async def _get_session(self) -> AsyncIterator[_ProtocolErrorSession]:
+        yield _ProtocolErrorSession()
+
+
+class _ProtocolSuccessSession:
+    async def call_tool(self, *args: object, **kwargs: object) -> CallToolResult:
+        return CallToolResult(
+            content=[TextContent(type="text", text="result")],
+            isError=False,
+        )
+
+
+class _ProtocolSuccessServer(MCPServer):
+    @asynccontextmanager
+    async def _get_session(self) -> AsyncIterator[_ProtocolSuccessSession]:
+        yield _ProtocolSuccessSession()
+
+
+def test_mcp_protocol_error_maps_to_tool_failure() -> None:
+    server = _ProtocolErrorServer(endpoint="http://localhost/mcp")
+
+    with pytest.raises(RuntimeError, match="business failure"):
+        asyncio.run(server.call_tool_async("lookup", query="flink"))
+
+    tool = MCPTool(
+        metadata=ToolMetadata(
+            name="lookup",
+            description="Lookup a value.",
+            args_schema={"type": "object", "properties": {}},
+        ),
+        mcp_server=server,
+    )
+    response = tool.call(query="flink")
+
+    assert isinstance(response, ToolResponse)
+    assert response.is_error()
+    assert "business failure" in response.error_message
+
+
+def test_mcp_tool_success_preserves_raw_result() -> None:
+    tool = MCPTool(
+        metadata=ToolMetadata(
+            name="lookup",
+            description="Lookup a value.",
+            args_schema={"type": "object", "properties": {}},
+        ),
+        mcp_server=_ProtocolSuccessServer(endpoint="http://localhost/mcp"),
+    )
+
+    assert tool.call(query="flink") == ["result"]

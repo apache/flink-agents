@@ -87,11 +87,11 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
         try {
             manager = resolveSkillManager();
         } catch (Exception e) {
-            return ToolResponse.success(
+            return ToolResponse.error(
                     "Skill manager not available. No skills have been registered.");
         }
         if (manager == null) {
-            return ToolResponse.success(
+            return ToolResponse.error(
                     "Skill manager not available. No skills have been registered.");
         }
 
@@ -102,7 +102,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
             List<String> available = manager.getAllSkillNames();
             String availableStr =
                     available.isEmpty() ? "No skills available." : String.join(", ", available);
-            return ToolResponse.success(
+            return ToolResponse.error(
                     "Skill '" + name + "' not found. Available skills: " + availableStr);
         }
 
@@ -140,7 +140,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
 
         String content = skill.getResource(path);
         if (content == null) {
-            return ToolResponse.success(
+            return ToolResponse.error(
                     "Resource '"
                             + path
                             + "' not found in skill '"
