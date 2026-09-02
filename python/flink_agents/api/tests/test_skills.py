@@ -42,7 +42,6 @@ class TestSkillsFactories:
             "https://localhost/x.zip",
             "https://127.0.0.1/x.zip",
             "https://[::1]/x.zip",
-            "https://[fe80::1%25eth0]/x.zip",
             "https://example.com./x.zip",
             "https://example.com:/x.zip",
             "https://example.com:65535/x.zip",
@@ -53,6 +52,12 @@ class TestSkillsFactories:
     )
     def test_from_url_accepts_shared_valid_host_syntax(self, url: str) -> None:
         assert Skills.from_url(url).sources[0].params["url"] == url
+
+    def test_from_url_rejects_scoped_ipv6(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            Skills.from_url("https://[fe80::1%25lo0]/x.zip")
 
     def test_from_url_with_sha256_emits_integrity_param(self) -> None:
         digest = "A" * 64
@@ -103,6 +108,14 @@ class TestSkillsFactories:
     def test_from_url_rejects_invalid_host_and_port(self, url: str) -> None:
         with pytest.raises(ValueError, match=r"valid host|valid port"):
             Skills.from_url(url)
+
+    def test_from_url_redacts_ambiguous_invalid_port(self) -> None:
+        url = "https://user:supersecret/x.zip?token=TOPSECRET"
+        with pytest.raises(ValueError, match="valid port") as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "supersecret" not in str(exc_info.value)
+        assert "TOPSECRET" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "url",
@@ -166,6 +179,15 @@ class TestSkillsFactories:
         assert str(exc_info.value).endswith("<redacted>")
         assert "password" not in str(exc_info.value)
         assert "top-secret" not in str(exc_info.value)
+
+    def test_from_url_redacts_unsafe_control_characters(self) -> None:
+        url = "https://u:pw@example.com/a\x1b[31mred?token=SECRET"
+        with pytest.raises(ValueError, match="Invalid skill URL") as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "\x1b" not in str(exc_info.value)
+        assert "pw" not in str(exc_info.value)
+        assert "SECRET" not in str(exc_info.value)
 
     @pytest.mark.parametrize(
         "url",

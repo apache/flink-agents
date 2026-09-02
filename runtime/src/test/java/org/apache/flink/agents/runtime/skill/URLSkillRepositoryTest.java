@@ -146,10 +146,11 @@ class URLSkillRepositoryTest {
                         IllegalArgumentException.class,
                         () ->
                                 new URLSkillRepository(
-                                        "https://example.com:bad/skills.zip?token=top-secret"));
+                                        "https://user:supersecret/skills.zip?token=TOPSECRET"));
         assertNull(malformedPort.getCause());
-        assertTrue(malformedPort.getMessage().contains("https://example.com:bad/skills.zip"));
-        assertFalse(malformedPort.getMessage().contains("top-secret"));
+        assertTrue(malformedPort.getMessage().endsWith("<redacted>"));
+        assertFalse(malformedPort.getMessage().contains("supersecret"));
+        assertFalse(malformedPort.getMessage().contains("TOPSECRET"));
 
         for (String url :
                 List.of("https://:443/skills.zip", "https://example.com:65536/skills.zip")) {
@@ -191,6 +192,16 @@ class URLSkillRepositoryTest {
                         IllegalArgumentException.class,
                         () -> new URLSkillRepository("https://[fe80::1%eth0]/skills.zip"));
         assertEquals("Invalid skill URL: https://[fe80::1%eth0]/skills.zip", ex.getMessage());
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    void scopedIpv6IsRejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https://[fe80::1%25lo0]/skills.zip"));
+        assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
         assertNull(ex.getCause());
     }
 

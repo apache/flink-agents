@@ -293,7 +293,7 @@ class TestSkillManagerMixedSources:
         "params",
         [
             {"uri": "https://user:password@example.com/x.zip?token=top-secret"},
-            {"url": "https://example.com:bad/x.zip?token=top-secret"},
+            {"url": "https://user:supersecret/x.zip?token=TOPSECRET"},
         ],
     )
     def test_url_source_failures_do_not_leak_params(
@@ -307,8 +307,10 @@ class TestSkillManagerMixedSources:
         messages = f"{exc_info.value}\n{exc_info.value.__cause__}"
         assert "password" not in messages
         assert "top-secret" not in messages
+        assert "supersecret" not in messages
+        assert "TOPSECRET" not in messages
         if "url" in params:
-            assert "url:https://example.com:bad/x.zip" in str(exc_info.value)
+            assert "url:<redacted>" in str(exc_info.value)
 
     def test_close_releases_repo_displaced_by_duplicate_skill_name(self) -> None:
         from typing import Dict, List

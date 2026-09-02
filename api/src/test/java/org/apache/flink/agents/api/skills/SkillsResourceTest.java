@@ -60,7 +60,6 @@ class SkillsResourceTest {
                         "https://localhost/x.zip",
                         "https://127.0.0.1/x.zip",
                         "https://[::1]/x.zip",
-                        "https://[fe80::1%25eth0]/x.zip",
                         "https://example.com./x.zip",
                         "https://example.com:/x.zip",
                         "https://example.com:65535/x.zip",
@@ -69,6 +68,16 @@ class SkillsResourceTest {
                         "https://999./x.zip")) {
             assertEquals(url, Skills.fromUrl(url).getSources().get(0).getParams().get("url"));
         }
+    }
+
+    @Test
+    void fromUrlRejectsScopedIpv6() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> Skills.fromUrl("https://[fe80::1%25lo0]/x.zip"));
+        assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
+        assertNull(ex.getCause());
     }
 
     @Test
@@ -183,13 +192,18 @@ class SkillsResourceTest {
 
     @Test
     void fromUrlRejectsInvalidHostAndPort() {
-        IllegalArgumentException malformedPort =
-                assertThrows(
-                        IllegalArgumentException.class,
-                        () -> Skills.fromUrl("https://example.com:bad/x.zip?token=top-secret"));
-        assertNull(malformedPort.getCause());
-        assertTrue(malformedPort.getMessage().contains("https://example.com:bad/x.zip"));
-        assertFalse(malformedPort.getMessage().contains("top-secret"));
+        for (String url :
+                List.of(
+                        "https://example.com:bad/x.zip?token=top-secret",
+                        "https://user:supersecret/x.zip?token=TOPSECRET")) {
+            IllegalArgumentException malformedPort =
+                    assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
+            assertNull(malformedPort.getCause());
+            assertTrue(malformedPort.getMessage().endsWith("<redacted>"));
+            assertFalse(malformedPort.getMessage().contains("supersecret"));
+            assertFalse(malformedPort.getMessage().contains("TOPSECRET"));
+            assertFalse(malformedPort.getMessage().contains("top-secret"));
+        }
 
         for (String url : List.of("https://:443/x.zip", "https://example.com:65536/x.zip")) {
             assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);

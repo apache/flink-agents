@@ -69,6 +69,7 @@ from flink_agents.api.resource import ResourceType, SerializableResource
 
 _INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
 _INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+_UNSAFE_LOG_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
 _HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 
 
@@ -81,10 +82,12 @@ def redact_skill_url(url: str) -> str:
         parts = urlsplit(url)
         if not parts.scheme or not parts.netloc:
             return "<redacted>"
+        _ = parts.port
         netloc = parts.netloc.rsplit("@", 1)[-1]
         if not netloc:
             return "<redacted>"
-        return urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        redacted = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        return "<redacted>" if _UNSAFE_LOG_CHARACTER.search(redacted) else redacted
     except ValueError:
         return "<redacted>"
 
@@ -125,6 +128,12 @@ def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
         raise ValueError(msg) from None
     if parsed.username is not None:
         msg = f"Skill URL must not include user info: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    if hostname and ":" in hostname and "%" in hostname:
+        msg = (
+            "Skill URL must not include an IPv6 zone identifier: "
+            f"{redact_skill_url(url)}"
+        )
         raise ValueError(msg)
     bracketed_host = parsed.netloc.rsplit("@", 1)[-1].startswith("[")
     if (

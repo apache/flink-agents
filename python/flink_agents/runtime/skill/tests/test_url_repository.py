@@ -128,6 +128,20 @@ class TestURLSkillRepository:
         with pytest.raises(ValueError, match=r"valid host|valid port"):
             URLSkillRepository(url)
 
+    def test_ambiguous_invalid_port_is_redacted_before_download(self) -> None:
+        url = "https://user:supersecret/skills.zip?token=TOPSECRET"
+        with pytest.raises(ValueError, match="valid port") as exc_info:
+            URLSkillRepository(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "supersecret" not in str(exc_info.value)
+        assert "TOPSECRET" not in str(exc_info.value)
+
+    def test_scoped_ipv6_is_rejected_before_download(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            URLSkillRepository("https://[fe80::1%25lo0]/skills.zip")
+
     @pytest.mark.parametrize(
         "url",
         [

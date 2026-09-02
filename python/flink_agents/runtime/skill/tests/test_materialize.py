@@ -152,6 +152,12 @@ class TestDownloadToTempfile:
     def test_redact_skill_url_redacts_opaque_malformed_credentials(self) -> None:
         assert redact_skill_url("https:user:password?token=top-secret") == "<redacted>"
 
+    def test_redact_skill_url_rejects_control_characters(self) -> None:
+        assert (
+            redact_skill_url("https://u:pw@example.com/a\x1b[31mred?token=top-secret")
+            == "<redacted>"
+        )
+
     def test_downloads_bytes(
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:
@@ -184,6 +190,12 @@ class TestDownloadToTempfile:
     def test_rejects_plain_http_by_default(self) -> None:
         with pytest.raises(ValueError, match="disabled by default"):
             download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
+
+    def test_rejects_scoped_ipv6_before_connection(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            download_to_tempfile("https://[fe80::1%25lo0]/skills.zip", timeout=10)
 
     def test_rejects_cross_protocol_redirect_before_request(
         self, static_server: "tuple[str, type[_StaticHandler]]"

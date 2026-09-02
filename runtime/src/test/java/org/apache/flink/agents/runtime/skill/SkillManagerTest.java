@@ -290,15 +290,17 @@ class SkillManagerTest {
         for (Map<String, String> params :
                 List.of(
                         Map.of("uri", "https://user:password@example.com/x.zip?token=top-secret"),
-                        Map.of("url", "https://example.com:bad/x.zip?token=top-secret"))) {
+                        Map.of("url", "https://user:supersecret/x.zip?token=TOPSECRET"))) {
             Skills config = new Skills(List.of(new SkillSourceSpec("url", params)));
             IllegalStateException ex =
                     assertThrows(IllegalStateException.class, () -> new SkillManager(config));
             String messages = ex.getMessage() + "\n" + ex.getCause().getMessage();
             assertFalse(messages.contains("password"));
             assertFalse(messages.contains("top-secret"));
+            assertFalse(messages.contains("supersecret"));
+            assertFalse(messages.contains("TOPSECRET"));
             if (params.containsKey("url")) {
-                assertTrue(ex.getMessage().contains("url:https://example.com:bad/x.zip"));
+                assertTrue(ex.getMessage().contains("url:<redacted>"));
             }
         }
     }

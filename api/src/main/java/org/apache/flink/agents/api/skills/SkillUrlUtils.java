@@ -74,9 +74,14 @@ public final class SkillUrlUtils {
             throw new IllegalArgumentException(
                     "Skill URL must not include user info: " + redact(url));
         }
-        if (uri.getHost() == null || uri.getHost().isEmpty()) {
+        String host = uri.getHost();
+        if (host == null || host.isEmpty()) {
             throw new IllegalArgumentException(
                     "Skill URL must include a valid host: " + redact(url));
+        }
+        if (host.indexOf(':') >= 0 && host.indexOf('%') >= 0) {
+            throw new IllegalArgumentException(
+                    "Skill URL must not include an IPv6 zone identifier: " + redact(url));
         }
         if (uri.getPort() > 65535) {
             throw new IllegalArgumentException(
@@ -124,10 +129,51 @@ public final class SkillUrlUtils {
         if (userInfoEnd >= 0) {
             authority = authority.substring(userInfoEnd + 1);
         }
-        if (authority.isEmpty()) {
+        if (authority.isEmpty() || hasInvalidPort(authority)) {
             return REDACTED;
         }
         return scheme + "://" + authority + (path == null ? "" : path);
+    }
+
+    private static boolean hasInvalidPort(String authority) {
+        int portStart;
+        if (authority.startsWith("[")) {
+            int closingBracket = authority.lastIndexOf(']');
+            if (closingBracket < 0) {
+                return true;
+            }
+            if (closingBracket == authority.length() - 1) {
+                return false;
+            }
+            if (authority.charAt(closingBracket + 1) != ':') {
+                return true;
+            }
+            portStart = closingBracket + 2;
+        } else {
+            int firstColon = authority.indexOf(':');
+            if (firstColon < 0) {
+                return false;
+            }
+            if (firstColon != authority.lastIndexOf(':')) {
+                return true;
+            }
+            portStart = firstColon + 1;
+        }
+        if (portStart == authority.length()) {
+            return false;
+        }
+        int port = 0;
+        for (int i = portStart; i < authority.length(); i++) {
+            char c = authority.charAt(i);
+            if (c < '0' || c > '9') {
+                return true;
+            }
+            port = port * 10 + (c - '0');
+            if (port > 65535) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean containsUnsafeLogCharacter(String value) {

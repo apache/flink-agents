@@ -174,6 +174,18 @@ class SkillMaterializerTest {
     }
 
     @Test
+    void rejectsScopedIpv6BeforeConnection() {
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () ->
+                                SkillMaterializer.downloadToTempFile(
+                                        "https://[fe80::1%25lo0]/skills.zip", 5_000));
+        assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
+        assertTrue(ex.getCause() == null);
+    }
+
+    @Test
     void unfollowedCrossProtocolRedirectFailsClearly() throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
