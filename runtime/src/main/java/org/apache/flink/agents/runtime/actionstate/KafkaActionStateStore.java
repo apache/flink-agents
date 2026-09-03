@@ -74,7 +74,9 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     private static final Duration CONSUMER_POLL_TIMEOUT = Duration.ofMillis(1000);
     private static final Logger LOG = LoggerFactory.getLogger(KafkaActionStateStore.class);
-    private static final Long DEFAULT_FUTURE_GET_TIMEOUT_MS = 100L;
+    // A cold AdminClient's first metadata round-trip routinely exceeds 100ms even against a
+    // local broker; 100ms made store initialization fail nondeterministically at startup.
+    private static final Long DEFAULT_FUTURE_GET_TIMEOUT_MS = 30_000L;
 
     private final AgentConfiguration agentConfiguration;
 
