@@ -11,20 +11,21 @@ is iterative and will be extended as worked examples accumulate.
 
 ## When this applies
 
-Non-trivial code changes: a change that adds or alters behavior a caller
-can observe, or that touches a runtime path, a public API, or a failure
-path.
+A non-trivial code change whose implementation is largely AI-assisted: a
+change that adds or alters behavior a caller can observe, or that touches a
+runtime path, a public API, or a failure path.
 
 It does not apply to a change whose diff is already prose, such as
 documentation, comments, or site content. The format is built around
 runtime flow, behavioral contracts and failure behavior, and a prose diff
 has none of them. Describing one produces a second copy of the change that
 the reviewer then has to keep consistent with the first. Use the repository
-template as it stands.
+template as it stands, and remove its `Behavioral Semantics` heading.
 
-When only part of a PR qualifies, describe that part and nothing else. Say
-in one line which part of the diff the description covers, so a reviewer
-does not read the omission as a gap.
+When only part of a PR qualifies, apply the seven fields to that part
+alone, and say in one line which part of the diff they cover, so a reviewer
+does not read the omission as a gap. Describe the rest of the diff through
+the repository template as usual.
 
 ## The two-stage review it feeds
 
@@ -51,17 +52,17 @@ are unchanged.
 | Template section | Carries |
 |---|---|
 | `Purpose of change` | the user-visible outcome first, then the intent behind the change, then runtime flow and key decisions |
-| `Implementation Description` | interaction decisions, behavioral contracts, failure behavior |
+| `Behavioral Semantics` | interaction decisions, behavioral contracts, failure behavior |
 | `Tests` | the contracts-to-tests table |
 | `API` | compatibility impact |
 
-Three of the seven fields have no existing home, and one new `###
-Implementation Description` heading carries all three. That heading names
-one section of the template; the seven fields taken together are the
-Implementation Description this guide describes. Do not restructure the
-rest of the template. Where a section carries more than one field, give
-each field its own `####` sub-heading so a reader can find it at a glance;
-a section carrying a single field needs none.
+`Behavioral Semantics` is the one section that exists for this format; the
+other four fields fold into sections the template already had.
+`Implementation Description` names the whole seven-field account, never one
+section of it. Do not restructure the rest of the template. Where a section
+carries more than one field, give each field its own `####` sub-heading so
+a reader can find it at a glance; a section carrying a single field needs
+none.
 
 Open `Purpose of change` with what changes for a caller, then say why the
 change is being made: the problem it solves and the intent behind the
@@ -151,7 +152,9 @@ Target 6,000 characters or fewer for the visible body, the part outside the
 of the diff. One to two screens. A reviewer should be able to decide how to
 review without clicking anything. A `<details>` block relocates detail and
 is not headroom; if the collapsed material grows past a screen of its own,
-move it into a PR comment.
+move that supporting evidence into a single PR comment and link to it from
+the body. The seven fields stay in the body either way; only the evidence
+behind them moves.
 
 ## What not to write
 
@@ -171,5 +174,5 @@ unremarkable; read them for shape rather than as templates to copy.
 
 | Pull request | What it shows |
 |---|---|
-| [#952](https://github.com/apache/flink-agents/pull/952) | The fields folded into the template's sections on a small change: runtime flow and key decisions under `Purpose of change`, then behavioral contracts and failure behavior under one `Implementation Description` heading. |
+| [#952](https://github.com/apache/flink-agents/pull/952) | The fields folded into the template's sections on a small change: runtime flow and key decisions under `Purpose of change`, then behavioral contracts and failure behavior grouped under a single heading of their own. |
 | [#965](https://github.com/apache/flink-agents/pull/965) | An interaction table crossing the independent conditions the change combines, on a large, two-language change, and implementation detail relocated into a `<details>` block at the end of `Tests`. |

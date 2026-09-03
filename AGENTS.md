@@ -29,7 +29,7 @@ Use concise subjects with bracketed components, matching existing history, such 
 
 ## How to Contribute
 
-Start from `.github/CONTRIBUTING.md` for general contribution guidance, covering bug reports, feature proposals, code contribution, and design discussions. Before opening a pull request whose implementation is largely AI-assisted, also read `contribution-guides/ai-assisted-pr.md`. It defines the Implementation Description a non-trivial code change owes its reviewer: runtime flow, key decisions, interaction decisions, behavioral contracts, failure behavior, compatibility impact, and a contracts-to-tests table, folded into the sections of `.github/PULL_REQUEST_TEMPLATE.md`. It does not apply to a change whose diff is already prose, such as documentation, comments, or site content.
+Start from `.github/CONTRIBUTING.md` for general contribution guidance, covering bug reports, feature proposals, code contribution, and design discussions. Before opening a pull request whose implementation is largely AI-assisted, also read `contribution-guides/ai-assisted-pr.md`. It defines the Implementation Description such a change owes its reviewer: runtime flow, key decisions, interaction decisions, behavioral contracts, failure behavior, compatibility impact, and a contracts-to-tests table, folded into the sections of `.github/PULL_REQUEST_TEMPLATE.md`. It does not apply to a change whose diff is already prose, such as documentation, comments, or site content.
 
 ## Code Review
 

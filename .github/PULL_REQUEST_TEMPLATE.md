@@ -10,9 +10,9 @@ Linked issue: #xxx
 
 <!-- What is the purpose of this change? -->
 
-### Implementation Description
+### Behavioral Semantics
 
-<!-- For non-trivial code changes: interaction decisions, behavioral contracts, and failure behavior. See `contribution-guides/ai-assisted-pr.md`. Leave empty for a change whose diff is already prose, such as documentation, comments, or site content. -->
+<!-- For a non-trivial code change whose implementation is largely AI-assisted: interaction decisions, behavioral contracts, and failure behavior. See `contribution-guides/ai-assisted-pr.md`. Remove this heading and this comment otherwise. -->
 
 ### Tests
 
