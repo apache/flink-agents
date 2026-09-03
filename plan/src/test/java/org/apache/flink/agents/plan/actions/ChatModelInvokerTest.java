@@ -122,7 +122,7 @@ class ChatModelInvokerTest {
         // second call is made.
         verify(ctx, times(1)).durableExecute(any());
         // This is the only assertion that distinguishes the fix from the pre-fix code: the
-        // ChatAttemptFailed/times(1) shape above passes either way, since Thread.sleep still
+        // InterruptedException/times(1) shape above passes either way, since Thread.sleep still
         // aborts the retry loop on both. Only the restored flag proves the backoff sleep's catch
         // block restores it instead of leaving it cleared.
         assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
