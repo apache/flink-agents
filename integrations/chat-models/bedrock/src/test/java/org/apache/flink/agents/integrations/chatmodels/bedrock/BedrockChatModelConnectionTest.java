@@ -23,8 +23,17 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.core.document.Document;
+import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.Message;
 
 import java.util.*;
 
@@ -43,6 +52,34 @@ class BedrockChatModelConnectionTest {
         if (region != null) b.addInitialArgument("region", region);
         if (model != null) b.addInitialArgument("model", model);
         return b.build();
+    }
+
+    private static BedrockChatModelConnection connection() {
+        return new BedrockChatModelConnection(
+                descriptor("us-east-1", "us.anthropic.claude-sonnet-4-20250514-v1:0"), NOOP);
+    }
+
+    /** Minimal tool carrying only metadata; never invoked in these tests. */
+    private static final class SchemaOnlyTool extends Tool {
+        SchemaOnlyTool(String inputSchema) {
+            super(new ToolMetadata("add", "Add two numbers.", inputSchema));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new UnsupportedOperationException("not invoked in this test");
+        }
+    }
+
+    private static ChatMessage toolMessage(String externalId, String content) {
+        Map<String, Object> extraArgs = new HashMap<>();
+        extraArgs.put("externalId", externalId);
+        return new ChatMessage(MessageRole.TOOL, content, extraArgs);
     }
 
     @Test
@@ -118,5 +155,93 @@ class BedrockChatModelConnectionTest {
     @DisplayName("stripMarkdownFences: null returns null")
     void testStripMarkdownFencesNull() {
         assertThat(BedrockChatModelConnection.stripMarkdownFences(null)).isNull();
+    }
+
+    @Test
+    @DisplayName("buildRequest: the effective model id lands in the request")
+    void testBuildRequestResolvesModelId() {
+        List<ChatMessage> messages = List.of(ChatMessage.user("hello"));
+
+        ConverseRequest fromConnection = connection().buildRequest(messages, null, Map.of());
+        assertThat(fromConnection.modelId())
+                .isEqualTo("us.anthropic.claude-sonnet-4-20250514-v1:0");
+
+        ConverseRequest fromCall =
+                connection().buildRequest(messages, null, Map.of("model", "per-call-model"));
+        assertThat(fromCall.modelId()).isEqualTo("per-call-model");
+    }
+
+    @Test
+    @DisplayName("buildRequest: tools land in toolConfig")
+    void testBuildRequestPreservesToolConfig() {
+        ConverseRequest request =
+                connection()
+                        .buildRequest(
+                                List.of(ChatMessage.user("hello")),
+                                List.of(new SchemaOnlyTool("{\"type\": \"object\"}")),
+                                Map.of());
+
+        assertThat(request.toolConfig()).isNotNull();
+        assertThat(request.toolConfig().tools()).hasSize(1);
+        assertThat(request.toolConfig().tools().get(0).toolSpec().name()).isEqualTo("add");
+        assertThat(request.toolConfig().tools().get(0).toolSpec().description())
+                .isEqualTo("Add two numbers.");
+        assertThat(request.toolConfig().tools().get(0).toolSpec().inputSchema().json().asMap())
+                .containsEntry("type", Document.fromString("object"));
+    }
+
+    @Test
+    @DisplayName("buildRequest: system messages land in system, the rest in messages")
+    void testBuildRequestPreservesSystemMessages() {
+        ConverseRequest request =
+                connection()
+                        .buildRequest(
+                                List.of(ChatMessage.system("be terse"), ChatMessage.user("hello")),
+                                null,
+                                Map.of());
+
+        assertThat(request.system()).hasSize(1);
+        assertThat(request.system().get(0).text()).isEqualTo("be terse");
+        assertThat(request.messages()).hasSize(1);
+        assertThat(request.messages().get(0).role()).isEqualTo(ConversationRole.USER);
+        assertThat(request.messages().get(0).content().get(0).text()).isEqualTo("hello");
+    }
+
+    @Test
+    @DisplayName("buildRequest: temperature and max_tokens land in inferenceConfig")
+    void testBuildRequestPreservesInferenceConfig() {
+        List<ChatMessage> messages = List.of(ChatMessage.user("hello"));
+
+        ConverseRequest configured =
+                connection()
+                        .buildRequest(messages, null, Map.of("temperature", 0.7, "max_tokens", 64));
+        assertThat(configured.inferenceConfig()).isNotNull();
+        assertThat(configured.inferenceConfig().temperature()).isEqualTo(0.7f);
+        assertThat(configured.inferenceConfig().maxTokens()).isEqualTo(64);
+
+        ConverseRequest bare = connection().buildRequest(messages, null, Map.of());
+        assertThat(bare.inferenceConfig()).isNull();
+    }
+
+    @Test
+    @DisplayName("buildRequest: consecutive tool messages merge into one user message")
+    void testBuildRequestMergesConsecutiveToolMessages() {
+        ConverseRequest request =
+                connection()
+                        .buildRequest(
+                                List.of(
+                                        ChatMessage.user("hello"),
+                                        toolMessage("call-1", "first result"),
+                                        toolMessage("call-2", "second result")),
+                                null,
+                                Map.of());
+
+        assertThat(request.messages()).hasSize(2);
+        Message merged = request.messages().get(1);
+        assertThat(merged.role()).isEqualTo(ConversationRole.USER);
+        assertThat(merged.content()).hasSize(2);
+        assertThat(merged.content())
+                .extracting(block -> block.toolResult().toolUseId())
+                .containsExactly("call-1", "call-2");
     }
 }

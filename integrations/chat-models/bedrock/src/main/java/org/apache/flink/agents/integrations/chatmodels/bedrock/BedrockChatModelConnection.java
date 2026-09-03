@@ -120,6 +120,42 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        ConverseRequest request = buildRequest(messages, tools, modelParams);
+        String modelId = request.modelId();
+
+        ConverseResponse response =
+                retryExecutor.execute(() -> client.converse(request), "BedrockConverse");
+
+        ChatMessage result = convertResponse(response);
+        if (response.usage() != null) {
+            result.getExtraArgs().put("model_name", modelId);
+            result.getExtraArgs().put("promptTokens", response.usage().inputTokens().longValue());
+            result.getExtraArgs()
+                    .put("completionTokens", response.usage().outputTokens().longValue());
+        }
+        return result;
+    }
+
+    /**
+     * Translate the flink-agents call arguments into a Converse request: the effective model id,
+     * the SYSTEM/conversation message split, the tool configuration, and the inference
+     * configuration.
+     *
+     * <p>Package-private so a test can assert the request body without issuing a live call through
+     * the Bedrock runtime client.
+     *
+     * <p>Resolving the model is the first step, so an absent model id is rejected before any
+     * request state is built.
+     *
+     * @param messages the conversation, SYSTEM messages included; must not be null
+     * @param tools the tools to advertise, or {@code null} / empty for none
+     * @param modelParams per-call parameters; {@code model}, {@code temperature} and {@code
+     *     max_tokens} are read, and {@code null} is accepted
+     * @return the request to send to Converse
+     * @throws IllegalArgumentException if neither the call nor the connection supplies a model id
+     */
+    ConverseRequest buildRequest(
+            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         String modelId = resolveModel(modelParams);
 
         List<ChatMessage> systemMsgs =
@@ -173,19 +209,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
         }
 
-        ConverseRequest request = requestBuilder.build();
-
-        ConverseResponse response =
-                retryExecutor.execute(() -> client.converse(request), "BedrockConverse");
-
-        ChatMessage result = convertResponse(response);
-        if (response.usage() != null) {
-            result.getExtraArgs().put("model_name", modelId);
-            result.getExtraArgs().put("promptTokens", response.usage().inputTokens().longValue());
-            result.getExtraArgs()
-                    .put("completionTokens", response.usage().outputTokens().longValue());
-        }
-        return result;
+        return requestBuilder.build();
     }
 
     private static boolean isRetryable(Exception e) {
