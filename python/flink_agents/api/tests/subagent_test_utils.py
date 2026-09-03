@@ -19,11 +19,27 @@
 
 from typing import TYPE_CHECKING, Any
 
+from pydantic import BaseModel
+
 from flink_agents.api.subagent import SubagentSetup
 
 if TYPE_CHECKING:
     from flink_agents.api.runner_context import RunnerContext
     from flink_agents.api.subagent import SubagentFuture
+
+
+class Review(BaseModel):
+    """Arguments of the typed double below."""
+
+    path: str
+    lines: int = 0
+
+
+class Verdict(BaseModel):
+    """Result of the typed double below."""
+
+    approved: bool
+    note: str = ""
 
 
 class TestSubagentSetup(SubagentSetup):
@@ -47,3 +63,17 @@ class TestSubagentSetup(SubagentSetup):
         """Descriptor-only double; invocation lives in the runtime layer."""
         msg = "Descriptor-only sub-agent setup; invocation lives in the runtime layer."
         raise NotImplementedError(msg)
+
+
+class TypedTestSubagentSetup(TestSubagentSetup):
+    """Types its arguments and its result instead of spelling out a schema."""
+
+    @classmethod
+    def input_type(cls) -> type:
+        """Return the declared argument type."""
+        return Review
+
+    @classmethod
+    def result_type(cls) -> type:
+        """Return the declared result type."""
+        return Verdict
