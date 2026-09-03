@@ -26,6 +26,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -50,6 +51,7 @@ public final class RoutingContext {
     private final List<ChatMessage> messages;
     private final Map<String, Object> promptArgs;
     private final List<RoutingCandidate> candidates;
+    private final String defaultModel;
 
     public RoutingContext(
             UUID requestId,
@@ -57,6 +59,16 @@ public final class RoutingContext {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             List<RoutingCandidate> candidates) {
+        this(requestId, router, messages, promptArgs, candidates, null);
+    }
+
+    public RoutingContext(
+            UUID requestId,
+            String router,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            List<RoutingCandidate> candidates,
+            String defaultModel) {
         this.requestId = requestId;
         this.router = router;
         // Deep copy: the wrapping list is unmodifiable, but ChatMessage is mutable and the
@@ -74,6 +86,7 @@ public final class RoutingContext {
                 candidates == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(new ArrayList<>(candidates));
+        this.defaultModel = defaultModel;
     }
 
     private static List<ChatMessage> deepCopy(List<ChatMessage> messages) {
@@ -114,6 +127,11 @@ public final class RoutingContext {
     /** Name of the router resource handling this request. */
     public String getRouter() {
         return router;
+    }
+
+    /** The router's declared default model — where abstains resolve — if one is configured. */
+    public Optional<String> getDefaultModel() {
+        return Optional.ofNullable(defaultModel);
     }
 
     public List<ChatMessage> getMessages() {

@@ -53,9 +53,14 @@ public final class Strategies {
      * the judge call on its durable, metered, observable chat path; the verdict is constrained to
      * candidate names. An unparseable or non-candidate verdict abstains to the router's default
      * model; a judge call that exhausts its retries honors the request's error-handling strategy
-     * ({@code FAIL} surfaces it, {@code IGNORE} abstains with the cause recorded). The judge must
-     * be a plain chat model — no bound prompt or tools. Candidate {@code describe(...)}
-     * descriptions become the judge's decision criteria.
+     * ({@code FAIL} surfaces it, {@code IGNORE} abstains with the cause recorded). Candidate {@code
+     * describe(...)} descriptions become the judge's decision criteria.
+     *
+     * <p><b>Judge model contract:</b> the judge must be a plain chat model — no prompt, tools, or
+     * skills. Descriptor-declared bindings are rejected at plan construction. A {@code
+     * ChatModelSetup} implementation that adds them dynamically without declaring them in its
+     * descriptor is an invalid judge: its replies stop parsing as verdicts and every request
+     * abstains to the router's default model (visible in the routing events as abstains).
      *
      * <p>The judge receives the complete message list (and the rendered request when the target
      * setup binds a prompt); use {@link RoutingStrategy#withMaxContextChars(int)} to cap the

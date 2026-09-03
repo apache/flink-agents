@@ -27,14 +27,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * A framework resource that <b>selects</b> a concrete chat model for a request. It does not call
@@ -44,8 +41,10 @@ import java.util.regex.PatternSyntaxException;
  * model).
  *
  * <p>Built with the fluent {@link #of(String...)} builder, which produces a {@link
- * ResourceDescriptor} the framework instantiates reflectively. The strategy is carried as a
- * language-neutral type tag + arguments so it is plan-serializable across runtimes.
+ * ResourceDescriptor} the framework instantiates reflectively. The router carries declaration data
+ * only — candidates plus the strategy as a language-neutral type tag + arguments — so it is
+ * plan-serializable across runtimes; compilation, caching and execution of strategies live in the
+ * engine's plan layer (the {@code RoutingExecutor} implementations).
  *
  * <p>Abstain ({@link RoutingDecision#abstain()}) → {@link #getDefaultModel()}. A returned name that
  * is not a candidate is an invalid decision and is failed clearly by the caller.
@@ -68,8 +67,6 @@ public class ModelRouter extends Resource {
     private final String defaultModel;
     private final boolean fallbackEnabled;
     private final RoutingStrategy strategy;
-    private final Map<String, Pattern> compiledRules;
-    private final CustomRoutingExecutor customExecutor;
 
     public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext)
             throws Exception {
@@ -111,113 +108,11 @@ public class ModelRouter extends Resource {
         this.strategy =
                 new RoutingStrategy(
                         RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
-        this.compiledRules = compileRules(this.strategy);
-        this.customExecutor = instantiateCustomExecutor(this.strategy);
-    }
-
-    /**
-     * Instantiates the user's {@link CustomRoutingExecutor} once per router instance. Routers are
-     * cached per subtask — at parallelism N that is N router (and executor) instances, so executor
-     * instance state spans the requests of one subtask, not the whole TaskManager. The construction
-     * contract is a {@code (Map<String,Object>)} constructor fed the declaration's arguments, then
-     * a no-arg constructor, via the thread context classloader — plan-time validation checks the
-     * same contract without instantiating.
-     */
-    private static CustomRoutingExecutor instantiateCustomExecutor(RoutingStrategy strategy)
-            throws Exception {
-        if (strategy.getType() != RoutingStrategyType.CUSTOM) {
-            return null;
-        }
-        Class<?> clazz =
-                Class.forName(
-                        strategy.getExecutorClass(),
-                        true,
-                        Thread.currentThread().getContextClassLoader());
-        if (!CustomRoutingExecutor.class.isAssignableFrom(clazz)) {
-            throw new IllegalArgumentException(
-                    String.format(
-                            "Custom routing executor '%s' does not implement %s.",
-                            strategy.getExecutorClass(), CustomRoutingExecutor.class.getName()));
-        }
-        try {
-            return (CustomRoutingExecutor)
-                    clazz.getConstructor(Map.class).newInstance(strategy.getArguments());
-        } catch (NoSuchMethodException noMapCtor) {
-            return (CustomRoutingExecutor) clazz.getConstructor().newInstance();
-        }
-    }
-
-    /** The user's custom executor instance ({@code null} unless the strategy type is CUSTOM). */
-    public CustomRoutingExecutor getCustomExecutor() {
-        return customExecutor;
-    }
-
-    /**
-     * The single validation/compilation path for rule maps: null/empty keys, non-String values and
-     * invalid regex all fail here with the same diagnostics everywhere it is called — the builder
-     * ({@code build()}), the router constructor, and plan-time validation ({@code
-     * AgentPlan#validateRuleKeys}). Called once per router instance (routers are cached per
-     * subtask), so rule evaluation stays regex-match-only per request.
-     */
-    public static Map<String, Pattern> compileRules(RoutingStrategy strategy) {
-        if (strategy.getType() != RoutingStrategyType.RULE_BASED) {
-            return Collections.emptyMap();
-        }
-        Map<String, Pattern> compiled = new LinkedHashMap<>();
-        Object raw = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
-        // A mis-shaped 'rules' value must fail loudly: silently compiling zero rules would
-        // disable routing (every request abstains to the default) with no diagnostic. The
-        // fluent path always writes a Map; only hand-built/deserialized declarations get here.
-        if (raw != null && !(raw instanceof Map)) {
-            throw new IllegalArgumentException(
-                    String.format(
-                            "Routing rules must be a map of candidate name to regex, got %s.",
-                            raw.getClass().getSimpleName()));
-        }
-        if (raw instanceof Map) {
-            for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
-                Object key = entry.getKey();
-                Object value = entry.getValue();
-                if (!(key instanceof String) || ((String) key).isEmpty()) {
-                    throw new IllegalArgumentException(
-                            "Routing rule has a null or empty candidate key.");
-                }
-                // String.valueOf(null) would silently become the literal pattern "null" (and
-                // non-String values would coerce); reject both instead.
-                if (!(value instanceof String)) {
-                    throw new IllegalArgumentException(
-                            String.format(
-                                    "Routing rule for candidate '%s' must be a regex String, got %s.",
-                                    key,
-                                    value == null ? "null" : value.getClass().getSimpleName()));
-                }
-                try {
-                    compiled.put(
-                            (String) key,
-                            Pattern.compile((String) value, Pattern.CASE_INSENSITIVE));
-                } catch (PatternSyntaxException e) {
-                    throw new IllegalArgumentException(
-                            String.format(
-                                    "Routing rule pattern '%s' for candidate '%s' is not a valid regex.",
-                                    value, key),
-                            e);
-                }
-            }
-        }
-        return Collections.unmodifiableMap(compiled);
     }
 
     /** The configured strategy declaration (type + arguments). */
     public RoutingStrategy getStrategy() {
         return strategy;
-    }
-
-    /**
-     * The pre-compiled rule patterns, in declaration order (empty unless the strategy type is
-     * {@link RoutingStrategyType#RULE_BASED}).
-     */
-    public Map<String, Pattern> getCompiledRules() {
-        return compiledRules;
     }
 
     public List<RoutingCandidate> getCandidates() {
@@ -317,19 +212,22 @@ public class ModelRouter extends Resource {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
-            // Rule maps have ONE validation/compilation path (compileRules), shared with the
-            // router constructor so the diagnostics are identical whether the descriptor came
-            // through this builder or was hand-built/deserialized. build() additionally checks
-            // rule keys against the candidate set so a typo fails at the registration call
-            // site; descriptors that skip the builder get the same checks at plan
-            // construction (AgentPlan#validateRuleKeys, with a router-scoped message).
+            // Rule shape/pattern validation ran in the RoutingStrategy constructor (the single
+            // declaration-validation path). build() additionally checks rule keys against the
+            // candidate set so a typo fails at the registration call site; descriptors that skip
+            // the builder get the same check at plan construction (AgentPlan#validateRuleKeys,
+            // with a router-scoped message).
             if (strategy.getType() == RoutingStrategyType.RULE_BASED) {
-                for (String ruleKey : compileRules(strategy).keySet()) {
-                    if (!candidates.contains(ruleKey)) {
-                        throw new IllegalArgumentException(
-                                String.format(
-                                        "Routing rule key '%s' is not one of the candidates %s.",
-                                        ruleKey, candidates));
+                Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
+                if (rules instanceof Map) {
+                    for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
+                        if (!candidates.contains(ruleKey)) {
+                            throw new IllegalArgumentException(
+                                    String.format(
+                                            "Routing rule key '%s' is not one of the candidates"
+                                                    + " %s.",
+                                            ruleKey, candidates));
+                        }
                     }
                 }
             }

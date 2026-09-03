@@ -52,7 +52,9 @@ class RoutingTest {
     }
 
     @Test
-    void rulesDeclarationCompilesPatternsOnTheRouter() throws Exception {
+    void rulesDeclarationRoundTripsThroughTheRouter() throws Exception {
+        // The router carries the declaration only; compilation/execution live in the plan layer
+        // (RuleBasedRoutingExecutor), so the round-trip is declaration data, not Patterns.
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -61,8 +63,9 @@ class RoutingTest {
                                 .build(),
                         null);
         assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
-        assertTrue(router.getCompiledRules().containsKey("big"));
-        assertTrue(router.getCompiledRules().get("big").matcher("write some sql").find());
+        Object rules = router.getStrategy().getArguments().get(RoutingStrategy.ARG_RULES);
+        assertTrue(rules instanceof Map);
+        assertEquals("\\b(code|sql)\\b", ((Map<?, ?>) rules).get("big"));
     }
 
     @Test

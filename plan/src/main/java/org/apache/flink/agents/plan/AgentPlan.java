@@ -77,7 +77,6 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.function.Function;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
@@ -716,9 +715,10 @@ public class AgentPlan implements Serializable {
      * and expose a supported constructor — checked without instantiation, so plan construction
      * never runs user constructors (or their static initializers).
      *
-     * <p>{@code RULE_BASED}: the rule map must compile ({@link ModelRouter#compileRules} — the
-     * shared path, so diagnostics match the builder's) and every rule key must name a declared
-     * candidate.
+     * <p>{@code RULE_BASED}: rule shape and pattern validity are enforced by the {@link
+     * RoutingStrategy} constructor invoked below (the single declaration-validation path, so
+     * diagnostics match the builder's); this arm additionally checks that every rule key names a
+     * declared candidate.
      */
     private void validateRoutingStrategies() {
         if (resourceProviders == null) {
@@ -782,15 +782,12 @@ public class AgentPlan implements Serializable {
      * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
      * hand-built) never went through the builder. Without this arm they would surface only per
      * record at request time — inside the durable call — where the IGNORE error policy silently
-     * drops every matching record. {@link ModelRouter#compileRules} is the single
-     * validation/compilation path (invalid patterns, non-String values, empty keys), so those
-     * diagnostics are identical to the builder's; the key-vs-candidate check mirrors build().
+     * drops every matching record. Rule shape, value types and pattern validity were already
+     * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
+     * the key-vs-candidate check here mirrors build().
      */
     private static void validateRuleKeys(
             String routerName, RoutingStrategy strategy, Object candidates) {
-        // Compile first: pattern/value/key-shape problems fail at plan construction even when
-        // 'candidates' itself is unusable (compileRules needs only the strategy).
-        Set<String> ruleKeys = ModelRouter.compileRules(strategy).keySet();
         if (candidates == null) {
             // A missing 'candidates' argument gets the router constructor's own message
             // ("requires at least one candidate").
@@ -807,7 +804,11 @@ public class AgentPlan implements Serializable {
                             ModelRouter.CANDIDATES_KEY,
                             candidates.getClass().getSimpleName()));
         }
-        for (String ruleKey : ruleKeys) {
+        Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
+        if (!(rules instanceof Map)) {
+            return;
+        }
+        for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
             if (!((List<?>) candidates).contains(ruleKey)) {
                 throw new IllegalArgumentException(
                         String.format(

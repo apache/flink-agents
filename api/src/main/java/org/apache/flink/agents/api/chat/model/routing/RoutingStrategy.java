@@ -24,6 +24,8 @@ import java.io.Serializable;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 /**
  * The immutable, serializable <b>declaration</b> of a routing strategy: which kind of routing
@@ -108,9 +110,12 @@ public final class RoutingStrategy implements Serializable {
                 }
                 break;
             case RULE_BASED:
-                // Rule keys/patterns are validated against the candidate set where the
-                // candidates are in hand: ModelRouter.Builder#build() for the fluent path,
-                // AgentPlan#validateRuleKeys for descriptor-built plans.
+                // Declaration-level rule validation (shape, key/value types, regex syntax) lives
+                // here so every path that constructs the declaration — the fluent builder, the
+                // router constructor, plan-time validation — fails identically. Key-vs-candidate
+                // checks happen where the candidates are in hand: ModelRouter.Builder#build() for
+                // the fluent path, AgentPlan#validateRuleKeys for descriptor-built plans.
+                validateRules(arguments.get(ARG_RULES));
                 break;
             default:
                 // A new type must opt into validation explicitly (mirrors the executor
@@ -138,6 +143,49 @@ public final class RoutingStrategy implements Serializable {
         Map<String, Object> withCap = new LinkedHashMap<>(arguments);
         withCap.put(ARG_MAX_CONTEXT_CHARS, maxContextChars);
         return new RoutingStrategy(type, withCap, null);
+    }
+
+    /**
+     * A mis-shaped 'rules' value must fail loudly at declaration time: silently compiling zero
+     * rules would disable routing (every request abstains to the default) with no diagnostic. A
+     * {@code null} value is a rule-less declaration (always-abstain), which is legal.
+     */
+    private static void validateRules(@Nullable Object raw) {
+        if (raw == null) {
+            return;
+        }
+        if (!(raw instanceof Map)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Routing rules must be a map of candidate name to regex, got %s.",
+                            raw.getClass().getSimpleName()));
+        }
+        for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
+            Object key = entry.getKey();
+            Object value = entry.getValue();
+            if (!(key instanceof String) || ((String) key).isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Routing rule has a null or empty candidate key.");
+            }
+            // String.valueOf(null) would silently become the literal pattern "null" (and
+            // non-String values would coerce); reject both instead.
+            if (!(value instanceof String)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Routing rule for candidate '%s' must be a regex String, got %s.",
+                                key, value == null ? "null" : value.getClass().getSimpleName()));
+            }
+            try {
+                Pattern.compile((String) value);
+            } catch (PatternSyntaxException e) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Routing rule pattern '%s' for candidate '%s' is not a valid"
+                                        + " regex.",
+                                value, key),
+                        e);
+            }
+        }
     }
 
     public RoutingStrategyType getType() {
