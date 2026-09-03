@@ -77,6 +77,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
@@ -787,12 +788,26 @@ public class AgentPlan implements Serializable {
      */
     private static void validateRuleKeys(
             String routerName, RoutingStrategy strategy, Object candidates) {
-        if (!(candidates instanceof List)) {
-            // A missing or mis-shaped 'candidates' argument gets the router constructor's own
-            // message ("requires at least one candidate") instead of a ClassCastException here.
+        // Compile first: pattern/value/key-shape problems fail at plan construction even when
+        // 'candidates' itself is unusable (compileRules needs only the strategy).
+        Set<String> ruleKeys = ModelRouter.compileRules(strategy).keySet();
+        if (candidates == null) {
+            // A missing 'candidates' argument gets the router constructor's own message
+            // ("requires at least one candidate").
             return;
         }
-        for (String ruleKey : ModelRouter.compileRules(strategy).keySet()) {
+        if (!(candidates instanceof List)) {
+            // Fail here, not per record: the router constructor's unchecked read would turn a
+            // mis-shaped value into a raw ClassCastException inside the durable call.
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' declares '%s' as %s; expected a list of model"
+                                    + " names.",
+                            routerName,
+                            ModelRouter.CANDIDATES_KEY,
+                            candidates.getClass().getSimpleName()));
+        }
+        for (String ruleKey : ruleKeys) {
             if (!((List<?>) candidates).contains(ruleKey)) {
                 throw new IllegalArgumentException(
                         String.format(

@@ -157,8 +157,7 @@ public class ModelRouter extends Resource {
      * invalid regex all fail here with the same diagnostics everywhere it is called — the builder
      * ({@code build()}), the router constructor, and plan-time validation ({@code
      * AgentPlan#validateRuleKeys}). Called once per router instance (routers are cached per
-     * subtask), so rule evaluation stays regex-match-only per request. Patterns were validated at
-     * build(); this re-validates defensively for descriptors constructed outside the builder.
+     * subtask), so rule evaluation stays regex-match-only per request.
      */
     public static Map<String, Pattern> compileRules(RoutingStrategy strategy) {
         if (strategy.getType() != RoutingStrategyType.RULE_BASED) {
@@ -166,6 +165,15 @@ public class ModelRouter extends Resource {
         }
         Map<String, Pattern> compiled = new LinkedHashMap<>();
         Object raw = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
+        // A mis-shaped 'rules' value must fail loudly: silently compiling zero rules would
+        // disable routing (every request abstains to the default) with no diagnostic. The
+        // fluent path always writes a Map; only hand-built/deserialized declarations get here.
+        if (raw != null && !(raw instanceof Map)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Routing rules must be a map of candidate name to regex, got %s.",
+                            raw.getClass().getSimpleName()));
+        }
         if (raw instanceof Map) {
             for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
                 Object key = entry.getKey();
