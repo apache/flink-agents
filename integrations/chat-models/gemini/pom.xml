@@ -43,6 +43,17 @@ under the License.
             <artifactId>google-genai</artifactId>
             <version>${google.genai.version}</version>
         </dependency>
+
+        <!-- Versions managed by the victools BOM imported in the root pom. -->
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-generator</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-module-jackson</artifactId>
+        </dependency>
     </dependencies>
 
 </project>
