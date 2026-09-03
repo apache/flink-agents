@@ -31,12 +31,12 @@ import java.util.List;
  * do not need to redeclare the boilerplate around {@link JavaFunction#JavaFunction(Class, String,
  * Class[])} signature checks.
  */
-final class TestActions {
+public final class TestActions {
 
     private TestActions() {}
 
     /** Returns a minimal noop Java action backed by {@link #noop(InputEvent, RunnerContext)}. */
-    static Action noopAction() {
+    public static Action noopAction() {
         try {
             return new Action(
                     "noop",

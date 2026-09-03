@@ -32,7 +32,7 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, chat_model_server, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills, model_router.
+    vector_store, prompt, mcp_server, skills, model_router, agent.
     """
 
     CHAT_MODEL = "chat_model"
@@ -49,6 +49,7 @@ class ResourceType(Enum):
     # Python side: mixed jobs (Java router + Python actions) must not fail at
     # operator open with a ValidationError.
     MODEL_ROUTER = "model_router"
+    AGENT = "agent"
 
 
 class Resource(BaseModel, ABC):

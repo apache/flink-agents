@@ -33,7 +33,8 @@ public enum ResourceType {
     TOOL("tool"),
     MCP_SERVER("mcp_server"),
     SKILLS("skills"),
-    MODEL_ROUTER("model_router");
+    MODEL_ROUTER("model_router"),
+    AGENT("agent");
 
     private final String value;
 

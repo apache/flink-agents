@@ -51,6 +51,7 @@ from flink_agents.runtime.durable_execution import (
     _compute_function_id,
     _validate_reconciler_callable,
     durable_identity_for_call,
+    with_durable_id,
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
@@ -65,6 +66,7 @@ from flink_agents.runtime.resource_cache import (
     _failure_of,
     _first_or_logged,
 )
+from flink_agents.runtime.task_lifecycle_listener import TaskLifecycleListener
 
 logger = logging.getLogger(__name__)
 
@@ -485,6 +487,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.__config = self.__agent_plan.config
         self.executor = executor
+        # Task lifecycle listeners the operator's callbacks fan out to,
+        # registered via add_task_lifecycle_listener() (aligned with the Java
+        # operator's taskLifecycleListeners).
+        self.__task_lifecycle_listeners: list = []
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -529,6 +535,75 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
+
+    def eager_materialize(self, resource_type: str) -> Dict[str, Resource]:
+        """Materialize every Python-owned resource of ``resource_type``.
+
+        The Python-side counterpart of the Java ``ResourceCache.eagerMaterialize``:
+        resources declared by Python providers are built, cached and closed here,
+        so the Java side asks for them instead of building its own. Returns them
+        keyed by resource name.
+        """
+        from flink_agents.plan.resource_provider import is_python_owned
+
+        type_ = ResourceType(resource_type)
+        materialized = {}
+        providers = self.__agent_plan.resource_providers.get(type_, {})
+        for name, provider in providers.items():
+            if not is_python_owned(provider):
+                # Java-owned resources are materialized by the Java resource cache.
+                continue
+            materialized[name] = self.__resource_cache.get_resource(name, type_)
+        return materialized
+
+    def add_task_lifecycle_listener(self, listener: Any) -> None:
+        """Register a task lifecycle listener the operator's callbacks fan out to."""
+        self.__task_lifecycle_listeners.append(listener)
+
+    def notify_record_start(self, key: Any) -> None:
+        """Fan out the operator's onRecordStart to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_record_start(key)
+
+    def notify_action_prepared(self, task: Any) -> None:
+        """Fan out the operator's onActionPrepared to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_prepared(task)
+
+    def notify_action_started(self, task: Any) -> None:
+        """Fan out the operator's onActionStarted to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_started(task)
+
+    def notify_action_transferred(self, from_task: Any, to_task: Any) -> None:
+        """Fan out the operator's onActionTransferred to the listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_transferred(from_task, to_task)
+
+    def notify_action_finishing(self, task: Any) -> None:
+        """Fan out the operator's onActionFinishing to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_finishing(task)
+
+    def notify_action_finished(self, task: Any) -> None:
+        """Fan out the operator's onActionFinished to the listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_finished(task)
+
+    def notify_action_reused(self, task: Any) -> None:
+        """Fan out the operator's onActionReused to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_reused(task)
+
+    def notify_action_failed(self, task: Any, error: Any) -> None:
+        """Fan out the operator's onActionFailed to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_action_failed(task, error)
+
+    def notify_record_finished(self, key: Any) -> None:
+        """Fan out the operator's onRecordFinished to the task lifecycle listeners."""
+        for listener in self.__task_lifecycle_listeners:
+            listener.on_record_finished(key)
 
     @property
     @override
@@ -1113,6 +1188,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> Any:
         """Synchronously execute the provided function with durable execution support.
@@ -1126,6 +1202,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         the operator until completion.
         """
         validated_reconciler = _validate_reconciler_callable(reconciler)
+        if durable_id is not None:
+            func = with_durable_id(func, durable_id)
 
         if validated_reconciler is not None:
             plan = self._plan_reconciler_execution(
@@ -1153,6 +1231,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         func: Callable[[Any], Any],
         *args: Any,
         reconciler: Callable[[], Any] | None = None,
+        durable_id: str | None = None,
         **kwargs: Any,
     ) -> AsyncExecutionResult:
         """Asynchronously execute the provided function with durable execution support.
@@ -1167,6 +1246,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         recorded and cannot be recovered.
         """
         validated_reconciler = _validate_reconciler_callable(reconciler)
+        if durable_id is not None:
+            func = with_durable_id(func, durable_id)
 
         if validated_reconciler is not None:
             return _ReconcilerDurableAsyncExecutionResult(
@@ -1293,6 +1374,72 @@ def close_flink_runner_context(
 ) -> None:
     """Clean up the resources kept by the flink runner context."""
     ctx.close()
+
+
+def eager_materialize(
+    ctx: FlinkRunnerContext, resource_type: str
+) -> Dict[str, Resource]:
+    """Java entry: materialize the Python-owned resources of ``resource_type``."""
+    return ctx.eager_materialize(resource_type)
+
+
+def add_task_lifecycle_listener(ctx: FlinkRunnerContext, listener: Any) -> bool:
+    """Java entry: register a Python object as a task lifecycle listener.
+
+    Returns whether it observes the lifecycle, so the Java side knows whether the
+    Python runtime has anything to be notified about.
+    """
+    if not isinstance(listener, TaskLifecycleListener):
+        return False
+    ctx.add_task_lifecycle_listener(listener)
+    return True
+
+
+def notify_record_start(ctx: FlinkRunnerContext, key: Any) -> None:
+    """Java entry: forward onRecordStart to the Python task lifecycle listeners."""
+    ctx.notify_record_start(key)
+
+
+def notify_action_prepared(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onActionPrepared to the Python task lifecycle listeners."""
+    ctx.notify_action_prepared(task)
+
+
+def notify_action_started(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onActionStarted to the Python task lifecycle listeners."""
+    ctx.notify_action_started(task)
+
+
+def notify_action_transferred(
+    ctx: FlinkRunnerContext, from_task: Any, to_task: Any
+) -> None:
+    """Java entry: forward onActionTransferred to the Python listeners."""
+    ctx.notify_action_transferred(from_task, to_task)
+
+
+def notify_action_finishing(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onActionFinishing to the Python task lifecycle listeners."""
+    ctx.notify_action_finishing(task)
+
+
+def notify_action_finished(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onActionFinished to the Python listeners."""
+    ctx.notify_action_finished(task)
+
+
+def notify_action_reused(ctx: FlinkRunnerContext, task: Any) -> None:
+    """Java entry: forward onActionReused to the Python task lifecycle listeners."""
+    ctx.notify_action_reused(task)
+
+
+def notify_action_failed(ctx: FlinkRunnerContext, task: Any, error: Any) -> None:
+    """Java entry: forward onActionFailed to the Python task lifecycle listeners."""
+    ctx.notify_action_failed(task, error)
+
+
+def notify_record_finished(ctx: FlinkRunnerContext, key: Any) -> None:
+    """Java entry: forward onRecordFinished to the Python task lifecycle listeners."""
+    ctx.notify_record_finished(key)
 
 
 _ASYNC_POOL_ID = itertools.count(1)

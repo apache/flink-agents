@@ -33,6 +33,7 @@ import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,9 +85,11 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 contextKey,
                 "observation-1",
-                suppressed);
+                suppressed,
+                null);
         return context;
     }
 
@@ -222,9 +225,11 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-43",
                 "observation-2",
-                true);
+                true,
+                null);
 
         assertThat(ltm.configureCallCount).isEqualTo(1);
         assertThat(ltm.switchCallCount).isEqualTo(2);
@@ -259,9 +264,11 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-42",
                 "observation-2",
-                false);
+                false,
+                null);
         ltm.record("user-42", "observation-2", "b", "from-b");
 
         LongTermUpdateEvent bEvent =
@@ -274,9 +281,11 @@ class TestMemoryObservationFlush {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 "user-42",
                 "observation-1",
-                false);
+                false,
+                null);
         context.discardMemoryObservation();
         assertThat(context.drainEventsAtActionFinish(null)).isEmpty();
         assertThat(ltm.pendingRecords).isEmpty();

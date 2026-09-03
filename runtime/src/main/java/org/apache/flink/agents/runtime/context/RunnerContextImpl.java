@@ -33,13 +33,13 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
@@ -47,8 +47,6 @@ import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
-import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -122,7 +120,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
 
-    protected final List<Event> pendingEvents = new ArrayList<>();
+    protected List<Event> pendingEvents = new ArrayList<>();
+
     protected final FlinkAgentsMetricGroupImpl agentMetricGroup;
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
@@ -150,9 +149,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     /** Whether the fixed job-level configuration enables any LTM observation. */
     private final boolean ltmObservationConfigured;
 
-    @Nullable protected ExecutionTraceContext actionTraceContext;
-    @Nullable protected ExecutionEventSink executionEventSink;
-    @Nullable private Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions;
+    /** Component execution listeners of the current action execution, fanned out best-effort. */
+    @Nullable protected List<ComponentExecutionListener> componentExecutionListeners;
 
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
@@ -182,58 +180,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void switchActionContext(
             String actionName,
             MemoryContext memoryContext,
-            String contextKey,
-            String observationId,
-            boolean observationSuppressed) {
-        switchActionContext(
-                actionName,
-                memoryContext,
-                contextKey,
-                observationId,
-                observationSuppressed,
-                null,
-                null);
-    }
-
-    public void switchActionContext(
-            String actionName,
-            MemoryContext memoryContext,
-            String contextKey,
-            @Nullable ExecutionTraceContext actionTraceContext,
-            @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
-        switchActionContext(
-                actionName,
-                memoryContext,
-                contextKey,
-                null,
-                false,
-                actionTraceContext,
-                activeReportedExecutions);
-    }
-
-    public void switchActionContext(
-            String actionName,
-            MemoryContext memoryContext,
+            List<Event> pendingEvents,
             String contextKey,
             @Nullable String observationId,
             boolean observationSuppressed,
-            @Nullable ExecutionTraceContext actionTraceContext,
-            @Nullable Map<ReportedExecutionKey, ExecutionTraceContext> activeReportedExecutions) {
+            @Nullable List<ComponentExecutionListener> componentExecutionListeners) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
+        this.pendingEvents = pendingEvents;
         this.contextKey = contextKey;
         this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
         this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
-        this.actionTraceContext = actionTraceContext;
-        this.activeReportedExecutions = activeReportedExecutions;
+        this.componentExecutionListeners = componentExecutionListeners;
         if (ltm != null) {
             ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
-    }
-
-    public void setExecutionEventSink(@Nullable ExecutionEventSink executionEventSink) {
-        this.executionEventSink = executionEventSink;
     }
 
     public MemoryContext getMemoryContext() {
@@ -350,6 +312,15 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 this.pendingEvents.isEmpty(), "There are pending events remaining in the context.");
     }
 
+    public List<Event> getPendingEvents() {
+        return this.pendingEvents;
+    }
+
+    @Nullable
+    public List<ComponentExecutionListener> getComponentExecutionListeners() {
+        return this.componentExecutionListeners;
+    }
+
     public List<MemoryUpdate> getSensoryMemoryUpdates() {
         mailboxThreadChecker.run();
         return List.copyOf(memoryContext.getSensoryMemoryUpdates());
@@ -404,42 +375,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 ExecutionLifecycleEvents.executionFailed(error, problemCategory));
     }
 
+    /**
+     * Fans the report out to the current action execution's component listeners best-effort: a
+     * listener that throws is logged and skipped, so reporting never fails the caller.
+     */
     protected void reportChildExecution(
             String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
         mailboxThreadChecker.run();
-        if (actionTraceContext == null
-                || executionEventSink == null
-                || activeReportedExecutions == null) {
+        if (componentExecutionListeners == null) {
             return;
         }
-
-        ReportedExecutionKey key = new ReportedExecutionKey(entityType, entityName, entityMetadata);
-        ExecutionTraceContext reportTraceContext;
-        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
-            reportTraceContext =
-                    actionTraceContext.childExecution(
-                            entityType, entityName, key.getEntityMetadata());
-            ExecutionTraceContext previous = activeReportedExecutions.put(key, reportTraceContext);
-            if (previous != null) {
-                LOG.debug(
-                        "Execution start report for {}:{} replaced an active report with the same metadata.",
-                        entityType,
-                        entityName);
-            }
-        } else {
-            reportTraceContext = activeReportedExecutions.remove(key);
-            if (reportTraceContext == null) {
-                LOG.debug(
-                        "Execution terminal report for {}:{} has no matching start report; emitting it with a new execution id.",
-                        entityType,
-                        entityName);
-                reportTraceContext =
-                        actionTraceContext.childExecution(
-                                entityType, entityName, key.getEntityMetadata());
+        for (ComponentExecutionListener listener : componentExecutionListeners) {
+            try {
+                listener.onComponentExecution(entityType, entityName, entityMetadata, event);
+            } catch (Exception | LinkageError e) {
+                LOG.warn(
+                        "Component execution listener {} failed on a report for action '{}' ({})",
+                        listener.getClass().getSimpleName(),
+                        actionName,
+                        e.getClass().getSimpleName());
             }
         }
-
-        executionEventSink.emit(event, reportTraceContext);
     }
 
     @Override
