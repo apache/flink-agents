@@ -666,6 +666,64 @@ def test_parallel_timeout_timestamp_precedes_response_processing_and_reporting(
     )
 
 
+@pytest.mark.parametrize("starts_after_observation", [False, True])
+def test_parallel_timeout_omits_starts_after_result_observation(
+    starts_after_observation: bool,
+) -> None:
+    failure = TimeoutError("batch timed out")
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    observed_at = base + timedelta(seconds=1)
+    delayed_start = (
+        observed_at + timedelta(seconds=1) if starts_after_observation else observed_at
+    )
+    clock = [base]
+    delayed = []
+    tool = MagicMock()
+    tool.tool_type.return_value = ToolType.FUNCTION
+    tool.call.return_value = "ok"
+    ctx, sent_events = trace_context(tool)
+    ctx.config = AgentConfiguration({})
+    ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+
+    async def execute_all(callables: list[Any]) -> list[Outcome]:
+        first = callables[0]
+        result = first.func(*first.args, **(first.kwargs or {}))
+        delayed.extend(callables[1:])
+        clock[0] = observed_at
+        return [
+            Outcome.success(result),
+            Outcome.failure(failure),
+            Outcome.failure(failure),
+        ]
+
+    def report_started(*args: Any) -> None:
+        if args[2][ToolExecutionMetadataKeys.TOOL_CALL_ID] == "call-1":
+            # The delayed calls enter after the Action has observed the timeout.
+            clock[0] = delayed_start
+            for call in delayed:
+                call.func(*call.args, **(call.kwargs or {}))
+
+    ctx.durable_execute_all_async = execute_all
+    ctx.report_execution_started_at.side_effect = report_started
+    with patch.object(tool_call_action, "datetime") as datetime_mock:
+        datetime_mock.now.side_effect = lambda tz: clock[0]
+        asyncio.run(process_tool_request(parallel_trace_request(), ctx))
+
+    starts = ["call-1"] if starts_after_observation else ["call-1", "call-2", "call-3"]
+    assert_occurrence_reports(ctx, starts, ["call-1"], ["call-2", "call-3"])
+    assert tool.call.call_count == 3
+    assert all(
+        call.args[3] is failure and call.args[-1] == "2026-01-01T00:00:01Z"
+        for call in ctx.report_execution_failed_at.call_args_list
+    )
+    assert sent_events[0].success == {
+        "call-1": True,
+        "call-2": False,
+        "call-3": False,
+    }
+
+
 def test_partial_cache_replay_only_reports_start_for_invoked_tool() -> None:
     tool = MagicMock()
     tool.tool_type.return_value = ToolType.FUNCTION

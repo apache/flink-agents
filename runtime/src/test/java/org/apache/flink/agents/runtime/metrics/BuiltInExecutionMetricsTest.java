@@ -257,6 +257,22 @@ class BuiltInExecutionMetricsTest {
                 .isZero();
     }
 
+    @Test
+    void toolFailureWithoutStartCountsFailureWithoutLatency() {
+        ExecutionTraceContext traceContext =
+                execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+        observe(
+                ExecutionLifecycleEvents.executionFailed(new RuntimeException("timed out")),
+                traceContext,
+                1000);
+
+        FlinkAgentsMetricGroupImpl tool = actionMetricGroup().getSubGroup("tool", "search");
+        assertThat(tool.getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_FAILED).getCount())
+                .isEqualTo(1);
+        assertThat(tool.getHistogram(ToolExecutionMetricRecorder.TOOL_CALL_LATENCY_MS).getCount())
+                .isZero();
+    }
+
     private void observe(Event event, ExecutionTraceContext traceContext, long timestampMillis) {
         metrics.executionEventObserved(
                 ACTION_NAME,

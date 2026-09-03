@@ -328,7 +328,7 @@ def _report_execution(
 ) -> None:
     finished_at = execution.occurrence.finished_at
     started_at = execution.occurrence.started_at
-    if started_at is not None:
+    if started_at is not None and (outcome is None or started_at <= result_observed_at):
         ExecutionReporters.started_at(
             ctx,
             ExecutionEntityTypes.TOOL,

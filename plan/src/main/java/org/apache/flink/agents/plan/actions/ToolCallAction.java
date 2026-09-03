@@ -281,7 +281,7 @@ public class ToolCallAction {
             Instant resultObservedAt) {
         Instant finishedAt = execution.occurrence.finishedAt;
         Instant startedAt = execution.occurrence.startedAt;
-        if (startedAt != null) {
+        if (startedAt != null && (outcome == null || !startedAt.isAfter(resultObservedAt))) {
             ExecutionReporters.startedAt(
                     ctx,
                     ExecutionReporter.EntityTypes.TOOL,
