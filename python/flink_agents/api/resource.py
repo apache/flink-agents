@@ -51,6 +51,25 @@ class ResourceType(Enum):
     MODEL_ROUTER = "model_router"
 
 
+def check_registrable_from_python(resource_type: "ResourceType") -> None:
+    """Reject resource types that cannot be registered from Python.
+
+    MODEL_ROUTER exists in the enum only so Java plans containing routers
+    deserialize on the Python side; Python-side routing is a planned
+    follow-up. Shared by every registration entry point
+    (``Agent.add_resource`` and ``AgentsExecutionEnvironment.add_resource``)
+    so the guard and its message cannot drift apart.
+    """
+    if resource_type == ResourceType.MODEL_ROUTER:
+        msg = (
+            "MODEL_ROUTER resources cannot be registered from Python yet: "
+            "model routing currently executes on the Java side only (the "
+            "enum member exists so Java plans containing routers "
+            "deserialize). Python-side routing is a planned follow-up."
+        )
+        raise NotImplementedError(msg)
+
+
 class Resource(BaseModel, ABC):
     """Base abstract class of all kinds of resources, includes chat model,
     prompt, tools and so on.

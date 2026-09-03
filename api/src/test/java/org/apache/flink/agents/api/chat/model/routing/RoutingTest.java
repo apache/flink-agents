@@ -52,20 +52,24 @@ class RoutingTest {
     }
 
     @Test
-    void ruleMatchSelectsCandidate() throws Exception {
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
-        RoutingDecision decision = strategy.route(ctx("please write some SQL for me"));
-        assertFalse(decision.isAbstain());
-        assertEquals("big", decision.getSelectedModel());
+    void rulesDeclarationRoundTripsThroughTheRouter() throws Exception {
+        // The router carries the declaration only; compilation/execution live in the plan layer
+        // (RuleBasedRoutingExecutor), so the round-trip is declaration data, not Patterns.
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
+        Object rules = router.getStrategy().getArguments().get(RoutingStrategy.ARG_RULES);
+        assertTrue(rules instanceof Map);
+        assertEquals("\\b(code|sql)\\b", ((Map<?, ?>) rules).get("big"));
     }
 
     @Test
-    void ruleMatchesLatestUserMessageNotFirst() throws Exception {
-        // Multi-turn: turn 1 asked for SQL, but the current question is small talk. The rule
-        // strategy must route on the most recent user message, not the oldest.
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
+    void routingContextExposesLatestAndFirstUserMessage() {
         RoutingContext multiTurn =
                 new RoutingContext(
                         REQUEST_ID,
@@ -76,22 +80,12 @@ class RoutingTest {
                                 new ChatMessage(MessageRole.USER, "thanks, how is the weather?")),
                         Map.of(),
                         List.of(new RoutingCandidate("small"), new RoutingCandidate("big")));
-        assertTrue(strategy.route(multiTurn).isAbstain());
         assertEquals("thanks, how is the weather?", multiTurn.lastUserMessage());
         assertEquals("please write some SQL for me", multiTurn.firstUserMessage());
     }
 
     @Test
-    void ruleNoMatchAbstains() throws Exception {
-        RuleBasedRoutingStrategy strategy =
-                new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", "\\b(code|sql)\\b")));
-        RoutingDecision decision = strategy.route(ctx("hello, how are you?"));
-        assertTrue(decision.isAbstain());
-        assertNull(decision.getSelectedModel());
-    }
-
-    @Test
-    void modelRouterBuildsAndRoutes() throws Exception {
+    void modelRouterBuildsFromDeclaration() throws Exception {
         ResourceDescriptor descriptor =
                 ModelRouter.of("small", "big")
                         .strategy(Strategies.rules(Map.of("big", "\\b(code|sql)\\b")))
@@ -107,6 +101,7 @@ class RoutingTest {
         assertTrue(router.isCandidate("big"));
         assertFalse(router.isCandidate("unknown"));
 
+        assertEquals(RoutingStrategyType.RULE_BASED, router.getStrategy().getType());
         RoutingContext context =
                 new RoutingContext(
                         REQUEST_ID,
@@ -114,7 +109,6 @@ class RoutingTest {
                         List.of(new ChatMessage(MessageRole.USER, "write code")),
                         Map.of(),
                         router.getCandidates());
-        assertEquals("big", router.route(context).getSelectedModel());
         assertEquals(REQUEST_ID, context.getRequestId());
     }
 
@@ -276,6 +270,41 @@ class RoutingTest {
     }
 
     @Test
+    void strategiesLlmRequiresJudgeModel() {
+        // The declaration validates at the factory call site — before any builder is involved.
+        assertThrows(IllegalArgumentException.class, () -> Strategies.llm(""));
+    }
+
+    @Test
+    void withMaxContextCharsRequiresPositiveValueAndJudgeType() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> Strategies.llm("judge").withMaxContextChars(0));
+        assertThrows(
+                IllegalStateException.class,
+                () -> Strategies.rules(Map.of()).withMaxContextChars(100));
+        assertEquals(
+                4096,
+                Strategies.llm("judge")
+                        .withMaxContextChars(4096)
+                        .getArguments()
+                        .get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS));
+    }
+
+    @Test
+    void strategyTypeTagRoundTrips() {
+        for (RoutingStrategyType type : RoutingStrategyType.values()) {
+            assertEquals(type, RoutingStrategyType.fromTag(type.tag()));
+        }
+        assertEquals("llm_judge", RoutingStrategyType.LLM_JUDGE.tag());
+    }
+
+    @Test
+    void factoryRejectsEmptyJudgeTemplate() {
+        assertThrows(IllegalArgumentException.class, () -> Strategies.llm("judge", ""));
+    }
+
+    @Test
     void builderRejectsInvalidRulePattern() {
         // A malformed regex must fail at build() like a typo'd key: an invalid pattern is never
         // cached by the resource cache, so it would otherwise re-throw on every routed request.
@@ -305,20 +334,36 @@ class RoutingTest {
     }
 
     @Test
-    void ruleStrategyRejectsNullRuleValue() {
+    void routerConstructionRejectsNullRuleValue() {
+        // A descriptor built outside the builder (e.g. deserialized) is re-validated when the
+        // router compiles its patterns: String.valueOf(null) would otherwise become the literal
+        // pattern "null".
         Map<String, Object> rules = new HashMap<>();
         rules.put("big", null);
-        // String.valueOf(null) would otherwise compile the literal pattern "null".
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, rules));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new RuleBasedRoutingStrategy(Map.of("rules", rules)));
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
     }
 
     @Test
-    void ruleStrategyRejectsNonStringRuleValue() {
+    void routerConstructionRejectsNonStringRuleValue() {
+        Map<String, Object> args = new HashMap<>();
+        args.put("candidates", List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(
+                ModelRouter.STRATEGY_ARGS_KEY,
+                Map.of(RoutingStrategy.ARG_RULES, Map.of("big", 42)));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new RuleBasedRoutingStrategy(Map.of("rules", Map.of("big", 42))));
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
     }
 
     @Test

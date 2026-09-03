@@ -382,18 +382,8 @@ public class ChatModelAction {
             throws Exception {
         Agent.ErrorHandlingStrategy strategy =
                 ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
-        int numRetries = 0;
-        int retryWaitIntervalSec = 0;
-        if (strategy == Agent.ErrorHandlingStrategy.RETRY) {
-            numRetries =
-                    ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES) > 0
-                            ? ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES)
-                            : 0;
-            retryWaitIntervalSec =
-                    ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL) > 0
-                            ? ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
-                            : 0;
-        }
+        int numRetries = ChatModelInvoker.configuredRetries(ctx, strategy);
+        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx, strategy);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -525,7 +515,7 @@ public class ChatModelAction {
      * Totals over a completed request are unchanged; requests that ultimately fail now contribute
      * their retry counts where they previously did not.
      */
-    private static void recordAttemptRetryStats(
+    static void recordAttemptRetryStats(
             RunnerContext ctx,
             UUID initialRequestId,
             BaseChatModelSetup chatModel,
@@ -638,6 +628,13 @@ public class ChatModelAction {
                             event.getPromptArgs(),
                             ctx);
         } catch (Exception e) {
+            // Cancellation is never a routing failure to ignore: isCancellation consults the
+            // thread's interrupt flag first (the judge path re-sets it before rethrowing) and
+            // the explicit cancellation types (a blocking custom executor surfaces a raw
+            // InterruptedException). Let the action loop stop instead of dropping the request.
+            if (ModelRoutingResolver.isCancellation(e)) {
+                throw e;
+            }
             // A routing-strategy failure honors the same error-handling strategy as the chat
             // call itself: under IGNORE the request is dropped with a warning instead of killing
             // the job. (Retries are not applied to the decision; strategies that perform I/O are

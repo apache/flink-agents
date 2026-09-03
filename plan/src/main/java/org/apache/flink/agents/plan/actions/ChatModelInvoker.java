@@ -96,6 +96,22 @@ final class ChatModelInvoker {
         }
     }
 
+    /** The request-level retry budget: honored only under {@code RETRY}. */
+    static int configuredRetries(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
+        if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
+            return 0;
+        }
+        return Math.max(ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES), 0);
+    }
+
+    /** The request-level retry backoff: honored only under {@code RETRY}. */
+    static int configuredRetryWaitSec(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
+        if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
+            return 0;
+        }
+        return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
+    }
+
     static ChatAttemptResult chatWithRetries(
             UUID initialRequestId,
             String model,

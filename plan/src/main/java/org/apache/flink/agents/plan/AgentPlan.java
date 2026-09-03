@@ -30,6 +30,10 @@ import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Prompt;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
+import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -110,6 +114,7 @@ public class AgentPlan implements Serializable {
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.resourceProviders = resourceProviders;
         this.config = new AgentConfiguration();
+        validateRoutingStrategies();
     }
 
     public AgentPlan(
@@ -128,6 +133,7 @@ public class AgentPlan implements Serializable {
         this.resourceProviders = resourceProviders;
         this.config = config;
         this.agentName = agentName;
+        validateRoutingStrategies();
     }
 
     /**
@@ -153,6 +159,7 @@ public class AgentPlan implements Serializable {
         extractResourceProvidersFromAgent(agent);
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.agentName = agentName != null ? agentName : defaultAgentName(agent);
+        validateRoutingStrategies();
     }
 
     public Map<String, Action> getActions() {
@@ -688,6 +695,209 @@ public class AgentPlan implements Serializable {
                             provider.getName(),
                             ResourceType.CHAT_MODEL,
                             ResourceType.MODEL_ROUTER));
+        }
+    }
+
+    /**
+     * Static routing-strategy constraints fail at plan construction — never per record. The
+     * strategy travels as a language-neutral type tag plus arguments, so validation reads
+     * declaration data directly: no reflective instantiation, whose failure modes previously let a
+     * misconfigured strategy skip validation entirely.
+     *
+     * <p>{@code LLM_JUDGE}: the judge chat model must be registered (a typo'd name would otherwise
+     * fail-and-abstain on every request, silently disabling routing — cf. {@link
+     * #checkNoRouterModelNameClash}), and its descriptor must bind no prompt, tools, or skills — a
+     * bound prompt would prepend an (unfilled) task prompt ahead of the verdict contract, bound
+     * tools divert the reply into tool calls, and skills inject both a discovery prompt and tools,
+     * each silently breaking verdict parsing on every request.
+     *
+     * <p>{@code CUSTOM}: the executor class must exist, implement {@link CustomRoutingExecutor},
+     * and expose a supported constructor — checked without instantiation, so plan construction
+     * never runs user constructors (or their static initializers).
+     *
+     * <p>{@code RULE_BASED}: rule shape and pattern validity are enforced by the {@link
+     * RoutingStrategy} constructor invoked below (the single declaration-validation path, so
+     * diagnostics match the builder's); this arm additionally checks that every rule key names a
+     * declared candidate.
+     */
+    private void validateRoutingStrategies() {
+        if (resourceProviders == null) {
+            return;
+        }
+        Map<String, ResourceProvider> routers = resourceProviders.get(ResourceType.MODEL_ROUTER);
+        if (routers == null) {
+            return;
+        }
+        Map<String, ResourceProvider> chatModels =
+                resourceProviders.getOrDefault(ResourceType.CHAT_MODEL, Collections.emptyMap());
+        for (ResourceProvider provider : routers.values()) {
+            if (!(provider instanceof JavaResourceProvider)) {
+                continue;
+            }
+            ResourceDescriptor descriptor = ((JavaResourceProvider) provider).getDescriptor();
+            if (descriptor == null || descriptor.getInitialArguments() == null) {
+                continue;
+            }
+            String typeTag = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
+            if (typeTag == null) {
+                // Fail here, not per record on the TaskManager: ModelRouter's constructor
+                // unconditionally rejects a descriptor without a strategy, and a throwing
+                // construction is never cached, so it would re-throw on every routed request.
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' declares no routing strategy ('%s' missing"
+                                        + " from its descriptor).",
+                                provider.getName(), ModelRouter.STRATEGY_TYPE_KEY));
+            }
+            // The declaration constructor re-validates the per-type argument rules, so a
+            // structurally invalid configuration (e.g. a judge without a judge model) fails
+            // plan construction with the same message as build().
+            RoutingStrategy strategy =
+                    new RoutingStrategy(
+                            RoutingStrategyType.fromTag(typeTag),
+                            descriptor.getArgument(
+                                    ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
+                            descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
+            switch (strategy.getType()) {
+                case LLM_JUDGE:
+                    validateJudge(provider.getName(), strategy, chatModels);
+                    break;
+                case CUSTOM:
+                    validateCustomExecutor(provider.getName(), strategy);
+                    break;
+                case RULE_BASED:
+                    validateRuleKeys(
+                            provider.getName(),
+                            strategy,
+                            descriptor.getArgument(ModelRouter.CANDIDATES_KEY));
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Rule declarations are static constraints like the judge checks above: the fluent builder
+     * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
+     * hand-built) never went through the builder. Without this arm they would surface only per
+     * record at request time — inside the durable call — where the IGNORE error policy silently
+     * drops every matching record. Rule shape, value types and pattern validity were already
+     * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
+     * the key-vs-candidate check here mirrors build().
+     */
+    private static void validateRuleKeys(
+            String routerName, RoutingStrategy strategy, Object candidates) {
+        if (candidates == null) {
+            // A missing 'candidates' argument gets the router constructor's own message
+            // ("requires at least one candidate").
+            return;
+        }
+        if (!(candidates instanceof List)) {
+            // Fail here, not per record: the router constructor's unchecked read would turn a
+            // mis-shaped value into a raw ClassCastException inside the durable call.
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' declares '%s' as %s; expected a list of model"
+                                    + " names.",
+                            routerName,
+                            ModelRouter.CANDIDATES_KEY,
+                            candidates.getClass().getSimpleName()));
+        }
+        Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
+        if (!(rules instanceof Map)) {
+            return;
+        }
+        for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
+            if (!((List<?>) candidates).contains(ruleKey)) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' has routing rule key '%s' which is not one of"
+                                        + " the candidates %s.",
+                                routerName, ruleKey, candidates));
+            }
+        }
+    }
+
+    private static void validateJudge(
+            String routerName, RoutingStrategy strategy, Map<String, ResourceProvider> chatModels) {
+        String judgeModel = (String) strategy.getArguments().get(RoutingStrategy.ARG_JUDGE_MODEL);
+        ResourceProvider judgeProvider = chatModels.get(judgeModel);
+        if (judgeProvider == null) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' uses Strategies.llm with judge model '%s', but no"
+                                    + " CHAT_MODEL resource with that name is registered.",
+                            routerName, judgeModel));
+        }
+        // The judge must be a plain chat model — nothing may rewrite the judge conversation.
+        // Only descriptor-carried bindings are visible here; a setup that is not introspectable
+        // at plan time surfaces its bindings on the judge's normal chat path.
+        if (!(judgeProvider instanceof JavaResourceProvider)) {
+            return;
+        }
+        ResourceDescriptor judgeDescriptor = ((JavaResourceProvider) judgeProvider).getDescriptor();
+        if (judgeDescriptor == null || judgeDescriptor.getInitialArguments() == null) {
+            return;
+        }
+        for (String binding : new String[] {"prompt", "tools", "skills"}) {
+            Object bound = judgeDescriptor.getArgument(binding);
+            boolean present =
+                    bound != null
+                            && (!(bound instanceof java.util.Collection)
+                                    || !((java.util.Collection<?>) bound).isEmpty());
+            if (present) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Judge model '%s' (router '%s') has '%s' configured; Strategies.llm"
+                                        + " requires a plain chat model (register the judge without"
+                                        + " %s).",
+                                judgeModel, routerName, binding, binding));
+            }
+        }
+    }
+
+    private static void validateCustomExecutor(String routerName, RoutingStrategy strategy) {
+        String executorClass = strategy.getExecutorClass();
+        Class<?> clazz;
+        try {
+            // initialize=false: plan construction must not run user static initializers.
+            clazz =
+                    Class.forName(
+                            executorClass, false, Thread.currentThread().getContextClassLoader());
+        } catch (ClassNotFoundException | LinkageError absent) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' references custom routing executor '%s', which is"
+                                    + " not on the classpath.",
+                            routerName, executorClass),
+                    absent);
+        }
+        if (!CustomRoutingExecutor.class.isAssignableFrom(clazz)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Model router '%s' references custom routing executor '%s', which does"
+                                    + " not implement CustomRoutingExecutor.",
+                            routerName, executorClass));
+        }
+        boolean hasSupportedCtor;
+        try {
+            clazz.getConstructor(Map.class);
+            hasSupportedCtor = true;
+        } catch (NoSuchMethodException noMapCtor) {
+            try {
+                clazz.getConstructor();
+                hasSupportedCtor = true;
+            } catch (NoSuchMethodException noArgCtor) {
+                hasSupportedCtor = false;
+            }
+        }
+        if (!hasSupportedCtor) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Custom routing executor '%s' (router '%s') must expose a"
+                                    + " (Map<String,Object>) or no-arg public constructor.",
+                            executorClass, routerName));
         }
     }
 
