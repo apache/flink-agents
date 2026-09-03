@@ -576,6 +576,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Exception exception = null;
         try {
             result = executionCallable.call();
+        } catch (InterruptedException e) {
+            // A cancellation signal, not a genuine call failure: leave the durable slot
+            // unfinished so recovery re-executes or reconciles the call instead of replaying a
+            // stale interruption as a completed success or failure.
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             exception = e;
         }
@@ -939,6 +945,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Exception exception = null;
         try {
             result = callSupplier.call();
+        } catch (InterruptedException e) {
+            // A cancellation signal, not a genuine call failure: leave the pending call
+            // unfinalized so recovery re-executes or reconciles it instead of replaying a stale
+            // interruption as a completed success or failure.
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             exception = e;
         }

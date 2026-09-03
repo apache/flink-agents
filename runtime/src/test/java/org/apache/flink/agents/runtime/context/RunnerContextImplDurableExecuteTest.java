@@ -26,6 +26,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -53,6 +54,13 @@ class RunnerContextImplDurableExecuteTest {
         lastPersistedState = null;
     }
 
+    @AfterEach
+    void clearInterruptStatus() {
+        // Prevents a leftover interrupt flag (e.g. if an assertion below one of the interruption
+        // tests ever fails before consuming it) from leaking into an unrelated later test.
+        Thread.interrupted();
+    }
+
     @Test
     void testDurableExecuteLegacyCall() throws Exception {
         RunnerContextImpl context = createContext(new ActionState(null));
@@ -70,6 +78,53 @@ class RunnerContextImplDurableExecuteTest {
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertTrue(persisted.isSuccess());
         assertSame(context.getDurableExecutionContext().getActionState(), lastPersistedState);
+    }
+
+    @Test
+    void testDurableExecuteCompletionOnlyDoesNotPersistInterruption() {
+        RunnerContextImpl context = createContext(new ActionState(null));
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "legacy-call",
+                        String.class,
+                        () -> {
+                            throw new InterruptedException("cancelled");
+                        });
+
+        // Clear any interrupt status left over from a previous test before asserting on it below.
+        Thread.interrupted();
+
+        assertThrows(InterruptedException.class, () -> context.durableExecute(callable));
+
+        assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+        // A cancellation must not be finalized as a durable success or failure: the slot stays
+        // unfinished so recovery re-executes the call instead of replaying a stale interruption.
+        assertEquals(0, persistCallCount.get());
+        assertEquals(0, context.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
+    void testDurableExecuteCompletionOnlyReExecutesPendingSlotDoesNotPersistInterruption() {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        RunnerContextImpl context = createContext(actionState);
+        TestDurableCallable<String> callable =
+                new TestDurableCallable<>(
+                        "tool-call",
+                        String.class,
+                        () -> {
+                            throw new InterruptedException("cancelled");
+                        });
+
+        Thread.interrupted();
+
+        assertThrows(InterruptedException.class, () -> context.durableExecute(callable));
+
+        assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+        assertEquals(0, persistCallCount.get());
+        CallResult pending =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertTrue(pending.isPending(), "interrupted pending slot should remain unfinalized");
     }
 
     @Test
