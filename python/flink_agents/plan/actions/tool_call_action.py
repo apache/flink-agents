@@ -16,7 +16,10 @@
 # limitations under the License.
 #################################################################################
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from functools import wraps
 from typing import Any
 
 from flink_agents.api.core_options import AgentExecutionOptions
@@ -78,12 +81,30 @@ def _tool_entity_metadata(
     return metadata
 
 
+@dataclass
+class _ToolCallOccurrence:
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+    def wrap(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        @wraps(func)
+        def observed_call(*args: Any, **kwargs: Any) -> Any:
+            self.started_at = datetime.now(timezone.utc)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                self.finished_at = datetime.now(timezone.utc)
+
+        return observed_call
+
+
 @dataclass(frozen=True)
 class _ToolCallExecution:
     id: str
     name: str
     durable_call: DurableCall
     entity_metadata: dict[str, Any]
+    occurrence: _ToolCallOccurrence
 
 
 async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
@@ -166,10 +187,6 @@ def _build_tool_call_executions(
         entity_metadata = _tool_entity_metadata(
             event.id, call_id, external_id, name, tool, call_kwargs
         )
-        ExecutionReporters.started(
-            ctx, ExecutionEntityTypes.TOOL, name, entity_metadata
-        )
-
         if not tool or preparation_error is not None:
             failure = preparation_error or RuntimeError(
                 f"Tool `{name}` does not exist."
@@ -191,15 +208,17 @@ def _build_tool_call_executions(
             )
             continue
 
+        occurrence = _ToolCallOccurrence()
         executions.append(
             _ToolCallExecution(
                 id=call_id,
                 name=name,
                 durable_call=DurableCall(
-                    func=tool.call,
+                    func=occurrence.wrap(tool.call),
                     kwargs=call_kwargs,
                 ),
                 entity_metadata=entity_metadata,
+                occurrence=occurrence,
             )
         )
     return executions
@@ -212,15 +231,28 @@ async def _execute_parallel(
     success: dict,
     error: dict,
 ) -> None:
+    outcomes: list[Outcome] = []
+    result_observed_at = None
     try:
         outcomes = await ctx.durable_execute_all_async(
             [execution.durable_call for execution in executions]
         )
+        result_observed_at = datetime.now(timezone.utc)
         for execution, outcome in zip(executions, outcomes, strict=True):
-            _record_outcome(execution, outcome, ctx, responses, success, error)
+            _record_outcome(execution, outcome, responses, success, error)
     except Exception as e:
+        if result_observed_at is None:
+            result_observed_at = datetime.now(timezone.utc)
         for execution in executions:
-            _record_execution_exception(execution, e, ctx, responses, success, error)
+            _record_execution_exception(execution, e, responses, success, error)
+    finally:
+        for index, execution in enumerate(executions):
+            _report_execution(
+                execution,
+                ctx,
+                outcomes[index] if index < len(outcomes) else None,
+                result_observed_at,
+            )
 
 
 async def _execute_sequentially(
@@ -233,6 +265,8 @@ async def _execute_sequentially(
     error: dict,
 ) -> None:
     for execution in executions:
+        outcome = None
+        result_observed_at = None
         try:
             call = execution.durable_call
             if tool_call_async:
@@ -247,45 +281,36 @@ async def _execute_sequentially(
                     *call.args,
                     **(call.kwargs or {}),
                 )
+            result_observed_at = datetime.now(timezone.utc)
+            outcome = Outcome.success(response)
             responses[execution.id] = response
             success[execution.id] = True
-            ExecutionReporters.succeeded(
-                ctx,
-                ExecutionEntityTypes.TOOL,
-                execution.name,
-                execution.entity_metadata,
-            )
-        except Exception as e:  # noqa: PERF203
-            _record_execution_exception(execution, e, ctx, responses, success, error)
+        except Exception as e:
+            if result_observed_at is None:
+                result_observed_at = datetime.now(timezone.utc)
+            outcome = Outcome.failure(e)
+            _record_execution_exception(execution, e, responses, success, error)
+        finally:
+            _report_execution(execution, ctx, outcome, result_observed_at)
 
 
 def _record_outcome(
     execution: _ToolCallExecution,
     outcome: Outcome,
-    ctx: RunnerContext,
     responses: dict,
     success: dict,
     error: dict,
 ) -> None:
     if outcome.is_failure():
-        _record_execution_exception(
-            execution, outcome.error, ctx, responses, success, error
-        )
+        _record_execution_exception(execution, outcome.error, responses, success, error)
     else:
         responses[execution.id] = outcome.value
         success[execution.id] = True
-        ExecutionReporters.succeeded(
-            ctx,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
-            execution.entity_metadata,
-        )
 
 
 def _record_execution_exception(
     execution: _ToolCallExecution,
     exception: BaseException,
-    ctx: RunnerContext,
     responses: dict,
     success: dict,
     error: dict,
@@ -293,14 +318,48 @@ def _record_execution_exception(
     responses[execution.id] = f"Tool `{execution.name}` execute failed."
     success[execution.id] = False
     error[execution.id] = str(exception)
-    ExecutionReporters.failed(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        execution.name,
-        execution.entity_metadata,
-        exception,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-    )
+
+
+def _report_execution(
+    execution: _ToolCallExecution,
+    ctx: RunnerContext,
+    outcome: Outcome | None,
+    result_observed_at: datetime | None,
+) -> None:
+    finished_at = execution.occurrence.finished_at
+    started_at = execution.occurrence.started_at
+    if started_at is not None:
+        ExecutionReporters.started_at(
+            ctx,
+            ExecutionEntityTypes.TOOL,
+            execution.name,
+            execution.entity_metadata,
+            started_at.isoformat().replace("+00:00", "Z"),
+        )
+    if outcome is None:
+        return
+    # A timed-out callable may finish after the Action already received its failure.
+    if finished_at is None or finished_at > result_observed_at:
+        finished_at = result_observed_at
+    finished_timestamp = finished_at.isoformat().replace("+00:00", "Z")
+    if outcome.is_success():
+        ExecutionReporters.succeeded_at(
+            ctx,
+            ExecutionEntityTypes.TOOL,
+            execution.name,
+            execution.entity_metadata,
+            finished_timestamp,
+        )
+    else:
+        ExecutionReporters.failed_at(
+            ctx,
+            ExecutionEntityTypes.TOOL,
+            execution.name,
+            execution.entity_metadata,
+            outcome.error,
+            ExecutionProblemCategories.TOOL_CALL_FAILED,
+            finished_timestamp,
+        )
 
 
 def _resolve_injected_arguments(tool: object, ctx: RunnerContext) -> dict:

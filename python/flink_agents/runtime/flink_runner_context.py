@@ -626,6 +626,21 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         )
 
     @override
+    def report_execution_started_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        self._j_runner_context.reportExecutionStartedAtJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+            timestamp,
+        )
+
+    @override
     def report_execution_succeeded(
         self,
         entity_type: str,
@@ -636,6 +651,21 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             entity_type,
             entity_name,
             self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
+    def report_execution_succeeded_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        self._j_runner_context.reportExecutionSucceededAtJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+            timestamp,
         )
 
     @override
@@ -656,6 +686,28 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             _error_type(root_error),
             error_message or None,
             problem_category,
+        )
+
+    @override
+    def report_execution_failed_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        error: BaseException,
+        problem_category: str | None,
+        timestamp: str,
+    ) -> None:
+        root_error = _root_cause(error)
+        error_message = str(root_error)
+        self._j_runner_context.reportExecutionFailedAtJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+            _error_type(root_error),
+            error_message or None,
+            problem_category,
+            timestamp,
         )
 
     @staticmethod

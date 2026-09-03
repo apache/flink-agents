@@ -58,6 +58,16 @@ class ExecutionReporter(ABC):
     ) -> None:
         """Report that a logical execution started."""
 
+    def report_execution_started_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        """Report that a logical execution started at an occurrence timestamp."""
+        self.report_execution_started(entity_type, entity_name, entity_metadata)
+
     @abstractmethod
     def report_execution_succeeded(
         self,
@@ -66,6 +76,16 @@ class ExecutionReporter(ABC):
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         """Report that a logical execution completed successfully."""
+
+    def report_execution_succeeded_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        """Report successful completion at an occurrence timestamp."""
+        self.report_execution_succeeded(entity_type, entity_name, entity_metadata)
 
     @abstractmethod
     def report_execution_failed(
@@ -77,6 +97,24 @@ class ExecutionReporter(ABC):
         problem_category: str | None = None,
     ) -> None:
         """Report that a logical execution failed."""
+
+    def report_execution_failed_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        error: BaseException,
+        problem_category: str | None,
+        timestamp: str,
+    ) -> None:
+        """Report failed completion at an occurrence timestamp."""
+        self.report_execution_failed(
+            entity_type,
+            entity_name,
+            entity_metadata,
+            error,
+            problem_category,
+        )
 
 
 class ExecutionReporters:
@@ -98,6 +136,25 @@ class ExecutionReporters:
         )
 
     @staticmethod
+    def started_at(
+        ctx: "RunnerContext",
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        """Report a start occurrence if the context supports it."""
+        ExecutionReporters._report(
+            ctx,
+            lambda reporter: reporter.report_execution_started_at(
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
+                timestamp,
+            ),
+        )
+
+    @staticmethod
     def succeeded(
         ctx: "RunnerContext",
         entity_type: str,
@@ -109,6 +166,25 @@ class ExecutionReporters:
             ctx,
             lambda reporter: reporter.report_execution_succeeded(
                 entity_type, entity_name, entity_metadata or _EMPTY_METADATA
+            ),
+        )
+
+    @staticmethod
+    def succeeded_at(
+        ctx: "RunnerContext",
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        timestamp: str,
+    ) -> None:
+        """Report a successful occurrence if the context supports it."""
+        ExecutionReporters._report(
+            ctx,
+            lambda reporter: reporter.report_execution_succeeded_at(
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
+                timestamp,
             ),
         )
 
@@ -130,6 +206,29 @@ class ExecutionReporters:
                 entity_metadata or _EMPTY_METADATA,
                 error,
                 problem_category,
+            ),
+        )
+
+    @staticmethod
+    def failed_at(
+        ctx: "RunnerContext",
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None,
+        error: BaseException,
+        problem_category: str | None,
+        timestamp: str,
+    ) -> None:
+        """Report a failed occurrence if the context supports it."""
+        ExecutionReporters._report(
+            ctx,
+            lambda reporter: reporter.report_execution_failed_at(
+                entity_type,
+                entity_name,
+                entity_metadata or _EMPTY_METADATA,
+                error,
+                problem_category,
+                timestamp,
             ),
         )
 

@@ -272,7 +272,7 @@ class ActionTaskContextManagerTest {
             ActionTask to =
                     new JavaActionTask("k", new InputEvent(1L), action, from.getTraceContext());
             List<ExecutionTraceContext> reports = new ArrayList<>();
-            ExecutionEventSink sink = (event, context) -> reports.add(context);
+            ExecutionEventSink sink = (eventContext, event, context) -> reports.add(context);
 
             invokeCreateAndSetRunnerContext(mgr, from, sink);
             from.getRunnerContext()
@@ -295,7 +295,7 @@ class ActionTaskContextManagerTest {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             ActionTask task = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
             List<ExecutionTraceContext> reports = new ArrayList<>();
-            ExecutionEventSink sink = (event, context) -> reports.add(context);
+            ExecutionEventSink sink = (eventContext, event, context) -> reports.add(context);
 
             invokeCreateAndSetRunnerContext(mgr, task, sink);
             task.getRunnerContext()
@@ -317,7 +317,7 @@ class ActionTaskContextManagerTest {
     void activeExecutionReportsDoNotEnterActionTaskState() throws Exception {
         try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
             ActionTask task = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction());
-            invokeCreateAndSetRunnerContext(mgr, task, (event, context) -> {});
+            invokeCreateAndSetRunnerContext(mgr, task, (eventContext, event, context) -> {});
             task.getRunnerContext()
                     .reportExecutionStarted(
                             ExecutionReporter.EntityTypes.TOOL,

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
@@ -454,9 +455,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
-                (event, traceContext) ->
+                (eventContext, event, traceContext) ->
                         notifyExecutionLifecycleEvent(
-                                actionTask.action.getName(), traceContext, event));
+                                actionTask.action.getName(), eventContext, traceContext, event));
 
         long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
@@ -769,8 +770,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private void notifyExecutionLifecycleEvent(
             String actionName, ExecutionTraceContext traceContext, Event event) {
-        builtInMetrics.markExecutionEvent(actionName, event, traceContext);
-        executionEventLogger.emit(event, traceContext);
+        notifyExecutionLifecycleEvent(actionName, new EventContext(event), traceContext, event);
+    }
+
+    private void notifyExecutionLifecycleEvent(
+            String actionName,
+            EventContext eventContext,
+            ExecutionTraceContext traceContext,
+            Event event) {
+        builtInMetrics.markExecutionEvent(actionName, eventContext, event, traceContext);
+        executionEventLogger.emit(eventContext, event, traceContext);
     }
 
     private ActionTask createActionTask(

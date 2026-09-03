@@ -56,6 +56,20 @@ public final class ExecutionReporters {
                 null);
     }
 
+    public static void startedAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionStartedAt(
+                                entityType, entityName, entityMetadata, timestamp),
+                null);
+    }
+
     public static void succeeded(RunnerContext ctx, String entityType, String entityName) {
         succeeded(ctx, entityType, entityName, EMPTY_METADATA);
     }
@@ -69,6 +83,20 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionSucceeded(entityType, entityName, entityMetadata),
+                null);
+    }
+
+    public static void succeededAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionSucceededAt(
+                                entityType, entityName, entityMetadata, timestamp),
                 null);
     }
 
@@ -93,6 +121,27 @@ public final class ExecutionReporters {
                 reporter ->
                         reporter.reportExecutionFailed(
                                 entityType, entityName, entityMetadata, error, problemCategory),
+                error);
+    }
+
+    public static void failedAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionFailedAt(
+                                entityType,
+                                entityName,
+                                entityMetadata,
+                                error,
+                                problemCategory,
+                                timestamp),
                 error);
     }
 

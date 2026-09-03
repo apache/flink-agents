@@ -487,7 +487,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testToolLinkageErrorEmitsFailedLifecycleBeforeActionFailure() throws Exception {
+    void testToolLinkageErrorPropagatesWithoutInferringToolOutcome() throws Exception {
         AgentPlan basePlan = TestAgent.getLinkageErrorToolAgentPlan();
         AgentPlan agentPlan =
                 new AgentPlan(
@@ -521,14 +521,22 @@ public class ActionExecutionOperatorTest {
         RecordedEvent failed =
                 findRecordedLifecycleEvent(
                         ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                        "linkageErrorTool",
+                        "tool_call_action",
                         ExecutionLifecycleEvents.STATUS_FAILED);
         assertThat(started.traceContext().getEntityType())
                 .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
         assertThat(failed.traceContext().getExecutionId())
-                .isEqualTo(started.traceContext().getExecutionId());
+                .isEqualTo(started.traceContext().getParentExecutionId());
         assertThat(failed.event.getAttr("errorType"))
                 .isEqualTo(NoClassDefFoundError.class.getName());
+        assertThat(RecordingEventLogger.events())
+                .filteredOn(
+                        record ->
+                                started.traceContext()
+                                        .getExecutionId()
+                                        .equals(record.traceContext().getExecutionId()))
+                .extracting(record -> record.event.getType())
+                .containsExactly(ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE);
     }
 
     @Test

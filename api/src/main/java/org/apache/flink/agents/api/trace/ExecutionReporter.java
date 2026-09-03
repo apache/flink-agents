@@ -63,6 +63,21 @@ public interface ExecutionReporter {
             throws Exception;
 
     /**
+     * Reports that a logical execution started at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionStarted(String, String,
+     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     */
+    default void reportExecutionStartedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        reportExecutionStarted(entityType, entityName, entityMetadata);
+    }
+
+    /**
      * Reports that a previously started logical execution completed successfully.
      *
      * <p>The entity type/name/metadata should match the corresponding start report when one was
@@ -71,6 +86,21 @@ public interface ExecutionReporter {
     void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception;
+
+    /**
+     * Reports that a logical execution completed successfully at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionSucceeded(String, String,
+     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     */
+    default void reportExecutionSucceededAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        reportExecutionSucceeded(entityType, entityName, entityMetadata);
+    }
 
     /**
      * Reports that a logical execution failed.
@@ -85,4 +115,22 @@ public interface ExecutionReporter {
             Throwable error,
             @Nullable String problemCategory)
             throws Exception;
+
+    /**
+     * Reports that a logical execution failed at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionFailed(String, String, Map,
+     * Throwable, String)}, so reporters that do not retain occurrence timestamps may use their
+     * observation time.
+     */
+    default void reportExecutionFailedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp)
+            throws Exception {
+        reportExecutionFailed(entityType, entityName, entityMetadata, error, problemCategory);
+    }
 }

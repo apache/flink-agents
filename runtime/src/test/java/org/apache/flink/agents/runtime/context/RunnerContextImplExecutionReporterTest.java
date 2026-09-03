@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -45,14 +46,15 @@ class RunnerContextImplExecutionReporterTest {
                 ExecutionTraceContext.forInputRun("business-key", "agent")
                         .childExecution("action", "chat_model_action");
         runnerContext.setExecutionEventSink(
-                (event, context) -> reports.add(new RecordedReport(event, context)));
+                (eventContext, event, context) ->
+                        reports.add(new RecordedReport(eventContext, event, context)));
         runnerContext.switchActionContext(
                 "chat_model_action", null, "business-key", actionTraceContext, new HashMap<>());
 
-        runnerContext.reportExecutionStarted(
-                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
-        runnerContext.reportExecutionSucceeded(
-                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), "2026-01-01T00:00:00.001Z");
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), "2026-01-01T00:00:00.025Z");
 
         assertThat(reports).hasSize(2);
         RecordedReport started = reports.get(0);
@@ -73,6 +75,8 @@ class RunnerContextImplExecutionReporterTest {
         assertThat(started.traceContext().getEntityType())
                 .isEqualTo(ExecutionReporter.EntityTypes.LLM);
         assertThat(started.traceContext().getEntityName()).isEqualTo("model-a");
+        assertThat(started.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:00.001Z");
+        assertThat(finished.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:00.025Z");
     }
 
     @Test
@@ -81,7 +85,8 @@ class RunnerContextImplExecutionReporterTest {
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         runnerContext.setExecutionEventSink(
-                (event, context) -> reports.add(new RecordedReport(event, context)));
+                (eventContext, event, context) ->
+                        reports.add(new RecordedReport(eventContext, event, context)));
 
         ExecutionTraceContext actionA =
                 ExecutionTraceContext.forInputRun("business-key", "agent")
@@ -129,20 +134,22 @@ class RunnerContextImplExecutionReporterTest {
                 ExecutionTraceContext.forInputRun("business-key", "agent")
                         .childExecution("action", "tool_call_action");
         runnerContext.setExecutionEventSink(
-                (event, context) -> reports.add(new RecordedReport(event, context)));
+                (eventContext, event, context) ->
+                        reports.add(new RecordedReport(eventContext, event, context)));
         runnerContext.switchActionContext(
                 "tool_call_action", null, "business-key", actionTraceContext, new HashMap<>());
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
-        runnerContext.reportExecutionStartedJson(
-                ExecutionReporter.EntityTypes.TOOL, "search", metadata);
-        runnerContext.reportExecutionFailedJson(
+        runnerContext.reportExecutionStartedAtJson(
+                ExecutionReporter.EntityTypes.TOOL, "search", metadata, "2026-01-01T00:00:01.001Z");
+        runnerContext.reportExecutionFailedAtJson(
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
                 "builtins.ValueError",
                 "bad response",
-                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                "2026-01-01T00:00:01.125Z");
 
         assertThat(reports).hasSize(2);
         RecordedReport started = reports.get(0);
@@ -159,6 +166,8 @@ class RunnerContextImplExecutionReporterTest {
         assertThat(failed.event.getAttr("errorMessage")).isEqualTo("bad response");
         assertThat(failed.event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE))
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+        assertThat(started.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:01.001Z");
+        assertThat(failed.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:01.125Z");
     }
 
     private static AgentPlan emptyAgentPlan() {
@@ -166,10 +175,13 @@ class RunnerContextImplExecutionReporterTest {
     }
 
     private static class RecordedReport {
+        private final EventContext eventContext;
         private final Event event;
         private final ExecutionTraceContext traceContext;
 
-        private RecordedReport(Event event, ExecutionTraceContext traceContext) {
+        private RecordedReport(
+                EventContext eventContext, Event event, ExecutionTraceContext traceContext) {
+            this.eventContext = eventContext;
             this.event = event;
             this.traceContext = traceContext;
         }
