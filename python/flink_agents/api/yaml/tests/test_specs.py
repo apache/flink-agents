@@ -32,6 +32,7 @@ from flink_agents.api.yaml.specs import (
     PromptSpec,
     SkillsSpec,
     ToolSpec,
+    UrlSkillSpec,
     YamlAgentsDocument,
     export,
 )
@@ -231,9 +232,7 @@ def test_action_spec_rejects_non_string_trigger_condition() -> None:
 
 
 def test_action_spec_defaults() -> None:
-    spec = ActionSpec.model_validate(
-        {"name": "a1", "trigger_conditions": ["input"]}
-    )
+    spec = ActionSpec.model_validate({"name": "a1", "trigger_conditions": ["input"]})
     assert spec.trigger_conditions == ["input"]
     assert spec.function is None
     assert spec.config is None
@@ -254,9 +253,7 @@ def test_action_spec_accepts_type() -> None:
 
 
 def test_action_spec_type_defaults_to_none() -> None:
-    spec = ActionSpec.model_validate(
-        {"name": "a1", "trigger_conditions": ["input"]}
-    )
+    spec = ActionSpec.model_validate({"name": "a1", "trigger_conditions": ["input"]})
     assert spec.type is None
 
 
@@ -351,17 +348,47 @@ def test_skills_spec_with_urls_classpath_package() -> None:
     spec = SkillsSpec.model_validate(
         {
             "name": "s",
-            "urls": ["https://x/s.zip"],
+            "urls": ["https://x/unpinned.zip"],
+            "url_sources": [{"url": "https://x/s.zip", "sha256": "a" * 64}],
             "classpath": ["com/example/s"],
             "package": [{"package": "my_pkg", "resource": "skills/"}],
         }
     )
     assert spec.paths == []
-    assert spec.urls == ["https://x/s.zip"]
+    assert spec.urls == ["https://x/unpinned.zip"]
+    assert len(spec.url_sources) == 1
+    assert spec.url_sources[0].url == "https://x/s.zip"
+    assert spec.url_sources[0].sha256 == "a" * 64
     assert spec.classpath == ["com/example/s"]
     assert len(spec.package) == 1
     assert spec.package[0].package == "my_pkg"
     assert spec.package[0].resource == "skills/"
+
+
+def test_url_skill_spec_rejects_null_allow_insecure_http() -> None:
+    with pytest.raises(ValidationError):
+        UrlSkillSpec.model_validate(
+            {"url": "https://x/skills.zip", "allow_insecure_http": None}
+        )
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1, 0])
+def test_url_skill_spec_rejects_non_boolean_allow_insecure_http(value: object) -> None:
+    with pytest.raises(ValidationError):
+        UrlSkillSpec.model_validate(
+            {"url": "https://x/skills.zip", "allow_insecure_http": value}
+        )
+
+
+@pytest.mark.parametrize(
+    "field", ["paths", "urls", "url_sources", "classpath", "package"]
+)
+def test_skills_spec_treats_null_source_lists_as_empty(field: str) -> None:
+    values: dict[str, object] = {"name": "s", "paths": ["./a"], field: None}
+    if field == "paths":
+        values["urls"] = ["https://example.com/skills.zip"]
+    spec = SkillsSpec.model_validate(values)
+    assert getattr(spec, field) == []
 
 
 def test_skills_spec_forbids_extras() -> None:

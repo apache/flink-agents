@@ -17,6 +17,7 @@
 #################################################################################
 """Unit tests for the _materialize utility module."""
 
+import logging
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -25,6 +26,7 @@ from urllib.error import HTTPError
 
 import pytest
 
+from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
     Materialized,
     download_to_tempfile,
@@ -97,9 +99,24 @@ class TestMaterialized:
 class _StaticHandler(BaseHTTPRequestHandler):
     payload: bytes = b""
     status: int = 200
+    redirect_status: int = 302
+    redirect_location: str | None = None
+    request_count: int = 0
 
     def do_GET(self) -> None:
-        self.send_response(type(self).status)
+        type(self).request_count += 1
+        is_chain = self.path.startswith("/chain/")
+        is_redirect = self.path.startswith("/redirect") and (
+            type(self).redirect_location is not None
+        )
+        self.send_response(
+            type(self).redirect_status if is_redirect or is_chain else type(self).status
+        )
+        if is_redirect:
+            self.send_header("Location", type(self).redirect_location)
+        elif is_chain:
+            step = int(self.path.rsplit("/", 1)[-1])
+            self.send_header("Location", f"/chain/{step + 1}")
         self.send_header("Content-Length", str(len(type(self).payload)))
         self.end_headers()
         self.wfile.write(type(self).payload)
@@ -112,6 +129,9 @@ class _StaticHandler(BaseHTTPRequestHandler):
 def static_server() -> "tuple[str, type[_StaticHandler]]":
     _StaticHandler.payload = b""
     _StaticHandler.status = 200
+    _StaticHandler.redirect_status = 302
+    _StaticHandler.redirect_location = None
+    _StaticHandler.request_count = 0
     server = HTTPServer(("127.0.0.1", 0), _StaticHandler)
     port = server.server_address[1]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -123,9 +143,21 @@ def static_server() -> "tuple[str, type[_StaticHandler]]":
         server.server_close()
         _StaticHandler.payload = b""
         _StaticHandler.status = 200
+        _StaticHandler.redirect_status = 302
+        _StaticHandler.redirect_location = None
+        _StaticHandler.request_count = 0
 
 
 class TestDownloadToTempfile:
+    def test_redact_skill_url_redacts_opaque_malformed_credentials(self) -> None:
+        assert redact_skill_url("https:user:password?token=top-secret") == "<redacted>"
+
+    def test_redact_skill_url_rejects_control_characters(self) -> None:
+        assert (
+            redact_skill_url("https://u:pw@example.com/a\x1b[31mred?token=top-secret")
+            == "<redacted>"
+        )
+
     def test_downloads_bytes(
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:
@@ -133,7 +165,9 @@ class TestDownloadToTempfile:
         handler.payload = b"hello-zip-bytes"
         handler.status = 200
 
-        path = download_to_tempfile(f"{base_url}/anything", timeout=10)
+        path = download_to_tempfile(
+            f"{base_url}/anything", timeout=10, allow_insecure_http=True
+        )
 
         try:
             assert path.is_file()
@@ -149,4 +183,127 @@ class TestDownloadToTempfile:
         handler.status = 404
 
         with pytest.raises(HTTPError):
-            download_to_tempfile(f"{base_url}/missing", timeout=10)
+            download_to_tempfile(
+                f"{base_url}/missing", timeout=10, allow_insecure_http=True
+            )
+
+    def test_rejects_plain_http_by_default(self) -> None:
+        with pytest.raises(ValueError, match="disabled by default"):
+            download_to_tempfile("http://127.0.0.1:1/anything", timeout=10)
+
+    def test_rejects_scoped_ipv6_before_connection(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            download_to_tempfile("https://[fe80::1%25lo0]/skills.zip", timeout=10)
+
+    def test_rejects_cross_protocol_redirect_before_request(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = "https://127.0.0.1:1/skills.zip"
+
+        with pytest.raises(
+            ValueError, match=r"unsupported redirect.*https://127\.0\.0\.1:1"
+        ):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+
+    def test_follows_308_redirect(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"redirected-zip-bytes"
+        handler.redirect_status = 308
+        handler.redirect_location = f"{base_url}/skills.zip"
+
+        path = download_to_tempfile(
+            f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+        )
+        try:
+            assert path.read_bytes() == b"redirected-zip-bytes"
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_rejects_redirect_user_info_without_leaking_secrets(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        target = base_url.removeprefix("http://")
+        handler.redirect_location = (
+            f"http://user:password@{target}/skills.zip?token=top-secret"
+        )
+
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_rejects_fifth_repeat_of_redirect_target(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = f"{base_url}/redirect"
+
+        with pytest.raises(HTTPError):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 5
+
+    def test_rejects_eleventh_distinct_redirect(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+
+        with pytest.raises(HTTPError):
+            download_to_tempfile(
+                f"{base_url}/chain/0", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 11
+
+    def test_rejects_redirect_location_with_raw_space(
+        self, static_server: "tuple[str, type[_StaticHandler]]"
+    ) -> None:
+        base_url, handler = static_server
+        handler.redirect_location = f"{base_url}/skills archive.zip"
+
+        with pytest.raises(ValueError, match="Invalid skill URL"):
+            download_to_tempfile(
+                f"{base_url}/redirect", timeout=10, allow_insecure_http=True
+            )
+        assert handler.request_count == 1
+
+    def test_logs_sanitized_effective_url_for_same_protocol_redirect(
+        self,
+        static_server: "tuple[str, type[_StaticHandler]]",
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        base_url, handler = static_server
+        handler.payload = b"redirected-zip-bytes"
+        handler.redirect_location = (
+            f"{base_url}/skills.zip?redirect_token=secret#redirect-fragment"
+        )
+
+        configured_url = f"{base_url}/redirect?configured_token=secret"
+        with caplog.at_level(
+            logging.WARNING,
+            logger="flink_agents.runtime.skill.repository._materialize",
+        ):
+            path = download_to_tempfile(
+                configured_url, timeout=10, allow_insecure_http=True
+            )
+
+        try:
+            assert path.read_bytes() == b"redirected-zip-bytes"
+            warning = "\n".join(caplog.messages)
+            assert f"{base_url}/redirect" in warning
+            assert f"{base_url}/skills.zip" in warning
+            assert "configured_token" not in warning
+            assert "redirect_token" not in warning
+            assert "redirect-fragment" not in warning
+        finally:
+            path.unlink(missing_ok=True)

@@ -23,7 +23,7 @@ Each :class:`Skills` resource carries a single ordered list of
 Use one of the factory methods to construct a :class:`Skills` resource:
 
 * :meth:`Skills.from_local_dir` for local directories or local ``.zip`` files
-* :meth:`Skills.from_url` for http(s) URLs pointing to a ``.zip``
+* :meth:`Skills.from_url` for HTTPS URLs pointing to a ``.zip``
 * :meth:`Skills.from_package` for resources inside installed packages
 
 Example::
@@ -57,12 +57,126 @@ sources; the runtime merges them and de-duplicates identical
 
 from __future__ import annotations
 
+import re
+from ipaddress import AddressValueError, IPv6Address
 from typing import Dict, List, Tuple
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
+
+_INVALID_URI_CHARACTER = re.compile(r'[\x00-\x20\x7f<>"{}|\\^`]')
+_INVALID_PERCENT_ESCAPE = re.compile(r"%(?![0-9a-fA-F]{2})")
+_UNSAFE_LOG_CHARACTER = re.compile(r"[\x00-\x1f\x7f]")
+_HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
+
+
+def redact_skill_url(url: str) -> str:
+    """Return a skill URL without user info, query parameters, or a fragment.
+
+    Internal contract shared with the runtime; not a stable public API.
+    """
+    try:
+        parts = urlsplit(url)
+        if not parts.scheme or not parts.netloc:
+            return "<redacted>"
+        _ = parts.port
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        if not netloc:
+            return "<redacted>"
+        redacted = urlunsplit((parts.scheme, netloc, parts.path, "", ""))
+        return "<redacted>" if _UNSAFE_LOG_CHARACTER.search(redacted) else redacted
+    except ValueError:
+        return "<redacted>"
+
+
+def validate_skill_url(url: str, *, allow_insecure_http: bool) -> str:
+    """Validate a skill URL using the contract shared with the Java API.
+
+    Internal contract shared with the runtime; not a stable public API.
+    """
+    if not isinstance(url, str):
+        msg = "skill URL must be a string"
+        raise TypeError(msg)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
+        raise ValueError(msg) from None
+    if _INVALID_URI_CHARACTER.search(url) or _INVALID_PERCENT_ESCAPE.search(url):
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    # Java's URI rejects raw brackets in the path (but not in the query or
+    # fragment); encoded %5B/%5D and IPv6 authority brackets stay valid.
+    if any(c in f"{parsed.path};{parsed.params}" for c in "[]"):
+        msg = f"Invalid skill URL: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        msg = f"Only HTTP(S) skill URLs are supported: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    try:
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError:
+        msg = (
+            "Skill URL must include a valid host and, when present, a valid port: "
+            f"{redact_skill_url(url)}"
+        )
+        raise ValueError(msg) from None
+    if parsed.username is not None:
+        msg = f"Skill URL must not include user info: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    if hostname and ":" in hostname and "%" in hostname:
+        msg = (
+            "Skill URL must not include an IPv6 zone identifier: "
+            f"{redact_skill_url(url)}"
+        )
+        raise ValueError(msg)
+    bracketed_host = parsed.netloc.rsplit("@", 1)[-1].startswith("[")
+    if (
+        not hostname
+        or not parsed.netloc.isascii()
+        or (bracketed_host and ":" not in hostname)
+        or not _is_valid_hostname(hostname)
+    ):
+        msg = f"Skill URL must include a valid host: {redact_skill_url(url)}"
+        raise ValueError(msg)
+    if scheme == "http" and not allow_insecure_http:
+        msg = (
+            "Plain HTTP skill URLs are disabled by default; use HTTPS or "
+            "explicitly allow insecure HTTP for this source: "
+            f"{redact_skill_url(url)}"
+        )
+        raise ValueError(msg)
+    return scheme
+
+
+def _is_valid_hostname(hostname: str) -> bool:
+    """Match the host syntax accepted by Java URI.parseServerAuthority()."""
+    if ":" in hostname:
+        try:
+            IPv6Address(hostname)
+        except AddressValueError:
+            return False
+        return True
+    if not hostname.isascii():
+        return False
+    dns_name = hostname[:-1] if hostname.endswith(".") else hostname
+    if not dns_name:
+        return False
+    if re.fullmatch(r"[0-9]+(?:\.[0-9]+){3}", dns_name):
+        return not hostname.endswith(".") and all(
+            int(part) <= 255 for part in dns_name.split(".")
+        )
+    labels = dns_name.split(".")
+    if any(not label for label in labels):
+        return False
+    return not (len(labels) > 1 and labels[-1][0].isdigit()) and all(
+        _HOST_LABEL.fullmatch(label) for label in labels
+    )
 
 
 class SkillSourceSpec(BaseModel):
@@ -107,21 +221,79 @@ class Skills(SerializableResource):
         a zip, its top-level entries are the skill subdirectories.
         """
         return cls(
-            sources=[
-                SkillSourceSpec(scheme="local", params={"path": p}) for p in paths
-            ]
+            sources=[SkillSourceSpec(scheme="local", params={"path": p}) for p in paths]
         )
 
     @classmethod
     def from_url(cls, *urls: str) -> Skills:
-        """Create a Skills resource from one or more http(s) URLs.
+        """Create a Skills resource from one or more HTTPS URLs.
 
         Each URL must point to a ``.zip`` whose top level is the baseDir
         (i.e. skill subdirectories sit at the top of the zip).
         """
+        for url in urls:
+            cls._require_url(url, allow_insecure_http=False)
         return cls(
             sources=[SkillSourceSpec(scheme="url", params={"url": u}) for u in urls]
         )
+
+    @classmethod
+    def from_url_with_sha256(cls, url: str, sha256: str) -> Skills:
+        """Create an HTTPS URL source pinned to a SHA-256 archive digest."""
+        cls._require_url(url, allow_insecure_http=False)
+        cls._require_sha256(sha256)
+        return cls(
+            sources=[
+                SkillSourceSpec(scheme="url", params={"url": url, "sha256": sha256})
+            ]
+        )
+
+    @classmethod
+    def from_url_unsafe(cls, *urls: str) -> Skills:
+        """Create URL sources that explicitly permit plain HTTP transport.
+
+        This compatibility escape hatch should be used only on trusted networks.
+        Prefer :meth:`from_url` with HTTPS.
+        """
+        for url in urls:
+            cls._require_url(url, allow_insecure_http=True)
+        return cls(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url",
+                    params={"url": url, "allow_insecure_http": "true"},
+                )
+                for url in urls
+            ]
+        )
+
+    @classmethod
+    def from_url_unsafe_with_sha256(cls, url: str, sha256: str) -> Skills:
+        """Create a digest-pinned source that explicitly permits plain HTTP."""
+        cls._require_url(url, allow_insecure_http=True)
+        cls._require_sha256(sha256)
+        return cls(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url",
+                    params={
+                        "url": url,
+                        "sha256": sha256,
+                        "allow_insecure_http": "true",
+                    },
+                )
+            ]
+        )
+
+    @staticmethod
+    def _require_url(url: str, *, allow_insecure_http: bool) -> None:
+        validate_skill_url(url, allow_insecure_http=allow_insecure_http)
+
+    @staticmethod
+    def _require_sha256(sha256: str) -> None:
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
+            raise ValueError(msg)
 
     @classmethod
     def from_package(cls, *pairs: Tuple[str, str]) -> Skills:

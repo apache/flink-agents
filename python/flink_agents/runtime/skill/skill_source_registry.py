@@ -34,6 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, Mapping
 
+from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository.filesystem_repository import (
     FileSystemSkillRepository,
 )
@@ -103,10 +104,7 @@ def get(scheme: str) -> SkillSourceHandler:
 def _require(params: Mapping[str, str], scheme: str, key: str) -> str:
     value = params.get(key)
     if value is None:
-        msg = (
-            f"Missing required param '{key}' for skill source scheme "
-            f"'{scheme}'. Got: {dict(params)}"
-        )
+        msg = f"Missing required param '{key}' for skill source scheme '{scheme}'"
         raise ValueError(msg)
     return value
 
@@ -118,8 +116,13 @@ register(
 )
 register(
     "url",
-    lambda params: URLSkillRepository(_require(params, "url", "url")),
-    lambda params: params.get("url", ""),
+    lambda params: URLSkillRepository(
+        _require(params, "url", "url"),
+        sha256=params.get("sha256"),
+        allow_insecure_http=params.get("allow_insecure_http", "false").lower()
+        == "true",
+    ),
+    lambda params: redact_skill_url(params.get("url", "")),
 )
 register(
     "package",

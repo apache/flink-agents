@@ -208,15 +208,30 @@ agents:
             key: tenant_id
 ```
 
-**Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `classpath` / `package` must be non-empty; multiple sources can coexist.
+**Skills** — bundles of agent skill assets loaded from one or more sources. At least one of `paths` / `urls` / `url_sources` / `classpath` / `package` must be non-empty; multiple sources can coexist.
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Skills resource name. |
 | `paths` | one-of | `local` scheme: list of directories or `.zip` files. |
-| `urls` | one-of | `url` scheme: list of `http(s)` URLs pointing to `.zip` archives. |
+| `urls` | one-of | `url` scheme: list of HTTPS URLs without embedded user information, pointing to `.zip` archives. |
+| `url_sources` | one-of | `url` scheme: list of `{url, sha256?, allow_insecure_http?}` archive sources without embedded user information. HTTPS is required by default; `sha256` pins the downloaded archive, and `allow_insecure_http: true` is an explicit unsafe compatibility opt-in. |
 | `classpath` | one-of | `classpath` scheme (Java runtime only): list of classpath resource paths. |
 | `package` | one-of | `package` scheme (Python runtime only): list of `{package, resource}` pairs. |
+
+`urls` entries must use HTTPS. To keep an existing plain-HTTP source, move it to `url_sources` and opt in explicitly:
+
+```yaml
+skills:
+  - name: agent_skills
+    url_sources:
+      - url: http://example.com/skills.zip
+        allow_insecure_http: true
+```
+
+Use this compatibility option only on trusted development networks; prefer HTTPS.
+
+URL source hosts must use DNS-compatible ASCII syntax. Names containing underscores, such as `skill_server`, are rejected; use a DNS-compatible name such as `skill-server`. Internationalized hostnames must use IDNA/Punycode rather than raw Unicode, and scoped IPv6 literals with zone identifiers are rejected. This validation is stricter than in earlier releases.
 
 ```yaml
 skills:
@@ -224,7 +239,10 @@ skills:
     paths:
       - ./skills
     urls:
-      - https://example.com/skills.zip
+      - https://example.com/unpinned-skills.zip
+    url_sources:
+      - url: https://example.com/skills.zip
+        sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     classpath:
       - skills/my-skills
     package:
@@ -233,6 +251,8 @@ skills:
 ```
 
 `classpath` is accepted by the Python parser for schema parity with Java but rejected at runtime, because the Python runtime does not register a `classpath` handler.
+
+Remote skill archives contain trusted agent instructions and may contain executable scripts. Pin remote sources with `sha256`, or use `Skills.from_url_with_sha256(...)` (Python) / `Skills.fromUrlWithSha256(...)` (Java) in code.
 
 **ResourceDescriptor-backed resources** — `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, `vector_stores`, `mcp_servers`. Unlike the resources above (which are constructed inline by the loader), these are described by a `ResourceDescriptor` and instantiated by the framework at runtime. They all share the same shape:
 
