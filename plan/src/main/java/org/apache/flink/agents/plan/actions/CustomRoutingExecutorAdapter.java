@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 
-import java.util.Collections;
 import java.util.Map;
 import java.util.WeakHashMap;
 
@@ -35,18 +34,24 @@ import java.util.WeakHashMap;
  * (no unmetered chat calls inside the decision step).
  *
  * <p>Instantiation lives here — not in the API-layer {@code ModelRouter} — so the router stays pure
- * declaration data. The user executor is constructed once per declaration and cached (weakly keyed
- * by the {@link RoutingStrategy} instance, whose lifetime matches the per-subtask router cache),
- * preserving executor instance state across the requests of one subtask. Construction contract,
- * checked without instantiation at plan time ({@code AgentPlan#validateCustomExecutor}): a {@code
+ * declaration data. It happens in {@link #prepare}, <i>outside</i> the persistence boundary: a
+ * transiently failing user constructor throws fresh on every request instead of being persisted as
+ * the decision's durable record and replayed forever. The instance is cached per declaration in
+ * thread-confined state (routing always runs on the task's mailbox thread), so executor instance
+ * state spans the requests of one subtask and is released with the task's thread — no locks, and no
+ * pinning of a cancelled job's user classloader by JVM-global state. Construction contract, checked
+ * without instantiation at plan time ({@code AgentPlan#validateCustomExecutor}): a {@code
  * (Map<String,Object>)} constructor fed the declaration's arguments, then a no-arg constructor, via
  * the thread context classloader.
  */
 final class CustomRoutingExecutorAdapter implements RoutingExecutor {
 
-    /** User executor instances per declaration. Synchronized: shared across subtask threads. */
-    private final Map<RoutingStrategy, CustomRoutingExecutor> instances =
-            Collections.synchronizedMap(new WeakHashMap<>());
+    /**
+     * User executor instances per declaration, confined to the task mailbox thread. Weak keys keep
+     * a long-lived thread from accumulating entries for re-registered routers within one task.
+     */
+    private final ThreadLocal<Map<RoutingStrategy, CustomRoutingExecutor>> instances =
+            ThreadLocal.withInitial(WeakHashMap::new);
 
     @Override
     public String decisionSource() {
@@ -54,52 +59,41 @@ final class CustomRoutingExecutorAdapter implements RoutingExecutor {
     }
 
     @Override
+    public void prepare(RoutingStrategy strategy, RunnerContext ctx) throws Exception {
+        Map<RoutingStrategy, CustomRoutingExecutor> cache = instances.get();
+        if (!cache.containsKey(strategy)) {
+            cache.put(strategy, instantiate(strategy));
+        }
+    }
+
+    @Override
     public RoutingDecision route(
             RoutingStrategy strategy, RoutingContext context, RunnerContext ctx) throws Exception {
-        CustomRoutingExecutor executor;
-        try {
-            executor =
-                    instances.computeIfAbsent(strategy, CustomRoutingExecutorAdapter::instantiate);
-        } catch (WrappedInstantiationFailure wrapped) {
-            throw wrapped.cause;
+        CustomRoutingExecutor executor = instances.get().get(strategy);
+        if (executor == null) {
+            // Unreachable through the resolver (prepare() runs first); kept as a loud guard.
+            throw new IllegalStateException("Custom routing executor was not prepared.");
         }
         return executor.route(strategy, context);
     }
 
-    private static CustomRoutingExecutor instantiate(RoutingStrategy strategy) {
-        try {
-            Class<?> clazz =
-                    Class.forName(
-                            strategy.getExecutorClass(),
-                            true,
-                            Thread.currentThread().getContextClassLoader());
-            if (!CustomRoutingExecutor.class.isAssignableFrom(clazz)) {
-                throw new IllegalArgumentException(
-                        String.format(
-                                "Custom routing executor '%s' does not implement %s.",
-                                strategy.getExecutorClass(),
-                                CustomRoutingExecutor.class.getName()));
-            }
-            try {
-                return (CustomRoutingExecutor)
-                        clazz.getConstructor(Map.class).newInstance(strategy.getArguments());
-            } catch (NoSuchMethodException noMapCtor) {
-                return (CustomRoutingExecutor) clazz.getConstructor().newInstance();
-            }
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception checked) {
-            // computeIfAbsent's mapper cannot throw checked exceptions; unwrap at the call site.
-            throw new WrappedInstantiationFailure(checked);
+    private static CustomRoutingExecutor instantiate(RoutingStrategy strategy) throws Exception {
+        Class<?> clazz =
+                Class.forName(
+                        strategy.getExecutorClass(),
+                        true,
+                        Thread.currentThread().getContextClassLoader());
+        if (!CustomRoutingExecutor.class.isAssignableFrom(clazz)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Custom routing executor '%s' does not implement %s.",
+                            strategy.getExecutorClass(), CustomRoutingExecutor.class.getName()));
         }
-    }
-
-    private static final class WrappedInstantiationFailure extends RuntimeException {
-        final Exception cause;
-
-        WrappedInstantiationFailure(Exception cause) {
-            super(cause);
-            this.cause = cause;
+        try {
+            return (CustomRoutingExecutor)
+                    clazz.getConstructor(Map.class).newInstance(strategy.getArguments());
+        } catch (NoSuchMethodException noMapCtor) {
+            return (CustomRoutingExecutor) clazz.getConstructor().newInstance();
         }
     }
 }

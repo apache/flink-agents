@@ -35,21 +35,21 @@ import java.util.regex.Pattern;
  *
  * <p>Compilation lives here — not in the API-layer {@code ModelRouter} — because a compiled {@code
  * Map<String, Pattern>} is a Java execution detail of the plan layer, while the router carries only
- * the language-neutral declaration. Patterns are compiled once per declaration and cached (weakly
- * keyed by the {@link RoutingStrategy} instance, whose lifetime matches the per-subtask router
- * cache), so rule evaluation stays regex-match-only per request. Declaration validity (shape,
- * types, regex syntax) is enforced by the {@link RoutingStrategy} constructor before any executor
- * sees it.
+ * the language-neutral declaration. Patterns are compiled once per declaration and cached in
+ * thread-confined state (routing always runs on the task's mailbox thread), so rule evaluation
+ * stays regex-match-only per request with no locking, and the cache is released with the task's
+ * thread. Declaration validity (shape, types, regex syntax) is enforced by the {@link
+ * RoutingStrategy} constructor before any executor sees it, with the same flags as the execution
+ * compile below.
  */
 final class RuleBasedRoutingExecutor implements RoutingExecutor {
 
     /**
-     * Compiled patterns per declaration instance. Weak keys: an entry is reclaimed with its router
-     * (which strongly holds the strategy) when the per-subtask resource cache evicts it.
-     * Synchronized because executors are shared across operator subtask threads in one JVM.
+     * Compiled patterns per declaration, confined to the task mailbox thread. Weak keys keep a
+     * long-lived thread from accumulating entries for re-registered routers within one task.
      */
-    private final Map<RoutingStrategy, Map<String, Pattern>> compiledCache =
-            Collections.synchronizedMap(new WeakHashMap<>());
+    private final ThreadLocal<Map<RoutingStrategy, Map<String, Pattern>>> compiledCache =
+            ThreadLocal.withInitial(WeakHashMap::new);
 
     @Override
     public String decisionSource() {
@@ -90,10 +90,14 @@ final class RuleBasedRoutingExecutor implements RoutingExecutor {
     }
 
     private Map<String, Pattern> compiledRules(RoutingStrategy strategy) {
-        return compiledCache.computeIfAbsent(strategy, RuleBasedRoutingExecutor::compile);
+        return compiledCache.get().computeIfAbsent(strategy, RuleBasedRoutingExecutor::compile);
     }
 
-    /** Compiles the (constructor-validated) rule map, preserving declaration order. */
+    /**
+     * Compiles the (constructor-validated) rule map, preserving declaration order. Must compile
+     * with the same flags as {@code RoutingStrategy}'s declaration validation, so validation never
+     * accepts what execution rejects (or vice versa).
+     */
     private static Map<String, Pattern> compile(RoutingStrategy strategy) {
         Object raw = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
         if (!(raw instanceof Map)) {
@@ -103,7 +107,7 @@ final class RuleBasedRoutingExecutor implements RoutingExecutor {
         for (Map.Entry<?, ?> entry : ((Map<?, ?>) raw).entrySet()) {
             compiled.put(
                     (String) entry.getKey(),
-                    Pattern.compile((String) entry.getValue(), Pattern.CASE_INSENSITIVE));
+                    Pattern.compile((String) entry.getValue(), RoutingStrategy.RULE_PATTERN_FLAGS));
         }
         return Collections.unmodifiableMap(compiled);
     }

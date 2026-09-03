@@ -56,6 +56,15 @@ interface RoutingExecutor {
     String decisionSource();
 
     /**
+     * Idempotent per-request preparation, invoked by the resolver <i>outside</i> the persistence
+     * boundary — a failure here is thrown fresh on every request (handled by the request's normal
+     * error policy) instead of being persisted as the routing decision's durable record and
+     * replayed forever. Used for lazily materializing per-declaration state whose construction can
+     * fail transiently (the custom executor's user constructor). Must not issue durable calls.
+     */
+    default void prepare(RoutingStrategy strategy, RunnerContext ctx) throws Exception {}
+
+    /**
      * Executes the declared strategy for one request. An abstain decision resolves to the router's
      * default model; a thrown exception follows the request's error-handling strategy.
      */

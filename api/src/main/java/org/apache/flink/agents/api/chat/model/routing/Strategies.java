@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.chat.model.routing;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
@@ -43,7 +44,12 @@ public final class Strategies {
      */
     public static RoutingStrategy rules(Map<String, String> rules) {
         Map<String, Object> args = new HashMap<>();
-        args.put(RoutingStrategy.ARG_RULES, rules == null ? Collections.emptyMap() : rules);
+        // Defensive copy: validation (declaration construction) and compilation (first routed
+        // request, plan side) are separated in time, so a caller mutating its map after this call
+        // must not bypass the validated shape.
+        args.put(
+                RoutingStrategy.ARG_RULES,
+                rules == null ? Collections.emptyMap() : new LinkedHashMap<>(rules));
         return new RoutingStrategy(RoutingStrategyType.RULE_BASED, args, null);
     }
 

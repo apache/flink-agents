@@ -199,7 +199,8 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     private static List<ChatMessage> effectiveJudgeMessages(
             RoutingContext context, RunnerContext ctx) {
         List<ChatMessage> messages = context.getMessages();
-        String anchor = context.getDefaultModel().orElse(context.getCandidates().get(0).getName());
+        String anchor =
+                context.getDefaultModel().orElseGet(() -> context.getCandidates().get(0).getName());
         try {
             BaseChatModelSetup setup =
                     (BaseChatModelSetup) ctx.getResource(anchor, ResourceType.CHAT_MODEL);

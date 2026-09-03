@@ -56,6 +56,12 @@ public final class RoutingStrategy implements Serializable {
     /** Argument key: the candidate-to-regex rule map ({@code RULE_BASED}). */
     public static final String ARG_RULES = "rules";
 
+    /**
+     * The flags rule patterns are compiled with — shared by declaration validation (below) and the
+     * plan-side execution compile, so the two sites cannot drift.
+     */
+    public static final int RULE_PATTERN_FLAGS = Pattern.CASE_INSENSITIVE;
+
     private final RoutingStrategyType type;
     private final Map<String, Object> arguments;
 
@@ -176,7 +182,7 @@ public final class RoutingStrategy implements Serializable {
                                 key, value == null ? "null" : value.getClass().getSimpleName()));
             }
             try {
-                Pattern.compile((String) value);
+                Pattern.compile((String) value, RULE_PATTERN_FLAGS);
             } catch (PatternSyntaxException e) {
                 throw new IllegalArgumentException(
                         String.format(

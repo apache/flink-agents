@@ -90,6 +90,10 @@ final class ModelRoutingResolver {
         RoutingStrategy strategy = router.getStrategy();
         RoutingExecutor executor = RoutingExecutors.forType(strategy.getType());
 
+        // Outside the persistence boundary: a transiently failing preparation (e.g. a custom
+        // executor's constructor) must throw fresh per request, never persist as the decision.
+        executor.prepare(strategy, ctx);
+
         RoutingDecision decision =
                 executor.issuesDurableCalls()
                         ? persistPrecomputed(executor, strategy, routingContext, model, ctx)
@@ -112,32 +116,47 @@ final class ModelRoutingResolver {
             RunnerContext ctx)
             throws Exception {
         return ctx.durableExecute(
-                new DurableCallable<>() {
-                    @Override
-                    public String getId() {
-                        // Deterministic across recovery re-processing: the durable store already
-                        // scopes call results by (key, sequence number, event, action), so the id
-                        // must NOT embed the request id — event ids are regenerated when Flink
-                        // rolls back and re-processes, and a non-deterministic id turns every
-                        // replay lookup into a miss (measured: 0/138 decisions replayed).
-                        return routeCallId(model);
-                    }
+                routeDecisionCallable(
+                        model,
+                        () -> {
+                            // Timed inside the durable call so the latency is persisted with the
+                            // decision: a replayed run reports the original strategy wall time —
+                            // and the strategy is never re-executed on replay.
+                            long start = System.nanoTime();
+                            RoutingDecision decision =
+                                    executor.route(strategy, routingContext, ctx);
+                            return decision.withDecisionMs(
+                                    (System.nanoTime() - start) / 1_000_000.0);
+                        }));
+    }
 
-                    @Override
-                    public Class<RoutingDecision> getResultClass() {
-                        return RoutingDecision.class;
-                    }
+    /**
+     * The single definition of the {@code route:<router>} persistence record — both execution
+     * shapes persist through this callable, so the id scheme and result class cannot diverge.
+     */
+    private static DurableCallable<RoutingDecision> routeDecisionCallable(
+            String model, java.util.concurrent.Callable<RoutingDecision> body) {
+        return new DurableCallable<>() {
+            @Override
+            public String getId() {
+                // Deterministic across recovery re-processing: the durable store already
+                // scopes call results by (key, sequence number, event, action), so the id
+                // must NOT embed the request id — event ids are regenerated when Flink
+                // rolls back and re-processes, and a non-deterministic id turns every
+                // replay lookup into a miss (measured: 0/138 decisions replayed).
+                return routeCallId(model);
+            }
 
-                    @Override
-                    public RoutingDecision call() throws Exception {
-                        // Timed inside the durable call so the latency is persisted with the
-                        // decision: a replayed run reports the original strategy wall time — and
-                        // the strategy is never re-executed on replay.
-                        long start = System.nanoTime();
-                        RoutingDecision decision = executor.route(strategy, routingContext, ctx);
-                        return decision.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
-                    }
-                });
+            @Override
+            public Class<RoutingDecision> getResultClass() {
+                return RoutingDecision.class;
+            }
+
+            @Override
+            public RoutingDecision call() throws Exception {
+                return body.call();
+            }
+        };
     }
 
     /**
@@ -158,23 +177,7 @@ final class ModelRoutingResolver {
         RoutingDecision computed = executor.route(strategy, routingContext, ctx);
         final RoutingDecision toStore =
                 computed.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
-        return ctx.durableExecute(
-                new DurableCallable<>() {
-                    @Override
-                    public String getId() {
-                        return routeCallId(model);
-                    }
-
-                    @Override
-                    public Class<RoutingDecision> getResultClass() {
-                        return RoutingDecision.class;
-                    }
-
-                    @Override
-                    public RoutingDecision call() {
-                        return toStore;
-                    }
-                });
+        return ctx.durableExecute(routeDecisionCallable(model, () -> toStore));
     }
 
     /**

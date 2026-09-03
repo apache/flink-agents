@@ -241,8 +241,8 @@ public class AgentPlanLlmJudgeValidationTest {
     }
 
     /**
-     * Invalid rule patterns fail at plan construction too: validation reuses {@code
-     * ModelRouter.compileRules} — the same path as the builder — so a descriptor-built plan gets
+     * Invalid rule patterns fail at plan construction too: validation reuses {@code the
+     * RoutingStrategy constructor} — the same path as the builder — so a descriptor-built plan gets
      * the identical diagnostic instead of a per-record throw on the TaskManager.
      */
     @Test
@@ -256,7 +256,7 @@ public class AgentPlanLlmJudgeValidationTest {
 
     /**
      * Pattern validation does not depend on a usable candidate list (review: the shape guard must
-     * not skip {@code compileRules}): a descriptor with a mis-shaped 'candidates' argument and an
+     * not skip pattern validation): a descriptor with a mis-shaped 'candidates' argument and an
      * invalid rule pattern still fails plan construction on the pattern.
      */
     @Test

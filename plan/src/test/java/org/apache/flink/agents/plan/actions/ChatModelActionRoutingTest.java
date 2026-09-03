@@ -794,6 +794,46 @@ public class ChatModelActionRoutingTest {
         }
     }
 
+    /** A custom executor whose constructor fails (transiently, e.g. a flaky config read). */
+    public static class ThrowingCtorExecutor implements CustomRoutingExecutor {
+        public ThrowingCtorExecutor(Map<String, Object> args) {
+            throw new IllegalStateException("transient boot failure");
+        }
+
+        @Override
+        public RoutingDecision route(RoutingStrategy strategy, RoutingContext context) {
+            return RoutingDecision.abstain();
+        }
+    }
+
+    /**
+     * Regression (review): a failing custom-executor constructor must throw OUTSIDE the durable
+     * boundary. Persisted as the route:<router> record, a transient failure would replay as a
+     * permanent poison record — recovery would rethrow it forever without re-attempting
+     * instantiation.
+     */
+    @Test
+    void failingCustomExecutorConstructorIsNotPersistedAsTheDecision() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ThrowingCtorExecutor.class))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx = new FakeRunnerContext(router);
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router",
+                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                                        ctx))
+                .hasStackTraceContaining("transient boot failure");
+        // The failure happened before the persistence boundary: no decision record was attempted.
+        assertThat(ctx.durableCallIds).doesNotContain("route:router");
+    }
+
     @Test
     void strategyFailureIsIgnoredUnderIgnorePolicy() throws Exception {
         ModelRouter router =
