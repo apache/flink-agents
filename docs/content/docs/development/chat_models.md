@@ -1077,12 +1077,12 @@ Tongyi is only supported in Python currently. To use Tongyi from Java agents, se
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"qwen-plus"` | Name of the chat model to use |
+| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on the Qwen3.7-Max family, the schema-capable family DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
 | `extract_reasoning` | bool | `False` | Extract reasoning content from response |
-| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters |
+| `additional_kwargs` | dict | `{}` | Additional DashScope API parameters. A `response_format` supplied here is rejected only when it would be overwritten, that is when an `output_schema` carrying a Pydantic model is set on a model that applies it natively; otherwise it is passed through unchanged |
 
 #### Usage Example
 
