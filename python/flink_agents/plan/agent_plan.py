@@ -33,7 +33,7 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
-from flink_agents.api.subagent import SubagentSetup
+from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.actions.action import Action
@@ -293,6 +293,22 @@ def _to_plan_function(func: ApiFunction) -> PythonFunction | JavaFunction:
     raise TypeError(msg)
 
 
+def _check_tool_name_not_reserved(name: str) -> None:
+    """Reject a tool name carrying the reserved sub-agent callable prefix.
+
+    Sub-agent callables are exposed to the model under the ``subagent_`` prefix,
+    and dispatch routes any prefixed call to the AGENT namespace, so a tool
+    registered under the prefix could never be called. Fail clearly at
+    plan-construction time rather than at call time.
+    """
+    if name.startswith(CALLABLE_NAME_PREFIX):
+        msg = (
+            f"Tool name '{name}' must not start with the reserved prefix "
+            f"'{CALLABLE_NAME_PREFIX}', which identifies sub-agent callables."
+        )
+        raise ValueError(msg)
+
+
 def _get_resource_providers(
     agent: Agent, config: AgentConfiguration
 ) -> List[ResourceProvider]:
@@ -322,6 +338,7 @@ def _get_resource_providers(
                     )
 
         elif hasattr(value, "_is_tool"):
+            _check_tool_name_not_reserved(name)
             injected_args = getattr(value, "_injected_args", None)
             if isinstance(value, staticmethod):
                 value = value.__func__
@@ -366,6 +383,7 @@ def _get_resource_providers(
         )
 
     for name, tool in agent.resources[ResourceType.TOOL].items():
+        _check_tool_name_not_reserved(name)
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(
                 name=name,

@@ -514,6 +514,24 @@ def test_agent_plan_accepts_matching_decorated_python_tool_injected_args() -> No
     }
 
 
+def test_tool_name_with_reserved_subagent_prefix_is_rejected() -> None:
+    """Sub-agent callables reach the model under the reserved ``subagent_``
+    prefix, so a tool registered under that prefix could never be called and
+    is rejected at plan-construction time.
+    """
+    agent = Agent()
+    agent.add_resource(
+        name="subagent_helper",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(query_order),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="reserved prefix 'subagent_'"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
+
+
 def test_agent_plan_rejects_conflicting_decorated_python_tool_injected_args() -> None:
     agent = Agent()
     agent.add_resource(

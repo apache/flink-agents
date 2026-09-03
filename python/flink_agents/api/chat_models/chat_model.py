@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
 import re
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -29,11 +30,15 @@ from flink_agents.api.chat_message import (
     MessageRole,
     find_first_system_message,
 )
+from flink_agents.api.chat_models.subagent_tool import SubagentTool
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
+from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
+
+_LOG = logging.getLogger(__name__)
 
 
 class StructuredOutputStrategy(str, Enum):
@@ -360,6 +365,10 @@ class BaseChatModelSetup(Resource):
     _resolved_connection: BaseChatModelConnection | None = PrivateAttr(default=None)
     prompt: Prompt | str | None = None
     tools: List[str] | List[Tool] = Field(default_factory=list)
+    subagents: List[str] = Field(
+        default_factory=list,
+        description="Names of the AGENT resources this setup may delegate to.",
+    )
     skills: List[str] | None = None
     skill_discovery_prompt: str | None = None
     allowed_commands: List[str] = Field(default_factory=list)
@@ -420,17 +429,76 @@ class BaseChatModelSetup(Resource):
         if self.skills is not None:
             self.skill_discovery_prompt = (
                 self.resource_context.generate_available_skills_prompt(*self.skills)
+                or None
             )
-            self.tools.extend([LOAD_SKILL_TOOL, BASH_TOOL])
 
-        if len(self.tools) > 0:
-            self.tools = [
-                cast(
+        # Rebuilt from scratch: open() may run again on the same instance, and the
+        # callables must not accumulate. Sub-agent callables are derived from
+        # ``subagents`` rather than declared under ``tools``, so a previous build of
+        # them is dropped here instead of being read back as a declaration.
+        declared: List[str | Tool] = [
+            entry for entry in self.tools if not isinstance(entry, SubagentTool)
+        ]
+        declared_names = [
+            entry if isinstance(entry, str) else entry.name for entry in declared
+        ]
+        if self.skills is not None:
+            for skill_tool in (LOAD_SKILL_TOOL, BASH_TOOL):
+                if skill_tool not in declared_names:
+                    declared.append(skill_tool)
+                    declared_names.append(skill_tool)
+
+        callables: List[Tool] = []
+        callable_names: set[str] = set()
+        for entry, name in zip(declared, declared_names, strict=True):
+            if name in callable_names:
+                msg = f"Duplicate callable name: {name}"
+                raise ValueError(msg)
+            callable_names.add(name)
+            callables.append(
+                entry
+                if isinstance(entry, Tool)
+                else cast(
                     "Tool",
-                    self.resource_context.get_resource(tool_name, ResourceType.TOOL),
+                    self.resource_context.get_resource(name, ResourceType.TOOL),
                 )
-                for tool_name in self.tools
-            ]
+            )
+        for name in self.subagents:
+            # Tools are forbidden to carry the reserved prefix at registration, so a
+            # prefixed callable name can only come from this loop and a clash with a
+            # tool is impossible. Checked before the schema below, because a name
+            # declared twice is a mistake in the declaration whether or not it ends
+            # up registered.
+            callable_name = CALLABLE_NAME_PREFIX + name
+            if callable_name in callable_names:
+                msg = f"Duplicate callable name: {callable_name}"
+                raise ValueError(msg)
+            callable_names.add(callable_name)
+            setup = self.resource_context.get_resource(name, ResourceType.AGENT)
+            # A sub-agent owned by the other language resolves to a bridge handle
+            # here, which carries no schema to declare, so it is rejected instead
+            # of silently dropped.
+            if not isinstance(setup, SubagentSetup):
+                msg = (
+                    f"Sub-agent {name} must resolve to a SubagentSetup, "
+                    f"but was {type(setup).__name__}"
+                )
+                raise TypeError(msg)
+            if setup.input_schema is None:
+                # Unlike a bridge handle this is a sub-agent the caller could have
+                # described, so it is dropped with a warning rather than failing the
+                # job: the rest of the callables stay usable.
+                _LOG.warning(
+                    "Sub-agent %s declares neither an input schema nor an input"
+                    " type, so there are no arguments for the model to build a"
+                    " call from and it is not offered as a callable.",
+                    name,
+                )
+                continue
+            callables.append(
+                SubagentTool.of(name, setup.description, setup.input_schema)
+            )
+        self.tools = callables
 
     def chat(
         self,
@@ -476,17 +544,15 @@ class BaseChatModelSetup(Resource):
                     prompt_messages.append(msg)
             messages = prompt_messages
 
-        if self.skills is not None:
-            index = find_first_system_message(messages)
-            messages = (
-                messages[: index + 1]
-                + [
-                    ChatMessage(
-                        role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
-                    )
-                ]
-                + messages[index + 1 :]
-            )
+        if self.skill_discovery_prompt:
+            # Right after the first system message, or at the head when there is none.
+            index = find_first_system_message(messages) + 1
+            injected = [
+                ChatMessage(
+                    role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
+                )
+            ]
+            messages = list(messages[:index]) + injected + list(messages[index:])
 
         # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()
