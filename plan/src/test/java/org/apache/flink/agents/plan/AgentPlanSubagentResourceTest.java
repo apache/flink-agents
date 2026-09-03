@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.subagent.TestSubagentSetup;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
@@ -83,5 +84,24 @@ public class AgentPlanSubagentResourceTest {
         assertThatThrownBy(() -> new AgentPlan(agent))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must be a SubagentSetup or a ResourceDescriptor");
+    }
+
+    /**
+     * Sub-agent callables reach the model under the reserved {@code subagent_} prefix, so a tool
+     * registered under that prefix could never be called and is rejected at plan-construction time.
+     */
+    @Test
+    void toolNameWithTheReservedSubagentPrefixIsRejected() {
+        Agent agent = new Agent();
+        agent.addResource(
+                "subagent_helper",
+                ResourceType.TOOL,
+                new BashTool(
+                        ResourceDescriptor.Builder.newBuilder(BashTool.class.getName()).build(),
+                        null));
+
+        assertThatThrownBy(() -> new AgentPlan(agent))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must not start with the reserved prefix 'subagent_'");
     }
 }

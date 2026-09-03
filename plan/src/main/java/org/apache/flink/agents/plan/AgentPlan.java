@@ -691,9 +691,27 @@ public class AgentPlan implements Serializable {
     /** Adds a resource provider to the resourceProviders map. */
     private void addResourceProvider(ResourceProvider provider) {
         checkNoRouterModelNameClash(provider);
+        checkToolNameNotReserved(provider);
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * A tool name must not carry the reserved {@code subagent_} prefix: sub-agent callables are
+     * exposed to the model under that prefix, and dispatch routes any prefixed call to the {@code
+     * AGENT} namespace, so a tool registered under the prefix could never be called. Fail clearly
+     * at plan-construction time rather than at call time.
+     */
+    private void checkToolNameNotReserved(ResourceProvider provider) {
+        if (provider.getType() == TOOL
+                && provider.getName().startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Tool name '%s' must not start with the reserved prefix '%s',"
+                                    + " which identifies sub-agent callables.",
+                            provider.getName(), SubagentSetup.CALLABLE_NAME_PREFIX));
+        }
     }
 
     /**
