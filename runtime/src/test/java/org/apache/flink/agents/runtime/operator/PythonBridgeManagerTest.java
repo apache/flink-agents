@@ -23,12 +23,12 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
-import pemja.core.PythonInterpreter;
 
 import java.lang.reflect.Field;
 import java.util.List;
@@ -50,7 +50,7 @@ class PythonBridgeManagerTest {
         Mem0LongTermMemory longTermMemory = mock(Mem0LongTermMemory.class);
         PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
         PythonResourceAdapterImpl resourceAdapter = mock(PythonResourceAdapterImpl.class);
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreterManager interpreterManager = mock(PythonInterpreterManager.class);
         PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
         RuntimeException actionExecutorFailure =
                 new RuntimeException("action executor close failed");
@@ -61,12 +61,12 @@ class PythonBridgeManagerTest {
         RuntimeException resourceAdapterFailure =
                 new RuntimeException("resource adapter close failed");
         doThrow(resourceAdapterFailure).when(resourceAdapter).close();
-        doThrow(interpreterFailure).when(interpreter).close();
+        doThrow(interpreterFailure).when(interpreterManager).close();
         doThrow(environmentFailure).when(environmentManager).close();
         setField(bridge, "longTermMemory", longTermMemory);
         setField(bridge, "pythonActionExecutor", actionExecutor);
         setField(bridge, "pythonResourceAdapter", resourceAdapter);
-        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonInterpreterManager", interpreterManager);
         setField(bridge, "pythonEnvironmentManager", environmentManager);
 
         assertThatThrownBy(bridge::close)
@@ -79,12 +79,12 @@ class PythonBridgeManagerTest {
                         longTermMemory,
                         actionExecutor,
                         resourceAdapter,
-                        interpreter,
+                        interpreterManager,
                         environmentManager);
         closeOrder.verify(longTermMemory).close();
         closeOrder.verify(actionExecutor).close();
         closeOrder.verify(resourceAdapter).close();
-        closeOrder.verify(interpreter).close();
+        closeOrder.verify(interpreterManager).close();
         closeOrder.verify(environmentManager).close();
     }
 
@@ -128,14 +128,14 @@ class PythonBridgeManagerTest {
     void closeReleasesInterpreterAndEnvironmentWhenActionExecutorFails() throws Exception {
         PythonBridgeManager bridge = new PythonBridgeManager();
         PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreterManager interpreterManager = mock(PythonInterpreterManager.class);
         PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
         doThrow(new IllegalStateException("action executor close failed"))
                 .when(actionExecutor)
                 .close();
 
         setField(bridge, "pythonActionExecutor", actionExecutor);
-        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonInterpreterManager", interpreterManager);
         setField(bridge, "pythonEnvironmentManager", environmentManager);
 
         assertThatThrownBy(bridge::close)
@@ -144,9 +144,9 @@ class PythonBridgeManagerTest {
                 // Contract 3: a lone failure arrives with nothing attached to it.
                 .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
-        InOrder inOrder = inOrder(actionExecutor, interpreter, environmentManager);
+        InOrder inOrder = inOrder(actionExecutor, interpreterManager, environmentManager);
         inOrder.verify(actionExecutor).close();
-        inOrder.verify(interpreter).close();
+        inOrder.verify(interpreterManager).close();
         inOrder.verify(environmentManager).close();
     }
 
@@ -155,7 +155,7 @@ class PythonBridgeManagerTest {
     void closeReportsFirstFailureWithLaterOnesSuppressed() throws Exception {
         PythonBridgeManager bridge = new PythonBridgeManager();
         PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreterManager interpreterManager = mock(PythonInterpreterManager.class);
         PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
         doThrow(new IllegalStateException("action executor close failed"))
                 .when(actionExecutor)
@@ -165,7 +165,7 @@ class PythonBridgeManagerTest {
                 .close();
 
         setField(bridge, "pythonActionExecutor", actionExecutor);
-        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonInterpreterManager", interpreterManager);
         setField(bridge, "pythonEnvironmentManager", environmentManager);
 
         assertThatThrownBy(bridge::close)
@@ -177,7 +177,7 @@ class PythonBridgeManagerTest {
                                         .extracting(Throwable::getMessage)
                                         .containsExactly("environment manager close failed"));
 
-        verify(interpreter).close();
+        verify(interpreterManager).close();
     }
 
     /**
@@ -189,13 +189,13 @@ class PythonBridgeManagerTest {
     void closeReleasesInterpreterAndEnvironmentWhenActionExecutorThrowsError() throws Exception {
         PythonBridgeManager bridge = new PythonBridgeManager();
         PythonActionExecutor actionExecutor = mock(PythonActionExecutor.class);
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonInterpreterManager interpreterManager = mock(PythonInterpreterManager.class);
         PythonEnvironmentManager environmentManager = mock(PythonEnvironmentManager.class);
         OutOfMemoryError failure = new OutOfMemoryError("action executor close failed");
         doThrow(failure).when(actionExecutor).close();
 
         setField(bridge, "pythonActionExecutor", actionExecutor);
-        setField(bridge, "pythonInterpreter", interpreter);
+        setField(bridge, "pythonInterpreterManager", interpreterManager);
         setField(bridge, "pythonEnvironmentManager", environmentManager);
 
         // The Error reaches the caller unchanged rather than wrapped in an Exception, and with
@@ -204,7 +204,7 @@ class PythonBridgeManagerTest {
                 .isSameAs(failure)
                 .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
-        verify(interpreter).close();
+        verify(interpreterManager).close();
         verify(environmentManager).close();
     }
 

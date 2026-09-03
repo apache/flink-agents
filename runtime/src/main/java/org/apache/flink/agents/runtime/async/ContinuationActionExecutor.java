@@ -37,6 +37,9 @@ public class ContinuationActionExecutor {
     /** Creates a new ContinuationActionExecutor. */
     public ContinuationActionExecutor(int numAsyncThreads) {}
 
+    /** JDK 11 fallback has no worker threads, so the cleanup hook is never needed. */
+    public ContinuationActionExecutor(int numAsyncThreads, Runnable threadCleanup) {}
+
     /**
      * Executes the action. In JDK 11, this simply runs the action synchronously.
      *

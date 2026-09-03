@@ -22,6 +22,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.junit.jupiter.api.Test;
 
@@ -33,9 +35,25 @@ import static org.assertj.core.api.Assertions.assertThat;
 class JavaResourceAdapterTest {
 
     @Test
+    void buildsJavaChatMessageFromExtractedPythonFields() {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, Thread.currentThread().getContextClassLoader());
+        List<Map<String, Object>> toolCalls = List.of(Map.of("id", "call-1", "type", "function"));
+        Map<String, Object> extraArgs = Map.of("reasoning", "brief");
+
+        ChatMessage converted =
+                adapter.fromPythonChatMessage("user", "hello", toolCalls, extraArgs);
+
+        assertThat(converted.getRole()).isEqualTo(MessageRole.USER);
+        assertThat(converted.getContent()).isEqualTo("hello");
+        assertThat(converted.getToolCalls()).isEqualTo(toolCalls);
+        assertThat(converted.getExtraArgs()).isEqualTo(extraArgs);
+    }
+
+    @Test
     void getJavaToolMetadataHidesInjectedArgsAndReturnsAnnotatedDeclaration() throws Exception {
         JavaResourceAdapter adapter =
-                new JavaResourceAdapter(null, null, Thread.currentThread().getContextClassLoader());
+                new JavaResourceAdapter(null, Thread.currentThread().getContextClassLoader());
 
         Map<String, String> metadata =
                 adapter.getJavaToolMetadata(

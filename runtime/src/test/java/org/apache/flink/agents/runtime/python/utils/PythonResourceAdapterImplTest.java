@@ -45,18 +45,27 @@ public class PythonResourceAdapterImplTest {
     @Mock private ResourceContext resourceContext;
 
     private PythonResourceAdapterImpl pythonResourceAdapter;
+    private PythonInterpreterManager interpreterManager;
     private AutoCloseable mocks;
 
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
+        interpreterManager =
+                new PythonInterpreterManager(
+                        mockInterpreter,
+                        () -> {
+                            throw new AssertionError("unexpected worker interpreter");
+                        },
+                        ignored -> {});
         pythonResourceAdapter =
-                new PythonResourceAdapterImpl(resourceContext, mockInterpreter, null);
+                new PythonResourceAdapterImpl(resourceContext, interpreterManager, null);
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (mocks != null) {
+            interpreterManager.close();
             mocks.close();
         }
     }
@@ -87,7 +96,6 @@ public class PythonResourceAdapterImplTest {
 
         pythonResourceAdapter.open();
 
-        verify(mockInterpreter).exec(PythonResourceAdapterImpl.PYTHON_IMPORTS);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT, pythonResourceAdapter);
     }
