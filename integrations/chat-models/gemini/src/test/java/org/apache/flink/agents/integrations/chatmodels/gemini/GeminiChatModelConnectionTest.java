@@ -18,6 +18,12 @@
 
 package org.apache.flink.agents.integrations.chatmodels.gemini;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonPropertyDescription;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
@@ -35,12 +41,17 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -52,6 +63,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GeminiChatModelConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+
+    /** A model Google documents native structured-output support for. */
+    private static final String CAPABLE_MODEL = "gemini-2.5-flash";
 
     private static ResourceDescriptor descriptor(String apiKey, String baseUrl, String model) {
         ResourceDescriptor.Builder b =
@@ -79,6 +93,122 @@ class GeminiChatModelConnectionTest {
      */
     private static Map<String, Object> params() {
         return new HashMap<>();
+    }
+
+    private static List<ChatMessage> userMessage() {
+        return List.of(ChatMessage.user("hi"));
+    }
+
+    private static JsonNode nativeSchema(GenerateContentConfig config) {
+        return (JsonNode) config.responseJsonSchema().orElseThrow();
+    }
+
+    private static List<String> fieldNames(JsonNode node) {
+        List<String> names = new ArrayList<>();
+        node.fieldNames().forEachRemaining(names::add);
+        return names;
+    }
+
+    /**
+     * Output schema fixture shaped to expose the derivation settings: fields are declared out of
+     * alphabetical order, {@code counts} is a map whose values carry a type, and {@code note} is
+     * the only optional field.
+     */
+    public static class Report {
+        public String summary;
+        public Map<String, Integer> counts;
+        public Optional<String> note;
+        public int total;
+    }
+
+    /**
+     * Output schema fixture shaped to expose Jackson's property model.
+     *
+     * <p>{@code name} is deserialized from {@code full_name} rather than from the Java field name,
+     * and {@code secret} is not deserialized at all.
+     */
+    public static class Profile {
+        @JsonProperty("full_name")
+        public String name;
+
+        @JsonIgnore public String secret;
+
+        public int age;
+    }
+
+    /** Nested type reused by two described fields of {@link Addresses}. */
+    public static class Address {
+        public String street;
+    }
+
+    /**
+     * Output schema fixture whose reused nested type is extracted into {@code $defs}, so each
+     * described field emits a {@code $ref} that would otherwise carry a {@code description}
+     * sibling.
+     */
+    public static class Addresses {
+        @JsonPropertyDescription("home address")
+        public Address home;
+
+        @JsonPropertyDescription("work address")
+        public Address work;
+    }
+
+    /**
+     * Output schema fixture that reuses {@link Addresses}, so the forbidden pairing also appears
+     * inside a {@code $defs} entry rather than only among the root's own properties.
+     */
+    public static class Building {
+        @JsonPropertyDescription("primary occupant")
+        public Addresses primary;
+
+        @JsonPropertyDescription("secondary occupant")
+        public Addresses secondary;
+    }
+
+    /**
+     * Subtype union whose branches victools renders as a {@code $ref} each, inside an {@code anyOf}
+     * array.
+     */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Animal {
+        public String name;
+    }
+
+    public static class Dog extends Animal {
+        public int barks;
+    }
+
+    public static class Cat extends Animal {
+        public int lives;
+    }
+
+    /**
+     * Output schema fixture whose two described fields share a subtype union, so every {@code $ref}
+     * carrying a forbidden sibling sits inside an {@code anyOf} array rather than directly under a
+     * {@code properties} map.
+     */
+    public static class Owner {
+        @JsonPropertyDescription("the pet")
+        public Animal pet;
+
+        @JsonPropertyDescription("the backup pet")
+        public Animal backup;
+    }
+
+    /**
+     * Output schema fixture declaring a property literally named {@code $ref}, which puts a member
+     * of that name into the enclosing {@code properties} map without making that map a reference.
+     */
+    public static class RefNamedProperty {
+        @JsonProperty("$ref")
+        public String reference;
+
+        public String other;
     }
 
     /** Minimal tool carrying only metadata; never invoked in these tests. */
@@ -446,7 +576,8 @@ class GeminiChatModelConnectionTest {
         List<ChatMessage> messages =
                 List.of(ChatMessage.system("be terse"), ChatMessage.user("hi"));
 
-        GenerateContentConfig config = connection().buildConfig(messages, null, params());
+        GenerateContentConfig config =
+                connection().buildConfig(messages, null, params(), CAPABLE_MODEL, null);
 
         Content instruction = config.systemInstruction().orElseThrow();
         // Exactly one part: the USER turn must not be lifted into the system instruction.
@@ -462,7 +593,7 @@ class GeminiChatModelConnectionTest {
         arguments.put("additional_kwargs", Map.of("top_k", 40, "top_p", 0.9));
 
         GenerateContentConfig config =
-                connection().buildConfig(List.of(ChatMessage.user("hi")), null, arguments);
+                connection().buildConfig(userMessage(), null, arguments, CAPABLE_MODEL, null);
 
         assertThat(config.topK()).hasValue(40f);
         assertThat(config.topP()).hasValue(0.9f);
@@ -476,7 +607,7 @@ class GeminiChatModelConnectionTest {
         arguments.put("max_output_tokens", 512);
 
         GenerateContentConfig config =
-                connection().buildConfig(List.of(ChatMessage.user("hi")), null, arguments);
+                connection().buildConfig(userMessage(), null, arguments, CAPABLE_MODEL, null);
 
         assertThat(config.temperature()).hasValue(0.25f);
         assertThat(config.maxOutputTokens()).hasValue(512);
@@ -488,9 +619,11 @@ class GeminiChatModelConnectionTest {
         GenerateContentConfig config =
                 connection()
                         .buildConfig(
-                                List.of(ChatMessage.user("hi")),
+                                userMessage(),
                                 List.of(new SchemaOnlyTool()),
-                                params());
+                                params(),
+                                CAPABLE_MODEL,
+                                null);
 
         List<FunctionDeclaration> declarations =
                 config.tools().orElseThrow().get(0).functionDeclarations().orElseThrow();
@@ -498,5 +631,279 @@ class GeminiChatModelConnectionTest {
         assertThat(declarations.get(0).name()).hasValue("add");
         assertThat(declarations.get(0).description()).hasValue("Add two numbers.");
         assertThat(declarations.get(0).parametersJsonSchema()).hasValue(Map.of("type", "object"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "gemini-3.1-pro-preview",
+                "gemini-3.8-flash",
+                "gemini-3.5-flash-lite",
+                "gemini-2.5-pro",
+                "gemini-2.5-flash",
+                "gemini-robotics-er-1.6-preview"
+            })
+    @DisplayName("Every live Gemini text model reports native structured-output support")
+    void supportsNativeStructuredOutputForTextModels(String model) {
+        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "gemini-3.1-flash-image",
+                "gemini-2.5-flash-image",
+                "gemini-2.5-flash-preview-tts",
+                "gemini-2.5-flash-native-audio-preview-12-2025",
+                "gemini-3.1-flash-live-preview",
+                "gemini-3.5-transcribe",
+                "gemini-embedding-001",
+                "gemini-omni-flash"
+            })
+    @DisplayName("A non-text output modality is rejected even though it carries the family prefix")
+    void supportsNativeStructuredOutputRejectsNonTextModalities(String model) {
+        // gemini-2.5-flash-image is the case the marker exists for: its published capability row
+        // claims support, and the service answers 400 "JSON mode is not enabled for this model".
+        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"   ", "gemini-"})
+    @DisplayName("A null, blank or bare-prefix model reports not-capable")
+    void supportsNativeStructuredOutputRejectsNullBlankAndBarePrefix(String model) {
+        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @ValueSource(
+            strings = {
+                "models/gemini-2.5-flash",
+                "gemma-4-31b-it",
+                "tunedModels/my-tune",
+                "gemini",
+                "imagen-4.0-generate-001"
+            })
+    @DisplayName("A name outside the family reports not-capable and keeps the prompt fallback")
+    void supportsNativeStructuredOutputRejectsOutsideFamily(String model) {
+        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    }
+
+    @Test
+    @DisplayName("A POJO schema is sent as responseJsonSchema alongside a JSON response mime type")
+    void nativeSchemaAppliedForPojo() {
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
+
+        assertThat(config.responseMimeType()).hasValue("application/json");
+        JsonNode schema = nativeSchema(config);
+        assertThat(schema.path("type").asText()).isEqualTo("object");
+        assertThat(fieldNames(schema.path("properties")))
+                .containsExactly("summary", "counts", "note", "total");
+    }
+
+    @Test
+    @DisplayName("A RowTypeInfo-shaped schema is skipped rather than rejected")
+    void nativeSchemaSkippedForRowTypeInfo() {
+        // A RowTypeInfo schema arrives wrapped in OutputSchema rather than as a bare POJO Class,
+        // so it must not activate native structured output. OutputSchema cannot be instantiated
+        // here because RowTypeInfo is not on this module's classpath; any non-Class schema object
+        // exercises the same gate.
+        Object nonClassSchema = "row<name STRING>";
+
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, nonClassSchema);
+
+        assertThat(config.responseJsonSchema()).isEmpty();
+        assertThat(config.responseMimeType()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A request carrying tools keeps the tools and drops the schema")
+    void nativeSchemaSkippedWhenToolsPresent() {
+        // Outside a documented preview, Gemini answers a request combining function declarations
+        // with a JSON response mime type with 400 INVALID_ARGUMENT, so the schema degrades to the
+        // prompt fallback rather than failing the whole request.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(
+                                userMessage(),
+                                List.of(new SchemaOnlyTool()),
+                                params(),
+                                CAPABLE_MODEL,
+                                Report.class);
+
+        assertThat(config.tools()).isPresent();
+        assertThat(config.responseJsonSchema()).isEmpty();
+        assertThat(config.responseMimeType()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A model without documented support is never sent a schema")
+    void nativeSchemaSkippedForIncapableModel() {
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(
+                                userMessage(),
+                                null,
+                                params(),
+                                "gemini-2.5-flash-image",
+                                Report.class);
+
+        assertThat(config.responseJsonSchema()).isEmpty();
+        assertThat(config.responseMimeType()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("No output schema leaves the response format unconstrained")
+    void nullSchemaLeavesRequestUnconstrained() {
+        GenerateContentConfig config =
+                connection().buildConfig(userMessage(), null, params(), CAPABLE_MODEL, null);
+
+        assertThat(config.responseJsonSchema()).isEmpty();
+        assertThat(config.responseMimeType()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("The derived schema names properties the way Jackson deserializes them")
+    void derivedSchemaHonorsJacksonAnnotations() {
+        // The response is read back with an ObjectMapper, which accepts the renamed property and
+        // rejects the Java field name, and which discards an ignored property the schema would
+        // otherwise force the model to fabricate.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Profile.class);
+
+        assertThat(fieldNames(nativeSchema(config).path("properties")))
+                .containsExactly("full_name", "age");
+    }
+
+    @Test
+    @DisplayName("The derived schema closes objects without unsetting a map's value schema")
+    void derivedSchemaClosesObjects() {
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
+        JsonNode schema = nativeSchema(config);
+
+        // No Gemini document states that a schema without the keyword is closed, so an undeclared
+        // key the ObjectMapper then rejects is admissible unless the schema says otherwise.
+        assertThat(schema.path("additionalProperties").isBoolean()).isTrue();
+        assertThat(schema.path("additionalProperties").asBoolean()).isFalse();
+        // The closure applies to the enclosing object, never to a map's declared value type.
+        assertThat(
+                        schema.path("properties")
+                                .path("counts")
+                                .path("additionalProperties")
+                                .path("type")
+                                .asText())
+                .isEqualTo("integer");
+    }
+
+    @Test
+    @DisplayName("The derived schema requires every field the caller did not declare omissible")
+    void derivedSchemaMarksNonOptionalFieldsRequired() {
+        // Gemini treats a field the schema does not list as required as one the model may skip,
+        // so leaving `required` unset would let a response omit fields at will.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
+
+        List<String> required = new ArrayList<>();
+        nativeSchema(config).path("required").forEach(entry -> required.add(entry.asText()));
+        assertThat(required).containsExactlyInAnyOrder("summary", "counts", "total");
+    }
+
+    @Test
+    @DisplayName("A $ref carries no sibling that Gemini forbids beside it")
+    void derivedSchemaStripsRefSiblings() {
+        // Gemini states that a sub-schema setting $ref may set no other property except those
+        // starting with $. A described field whose type is reused is extracted into $defs and
+        // emits exactly that pairing.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Addresses.class);
+        JsonNode properties = nativeSchema(config).path("properties");
+
+        assertThat(properties.path("home").path("$ref").isTextual()).isTrue();
+        assertThat(fieldNames(properties.path("home"))).containsExactly("$ref");
+        assertThat(fieldNames(properties.path("work"))).containsExactly("$ref");
+    }
+
+    @Test
+    @DisplayName("A $ref nested inside a $defs entry is stripped too")
+    void derivedSchemaStripsRefSiblingsInsideDefs() {
+        // Reusing a type that itself reuses one puts the forbidden pairing four levels down, under
+        // $defs rather than under the root's properties, so a walk that only visited the root's
+        // own properties would leave it in place.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Building.class);
+        JsonNode nested = nativeSchema(config).path("$defs").path("Addresses").path("properties");
+
+        assertThat(nested.path("home").path("$ref").isTextual()).isTrue();
+        assertThat(fieldNames(nested.path("home"))).containsExactly("$ref");
+        assertThat(fieldNames(nested.path("work"))).containsExactly("$ref");
+    }
+
+    @Test
+    @DisplayName("A $ref inside an anyOf array is stripped, so the walk descends through arrays")
+    void derivedSchemaStripsRefSiblingsInsideAnyOfBranches() {
+        // A subtype union renders as an anyOf array of $refs, and a description on the declaring
+        // field is copied onto every branch. These are the only forbidden pairings the generator
+        // places inside a JSON array rather than inside an object, so a walk that visited object
+        // members only would leave all four in place.
+        GenerateContentConfig config =
+                connection().buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Owner.class);
+        JsonNode properties = nativeSchema(config).path("properties");
+
+        for (String field : List.of("pet", "backup")) {
+            JsonNode branches = properties.path(field).path("anyOf");
+            assertThat(branches).hasSize(2);
+            branches.forEach(
+                    branch -> {
+                        assertThat(branch.path("$ref").isTextual()).isTrue();
+                        assertThat(fieldNames(branch)).containsExactly("$ref");
+                    });
+        }
+    }
+
+    @Test
+    @DisplayName("A property named $ref does not make its enclosing map look like a reference")
+    void derivedSchemaKeepsSiblingsOfAPropertyNamedRef() {
+        // The properties map of this class carries a member named $ref whose value is that
+        // property's own schema, an object. Treating the map as a reference would delete every
+        // other property from it while required still listed them, leaving a document that
+        // additionalProperties:false makes unsatisfiable.
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(
+                                userMessage(),
+                                null,
+                                params(),
+                                CAPABLE_MODEL,
+                                RefNamedProperty.class);
+        JsonNode schema = nativeSchema(config);
+
+        assertThat(fieldNames(schema.path("properties"))).containsExactly("$ref", "other");
+        List<String> required = new ArrayList<>();
+        schema.path("required").forEach(entry -> required.add(entry.asText()));
+        assertThat(required).containsExactlyInAnyOrder("$ref", "other");
+    }
+
+    @Test
+    @DisplayName("The schema-less chat overload delegates to the schema-carrying one")
+    void chatWithoutSchemaDelegatesToTheSchemaCarryingOverload() {
+        // The three-argument overload holds no body of its own; everything, including the model
+        // resolution that raises this error, lives in the four-argument one. A three-argument call
+        // that stopped delegating would never reach it.
+        GeminiChatModelConnection conn =
+                new GeminiChatModelConnection(descriptor("test-key", null, null), NOOP);
+
+        assertThatThrownBy(() -> conn.chat(List.of(ChatMessage.user("hi")), null, params()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("model name must be provided");
     }
 }
