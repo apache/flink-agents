@@ -7,5 +7,6 @@
       "user.address.city" : "SF"
     }
   },
+  "attachments" : { },
   "type" : "_agent_run_begin_event"
 }

@@ -17,9 +17,9 @@
 #################################################################################
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, model_serializer
 
 from flink_agents.api.memory_object import MemoryType
 
@@ -29,6 +29,9 @@ if TYPE_CHECKING:
 
 class MemoryRef(BaseModel):
     """Reference to a specific data item in the Short-Term Memory."""
+
+    TYPE_FIELD: ClassVar[str] = "@type"
+    TYPE_VALUE: ClassVar[str] = "memory_ref"
 
     memory_type: MemoryType = MemoryType.SHORT_TERM
     path: str
@@ -52,6 +55,11 @@ class MemoryRef(BaseModel):
             A new MemoryRef instance.
         """
         return MemoryRef(memory_type=memory_type, path=path)
+
+    @model_serializer(mode="wrap")
+    def _serialize_with_discriminator(self, handler: Any) -> dict[str, Any]:
+        """Serialize this reference with its language-neutral type discriminator."""
+        return {self.TYPE_FIELD: self.TYPE_VALUE, **handler(self)}
 
     def resolve(self, ctx: RunnerContext) -> Any:
         """Resolve the reference to get the actual data.

@@ -3,5 +3,6 @@
   "attributes" : {
     "output" : "world"
   },
+  "attachments" : { },
   "type" : "_output_event"
 }

@@ -25,6 +25,8 @@ from pydantic_core import PydanticSerializationError
 from pyflink.common import Row
 
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.memory_reference import MemoryRef
 
 
 class _CustomEvent(Event):
@@ -237,14 +239,31 @@ def test_output_event_from_event() -> None:
     assert reconstructed.type == "_output_event"
 
 
+def test_output_event_from_event_rejects_attachments() -> None:
+    """Test OutputEvent.from_event rejects an invalid attached source Event."""
+    base = Event(
+        type="_output_event",
+        attributes={"output": 99},
+        attachments={"payload": "attachment"},
+    )
+
+    with pytest.raises(ValueError, match="OutputEvent cannot carry attachments"):
+        OutputEvent.from_event(base)
+
+
 # ── Unified Event tests ──────────────────────────────────────────────────
 
 
 def test_unified_event_creation() -> None:
     """Test creating a unified event with type and attributes."""
-    event = Event(type="MyEvent", attributes={"field1": "test", "field2": 42})
+    event = Event(
+        type="MyEvent",
+        attributes={"field1": "test", "field2": 42},
+        attachments={"field3": "0105", "field4": 2004},
+    )
     assert event.type == "MyEvent"
     assert event.attributes == {"field1": "test", "field2": 42}
+    assert event.attachments == {"field3": "0105", "field4": 2004}
     assert event.get_type() == "MyEvent"
 
 
@@ -260,6 +279,14 @@ def test_unified_event_get_attr_set_attr() -> None:
     event.set_attr("key", "value")
     assert event.get_attr("key") == "value"
     assert event.get_attr("missing") is None
+
+
+def test_unified_event_get_attachment_set_attachment() -> None:
+    """Test get_attachment and set_attachment convenience methods."""
+    event = Event(type="TestEvent")
+    event.set_attachment("key", "value")
+    assert event.get_attachment("key") == "value"
+    assert event.get_attachment("missing") is None
 
 
 def test_unified_event_from_json() -> None:
@@ -307,6 +334,19 @@ def test_unified_event_serialization_roundtrip() -> None:
     restored = Event.model_validate(parsed)
     assert restored.type == "RoundTrip"
     assert restored.attributes == {"a": 1, "b": "two"}
+
+
+def test_unified_event_serialization_roundtrip_with_memory_ref_attachment() -> None:
+    """Test that tagged memory-reference attachments retain their concrete type."""
+    reference = MemoryRef.create(MemoryType.SENSORY, "memory.path")
+    original = Event(type="RoundTrip", attachments={"payload": reference})
+
+    parsed = json.loads(original.model_dump_json())
+    restored = Event.model_validate(parsed)
+
+    assert parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    assert restored.get_attachment("payload") == reference
+    assert isinstance(restored.get_attachment("payload"), MemoryRef)
 
 
 def test_event_lineage_json_roundtrip_uses_java_field_names() -> None:

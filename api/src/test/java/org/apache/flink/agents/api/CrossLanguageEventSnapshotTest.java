@@ -23,6 +23,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
@@ -52,6 +54,7 @@ import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -68,6 +71,7 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
     private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
+    private static final String MEMORY_REF_ATTACHMENT_EVENT_TYPE = "_memory_ref_attachment_event";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
     private static Path snapshotDir;
@@ -577,6 +581,28 @@ class CrossLanguageEventSnapshotTest {
         Map<String, Object> attrs = base.getAttributes();
         assertEquals("ping", attrs.get("value"));
         assertEquals(7, attrs.get("count"));
+    }
+
+    @Test
+    void memoryRefAttachmentCrossLanguageSnapshotIsStable() throws Exception {
+        Event javaEvent =
+                new Event(
+                        FIXED_EVENT_ID, MEMORY_REF_ATTACHMENT_EVENT_TYPE, Map.of("value", "ping"));
+        javaEvent.setAttachment(
+                "payload", MemoryRef.create(MemoryObject.MemoryType.SENSORY, "memory.path"));
+        if (regenerateRequested()) {
+            writeJavaSnapshot("memory_ref_attachment_event.json", javaEvent);
+        }
+        assertJavaSnapshotStable("memory_ref_attachment_event.json", javaEvent);
+
+        Event pythonEvent = readPythonSnapshot("memory_ref_attachment_event.json");
+        assertEquals(FIXED_EVENT_ID, pythonEvent.getId());
+        assertEquals(MEMORY_REF_ATTACHMENT_EVENT_TYPE, pythonEvent.getType());
+        assertEquals("ping", pythonEvent.getAttr("value"));
+        MemoryRef reference =
+                assertInstanceOf(MemoryRef.class, pythonEvent.getAttachment("payload"));
+        assertEquals(MemoryObject.MemoryType.SENSORY, reference.getType());
+        assertEquals("memory.path", reference.getPath());
     }
 
     // ── Smoke ──────────────────────────────────────────────────────────────

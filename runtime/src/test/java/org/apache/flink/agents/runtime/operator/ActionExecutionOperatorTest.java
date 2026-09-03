@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
@@ -141,6 +142,52 @@ public class ActionExecutionOperatorTest {
             recordOutput = (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(2);
             assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
+        }
+    }
+
+    @Test
+    void testJavaEventAttachmentsAreOffloadedAndResolvedBetweenActions() throws Exception {
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        AgentPlan agentPlan = TestAgent.getEventAttachmentAgentPlan();
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            List<Event> eventsAtSendBoundary = new ArrayList<>();
+            operator.getEventRouter()
+                    .addEventListener(
+                            (context, event) -> {
+                                if (TestAgent.ATTACHMENT_EVENT_TYPE.equals(event.getType())) {
+                                    eventsAtSendBoundary.add(event);
+                                }
+                            });
+
+            testHarness.processElement(new StreamRecord<>(1L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(eventsAtSendBoundary).hasSize(1);
+            Event runtimeEvent = eventsAtSendBoundary.get(0);
+            Object reference = runtimeEvent.getAttachment(TestAgent.ATTACHMENT_KEY);
+            assertThat(reference).isInstanceOf(MemoryRef.class);
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(Map.of("value", 1L));
+
+            ActionState actionState =
+                    actionStateStore.get(
+                            1L,
+                            0L,
+                            agentPlan.getActions().get("receiveEventAttachment"),
+                            runtimeEvent);
+            assertThat(actionState).isNotNull();
+            assertThat(actionState.getTaskEvent().getAttachment(TestAgent.ATTACHMENT_KEY))
+                    .isSameAs(reference);
         }
     }
 
@@ -2914,6 +2961,9 @@ public class ActionExecutionOperatorTest {
 
     public static class TestAgent {
 
+        private static final String ATTACHMENT_EVENT_TYPE = "AttachmentEvent";
+        private static final String ATTACHMENT_KEY = "payload";
+
         /** Counter to track how many times the durable supplier is executed. */
         public static final java.util.concurrent.atomic.AtomicInteger DURABLE_CALL_COUNTER =
                 new java.util.concurrent.atomic.AtomicInteger(0);
@@ -2957,6 +3007,19 @@ public class ActionExecutionOperatorTest {
                 ExceptionUtils.rethrow(e);
             }
             context.sendEvent(new MiddleEvent(inputData + 1));
+        }
+
+        public static void sendEventAttachment(Event event, RunnerContext context) {
+            Event attachmentEvent = new Event(ATTACHMENT_EVENT_TYPE);
+            attachmentEvent.setAttachment(
+                    ATTACHMENT_KEY, Map.of("value", InputEvent.fromEvent(event).getInput()));
+            context.sendEvent(attachmentEvent);
+        }
+
+        public static void receiveEventAttachment(Event event, RunnerContext context) {
+            Object attachment = event.getAttachment(ATTACHMENT_KEY);
+            event.setAttachment(ATTACHMENT_KEY, "mutated-by-action");
+            context.sendEvent(new OutputEvent(attachment));
         }
 
         public static void action2(MiddleEvent event, RunnerContext context) {
@@ -3304,6 +3367,34 @@ public class ActionExecutionOperatorTest {
 
         public static AgentPlan getAgentPlan(boolean testMemoryAccessOutOfMailbox) {
             return getAgentPlanWithConfig(new AgentConfiguration(), testMemoryAccessOutOfMailbox);
+        }
+
+        public static AgentPlan getEventAttachmentAgentPlan() {
+            try {
+                Action sendAction =
+                        new Action(
+                                "sendEventAttachment",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "sendEventAttachment",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Action receiveAction =
+                        new Action(
+                                "receiveEventAttachment",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "receiveEventAttachment",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(ATTACHMENT_EVENT_TYPE));
+                return new AgentPlan(
+                        Map.of(
+                                sendAction.getName(), sendAction,
+                                receiveAction.getName(), receiveAction));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
         }
 
         public static AgentPlan getAgentPlanWithConfig(AgentConfiguration config) {

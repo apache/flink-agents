@@ -18,5 +18,6 @@
     "external_ids" : { },
     "timestamp" : 1700000000000
   },
+  "attachments" : { },
   "type" : "_tool_response_event"
 }

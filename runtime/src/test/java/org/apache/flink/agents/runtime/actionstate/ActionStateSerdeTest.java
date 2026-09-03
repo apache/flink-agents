@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.context.MemoryObject;
+import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -58,6 +60,8 @@ public class ActionStateSerdeTest {
         // Create test data
         InputEvent inputEvent = new InputEvent("test input");
         inputEvent.setAttr("testAttr", "testValue");
+        MemoryRef reference = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "attachment.path");
+        inputEvent.setAttachment("payload", reference);
 
         OutputEvent outputEvent = new OutputEvent("test output");
         outputEvent.setAttr("outputAttr", 123);
@@ -88,6 +92,10 @@ public class ActionStateSerdeTest {
         InputEvent deserializedInputEvent = (InputEvent) deserializedState.getTaskEvent();
         assertEquals("test input", deserializedInputEvent.getInput());
         assertEquals("testValue", deserializedInputEvent.getAttr("testAttr"));
+        Object restoredAttachment = deserializedInputEvent.getAttachment("payload");
+        assertInstanceOf(MemoryRef.class, restoredAttachment);
+        assertEquals(reference, restoredAttachment);
+        assertEquals(MemoryObject.MemoryType.SENSORY, ((MemoryRef) restoredAttachment).getType());
 
         // Verify memoryUpdates
         assertEquals(1, deserializedState.getSensoryMemoryUpdates().size());

@@ -9,5 +9,6 @@
       "extra_args" : { }
     } ]
   },
+  "attachments" : { },
   "type" : "_chat_request_event"
 }

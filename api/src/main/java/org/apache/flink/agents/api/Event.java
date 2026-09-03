@@ -22,7 +22,13 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import org.apache.flink.agents.api.context.MemoryRef;
 
 import javax.annotation.Nullable;
 
@@ -42,6 +48,11 @@ public class Event {
     private final String type;
     private final Map<String, Object> attributes;
 
+    // Keep the annotation on the field as well as the creator parameter so it also applies when
+    // Jackson constructs Event subclasses whose creators do not declare attachments.
+    @JsonDeserialize(contentUsing = AttachmentValueDeserializer.class)
+    private final Map<String, Object> attachments;
+
     @Nullable private UUID upstreamEventId;
     @Nullable private String upstreamActionName;
 
@@ -53,7 +64,7 @@ public class Event {
 
     /** Unified event with user-defined type and attributes. */
     public Event(String type, Map<String, Object> attributes) {
-        this(UUID.randomUUID(), type, attributes);
+        this(UUID.randomUUID(), type, attributes, new HashMap<>());
     }
 
     /** Unified event with user-defined type and empty attributes. */
@@ -78,6 +89,9 @@ public class Event {
             @JsonProperty("id") UUID id,
             @JsonProperty("type") String type,
             @JsonProperty("attributes") Map<String, Object> attributes,
+            @JsonProperty("attachments")
+                    @JsonDeserialize(contentUsing = AttachmentValueDeserializer.class)
+                    Map<String, Object> attachments,
             @JsonProperty("upstreamEventId") @Nullable UUID upstreamEventId,
             @JsonProperty("upstreamActionName") @Nullable String upstreamActionName) {
         if (type == null || type.isEmpty()) {
@@ -86,14 +100,31 @@ public class Event {
         // Explicit null matches an omitted id: both mint a per-occurrence UUID.
         this.id = id != null ? id : UUID.randomUUID();
         this.type = type;
-        this.attributes = attributes != null ? attributes : new HashMap<>();
+        this.attributes = attributes != null ? new HashMap<>(attributes) : new HashMap<>();
+        this.attachments = attachments != null ? new HashMap<>(attachments) : new HashMap<>();
         this.upstreamEventId = upstreamEventId;
         this.upstreamActionName = upstreamActionName;
     }
 
+    /** Reconstructs an Event with an existing identity, attachments, and no upstream lineage. */
+    public Event(
+            UUID id, String type, Map<String, Object> attributes, Map<String, Object> attachments) {
+        this(id, type, attributes, attachments, null, null);
+    }
+
+    /** Reconstructs an Event with an existing identity and optional framework-managed lineage. */
+    public Event(
+            UUID id,
+            String type,
+            Map<String, Object> attributes,
+            @Nullable UUID upstreamEventId,
+            @Nullable String upstreamActionName) {
+        this(id, type, attributes, new HashMap<>(), upstreamEventId, upstreamActionName);
+    }
+
     /** Reconstructs an Event with an existing identity and no upstream lineage. */
     public Event(UUID id, String type, Map<String, Object> attributes) {
-        this(id, type, attributes, null, null);
+        this(id, type, attributes, new HashMap<>(), null, null);
     }
 
     public UUID getId() {
@@ -108,6 +139,10 @@ public class Event {
 
     public Map<String, Object> getAttributes() {
         return attributes;
+    }
+
+    public Map<String, Object> getAttachments() {
+        return attachments;
     }
 
     /** Returns the ID of the Event consumed by the Action that emitted this Event. */
@@ -150,6 +185,14 @@ public class Event {
         attributes.put(name, value);
     }
 
+    public Object getAttachment(String name) {
+        return attachments.get(name);
+    }
+
+    public void setAttachment(String name, Object value) {
+        attachments.put(name, value);
+    }
+
     @JsonIgnore
     public boolean hasSourceTimestamp() {
         return sourceTimestamp != null;
@@ -166,9 +209,9 @@ public class Event {
     }
 
     /**
-     * Creates a base Event from another Event, copying its identity, data, and framework metadata.
-     * Subclasses override this to reconstruct typed event objects with proper field
-     * deserialization.
+     * Creates a base Event from another Event, copying its identity, data, attachments, and
+     * framework metadata. Subclasses override this to reconstruct typed event objects with proper
+     * field deserialization.
      */
     public static Event fromEvent(Event event) {
         return reconstructFrom(
@@ -194,6 +237,8 @@ public class Event {
                             + source.getId());
         }
         Event reconstructedEvent = reconstructed;
+        reconstructedEvent.attachments.clear();
+        reconstructedEvent.attachments.putAll(source.attachments);
         reconstructedEvent.sourceTimestamp = source.sourceTimestamp;
         reconstructedEvent.upstreamEventId = source.upstreamEventId;
         reconstructedEvent.upstreamActionName = source.upstreamActionName;
@@ -211,6 +256,21 @@ public class Event {
         return MAPPER.readValue(json, Event.class);
     }
 
+    /** Deserializes one attachment value, preserving explicitly tagged memory references. */
+    static final class AttachmentValueDeserializer extends JsonDeserializer<Object> {
+
+        @Override
+        public Object deserialize(JsonParser parser, DeserializationContext context)
+                throws IOException {
+            JsonNode node = parser.getCodec().readTree(parser);
+            if (node.isObject()
+                    && MemoryRef.TYPE_VALUE.equals(node.path(MemoryRef.TYPE_FIELD).asText())) {
+                return parser.getCodec().treeToValue(node, MemoryRef.class);
+            }
+            return parser.getCodec().treeToValue(node, Object.class);
+        }
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
@@ -218,11 +278,12 @@ public class Event {
         Event other = (Event) o;
         return Objects.equals(this.id, other.id)
                 && Objects.equals(this.getType(), other.getType())
-                && Objects.equals(this.attributes, other.attributes);
+                && Objects.equals(this.attributes, other.attributes)
+                && Objects.equals(this.attachments, other.attachments);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(id, getType(), attributes);
+        return Objects.hash(id, getType(), attributes, attachments);
     }
 }

@@ -35,6 +35,8 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.memory_event import MemoryEvent, ShortTermWriteEvent
 from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
+from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.api.vector_stores.vector_store import Document
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -558,6 +560,31 @@ def test_python_only_subclass_event_snapshot_is_stable() -> None:
     _assert_python_snapshot_stable(
         "python_only_subclass_event.json", _build_python_only_subclass_event()
     )
+
+
+def test_memory_ref_attachment_cross_language_snapshot_is_stable() -> None:
+    python_event = _force_id(
+        Event(
+            type="_memory_ref_attachment_event",
+            attributes={"value": "ping"},
+        ),
+        _FIXED_EVENT_ID,
+    )
+    python_event.set_attachment(
+        "payload", MemoryRef.create(MemoryType.SENSORY, "memory.path")
+    )
+    if _regenerate_enabled():
+        _write_python_snapshot("memory_ref_attachment_event.json", python_event)
+    _assert_python_snapshot_stable("memory_ref_attachment_event.json", python_event)
+
+    java_event = _read_java_snapshot("memory_ref_attachment_event.json")
+    assert java_event.id == _FIXED_EVENT_ID
+    assert java_event.type == "_memory_ref_attachment_event"
+    assert java_event.get_attr("value") == "ping"
+    reference = java_event.get_attachment("payload")
+    assert isinstance(reference, MemoryRef)
+    assert reference.memory_type == MemoryType.SENSORY
+    assert reference.path == "memory.path"
 
 
 # ── Smoke ───────────────────────────────────────────────────────────────

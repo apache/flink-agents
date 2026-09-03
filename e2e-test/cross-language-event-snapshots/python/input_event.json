@@ -3,5 +3,6 @@
   "type": "_input_event",
   "attributes": {
     "input": "hello"
-  }
+  },
+  "attachments": {}
 }
