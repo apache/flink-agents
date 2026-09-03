@@ -22,6 +22,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -356,6 +357,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public void reportExecutionStartedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionStarted();
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
+    }
+
+    @Override
     public void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
@@ -364,6 +381,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 entityName,
                 entityMetadata,
                 ExecutionLifecycleEvents.executionFinished());
+    }
+
+    @Override
+    public void reportExecutionSucceededAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionFinished();
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
     }
 
     @Override
@@ -381,26 +414,55 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 ExecutionLifecycleEvents.executionFailed(error, problemCategory));
     }
 
+    @Override
+    public void reportExecutionFailedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionFailed(error, problemCategory);
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
+    }
+
     /**
      * Fans the report out to the current action execution's component listeners best-effort: a
      * listener that throws is logged and skipped, so reporting never fails the caller.
      */
     protected void reportChildExecution(
             String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
+        reportChildExecution(
+                entityType, entityName, entityMetadata, new EventContext(event), event);
+    }
+
+    protected void reportChildExecution(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            EventContext eventContext,
+            Event event) {
         mailboxThreadChecker.run();
         if (componentExecutionListeners == null) {
             return;
         }
         for (ComponentExecutionListener listener : componentExecutionListeners) {
             try {
-                listener.onComponentExecution(entityType, entityName, entityMetadata, event);
+                listener.onComponentExecution(
+                        entityType, entityName, entityMetadata, eventContext, event);
             } catch (Exception | LinkageError e) {
                 LOG.warn(
                         "Component execution listener {} failed on a report for action '{}' ({})",
                         listener.getClass().getSimpleName(),
                         actionName,
                         e.getClass().getSimpleName());
-            }
+                }
         }
     }
 

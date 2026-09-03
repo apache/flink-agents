@@ -48,6 +48,57 @@ def test_failed_reporter_uses_metadata_before_error() -> None:
     )
 
 
+def test_timestamped_reporters_forward_occurrence_timestamps() -> None:
+    ctx = MagicMock(spec=ExecutionReporter)
+    metadata = {"toolCallId": "call-1"}
+    error = RuntimeError("boom")
+
+    ExecutionReporters.started_at(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        "2026-01-01T00:00:00.001Z",
+    )
+    ExecutionReporters.succeeded_at(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        "2026-01-01T00:00:00.025Z",
+    )
+    ExecutionReporters.failed_at(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        error,
+        ExecutionProblemCategories.TOOL_CALL_FAILED,
+        "2026-01-01T00:00:00.030Z",
+    )
+
+    ctx.report_execution_started_at.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        "2026-01-01T00:00:00.001Z",
+    )
+    ctx.report_execution_succeeded_at.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        "2026-01-01T00:00:00.025Z",
+    )
+    ctx.report_execution_failed_at.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+        error,
+        ExecutionProblemCategories.TOOL_CALL_FAILED,
+        "2026-01-01T00:00:00.030Z",
+    )
+
+
 def test_reporters_ignore_context_without_execution_reporter() -> None:
     ctx = MagicMock()
 

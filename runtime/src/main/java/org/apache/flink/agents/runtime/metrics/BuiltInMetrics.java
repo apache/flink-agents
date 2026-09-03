@@ -20,6 +20,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -70,8 +71,7 @@ public class BuiltInMetrics {
         this.eventLogTruncatedEvents = parentMetricGroup.getCounter("eventLogTruncatedEvents");
         this.eventLogWriteFailures = parentMetricGroup.getCounter("eventLogWriteFailures");
         this.inputRunMetrics = new BuiltInInputRunMetrics(parentMetricGroup, System::nanoTime);
-        this.executionMetrics =
-                new BuiltInExecutionMetrics(parentMetricGroup, System::nanoTime, isRegisteredTool);
+        this.executionMetrics = new BuiltInExecutionMetrics(parentMetricGroup, isRegisteredTool);
 
         this.actionMetricGroups = new HashMap<>();
         for (String actionName : agentPlan.getActions().keySet()) {
@@ -146,13 +146,21 @@ public class BuiltInMetrics {
 
     public void markExecutionEvent(
             String actionName, Event event, ExecutionTraceContext traceContext) {
+        markExecutionEvent(actionName, new EventContext(event), event, traceContext);
+    }
+
+    public void markExecutionEvent(
+            String actionName,
+            EventContext eventContext,
+            Event event,
+            ExecutionTraceContext traceContext) {
         if (ExecutionReporter.EntityTypes.ACTION.equals(traceContext.getEntityType())) {
             actionMetrics(actionName).executionEventObserved(event, traceContext);
             if (isTerminalExecutionEvent(event)) {
                 executionMetrics.actionExecutionTerminated(traceContext.getExecutionId());
             }
         } else {
-            executionMetrics.executionEventObserved(actionName, event, traceContext);
+            executionMetrics.executionEventObserved(actionName, eventContext, event, traceContext);
         }
     }
 

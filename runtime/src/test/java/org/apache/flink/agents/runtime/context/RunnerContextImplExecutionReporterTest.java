@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -45,19 +46,29 @@ class RunnerContextImplExecutionReporterTest {
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         switchToChatModelAction(runnerContext, List.of(listener));
 
-        runnerContext.reportExecutionStarted(
-                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
-        runnerContext.reportExecutionSucceeded(
-                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.LLM,
+                "model-a",
+                Map.of("temperature", 0.7),
+                "2026-01-01T00:00:00.001Z");
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.LLM,
+                "model-a",
+                Map.of("temperature", 0.7),
+                "2026-01-01T00:00:00.025Z");
 
         assertThat(listener.started).hasSize(1);
-        assertThat(listener.started.get(0))
+        assertThat(listener.started.get(0).identity)
                 .containsExactly(
                         ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
+        assertThat(listener.started.get(0).eventContext.getTimestamp())
+                .isEqualTo("2026-01-01T00:00:00.001Z");
         assertThat(listener.succeeded).hasSize(1);
-        assertThat(listener.succeeded.get(0))
+        assertThat(listener.succeeded.get(0).identity)
                 .containsExactly(
                         ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
+        assertThat(listener.succeeded.get(0).eventContext.getTimestamp())
+                .isEqualTo("2026-01-01T00:00:00.025Z");
     }
 
     @Test
@@ -89,7 +100,7 @@ class RunnerContextImplExecutionReporterTest {
     void throwingListenerNeverFailsTheReportingCall() throws Exception {
         RecordingComponentListener receiver = new RecordingComponentListener();
         ComponentExecutionListener thrower =
-                (entityType, entityName, entityMetadata, event) -> {
+                (entityType, entityName, entityMetadata, eventContext, event) -> {
                     throw new IllegalStateException("listener boom");
                 };
         RunnerContextImpl runnerContext =
@@ -149,18 +160,19 @@ class RunnerContextImplExecutionReporterTest {
                 List.of(listener));
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
-        runnerContext.reportExecutionStartedJson(
-                ExecutionReporter.EntityTypes.TOOL, "search", metadata);
-        runnerContext.reportExecutionFailedJson(
+        runnerContext.reportExecutionStartedAtJson(
+                ExecutionReporter.EntityTypes.TOOL, "search", metadata, "2026-01-01T00:00:01.001Z");
+        runnerContext.reportExecutionFailedAtJson(
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
                 "builtins.ValueError",
                 "bad response",
-                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                "2026-01-01T00:00:01.125Z");
 
         assertThat(listener.started).hasSize(1);
-        assertThat(listener.started.get(0).get(2))
+        assertThat(listener.started.get(0).identity.get(2))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
                 .containsEntry("toolCallId", "call-1")
                 .containsEntry("toolType", "function");
@@ -172,6 +184,9 @@ class RunnerContextImplExecutionReporterTest {
         assertThat(failure.errorMessage).isEqualTo("bad response");
         assertThat(failure.problemCategory)
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+        assertThat(listener.started.get(0).eventContext.getTimestamp())
+                .isEqualTo("2026-01-01T00:00:01.001Z");
+        assertThat(failure.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:01.125Z");
     }
 
     private static void switchToChatModelAction(
@@ -192,8 +207,8 @@ class RunnerContextImplExecutionReporterTest {
 
     /** Records the raw arguments of every component report it receives. */
     private static final class RecordingComponentListener implements ComponentExecutionListener {
-        private final List<List<Object>> started = new ArrayList<>();
-        private final List<List<Object>> succeeded = new ArrayList<>();
+        private final List<RecordedComponentReport> started = new ArrayList<>();
+        private final List<RecordedComponentReport> succeeded = new ArrayList<>();
         private final List<RecordedFailure> failed = new ArrayList<>();
 
         @Override
@@ -201,16 +216,27 @@ class RunnerContextImplExecutionReporterTest {
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
+                EventContext eventContext,
                 Event event) {
             switch (event.getType()) {
                 case ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE:
-                    started.add(List.of(entityType, entityName, entityMetadata));
+                    started.add(
+                            new RecordedComponentReport(
+                                    entityType, entityName, entityMetadata, eventContext));
                     break;
                 case ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE:
-                    succeeded.add(List.of(entityType, entityName, entityMetadata));
+                    succeeded.add(
+                            new RecordedComponentReport(
+                                    entityType, entityName, entityMetadata, eventContext));
                     break;
                 case ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE:
-                    failed.add(new RecordedFailure(entityType, entityName, entityMetadata, event));
+                    failed.add(
+                            new RecordedFailure(
+                                    entityType,
+                                    entityName,
+                                    entityMetadata,
+                                    eventContext,
+                                    event));
                     break;
                 default:
                     throw new AssertionError("Unexpected event type " + event.getType());
@@ -218,10 +244,25 @@ class RunnerContextImplExecutionReporterTest {
         }
     }
 
+    private static final class RecordedComponentReport {
+        private final List<Object> identity;
+        private final EventContext eventContext;
+
+        private RecordedComponentReport(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                EventContext eventContext) {
+            this.identity = List.of(entityType, entityName, entityMetadata);
+            this.eventContext = eventContext;
+        }
+    }
+
     private static final class RecordedFailure {
         private final String entityType;
         private final String entityName;
         private final Map<String, Object> entityMetadata;
+        private final EventContext eventContext;
         private final String errorType;
         @Nullable private final String errorMessage;
         @Nullable private final String problemCategory;
@@ -230,10 +271,12 @@ class RunnerContextImplExecutionReporterTest {
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
+                EventContext eventContext,
                 Event event) {
             this.entityType = entityType;
             this.entityName = entityName;
             this.entityMetadata = entityMetadata;
+            this.eventContext = eventContext;
             this.errorType = (String) event.getAttr("errorType");
             this.errorMessage = (String) event.getAttr("errorMessage");
             this.problemCategory =

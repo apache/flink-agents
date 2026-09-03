@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
@@ -477,6 +478,7 @@ class ActionTaskContextManagerTest {
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
+                EventContext eventContext,
                 Event event) {
             if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
                 started.add(entityName);

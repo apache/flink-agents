@@ -30,6 +30,38 @@ def test_flink_runner_context_is_execution_reporter() -> None:
     assert issubclass(FlinkRunnerContext, ExecutionReporter)
 
 
+def test_timestamped_execution_reports_forward_to_java_context() -> None:
+    java_context = MagicMock()
+    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
+    ctx._j_runner_context = java_context
+
+    ctx.report_execution_started_at(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        {"toolCallId": "call-1"},
+        "2026-01-01T00:00:00.001Z",
+    )
+    ctx.report_execution_succeeded_at(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        {"toolCallId": "call-1"},
+        "2026-01-01T00:00:00.025Z",
+    )
+
+    java_context.reportExecutionStartedAtJson.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        '{"toolCallId": "call-1"}',
+        "2026-01-01T00:00:00.001Z",
+    )
+    java_context.reportExecutionSucceededAtJson.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        '{"toolCallId": "call-1"}',
+        "2026-01-01T00:00:00.025Z",
+    )
+
+
 def test_failed_execution_reports_deepest_explicit_cause() -> None:
     java_context = MagicMock()
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)

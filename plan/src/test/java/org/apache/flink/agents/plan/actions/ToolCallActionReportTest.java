@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
@@ -33,18 +34,32 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyMap;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
@@ -86,10 +101,22 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, ToolType.MCP.getValue());
         metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, "search-server");
         ExecutionReporter reporter = (ExecutionReporter) ctx;
+        ArgumentCaptor<String> startedAt = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
         verify(reporter)
-                .reportExecutionStarted(ExecutionReporter.EntityTypes.TOOL, "search", metadata);
+                .reportExecutionStartedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        eq(metadata),
+                        startedAt.capture());
         verify(reporter)
-                .reportExecutionSucceeded(ExecutionReporter.EntityTypes.TOOL, "search", metadata);
+                .reportExecutionSucceededAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        eq(metadata),
+                        finishedAt.capture());
+        assertThat(Instant.parse(finishedAt.getValue()))
+                .isAfterOrEqualTo(Instant.parse(startedAt.getValue()));
 
         assertThat(sentEvents).hasSize(1);
         assertThat(sentEvents.get(0)).isInstanceOf(ToolResponseEvent.class);
@@ -123,18 +150,407 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.TOOL_CALL_ID, "call-1");
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter)
-                .reportExecutionFailed(
+                .reportExecutionFailedAt(
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         eq(metadata),
                         any(Throwable.class),
-                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED));
+                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED),
+                        anyString());
         verify(reporter, never())
-                .reportExecutionSucceeded(ExecutionReporter.EntityTypes.TOOL, "search", metadata);
+                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
 
         ToolResponseEvent responseEvent = (ToolResponseEvent) sentEvents.get(0);
         assertThat(responseEvent.getSuccess()).containsEntry("call-1", false);
         assertThat(responseEvent.getError()).containsEntry("call-1", "tool rejected request");
+    }
+
+    @Test
+    void parallelToolCallsReportIndependentOutcomes() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        List<Event> sentEvents = new ArrayList<>();
+        Tool tool = mock(Tool.class);
+        when(tool.call(any()))
+                .thenAnswer(
+                        invocation -> {
+                            String query =
+                                    invocation
+                                            .<ToolParameters>getArgument(0)
+                                            .getParameter("query", String.class);
+                            if ("call-2".equals(query)) {
+                                throw new IllegalStateException("call-2 failed");
+                            }
+                            if ("call-3".equals(query)) {
+                                return ToolResponse.error("call-3 rejected");
+                            }
+                            return ToolResponse.success("ok");
+                        });
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(true, 3));
+        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
+                            for (DurableCallable<ToolResponse> callable : callables) {
+                                try {
+                                    outcomes.add(Outcome.success(callable.call()));
+                                } catch (Exception e) {
+                                    outcomes.add(Outcome.failure(e));
+                                }
+                            }
+                            return outcomes;
+                        });
+        doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(ctx).sendEvent(any());
+
+        ToolCallAction.processToolRequest(
+                new ToolRequestEvent(
+                        "test-model",
+                        List.of(toolCall("call-1"), toolCall("call-2"), toolCall("call-3"))),
+                ctx);
+
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        verify(reporter, times(3))
+                .reportExecutionStartedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        anyString());
+        verify(reporter)
+                .reportExecutionSucceededAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        anyString());
+        verify(reporter, times(2))
+                .reportExecutionFailedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        any(Throwable.class),
+                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED),
+                        anyString());
+
+        ToolResponseEvent response = (ToolResponseEvent) sentEvents.get(0);
+        assertThat(response.getSuccess())
+                .containsEntry("call-1", true)
+                .containsEntry("call-2", false)
+                .containsEntry("call-3", false);
+        assertThat(response.getError())
+                .containsEntry("call-2", "call-2 failed")
+                .containsEntry("call-3", "call-3 rejected");
+    }
+
+    @Test
+    void responseProcessingFailureDoesNotRepeatCompletedOccurrences() throws Exception {
+        Tool tool = mock(Tool.class);
+        when(tool.call(any()))
+                .thenAnswer(
+                        invocation ->
+                                "call-2"
+                                                .equals(
+                                                        invocation
+                                                                .<ToolParameters>getArgument(0)
+                                                                .getParameter(
+                                                                        "query", String.class))
+                                        ? null
+                                        : ToolResponse.success("ok"));
+        RunnerContext ctx = parallelContext(tool);
+
+        ToolCallAction.processToolRequest(parallelRequest(), ctx);
+
+        assertReports(
+                ctx,
+                List.of("call-1", "call-2", "call-3"),
+                List.of("call-1", "call-3"),
+                List.of("call-2"));
+        assertBusinessResponsesFailed(ctx);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void durableFailureIsReportedAsToolFailure(boolean async) throws Exception {
+        IllegalStateException failure = new IllegalStateException("persist failed");
+        Tool tool = mock(Tool.class);
+        when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
+        RunnerContext ctx = parallelContext(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(async, 1));
+        when(ctx.<ToolResponse>durableExecute(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.<DurableCallable<ToolResponse>>getArgument(0).call();
+                            throw failure;
+                        });
+        when(ctx.<ToolResponse>durableExecuteAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            invocation.<DurableCallable<ToolResponse>>getArgument(0).call();
+                            throw failure;
+                        });
+
+        ToolCallAction.processToolRequest(parallelRequest(), ctx);
+
+        assertReports(
+                ctx,
+                List.of("call-1", "call-2", "call-3"),
+                List.of(),
+                List.of("call-1", "call-2", "call-3"));
+        verify((ExecutionReporter) ctx, times(3))
+                .reportExecutionFailedAt(
+                        anyString(), anyString(), anyMap(), eq(failure), anyString(), anyString());
+        assertBusinessResponsesFailed(ctx);
+    }
+
+    @Test
+    void parallelDurableFailureIsReportedForItsToolCall() throws Exception {
+        IllegalStateException failure = new IllegalStateException("persist failed");
+        Tool tool = mock(Tool.class);
+        when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
+        RunnerContext ctx = parallelContext(tool);
+        doAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
+                            for (DurableCallable<ToolResponse> callable : callables) {
+                                outcomes.add(Outcome.success(callable.call()));
+                            }
+                            outcomes.set(1, Outcome.failure(failure));
+                            return outcomes;
+                        })
+                .when(ctx)
+                .durableExecuteAllAsync(any());
+
+        ToolCallAction.processToolRequest(parallelRequest(), ctx);
+
+        assertReports(
+                ctx,
+                List.of("call-1", "call-2", "call-3"),
+                List.of("call-1", "call-3"),
+                List.of("call-2"));
+        verify((ExecutionReporter) ctx)
+                .reportExecutionFailedAt(
+                        anyString(), anyString(), anyMap(), eq(failure), anyString(), anyString());
+        ArgumentCaptor<Event> event = ArgumentCaptor.forClass(Event.class);
+        verify(ctx).sendEvent(event.capture());
+        assertThat(((ToolResponseEvent) event.getValue()).getSuccess())
+                .containsEntry("call-1", true)
+                .containsEntry("call-2", false)
+                .containsEntry("call-3", true);
+    }
+
+    @Test
+    void timeoutIsReportedAsFailureWithoutRepeatingOnLateCompletion() throws Exception {
+        TimeoutException failure = new TimeoutException("request timed out");
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService worker = Executors.newSingleThreadExecutor();
+        AtomicReference<Future<ToolResponse>> pending = new AtomicReference<>();
+        AtomicReference<Instant> reportingStartedAt = new AtomicReference<>();
+        Tool tool = mock(Tool.class);
+        when(tool.call(any()))
+                .thenAnswer(
+                        invocation -> {
+                            started.countDown();
+                            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                            return ToolResponse.success("ok");
+                        });
+        RunnerContext ctx = parallelContext(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(true, 1));
+        when(ctx.<ToolResponse>durableExecuteAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            DurableCallable<ToolResponse> callable = invocation.getArgument(0);
+                            pending.set(worker.submit(callable::call));
+                            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                            throw failure;
+                        });
+        doAnswer(
+                        invocation -> {
+                            reportingStartedAt.set(Instant.now());
+                            return null;
+                        })
+                .when((ExecutionReporter) ctx)
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+
+        try {
+            ToolCallAction.processToolRequest(
+                    new ToolRequestEvent("test-model", List.of(toolCall("call-1"))), ctx);
+            assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1"));
+            ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
+            verify((ExecutionReporter) ctx)
+                    .reportExecutionFailedAt(
+                            anyString(),
+                            anyString(),
+                            anyMap(),
+                            eq(failure),
+                            anyString(),
+                            finishedAt.capture());
+            assertThat(Instant.parse(finishedAt.getValue()))
+                    .isBeforeOrEqualTo(reportingStartedAt.get());
+            assertBusinessResponsesFailed(ctx);
+        } finally {
+            release.countDown();
+            worker.shutdown();
+            assertThat(worker.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+        assertThat(pending.get().get().isSuccess()).isTrue();
+        assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void parallelTimeoutTimestampPrecedesResponseProcessingAndReporting(
+            boolean completeDuringReporting) throws Exception {
+        TimeoutException failure = new TimeoutException("batch timed out");
+        CountDownLatch started = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService workers = Executors.newFixedThreadPool(2);
+        List<Future<ToolResponse>> pending = new ArrayList<>();
+        AtomicReference<Instant> responseProcessingStartedAt = new AtomicReference<>();
+        ToolResponse firstResponse = mock(ToolResponse.class);
+        when(firstResponse.isSuccess())
+                .thenAnswer(
+                        invocation -> {
+                            responseProcessingStartedAt.compareAndSet(null, Instant.now());
+                            return true;
+                        });
+        Tool tool = mock(Tool.class);
+        when(tool.call(any()))
+                .thenAnswer(
+                        invocation -> {
+                            ToolParameters parameters = invocation.getArgument(0);
+                            if ("call-1".equals(parameters.getParameter("query"))) {
+                                return firstResponse;
+                            }
+                            started.countDown();
+                            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+                            return ToolResponse.success("late result");
+                        });
+        RunnerContext ctx = parallelContext(tool);
+        doAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            ToolResponse response = callables.get(0).call();
+                            pending.add(workers.submit(callables.get(1)::call));
+                            pending.add(workers.submit(callables.get(2)::call));
+                            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                            return List.of(
+                                    Outcome.success(response),
+                                    Outcome.failure(failure),
+                                    Outcome.failure(failure));
+                        })
+                .when(ctx)
+                .durableExecuteAllAsync(any());
+        doAnswer(
+                        invocation -> {
+                            if (completeDuringReporting) {
+                                release.countDown();
+                                for (Future<ToolResponse> future : pending) {
+                                    future.get(5, TimeUnit.SECONDS);
+                                }
+                            }
+                            return null;
+                        })
+                .when((ExecutionReporter) ctx)
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+
+        try {
+            ToolCallAction.processToolRequest(parallelRequest(), ctx);
+            ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
+            verify((ExecutionReporter) ctx, times(2))
+                    .reportExecutionFailedAt(
+                            anyString(),
+                            anyString(),
+                            anyMap(),
+                            eq(failure),
+                            anyString(),
+                            finishedAt.capture());
+            assertThat(finishedAt.getAllValues().get(0))
+                    .isEqualTo(finishedAt.getAllValues().get(1));
+            assertThat(Instant.parse(finishedAt.getValue()))
+                    .isBeforeOrEqualTo(responseProcessingStartedAt.get());
+        } finally {
+            release.countDown();
+            workers.shutdown();
+            assertThat(workers.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
+        assertReports(
+                ctx,
+                List.of("call-1", "call-2", "call-3"),
+                List.of("call-1"),
+                List.of("call-2", "call-3"));
+    }
+
+    private static RunnerContext parallelContext(Tool tool) throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(true, 3));
+        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
+                            for (DurableCallable<ToolResponse> callable : callables) {
+                                try {
+                                    outcomes.add(Outcome.success(callable.call()));
+                                } catch (Exception e) {
+                                    outcomes.add(Outcome.failure(e));
+                                }
+                            }
+                            return outcomes;
+                        });
+        return ctx;
+    }
+
+    private static ToolRequestEvent parallelRequest() {
+        return new ToolRequestEvent(
+                "test-model", List.of(toolCall("call-1"), toolCall("call-2"), toolCall("call-3")));
+    }
+
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static void assertReports(
+            RunnerContext ctx, List<String> started, List<String> succeeded, List<String> failed)
+            throws Exception {
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        ArgumentCaptor<Map> starts = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map> successes = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<Map> failures = ArgumentCaptor.forClass(Map.class);
+        verify(reporter, times(started.size()))
+                .reportExecutionStartedAt(anyString(), anyString(), starts.capture(), anyString());
+        verify(reporter, times(succeeded.size()))
+                .reportExecutionSucceededAt(
+                        anyString(), anyString(), successes.capture(), anyString());
+        verify(reporter, times(failed.size()))
+                .reportExecutionFailedAt(
+                        anyString(),
+                        anyString(),
+                        failures.capture(),
+                        any(Throwable.class),
+                        anyString(),
+                        anyString());
+        assertThat(starts.getAllValues())
+                .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
+                .containsExactlyInAnyOrderElementsOf(started);
+        assertThat(successes.getAllValues())
+                .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
+                .containsExactlyInAnyOrderElementsOf(succeeded);
+        assertThat(failures.getAllValues())
+                .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
+                .containsExactlyInAnyOrderElementsOf(failed);
+    }
+
+    private static void assertBusinessResponsesFailed(RunnerContext ctx) {
+        ArgumentCaptor<Event> event = ArgumentCaptor.forClass(Event.class);
+        verify(ctx).sendEvent(event.capture());
+        assertThat(((ToolResponseEvent) event.getValue()).getSuccess().values())
+                .isNotEmpty()
+                .containsOnly(false);
     }
 
     @Test
@@ -148,7 +564,9 @@ class ToolCallActionReportTest {
                                 ToolExecutionMetadataKeys.SKILL_NAME,
                                 "math-calculator",
                                 ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH,
-                                "README.md"),
+                                "README.md",
+                                ToolExecutionMetadataKeys.SKILL_REGISTERED,
+                                true),
                         ToolResponse.success("skill content"));
         when(ctx.getResource("load_skill", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
@@ -171,8 +589,43 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, ToolType.FUNCTION.getValue());
         metadata.put(ToolExecutionMetadataKeys.SKILL_NAME, "math-calculator");
         metadata.put(ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH, "README.md");
+        metadata.put(ToolExecutionMetadataKeys.SKILL_REGISTERED, true);
         verify((ExecutionReporter) ctx)
-                .reportExecutionStarted(ExecutionReporter.EntityTypes.TOOL, "load_skill", metadata);
+                .reportExecutionStartedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("load_skill"),
+                        eq(metadata),
+                        anyString());
+    }
+
+    @Test
+    void durableCacheHitDoesNotRecordToolCallLatency() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        Tool tool = mock(Tool.class);
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig());
+        when(ctx.<ToolResponse>durableExecute(any())).thenReturn(ToolResponse.success("cached"));
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "search");
+        function.put("arguments", Map.of("query", "flink"));
+        Map<String, Object> toolCall = new LinkedHashMap<>();
+        toolCall.put("id", "call-1");
+        toolCall.put("function", function);
+
+        ToolCallAction.processToolRequest(
+                new ToolRequestEvent("test-model", List.of(toolCall)), ctx);
+
+        verify(tool, never()).call(any());
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        verify(reporter, never())
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+        verify(reporter)
+                .reportExecutionSucceededAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        anyString());
     }
 
     @Test
@@ -202,12 +655,20 @@ class ToolCallActionReportTest {
 
     private static org.apache.flink.agents.api.configuration.ReadableConfiguration
             toolCallConfig() {
+        return toolCallConfig(false, 1);
+    }
+
+    private static org.apache.flink.agents.api.configuration.ReadableConfiguration toolCallConfig(
+            boolean async, int parallelism) {
         return new org.apache.flink.agents.api.configuration.ReadableConfiguration() {
             @Override
             @SuppressWarnings("unchecked")
             public <T> T get(org.apache.flink.agents.api.configuration.ConfigOption<T> option) {
                 if (option == AgentExecutionOptions.TOOL_CALL_ASYNC) {
-                    return (T) Boolean.FALSE;
+                    return (T) Boolean.valueOf(async);
+                }
+                if (option == AgentExecutionOptions.TOOL_CALL_PARALLELISM) {
+                    return (T) Integer.valueOf(parallelism);
                 }
                 return option.getDefaultValue();
             }
@@ -242,6 +703,16 @@ class ToolCallActionReportTest {
                 return defaultValue;
             }
         };
+    }
+
+    private static Map<String, Object> toolCall(String id) {
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "search");
+        function.put("arguments", Map.of("query", id));
+        Map<String, Object> toolCall = new LinkedHashMap<>();
+        toolCall.put("id", id);
+        toolCall.put("function", function);
+        return toolCall;
     }
 
     private static final class ReportingTool extends Tool implements ToolExecutionMetadataProvider {

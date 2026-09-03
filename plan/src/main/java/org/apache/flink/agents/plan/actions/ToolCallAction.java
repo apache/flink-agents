@@ -42,6 +42,7 @@ import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -138,9 +139,6 @@ public class ToolCallAction {
                             name,
                             tool,
                             metadataParameters);
-            ExecutionReporters.started(
-                    ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
-
             if (tool == null || preparationError != null) {
                 Exception failure =
                         preparationError != null
@@ -174,6 +172,7 @@ public class ToolCallAction {
 
             final Tool toolRef = tool;
             final Map<String, Object> callArguments = mergedArguments;
+            ToolCallOccurrence occurrence = new ToolCallOccurrence();
             DurableCallable<ToolResponse> callable =
                     new DurableCallable<>() {
                         @Override
@@ -188,10 +187,15 @@ public class ToolCallAction {
 
                         @Override
                         public ToolResponse call() throws Exception {
-                            return toolRef.call(new ToolParameters(callArguments));
+                            occurrence.markStarted();
+                            try {
+                                return toolRef.call(new ToolParameters(callArguments));
+                            } finally {
+                                occurrence.markFinished();
+                            }
                         }
                     };
-            executions.add(new ToolCallExecution(id, name, callable, entityMetadata));
+            executions.add(new ToolCallExecution(id, name, callable, entityMetadata, occurrence));
         }
         return executions;
     }
@@ -207,10 +211,13 @@ public class ToolCallAction {
         for (ToolCallExecution execution : executions) {
             callables.add(execution.callable);
         }
+        List<Outcome<ToolResponse>> outcomes = List.of();
+        Instant resultObservedAt = null;
         try {
-            List<Outcome<ToolResponse>> outcomes = ctx.durableExecuteAllAsync(callables);
+            outcomes = ctx.durableExecuteAllAsync(callables);
+            resultObservedAt = Instant.now();
             for (int i = 0; i < outcomes.size(); i++) {
-                recordOutcome(executions.get(i), outcomes.get(i), ctx, success, error, responses);
+                recordOutcome(executions.get(i), outcomes.get(i), success, error, responses);
             }
         } catch (InterruptedException e) {
             // A cancellation signal, not a batch failure: propagate immediately instead of
@@ -219,20 +226,20 @@ public class ToolCallAction {
             Thread.currentThread().interrupt();
             throw e;
         } catch (Exception e) {
+            if (resultObservedAt == null) {
+                resultObservedAt = Instant.now();
+            }
             for (ToolCallExecution execution : executions) {
                 recordExecutionException(execution, e, success, error, responses);
             }
-        } catch (Error e) {
-            for (ToolCallExecution execution : executions) {
-                ExecutionReporters.failed(
+        } finally {
+            for (int i = 0; i < executions.size(); i++) {
+                reportExecution(
+                        executions.get(i),
                         ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        execution.name,
-                        execution.entityMetadata,
-                        e,
-                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                        i < outcomes.size() ? outcomes.get(i) : null,
+                        resultObservedAt);
             }
-            throw e;
         }
     }
 
@@ -245,27 +252,16 @@ public class ToolCallAction {
             Map<String, ToolResponse> responses)
             throws InterruptedException {
         for (ToolCallExecution execution : executions) {
+            Outcome<ToolResponse> outcome = null;
+            Instant resultObservedAt = null;
             try {
                 ToolResponse response =
                         toolCallAsync
                                 ? ctx.durableExecuteAsync(execution.callable)
                                 : ctx.durableExecute(execution.callable);
+                resultObservedAt = Instant.now();
+                outcome = Outcome.success(response);
                 recordToolResponse(execution.id, response, success, error, responses);
-                if (response.isError()) {
-                    ExecutionReporters.failed(
-                            ctx,
-                            ExecutionReporter.EntityTypes.TOOL,
-                            execution.name,
-                            execution.entityMetadata,
-                            new RuntimeException(response.getError()),
-                            ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-                } else {
-                    ExecutionReporters.succeeded(
-                            ctx,
-                            ExecutionReporter.EntityTypes.TOOL,
-                            execution.name,
-                            execution.entityMetadata);
-                }
             } catch (InterruptedException e) {
                 // A cancellation signal, not a tool failure: propagate immediately instead of
                 // recording it as a tool error and letting the loop move on to (or past) the
@@ -273,23 +269,13 @@ public class ToolCallAction {
                 Thread.currentThread().interrupt();
                 throw e;
             } catch (Exception e) {
+                if (resultObservedAt == null) {
+                    resultObservedAt = Instant.now();
+                }
+                outcome = Outcome.failure(e);
                 recordExecutionException(execution, e, success, error, responses);
-                ExecutionReporters.failed(
-                        ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        execution.name,
-                        execution.entityMetadata,
-                        e,
-                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-            } catch (Error e) {
-                ExecutionReporters.failed(
-                        ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        execution.name,
-                        execution.entityMetadata,
-                        e,
-                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-                throw e;
+            } finally {
+                reportExecution(execution, ctx, outcome, resultObservedAt);
             }
         }
     }
@@ -297,38 +283,65 @@ public class ToolCallAction {
     private static void recordOutcome(
             ToolCallExecution execution,
             Outcome<ToolResponse> outcome,
-            RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
         if (outcome.isFailure()) {
             recordExecutionException(execution, outcome.getError(), success, error, responses);
-            ExecutionReporters.failed(
+        } else {
+            recordToolResponse(execution.id, outcome.getValue(), success, error, responses);
+        }
+    }
+
+    private static void reportExecution(
+            ToolCallExecution execution,
+            RunnerContext ctx,
+            Outcome<ToolResponse> outcome,
+            Instant resultObservedAt) {
+        Instant finishedAt = execution.occurrence.finishedAt;
+        Instant startedAt = execution.occurrence.startedAt;
+        if (startedAt != null) {
+            ExecutionReporters.startedAt(
                     ctx,
                     ExecutionReporter.EntityTypes.TOOL,
                     execution.name,
                     execution.entityMetadata,
-                    outcome.getError(),
-                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-        } else {
-            ToolResponse response = outcome.getValue();
-            recordToolResponse(execution.id, response, success, error, responses);
-            if (response.isError()) {
-                ExecutionReporters.failed(
-                        ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        execution.name,
-                        execution.entityMetadata,
-                        new RuntimeException(response.getError()),
-                        ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-            } else {
-                ExecutionReporters.succeeded(
-                        ctx,
-                        ExecutionReporter.EntityTypes.TOOL,
-                        execution.name,
-                        execution.entityMetadata);
-            }
+                    startedAt.toString());
         }
+        if (outcome == null) {
+            return;
+        }
+        // A timed-out callable may finish after the Action already received its failure.
+        if (finishedAt == null || finishedAt.isAfter(resultObservedAt)) {
+            finishedAt = resultObservedAt;
+        }
+        Throwable failure =
+                outcome.isFailure() ? outcome.getError() : toolResponseFailure(outcome.getValue());
+
+        if (failure == null) {
+            ExecutionReporters.succeededAt(
+                    ctx,
+                    ExecutionReporter.EntityTypes.TOOL,
+                    execution.name,
+                    execution.entityMetadata,
+                    finishedAt.toString());
+        } else {
+            ExecutionReporters.failedAt(
+                    ctx,
+                    ExecutionReporter.EntityTypes.TOOL,
+                    execution.name,
+                    execution.entityMetadata,
+                    failure,
+                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                    finishedAt.toString());
+        }
+    }
+
+    private static Throwable toolResponseFailure(ToolResponse response) {
+        if (response == null) {
+            return new IllegalStateException("Tool returned a null response.");
+        }
+        return response.isError() ? new RuntimeException(response.getError()) : null;
     }
 
     private static void recordInlineResponse(
@@ -375,16 +388,32 @@ public class ToolCallAction {
         private final String name;
         private final DurableCallable<ToolResponse> callable;
         private final Map<String, Object> entityMetadata;
+        private final ToolCallOccurrence occurrence;
 
         private ToolCallExecution(
                 String id,
                 String name,
                 DurableCallable<ToolResponse> callable,
-                Map<String, Object> entityMetadata) {
+                Map<String, Object> entityMetadata,
+                ToolCallOccurrence occurrence) {
             this.id = id;
             this.name = name;
             this.callable = callable;
             this.entityMetadata = entityMetadata;
+            this.occurrence = occurrence;
+        }
+    }
+
+    private static final class ToolCallOccurrence {
+        private volatile Instant startedAt;
+        private volatile Instant finishedAt;
+
+        private void markStarted() {
+            startedAt = Instant.now();
+        }
+
+        private void markFinished() {
+            finishedAt = Instant.now();
         }
     }
 

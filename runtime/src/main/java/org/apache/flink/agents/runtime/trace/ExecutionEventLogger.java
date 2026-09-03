@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.trace;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.annotation.Internal;
@@ -37,7 +38,7 @@ public final class ExecutionEventLogger implements ExecutionEventSink {
     }
 
     @Override
-    public void emit(Event event, ExecutionTraceContext traceContext) {
-        eventLogWriter.appendExecutionEventAndFlush(event, traceContext);
+    public void emit(EventContext eventContext, Event event, ExecutionTraceContext traceContext) {
+        eventLogWriter.appendExecutionEventAndFlush(eventContext, event, traceContext);
     }
 }

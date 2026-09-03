@@ -48,12 +48,14 @@ class EventLogComponentExecutionListenerTest {
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionContext, sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
@@ -86,12 +88,14 @@ class EventLogComponentExecutionListenerTest {
 
         // Mirrors a continuation: the start is reported first, the terminal arrives later
         // through the same per-execution listener instance.
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
@@ -121,7 +125,8 @@ class EventLogComponentExecutionListenerTest {
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionContext, sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.PARSER,
                 "json-parser",
                 Map.of(),
@@ -139,17 +144,20 @@ class EventLogComponentExecutionListenerTest {
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
@@ -171,7 +179,8 @@ class EventLogComponentExecutionListenerTest {
                         ExecutionEventLogger.forEventLogWriter(
                                 EventLogWriter.forEventLogger(logger, false)));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
@@ -183,6 +192,16 @@ class EventLogComponentExecutionListenerTest {
     private static ExecutionTraceContext actionTraceContext() {
         return ExecutionTraceContext.forInputRun("business-key", "agent")
                 .childExecution("action", "chat_model_action");
+    }
+
+    private static void report(
+            EventLogComponentExecutionListener listener,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Event event) {
+        listener.onComponentExecution(
+                entityType, entityName, entityMetadata, new EventContext(event), event);
     }
 
     private static ExecutionEventSink sink(EventLogger logger) {
