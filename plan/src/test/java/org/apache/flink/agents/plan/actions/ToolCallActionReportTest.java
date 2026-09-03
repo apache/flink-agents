@@ -37,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
+import org.mockito.MockedStatic;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -58,6 +59,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -483,6 +485,79 @@ class ToolCallActionReportTest {
                 List.of("call-1", "call-2", "call-3"),
                 List.of("call-1"),
                 List.of("call-2", "call-3"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void parallelTimeoutOmitsStartsAfterResultObservation(boolean startsAfterObservation)
+            throws Exception {
+        TimeoutException failure = new TimeoutException("batch timed out");
+        Instant base = Instant.parse("2026-01-01T00:00:00Z");
+        Instant observedAt = base.plusSeconds(1);
+        Instant delayedStart = startsAfterObservation ? observedAt.plusSeconds(1) : observedAt;
+        AtomicReference<Instant> now = new AtomicReference<>(base);
+        List<DurableCallable<ToolResponse>> delayed = new ArrayList<>();
+        Tool tool = mock(Tool.class);
+        when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
+        RunnerContext ctx = parallelContext(tool);
+        doAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            ToolResponse first = callables.get(0).call();
+                            delayed.addAll(callables.subList(1, callables.size()));
+                            now.set(observedAt);
+                            return List.of(
+                                    Outcome.success(first),
+                                    Outcome.failure(failure),
+                                    Outcome.failure(failure));
+                        })
+                .when(ctx)
+                .durableExecuteAllAsync(any());
+        doAnswer(
+                        invocation -> {
+                            Map<String, Object> metadata = invocation.getArgument(2);
+                            if ("call-1"
+                                    .equals(metadata.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))) {
+                                // The delayed calls enter after the Action has observed the
+                                // timeout.
+                                now.set(delayedStart);
+                                for (DurableCallable<ToolResponse> callable : delayed) {
+                                    callable.call();
+                                }
+                            }
+                            return null;
+                        })
+                .when((ExecutionReporter) ctx)
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+
+        try (MockedStatic<Instant> clock = mockStatic(Instant.class)) {
+            clock.when(Instant::now).thenAnswer(invocation -> now.get());
+            ToolCallAction.processToolRequest(parallelRequest(), ctx);
+        }
+
+        assertReports(
+                ctx,
+                startsAfterObservation ? List.of("call-1") : List.of("call-1", "call-2", "call-3"),
+                List.of("call-1"),
+                List.of("call-2", "call-3"));
+        verify(tool, times(3)).call(any());
+        ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
+        verify((ExecutionReporter) ctx, times(2))
+                .reportExecutionFailedAt(
+                        anyString(),
+                        anyString(),
+                        anyMap(),
+                        eq(failure),
+                        anyString(),
+                        finishedAt.capture());
+        assertThat(finishedAt.getAllValues())
+                .containsExactly(observedAt.toString(), observedAt.toString());
+        ArgumentCaptor<Event> response = ArgumentCaptor.forClass(Event.class);
+        verify(ctx).sendEvent(response.capture());
+        assertThat(((ToolResponseEvent) response.getValue()).getSuccess())
+                .containsExactlyInAnyOrderEntriesOf(
+                        Map.of("call-1", true, "call-2", false, "call-3", false));
     }
 
     private static RunnerContext parallelContext(Tool tool) throws Exception {
