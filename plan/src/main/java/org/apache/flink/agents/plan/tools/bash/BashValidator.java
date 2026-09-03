@@ -56,8 +56,6 @@ public final class BashValidator {
                     "program",
                     "command",
                     "command_name",
-                    // `export VAR=...`, `readonly`, `declare`, `local`, `typeset`
-                    "declaration_command",
                     "pipeline",
                     "list",
                     "redirected_statement",
@@ -76,11 +74,16 @@ public final class BashValidator {
                     "number",
                     "simple_expansion", // $VAR
                     "expansion", // ${VAR}
-                    "arithmetic_expansion", // $((...))
                     "binary_expression",
                     "unary_expression",
                     "parenthesized_expression",
                     "array");
+
+    private static final Set<String> BLOCKED_ENVIRONMENT_VARIABLES =
+            Set.of("PATH", "BASH_ENV", "ENV", "SHELLOPTS", "CDPATH");
+    private static final Set<String> DYNAMIC_LOADER_VARIABLE_PREFIXES = Set.of("LD_", "DYLD_");
+    private static final Set<String> FD_REDIRECT_OPERATORS = Set.of("<&", ">&");
+    private static final Set<String> FD_CLOSE_OPERATORS = Set.of("<&-", ">&-");
 
     private static final Object PARSER_LOCK = new Object();
     private static volatile TSParser parser;
@@ -143,6 +146,27 @@ public final class BashValidator {
             return Optional.of(
                     "Disallowed shell construct '" + node.getType() + "' in: '" + snippet + "'");
         }
+        TSNode parent = node.getParent();
+        if ("variable_assignment".equals(node.getType())
+                && (parent == null || parent.isNull() || !"command".equals(parent.getType()))) {
+            return Optional.of(
+                    "Standalone variable assignment without an executable is not allowed.");
+        }
+        if ("file_redirect".equals(node.getType()) && !isFdOnlyRedirect(node, command)) {
+            return Optional.of(
+                    "File redirects are not allowed; only file-descriptor duplication and closure "
+                            + "are permitted.");
+        }
+        if ("variable_assignment".equals(node.getType())) {
+            TSNode nameNode = node.getChildByFieldName("name");
+            if (nameNode != null && !nameNode.isNull()) {
+                String name = nodeText(nameNode, command);
+                if (isBlockedEnvironmentVariable(name)) {
+                    return Optional.of(
+                            "Environment variable assignment '" + name + "' is not allowed.");
+                }
+            }
+        }
         if ("command".equals(node.getType())) {
             Optional<String> err =
                     validateCommand(node, command, allowedCommands, allowedScriptDirs, cwd);
@@ -160,6 +184,43 @@ public final class BashValidator {
         return Optional.empty();
     }
 
+    private static boolean isFdOnlyRedirect(TSNode node, String command) {
+        String operator = null;
+        for (int i = 0; i < node.getChildCount(); i++) {
+            TSNode child = node.getChild(i);
+            if (!child.isNamed()) {
+                operator = child.getType();
+                break;
+            }
+        }
+        TSNode destination = node.getChildByFieldName("destination");
+        if (FD_CLOSE_OPERATORS.contains(operator)) {
+            return destination == null || destination.isNull();
+        }
+        if (!FD_REDIRECT_OPERATORS.contains(operator)
+                || destination == null
+                || destination.isNull()) {
+            return false;
+        }
+        if ("number".equals(destination.getType())) {
+            return true;
+        }
+        String destinationText = nodeText(destination, command);
+        return "word".equals(destination.getType()) && destinationText.matches("\\d+-");
+    }
+
+    private static boolean isBlockedEnvironmentVariable(String name) {
+        if (BLOCKED_ENVIRONMENT_VARIABLES.contains(name)) {
+            return true;
+        }
+        for (String prefix : DYNAMIC_LOADER_VARIABLE_PREFIXES) {
+            if (name.startsWith(prefix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static Optional<String> validateCommand(
             TSNode commandNode,
             String command,
@@ -168,8 +229,9 @@ public final class BashValidator {
             @Nullable String cwd) {
         TSNode nameNode = commandNode.getChildByFieldName("name");
         if (nameNode == null || nameNode.isNull()) {
-            // Bare variable-assignment parsed as command — nothing to validate.
-            return Optional.empty();
+            // Fail closed for constructs such as bare variable assignments. Bash can later
+            // reinterpret their values in arithmetic contexts.
+            return Optional.of("Command without an executable is not allowed.");
         }
         String executable = nodeText(nameNode, command);
         if (allowedCommands.contains(executable)) {

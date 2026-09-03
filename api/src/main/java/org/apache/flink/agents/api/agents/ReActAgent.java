@@ -69,14 +69,41 @@ public class ReActAgent extends Agent {
                 jsonSchema = outputSchema.toString();
                 outputSchema = new OutputSchema((RowTypeInfo) outputSchema);
             } else if (outputSchema instanceof Class) {
+                Class<?> schemaClass = (Class<?>) outputSchema;
                 try {
-                    jsonSchema = mapper.generateJsonSchema((Class<?>) outputSchema).toString();
-                } catch (JsonMappingException e) {
-                    throw new RuntimeException(e);
+                    jsonSchema = mapper.generateJsonSchema(schemaClass).getSchemaNode().toString();
+                } catch (JsonMappingException | IllegalArgumentException e) {
+                    // Both are reachable: a class whose getters disagree on a property name fails
+                    // the mapping, and one that would not serialize as a JSON object at all is
+                    // refused by the generator with an IllegalArgumentException naming no remedy.
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Output schema %s cannot be rendered as a JSON Schema, so it"
+                                            + " cannot constrain the response. Use a schema whose"
+                                            + " fields are all JSON-Schema-renderable, or pass no"
+                                            + " output schema. Rendering it reported: %s",
+                                    schemaClass.getName(), e.getMessage()),
+                            e);
+                } catch (StackOverflowError e) {
+                    // The generator carries no cycle guard, so a class that reaches itself
+                    // through its own members recurses until the stack is gone. A separate clause
+                    // rather than another type on the union above because the error carries no
+                    // message to quote, so this case has to name the cause itself.
+                    throw new IllegalArgumentException(
+                            String.format(
+                                    "Output schema %s is self-referential, so rendering it as a"
+                                            + " JSON Schema does not terminate and it cannot"
+                                            + " constrain the response. Use a schema that does not"
+                                            + " refer back to itself, or pass no output schema.",
+                                    schemaClass.getName()),
+                            e);
                 }
             } else {
                 throw new IllegalArgumentException(
-                        "Output schema must be RowTypeInfo or Pojo class.");
+                        String.format(
+                                "Output schema %s is not supported. It must be a RowTypeInfo or"
+                                        + " a Pojo class.",
+                                outputSchema.getClass().getName()));
             }
             Prompt schemaPrompt =
                     Prompt.fromText(

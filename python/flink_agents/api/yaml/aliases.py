@@ -67,6 +67,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "tongyi": ResourceName.ChatModel.TONGYI_CONNECTION,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             "vllm": ResourceName.ChatModel.VLLM_CONNECTION,
+            "watsonx": ResourceName.ChatModel.WATSONX_CONNECTION,
         },
         "java": {
             "ollama": ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
@@ -77,6 +78,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "azure_openai": ResourceName.ChatModel.Java.AZURE_OPENAI_CONNECTION,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_CONNECTION,
             "vllm": ResourceName.ChatModel.Java.VLLM_CONNECTION,
+            "watsonx": ResourceName.ChatModel.Java.WATSONX_CONNECTION,
         },
     },
     ResourceType.CHAT_MODEL: {
@@ -87,6 +89,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "tongyi": ResourceName.ChatModel.TONGYI_SETUP,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_SETUP,
             "vllm": ResourceName.ChatModel.VLLM_SETUP,
+            "watsonx": ResourceName.ChatModel.WATSONX_SETUP,
         },
         "java": {
             "ollama": ResourceName.ChatModel.Java.OLLAMA_SETUP,
@@ -97,6 +100,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "azure_openai": ResourceName.ChatModel.Java.AZURE_OPENAI_SETUP,
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_SETUP,
             "vllm": ResourceName.ChatModel.Java.VLLM_SETUP,
+            "watsonx": ResourceName.ChatModel.Java.WATSONX_SETUP,
         },
     },
     ResourceType.EMBEDDING_MODEL_CONNECTION: {

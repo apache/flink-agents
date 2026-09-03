@@ -172,7 +172,11 @@ def ltm(mock_ctx):
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
+    # Operations refuse an absent or empty key, so the fixture runs under the key an
+    # action would have switched to.
+    mem0_ltm.switch_context("test_key", observation_id="test-action")
     return mem0_ltm
 
 
@@ -330,14 +334,12 @@ def test_switch_context(ltm) -> None:
     memory_set.add(items="Data for key_a")
 
     ltm.switch_context("key_b", observation_id="action-b")
-    # key_b should have no items in the same memory set name
-    items = memory_set.get()
-    # Items from key_a should not be visible under key_b
-    # (They have different agent_id scoping)
-    assert len(items) == 0
-
-    # Reset context
-    ltm.switch_context("", observation_id="action-empty")
+    # The set stays scoped to key_a, so it still reads key_a's item after the
+    # switch rather than following the current context.
+    assert len(memory_set.get()) == 1
+    # A set obtained under key_b is scoped to key_b, so key_a's items in the
+    # same-named set are not visible through it.
+    assert len(ltm.get_memory_set(name="context_set").get()) == 0
 
 
 class MockChatModelWithTokenUsage:
@@ -459,6 +461,7 @@ def test_token_usage_reported_on_switch_context() -> None:
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
 
     # First switch_context triggers lazy init; no metrics yet.
@@ -519,6 +522,7 @@ def test_token_usage_flushed_on_close() -> None:
         chat_model_name="test_chat_model",
         embedding_model_name="test_embedding_model",
         vector_store_name="test_vector_store",
+        mailbox_thread_checker=lambda: None,
     )
 
     ltm.switch_context("key_1", observation_id="action-1")

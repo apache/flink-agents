@@ -24,8 +24,9 @@ command to be rejected. Every ``command`` node's name is checked against the
 ``allowed_commands`` allowlist or resolved under ``allowed_script_dirs``.
 
 This lets the tool accept natural shell constructs like pipes, ``&&`` / ``||``
-chains and simple redirections while blocking common injection vectors (``$()``,
-backticks, heredoc bodies containing substitutions, control flow, etc.).
+chains and file-descriptor-only redirections while blocking common injection
+vectors (``$()``, backticks, file redirects, execution-changing environment
+assignments, control flow, etc.).
 """
 
 from __future__ import annotations
@@ -47,8 +48,6 @@ _ALLOWED_NAMED = frozenset(
         "program",
         "command",
         "command_name",
-        # `export VAR=...`, `readonly`, `declare`, `local`, `typeset`
-        "declaration_command",
         "pipeline",
         "list",
         "redirected_statement",
@@ -67,13 +66,19 @@ _ALLOWED_NAMED = frozenset(
         "number",
         "simple_expansion",  # $VAR
         "expansion",  # ${VAR}
-        "arithmetic_expansion",  # $((...))
         "binary_expression",
         "unary_expression",
         "parenthesized_expression",
         "array",
     }
 )
+
+_BLOCKED_ENVIRONMENT_VARIABLES = frozenset(
+    {"PATH", "BASH_ENV", "ENV", "SHELLOPTS", "CDPATH"}
+)
+_DYNAMIC_LOADER_VARIABLE_PREFIXES = ("LD_", "DYLD_")
+_FD_REDIRECT_OPERATORS = frozenset({"<&", ">&"})
+_FD_CLOSE_OPERATORS = frozenset({"<&-", ">&-"})
 
 
 @lru_cache(maxsize=1)
@@ -121,6 +126,21 @@ def _walk(
     if node.is_named and node.type not in _ALLOWED_NAMED:
         snippet = node.text.decode("utf-8", errors="replace")[:80]
         return f"Disallowed shell construct '{node.type}' in: {snippet!r}"
+    if node.type == "variable_assignment" and (
+        node.parent is None or node.parent.type != "command"
+    ):
+        return "Standalone variable assignment without an executable is not allowed."
+    if node.type == "file_redirect" and not _is_fd_only_redirect(node):
+        return (
+            "File redirects are not allowed; only file-descriptor duplication "
+            "and closure are permitted."
+        )
+    if node.type == "variable_assignment":
+        name_node = node.child_by_field_name("name")
+        if name_node is not None:
+            name = name_node.text.decode("utf-8", errors="replace")
+            if _is_blocked_environment_variable(name):
+                return f"Environment variable assignment '{name}' is not allowed."
     if node.type == "command":
         err = _validate_command_node(node, allowed_commands, allowed_script_dirs, cwd)
         if err is not None:
@@ -132,6 +152,32 @@ def _walk(
     return None
 
 
+def _is_fd_only_redirect(node: Node) -> bool:
+    """Return whether a redirect only duplicates or closes a file descriptor."""
+    operator = next((child.type for child in node.children if not child.is_named), None)
+    destination = node.child_by_field_name("destination")
+    if operator in _FD_CLOSE_OPERATORS:
+        return destination is None
+    return (
+        operator in _FD_REDIRECT_OPERATORS
+        and destination is not None
+        and (
+            destination.type == "number"
+            or (
+                destination.type == "word"
+                and destination.text.endswith(b"-")
+                and destination.text[:-1].isdigit()
+            )
+        )
+    )
+
+
+def _is_blocked_environment_variable(name: str) -> bool:
+    return name in _BLOCKED_ENVIRONMENT_VARIABLES or name.startswith(
+        _DYNAMIC_LOADER_VARIABLE_PREFIXES
+    )
+
+
 def _validate_command_node(
     node: Node,
     allowed_commands: List[str],
@@ -140,9 +186,9 @@ def _validate_command_node(
 ) -> str | None:
     name_node = node.child_by_field_name("name")
     if name_node is None:
-        # Commands without a resolvable name (edge case, e.g. bare
-        # variable-assignment parsed as `command`) — nothing to validate.
-        return None
+        # Fail closed for constructs such as bare variable assignments. Bash
+        # can later reinterpret their values in arithmetic contexts.
+        return "Command without an executable is not allowed."
     executable = name_node.text.decode("utf-8", errors="replace")
     if executable in allowed_commands:
         return None

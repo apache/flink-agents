@@ -15,10 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict
+import logging
+from typing import Any, Callable, Dict
 from unittest.mock import MagicMock
 
 import pytest
+from anthropic import transform_schema
 from anthropic.types import Message, TextBlock, ToolUseBlock, Usage
 from pydantic import BaseModel
 from pyflink.common.typeinfo import Types
@@ -27,14 +29,16 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
+    _SAMPLING_WARNED_PARAMS,
     AnthropicChatModelConnection,
     AnthropicChatModelSetup,
     _supports_json_prefill,
+    _supports_sampling_params,
 )
 
 
 def _connection() -> AnthropicChatModelConnection:
-    return AnthropicChatModelConnection(name="test", api_key="dummy")
+    return AnthropicChatModelConnection(api_key="dummy")
 
 
 def _connection_returning(message: Message) -> AnthropicChatModelConnection:
@@ -162,6 +166,34 @@ class _Answer(BaseModel):
     verdict: str
 
 
+class _Unrenderable(BaseModel):
+    """A schema carrying a member that no JSON Schema can express."""
+
+    cb: Callable[[int], int]
+
+
+class _FieldLess(BaseModel):
+    """A schema declaring no fields, so it constrains nothing."""
+
+
+class _NestsFieldLess(BaseModel):
+    """A field-less schema one level down, reached through a ``$ref``."""
+
+    inner: _FieldLess
+
+
+class _MapsToFieldLess(BaseModel):
+    """A field-less schema reached through a map's ``additionalProperties``."""
+
+    m: Dict[str, _FieldLess]
+
+
+class _Labelled(BaseModel):
+    """A schema whose only member is a free-form map, a legitimate constraint."""
+
+    labels: Dict[str, str]
+
+
 # A model the provider documents native structured-output support for.
 #
 # Deliberately a 4.5-generation name, which is the only generation that is both
@@ -171,7 +203,8 @@ class _Answer(BaseModel):
 # even with the output_config suppression removed.
 _CAPABLE_MODEL = "claude-sonnet-4-5"
 
-# The default model this integration ships with, which predates the cutoff.
+# A model the provider does not document native structured-output support for,
+# predating the cutoff.
 _INCAPABLE_MODEL = "claude-sonnet-4-20250514"
 
 # The models the provider documents native structured-output support for, in the order
@@ -240,6 +273,39 @@ def test_native_output_config_applied_on_capable_model(model) -> None:
     assert set(output_config["format"]["schema"]["properties"]) == {"verdict"}
 
 
+def test_unrenderable_schema_raises_naming_the_model() -> None:
+    with pytest.raises(TypeError, match="_Unrenderable cannot be rendered"):
+        _request_kwargs(
+            model=_CAPABLE_MODEL,
+            output_schema=OutputSchema(output_schema=_Unrenderable),
+        )
+
+
+@pytest.mark.parametrize("schema", [_FieldLess, _NestsFieldLess, _MapsToFieldLess])
+def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
+    # A schema declaring no fields renders, so the provider decides on it, not this
+    # connection. The document reaches the request exactly as rendered rather than
+    # being refused here. The nested cases carry the field-less model below the root,
+    # so the assertion covers the whole document rather than only its top level.
+    output_config = _request_kwargs(
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=schema)
+    )["output_config"]
+
+    assert output_config["format"]["schema"] == transform_schema(schema)
+
+
+def test_map_member_schema_is_accepted_and_sent_whole() -> None:
+    # This renderer rewrites a map member into an object with an empty properties. The
+    # rewritten document is what reaches the request, so the member survives the
+    # normalization rather than being dropped or flattened.
+    output_config = _request_kwargs(
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Labelled)
+    )["output_config"]
+
+    assert output_config["format"]["schema"] == transform_schema(_Labelled)
+    assert output_config["format"]["schema"]["properties"]["labels"]["properties"] == {}
+
+
 def test_native_output_config_not_applied_on_incapable_model() -> None:
     assert "output_config" not in _request_kwargs(
         model=_INCAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Answer)
@@ -270,6 +336,22 @@ def test_caller_output_config_wins_over_schema() -> None:
     sent = _request_kwargs(
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=_Answer),
+        output_config=caller_config,
+    )["output_config"]
+
+    assert sent == caller_config
+
+
+def test_caller_output_config_wins_over_a_schema_that_cannot_be_rendered() -> None:
+    # The schema is rendered only when this branch will actually send the result. A
+    # render placed before the caller's value is honoured would refuse a request the
+    # caller had already steered away from the derived config, on the strength of a
+    # schema nothing was going to use.
+    caller_config = {"format": {"type": "json_schema", "schema": {"type": "object"}}}
+
+    sent = _request_kwargs(
+        model=_CAPABLE_MODEL,
+        output_schema=OutputSchema(output_schema=_Unrenderable),
         output_config=caller_config,
     )["output_config"]
 
@@ -516,3 +598,116 @@ def test_setup_honors_explicit_json_prefill() -> None:
     # unconditionally.
     setup = AnthropicChatModelSetup(connection="conn", json_prefill=True)
     assert setup.model_kwargs["json_prefill"] is True
+
+
+# The models the provider documents as rejecting a non-default sampling parameter, in
+# the order the module lists them. Mirroring that order keeps the two comparable side by
+# side, so a name added to one and not the other stands out.
+_SAMPLING_UNSUPPORTED = [
+    "claude-opus-4-7",
+    "claude-opus-4-8",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-mythos-5",
+    "claude-mythos-preview",
+]
+
+# Names that accept sampling parameters. The two 4.6-generation names are the
+# load-bearing ones: both reject a prefill, so deriving the sampling rule from the
+# prefill list would strip a temperature the provider still accepts.
+_SAMPLING_SUPPORTED = [
+    "claude-opus-4-6",
+    "claude-sonnet-4-6",
+    "claude-opus-4-5",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-sonnet-latest",
+    None,
+]
+
+
+_ABSENT = object()
+
+# The three sampling parameters, spelled out rather than read from the module under test.
+# Reading the production tuple would make a name dropped from it disappear from the comparison
+# below, so the drop would go unnoticed instead of failing an assertion.
+_SAMPLING_PARAM_NAMES = ("temperature", "top_p", "top_k")
+
+
+def _sent_sampling(model: str, **sampling: Any) -> Dict[str, Any]:
+    """Which of the sampling parameters the request reached the client with.
+
+    Each of the three names appears in the result, mapped either to the value the client
+    saw or to ``_ABSENT`` when it was dropped on the way.
+    """
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text=_CONTINUATION)],
+        usage=_usage(),
+    )
+    connection = _connection_returning(message)
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=model,
+        **sampling,
+    )
+    sent = connection.client.messages.create.call_args.kwargs
+    return {param: sent.get(param, _ABSENT) for param in _SAMPLING_PARAM_NAMES}
+
+
+@pytest.mark.parametrize("model", _SAMPLING_UNSUPPORTED)
+def test_sampling_predicate_rejects_unsupported_models(model) -> None:
+    assert _supports_sampling_params(model) is False
+
+
+@pytest.mark.parametrize("model", _SAMPLING_SUPPORTED)
+def test_sampling_predicate_accepts_other_models(model) -> None:
+    assert _supports_sampling_params(model) is True
+
+
+@pytest.mark.parametrize(
+    ("param", "value"), [("temperature", 0.1), ("top_p", 0.9), ("top_k", 5)]
+)
+def test_sampling_param_dropped_on_unsupported_model(param, value) -> None:
+    assert _sent_sampling("claude-opus-4-7", **{param: value})[param] is _ABSENT
+
+
+def test_sampling_params_sent_on_supported_model() -> None:
+    assert _sent_sampling(
+        "claude-sonnet-4-20250514", temperature=0.1, top_p=0.9, top_k=5
+    ) == {"temperature": 0.1, "top_p": 0.9, "top_k": 5}
+
+
+def test_each_dropped_sampling_param_is_reported_once(caplog) -> None:
+    # The bookkeeping behind the warning lives for the life of the process, so a pair
+    # left behind by an earlier test would suppress a warning this test has to observe.
+    model = "claude-mythos-preview"
+    for param in _SAMPLING_PARAM_NAMES:
+        _SAMPLING_WARNED_PARAMS.discard((model, param))
+
+    with caplog.at_level(logging.WARNING):
+        _sent_sampling(model, temperature=0.1)
+        _sent_sampling(model, temperature=0.1)
+        _sent_sampling(model, top_p=0.9)
+
+    # The repeat stays silent, but a different parameter is a different fact about the
+    # request and has to be reported on its own.
+    warnings = [record.getMessage() for record in caplog.records]
+    assert len(warnings) == 2
+    assert "temperature" in warnings[0]
+    assert "top_p" in warnings[1]
+
+
+def test_sampling_and_prefill_boundaries_differ() -> None:
+    # The two rules draw different lines, and this model sits between them: the provider
+    # withdraws prefilling from 4.6 on but sampling parameters only from 4.7 on.
+    # Deriving the sampling rule from the prefill list would drop the temperature here,
+    # where the provider still accepts it.
+    assert _supports_json_prefill("claude-sonnet-4-6") is False
+    assert _supports_sampling_params("claude-sonnet-4-6") is True
+    assert _sent_sampling("claude-sonnet-4-6", temperature=0.1)["temperature"] == 0.1

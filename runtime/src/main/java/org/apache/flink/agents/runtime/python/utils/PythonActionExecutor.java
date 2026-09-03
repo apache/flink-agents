@@ -25,6 +25,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.ExceptionUtils;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -34,7 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /** Execute the corresponding Python action in the agent. */
-public class PythonActionExecutor {
+public class PythonActionExecutor implements AutoCloseable {
 
     private static final String PYTHON_IMPORTS =
             "from flink_agents.plan import function\n"
@@ -201,18 +202,45 @@ public class PythonActionExecutor {
         return (boolean) ((Object[]) invokeResult)[0];
     }
 
+    @Override
     public void close() throws Exception {
-        if (interpreter != null) {
-            if (pythonAsyncThreadPool != null) {
-                interpreter.invoke(CLOSE_ASYNC_THREAD_POOL, pythonAsyncThreadPool);
-            }
+        // The two Python-side cleanups are independent, so attempt both even when the first
+        // fails. Skipping the runner-context cleanup leaves that context's long-term memory and
+        // resource cache unreleased, and PythonBridgeManager closes the interpreter right behind
+        // us, so there is no later chance to run it. The first failure is rethrown with the later
+        // one suppressed, matching the ladders in the managers above.
+        if (interpreter == null) {
+            return;
+        }
 
-            if (pythonRunnerContext != null) {
-                try {
-                    interpreter.invoke(CLOSE_FLINK_RUNNER_CONTEXT, pythonRunnerContext);
-                } finally {
-                    pythonRunnerContext = null;
-                }
+        // Clear the fields before releasing: PyObject.close() performs an unguarded native decRef,
+        // so a repeated close() must not reach the same handle twice.
+        PyObject asyncThreadPool = pythonAsyncThreadPool;
+        PyObject runnerContext = pythonRunnerContext;
+        pythonAsyncThreadPool = null;
+        pythonRunnerContext = null;
+
+        Throwable firstFailure = null;
+        try {
+            closePythonObject(CLOSE_ASYNC_THREAD_POOL, asyncThreadPool);
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+        }
+        try {
+            closePythonObject(CLOSE_FLINK_RUNNER_CONTEXT, runnerContext);
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+        }
+
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
+        }
+    }
+
+    private void closePythonObject(String closeFunction, PyObject pythonObject) throws Exception {
+        if (pythonObject != null) {
+            try (pythonObject) {
+                interpreter.invoke(closeFunction, pythonObject);
             }
         }
     }

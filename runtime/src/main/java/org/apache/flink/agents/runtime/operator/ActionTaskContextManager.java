@@ -35,6 +35,7 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.trace.ExecutionEventSink;
 import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
@@ -80,7 +81,7 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, String> pythonAwaitableRefs;
     private final Map<String, Map<ReportedExecutionKey, ExecutionTraceContext>>
             activeReportedExecutionsByActionExecutionId;
-    private ContinuationActionExecutor continuationActionExecutor;
+    private final ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this.actionTaskMemoryContexts = new HashMap<>();
@@ -350,15 +351,33 @@ class ActionTaskContextManager implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
+        // Close the continuation executor even when the runner context fails to close. The first
+        // failure is rethrown with the later one suppressed.
+        //
+        // The ladder catches Throwable, not Exception, so a non-Exception Throwable from the
+        // runner context cannot strand the executor's thread pool. Neither type implements
+        // AutoCloseable, so the aggregation is spelled out rather than delegated. Both rungs go
+        // through firstOrSuppressed even though the first one cannot yet have a previous failure,
+        // so that a close inserted above it later suppresses rather than overwrites.
+        Throwable firstFailure = null;
         if (runnerContext != null) {
             try {
                 runnerContext.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             } finally {
                 runnerContext = null;
             }
         }
         if (continuationActionExecutor != null) {
-            continuationActionExecutor.close();
+            try {
+                continuationActionExecutor.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
         }
     }
 }

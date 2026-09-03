@@ -18,7 +18,12 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.openai.core.JsonField;
+import com.openai.core.JsonMissing;
+import com.openai.core.JsonValue;
 import com.openai.errors.BadRequestException;
 import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
@@ -50,9 +55,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -82,6 +89,40 @@ class AzureOpenAIChatModelConnectionTest {
     public static class Person {
         public String name;
         public int age;
+    }
+
+    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member. */
+    public static class Owner {
+        public String name;
+        public Pet pet;
+    }
+
+    /** The JSON Schema the request carries, as the SDK holds it on the response format. */
+    private static String nativeSchemaPayload(ChatCompletionCreateParams params) {
+        return params.responseFormat()
+                .orElseThrow()
+                .asJsonSchema()
+                .jsonSchema()
+                ._schema()
+                .toString();
     }
 
     private static AzureOpenAIChatModelConnection connection(String apiVersion) {
@@ -270,6 +311,27 @@ class AzureOpenAIChatModelConnectionTest {
         // equal to the class name.
         assertThat(jsonSchema.jsonSchema().name()).contains("Person");
         assertThat(jsonSchema.jsonSchema().strict()).contains(true);
+        // Asserting the members rather than only the flags: a schema declaring no properties
+        // would satisfy strict() and the derived name while constraining nothing at all.
+        assertThat(nativeSchemaPayload(request))
+                .contains("name={type=string}")
+                .contains("age={type=integer}");
+    }
+
+    @Test
+    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    void testPolymorphicMemberSchemaIsSent() {
+        // Jackson renders this member as an object declaring no properties, while the SDK derives
+        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // a request that works.
+        ChatCompletionCreateParams request =
+                connection()
+                        .buildRequest(userMessage(), List.of(), params("gpt-4o-mini"), Owner.class);
+
+        assertThat(nativeSchemaPayload(request))
+                .contains("bark={type=string}")
+                .contains("meow={type=string}")
+                .contains("kind={const=dog}");
     }
 
     @Test
@@ -560,6 +622,106 @@ class AzureOpenAIChatModelConnectionTest {
                 .doesNotContainKeys("model_name", "promptTokens", "completionTokens");
     }
 
+    @Test
+    @DisplayName("The finish reason reported by the provider reaches the response extra args")
+    void testResponseCarriesFinishReason() {
+        ChatMessage response =
+                connection()
+                        .toResponse(
+                                completionWithFinishReasonAndUsage(
+                                        JsonField.of(ChatCompletion.Choice.FinishReason.LENGTH)),
+                                params("gpt-4o-mini"));
+
+        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+    }
+
+    @Test
+    @DisplayName("A finish reason outside the documented set is stored as received")
+    void testResponseCarriesUnknownFinishReasonVerbatim() {
+        ChatMessage response =
+                connection()
+                        .toResponse(
+                                completionWithFinishReasonAndUsage(
+                                        JsonField.of(
+                                                ChatCompletion.Choice.FinishReason.of(
+                                                        "some_vendor_reason"))),
+                                params("gpt-4o-mini"));
+
+        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+    }
+
+    @Test
+    @DisplayName("An empty finish reason is recorded rather than discarded")
+    void testResponseCarriesEmptyFinishReason() {
+        // The choice carries a value, so it is recorded; emptiness is not treated as absence.
+        ChatMessage response =
+                connection()
+                        .toResponse(
+                                completionWithFinishReasonAndUsage(
+                                        JsonField.of(ChatCompletion.Choice.FinishReason.of(""))),
+                                params("gpt-4o-mini"));
+
+        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+    }
+
+    @Test
+    @DisplayName("The finish reason is captured independently of the token metrics")
+    void testResponseCarriesFinishReasonWithoutTokenMetrics() {
+        // The metrics need both a backing model and a usage report, and neither is supplied here,
+        // so the absent promptTokens proves that branch did not run and could not have written it.
+        ChatMessage response =
+                connection()
+                        .toResponse(
+                                completionWithFinishReasonWithoutUsage(
+                                        JsonField.of(
+                                                ChatCompletion.Choice.FinishReason.TOOL_CALLS)),
+                                params(null));
+
+        assertThat(response.getExtraArgs())
+                .containsEntry("finish_reason", "tool_calls")
+                .doesNotContainKey("promptTokens");
+    }
+
+    private static Stream<Arguments> finishReasonsWithoutAValue() {
+        return Stream.of(
+                Arguments.of("field_absent", JsonMissing.of()),
+                Arguments.of("json_null", JsonValue.from(null)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("finishReasonsWithoutAValue")
+    @DisplayName("A choice carrying no finish reason value yields no key and no error")
+    void testNoFinishReasonKeyWhenTheChoiceCarriesNoValue(
+            String label, JsonField<ChatCompletion.Choice.FinishReason> finishReason) {
+        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException for both of these
+        // inputs, so reading the value has to go through the raw field.
+        AzureOpenAIChatModelConnection connection = connection();
+        ChatCompletion completion = completionWithFinishReasonAndUsage(finishReason);
+        AtomicReference<ChatMessage> response = new AtomicReference<>();
+
+        assertThatCode(() -> response.set(connection.toResponse(completion, params("gpt-4o-mini"))))
+                .doesNotThrowAnyException();
+
+        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+    }
+
+    private static ChatCompletion completionWithFinishReasonAndUsage(
+            JsonField<ChatCompletion.Choice.FinishReason> finishReason) {
+        return completionBuilder(finishReason)
+                .usage(
+                        CompletionUsage.builder()
+                                .promptTokens(11L)
+                                .completionTokens(7L)
+                                .totalTokens(18L)
+                                .build())
+                .build();
+    }
+
+    private static ChatCompletion completionWithFinishReasonWithoutUsage(
+            JsonField<ChatCompletion.Choice.FinishReason> finishReason) {
+        return completionBuilder(finishReason).build();
+    }
+
     private static ChatCompletion completionWithUsage(long promptTokens, long completionTokens) {
         return completionBuilder()
                 .usage(
@@ -576,6 +738,11 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     private static ChatCompletion.Builder completionBuilder() {
+        return completionBuilder(JsonField.of(ChatCompletion.Choice.FinishReason.STOP));
+    }
+
+    private static ChatCompletion.Builder completionBuilder(
+            JsonField<ChatCompletion.Choice.FinishReason> finishReason) {
         ChatCompletionMessage message =
                 ChatCompletionMessage.builder().content("hi").refusal(Optional.empty()).build();
         return ChatCompletion.builder()
@@ -584,7 +751,7 @@ class AzureOpenAIChatModelConnectionTest {
                 .model(DEPLOYMENT)
                 .addChoice(
                         ChatCompletion.Choice.builder()
-                                .finishReason(ChatCompletion.Choice.FinishReason.STOP)
+                                .finishReason(finishReason)
                                 .index(0L)
                                 .logprobs(Optional.empty())
                                 .message(message)

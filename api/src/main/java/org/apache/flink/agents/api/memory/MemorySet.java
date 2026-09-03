@@ -30,10 +30,18 @@ import java.util.Objects;
 /**
  * Represents a long term memory set, a named collection of memory items. Acts as a thin proxy that
  * delegates all operations to the bound {@link BaseLongTermMemory}.
+ *
+ * <p>A set also carries the action context it was obtained in. Operations run on a worker thread
+ * when submitted through {@code durableExecuteAsync}, by which time the owning long term memory may
+ * already have switched to another partition key, so they take the context from the set rather than
+ * from it. A set must therefore be obtained per action and not reused across actions.
  */
 public class MemorySet {
     private final String name;
     private @JsonIgnore BaseLongTermMemory ltm;
+    private @JsonIgnore String partitionKey;
+    private @JsonIgnore String observationId = "";
+    private @JsonIgnore boolean observationSuppressed;
 
     @JsonCreator
     public MemorySet(@JsonProperty("name") String name) {
@@ -100,8 +108,35 @@ public class MemorySet {
         this.ltm = ltm;
     }
 
+    /**
+     * Binds this set to the action context it was obtained in. Called on the mailbox thread when
+     * the set is created.
+     *
+     * @param partitionKey the partition key this set is scoped to
+     * @param observationId identifier for the owning action's observations
+     * @param observationSuppressed whether observation is suppressed for the owning action
+     */
+    public void setActionContext(
+            String partitionKey, String observationId, boolean observationSuppressed) {
+        this.partitionKey = partitionKey;
+        this.observationId = observationId;
+        this.observationSuppressed = observationSuppressed;
+    }
+
     public String getName() {
         return name;
+    }
+
+    public String getPartitionKey() {
+        return partitionKey;
+    }
+
+    public String getObservationId() {
+        return observationId;
+    }
+
+    public boolean isObservationSuppressed() {
+        return observationSuppressed;
     }
 
     @Override

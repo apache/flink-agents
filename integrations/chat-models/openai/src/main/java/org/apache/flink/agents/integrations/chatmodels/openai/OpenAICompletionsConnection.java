@@ -171,12 +171,22 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
                 || NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel);
     }
 
+    /**
+     * Returns the model response. When the provider reports a finish reason it is carried verbatim
+     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
+     * set, and the entry is absent when the provider reports none.
+     */
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
 
+    /**
+     * Returns the model response. When the provider reports a finish reason it is carried verbatim
+     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
+     * set, and the entry is absent when the provider reports none.
+     */
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
@@ -194,9 +204,16 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         ChatCompletionCreateParams params =
                 buildRequest(messages, tools, modelParams, outputSchema);
         ChatCompletion completion = client.chat().completions().create(params);
+        ChatCompletion.Choice choice = completion.choices().get(0);
         ChatMessage response =
-                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                        completion.choices().get(0).message());
+                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(choice.message());
+
+        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException when the member is
+        // absent or null, so the value is read through the raw field.
+        choice._finishReason()
+                .asKnown()
+                .ifPresent(
+                        reason -> response.getExtraArgs().put("finish_reason", reason.asString()));
 
         // Stash token usage
         if (completion.usage().isPresent()) {

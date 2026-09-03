@@ -17,16 +17,20 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -34,12 +38,27 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
 class ChatModelActionTest {
 
+    private static final String PARSEABLE_CONTENT = "{\"answer\":\"42\"}";
+
     private static ChatMessage responseWith(Map<String, Object> extraArgs) {
         return new ChatMessage(MessageRole.ASSISTANT, "response", extraArgs);
+    }
+
+    private static RunnerContext reportingContext() {
+        return mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+    }
+
+    private static ChatMessage generateStructuredOutput(
+            RunnerContext ctx, Map<String, Object> extraArgs) throws Exception {
+        return ChatModelAction.generateStructuredOutputWithReport(
+                ctx,
+                new ChatMessage(MessageRole.ASSISTANT, PARSEABLE_CONTENT, extraArgs),
+                Map.class);
     }
 
     @Test
@@ -178,5 +197,26 @@ class ChatModelActionTest {
         String input = "```json\n{\n  \"key\": \"value\"\n}\n```";
         String expected = "{\n  \"key\": \"value\"\n}";
         assertEquals(expected, ChatModelAction.cleanLlmResponse(input));
+    }
+
+    @Test
+    void testStructuredOutputParsesToExpectedValue() throws Exception {
+        ChatMessage parsed = generateStructuredOutput(reportingContext(), Map.of());
+
+        assertEquals(Map.of("answer", "42"), parsed.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
+    }
+
+    @Test
+    void testStructuredOutputPreservesInboundExtraArgs() throws Exception {
+        Map<String, Object> extraArgs = new HashMap<>();
+        extraArgs.put("finish_reason", "stop");
+        extraArgs.put("promptTokens", 100L);
+
+        Map<String, Object> parsedArgs =
+                generateStructuredOutput(reportingContext(), extraArgs).getExtraArgs();
+
+        assertEquals("stop", parsedArgs.get("finish_reason"));
+        assertEquals(100L, parsedArgs.get("promptTokens"));
+        assertTrue(parsedArgs.containsKey(Agent.STRUCTURED_OUTPUT), parsedArgs.toString());
     }
 }

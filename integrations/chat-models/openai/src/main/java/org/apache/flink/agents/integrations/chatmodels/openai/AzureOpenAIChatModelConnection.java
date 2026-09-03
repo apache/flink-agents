@@ -253,6 +253,11 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
                 >= 0;
     }
 
+    /**
+     * Returns the model response. When the provider reports a finish reason it is carried verbatim
+     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
+     * set, and the entry is absent when the provider reports none.
+     */
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
@@ -270,6 +275,10 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * on the deployment the request targets, because a deployment name is chosen by the user and
      * carries no model information. Leaving that parameter unset therefore keeps even a capable
      * deployment on the fallback.
+     *
+     * <p>When the provider reports a finish reason it is carried verbatim in {@code extraArgs}
+     * under {@code finish_reason}, including values outside the documented set, and the entry is
+     * absent when the provider reports none.
      *
      * @throws IllegalArgumentException if the schema is applied natively while {@code
      *     additional_kwargs} also carries a {@code response_format}, since the two would otherwise
@@ -305,9 +314,16 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         String modelOfAzureDeployment =
                 modelParams != null ? (String) modelParams.get("model_of_azure_deployment") : null;
 
+        ChatCompletion.Choice choice = completion.choices().get(0);
         ChatMessage response =
-                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(
-                        completion.choices().get(0).message());
+                OpenAIChatCompletionsUtils.convertFromOpenAIMessage(choice.message());
+
+        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException when the member is
+        // absent or null, so the value is read through the raw field.
+        choice._finishReason()
+                .asKnown()
+                .ifPresent(
+                        reason -> response.getExtraArgs().put("finish_reason", reason.asString()));
 
         if (modelOfAzureDeployment != null
                 && !modelOfAzureDeployment.isBlank()

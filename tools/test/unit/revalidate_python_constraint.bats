@@ -98,8 +98,8 @@ EOF
 
     run revalidate_python_constraint
     [ "$status" -eq 0 ]
-    [[ "$output" == *"incompatible with Flink Agents 0.2.1"* ]]
-    [[ "$output" == *"<3.12"* ]]
+    [[ "$output" == *"incompatible with Flink Agents 0.2.1"* ]] || false
+    [[ "$output" == *"<3.12"* ]] || false
 }
 
 # --- PYTHON_BIN re-resolution (Flink axis) ---
@@ -148,8 +148,8 @@ EOF
 
     run revalidate_existing_venv
     [ "$status" -ne 0 ]
-    [[ "$output" == *"uses Python 3.12"* ]]
-    [[ "$output" == *"different path"* ]]
+    [[ "$output" == *"uses Python 3.12"* ]] || false
+    [[ "$output" == *"different path"* ]] || false
 }
 
 @test "revalidate_existing_venv: no-op when the existing venv interpreter is compatible" {

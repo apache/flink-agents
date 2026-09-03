@@ -35,10 +35,22 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
 
+    private static final int PYTHON_KEY_FIELD_INDEX = 0;
+    private static final int PYTHON_VALUE_FIELD_INDEX = 1;
+
     // ============================ invoke by python ====================================
     public static DataStream<byte[]> connectToAgent(
             KeyedStream<Row, Row> inputDataStream, String agentPlanJson)
             throws JsonProcessingException {
+        TypeInformation<?> inputType = inputDataStream.getType();
+        checkArgument(
+                isPickledPythonFieldType(inputType, PYTHON_VALUE_FIELD_INDEX),
+                "Flink Agents only supports PyFlink input values serialized with "
+                        + "PickledByteArrayTypeInfo. Convert raw byte-array inputs with a Python "
+                        + "operator using the default pickle output type before connecting them "
+                        + "to Flink Agents, but got %s",
+                inputType);
+
         // deserialize agent plan json.
         AgentPlan agentPlan = new ObjectMapper().readValue(agentPlanJson, AgentPlan.class);
         return connectToAgent(
@@ -46,7 +58,7 @@ public class CompileUtils {
                 agentPlan,
                 TypeInformation.of(byte[].class),
                 false,
-                isPickledPythonKeyType(inputDataStream.getKeyType()));
+                isPickledPythonFieldType(inputDataStream.getKeyType(), PYTHON_KEY_FIELD_INDEX));
     }
 
     // ============================ invoke by java ====================================
@@ -95,20 +107,21 @@ public class CompileUtils {
                         .setParallelism(keyedInputStream.getParallelism());
     }
 
-    /**
-     * Returns whether PyFlink's single logical key field uses its default pickle representation.
-     */
-    static boolean isPickledPythonKeyType(TypeInformation<?> keyType) {
+    /** Returns whether a PyFlink Row field uses its default pickle representation. */
+    static boolean isPickledPythonFieldType(TypeInformation<?> typeInformation, int fieldIndex) {
+        checkArgument(fieldIndex >= 0, "Field index must not be negative, but got %s", fieldIndex);
         checkArgument(
-                keyType instanceof RowTypeInfo,
-                "Expected PyFlink key type to be a single-field RowTypeInfo, but got %s",
-                keyType);
-        RowTypeInfo rowType = (RowTypeInfo) keyType;
+                typeInformation instanceof RowTypeInfo,
+                "Expected PyFlink type to be a RowTypeInfo, but got %s",
+                typeInformation);
+        RowTypeInfo rowType = (RowTypeInfo) typeInformation;
+        int expectedArity = fieldIndex + 1;
         checkArgument(
-                rowType.getArity() == 1,
-                "Expected PyFlink key type to contain one logical field, but got arity %s",
+                rowType.getArity() == expectedArity,
+                "Expected PyFlink type to contain %s fields, but got arity %s",
+                expectedArity,
                 rowType.getArity());
-        TypeInformation<?> logicalKeyType = rowType.getTypeAt(0);
-        return logicalKeyType instanceof PickledByteArrayTypeInfo;
+        TypeInformation<?> fieldType = rowType.getTypeAt(fieldIndex);
+        return fieldType instanceof PickledByteArrayTypeInfo;
     }
 }

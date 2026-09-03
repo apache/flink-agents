@@ -42,11 +42,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Integration tests for {@link FlussActionStateStore} with SASL/PLAIN authentication against an
  * embedded Fluss cluster.
  */
-public class FlussActionStateStoreSaslIT {
+public class FlussActionStateStoreSaslIntegrationTest {
 
     private static final String TEST_DATABASE = "test_flink_agents_sasl";
     private static final String TEST_TABLE = "action_state_sasl_it";
     private static final String TEST_KEY = "test-key";
+    private static final int MAX_PARALLELISM = 128;
     private static final String SASL_USERNAME = "testuser";
     private static final String SASL_PASSWORD = "testpass";
 
@@ -64,7 +65,7 @@ public class FlussActionStateStoreSaslIT {
     @BeforeEach
     void setUp() throws Exception {
         AgentConfiguration config = createSaslAgentConfiguration();
-        store = new FlussActionStateStore(config);
+        store = new FlussActionStateStore(config, MAX_PARALLELISM);
     }
 
     @AfterEach
@@ -102,7 +103,7 @@ public class FlussActionStateStoreSaslIT {
 
         // Recover into a new store instance with SASL
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createSaslAgentConfiguration());
+                new FlussActionStateStore(createSaslAgentConfiguration(), MAX_PARALLELISM);
         try {
             recoveredStore.rebuildState(java.util.List.of(marker));
 

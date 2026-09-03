@@ -67,6 +67,9 @@ class BashTool(Tool):
     Safety:
     - The first token of each sub-command must be in ``allowed_commands``, or
       resolve to a file under one of ``allowed_script_dirs``.
+    - File redirects are rejected; only file-descriptor duplication and closure
+      are allowed.
+    - Assignments to execution-changing environment variables are rejected.
     - ``allowed_commands`` and ``allowed_script_dirs`` are injected at call
       time by the framework (not visible to the LLM through ``args_schema``).
     """

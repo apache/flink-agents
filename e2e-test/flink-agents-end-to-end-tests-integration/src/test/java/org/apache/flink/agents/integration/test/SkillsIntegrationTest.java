@@ -72,11 +72,20 @@ import static org.apache.flink.agents.api.agents.AgentExecutionOptions.MAX_RETRI
  */
 public class SkillsIntegrationTest {
 
+    /**
+     * Whether a usable key is present. GitHub sets the variable to the empty string when the secret
+     * is unavailable, such as on a pull request from a fork, so an absent key reaches the test as
+     * empty rather than as null.
+     */
+    private static boolean isApiKeySet() {
+        String apiKey = System.getenv("ACTION_API_KEY");
+        return apiKey != null && !apiKey.isEmpty();
+    }
+
     @Test
     public void testWorkflowWithSkills() throws Exception {
         Assumptions.assumeTrue(
-                System.getenv().get("ACTION_API_KEY") != null,
-                "ACTION_API_KEY is required for the skills end-to-end test.");
+                isApiKeySet(), "ACTION_API_KEY is required for the skills end-to-end test.");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
@@ -120,8 +129,7 @@ public class SkillsIntegrationTest {
     @Test
     public void testReActAgentWithSkills() throws Exception {
         Assumptions.assumeTrue(
-                System.getenv().get("ACTION_API_KEY") != null,
-                "ACTION_API_KEY is required for the skills end-to-end test.");
+                isApiKeySet(), "ACTION_API_KEY is required for the skills end-to-end test.");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);

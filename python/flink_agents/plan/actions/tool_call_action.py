@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from flink_agents.api.core_options import AgentExecutionOptions
@@ -23,7 +24,7 @@ from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
-from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.runner_context import DurableCall, Outcome, RunnerContext
 from flink_agents.api.tools import ToolExecutionMetadataProvider
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
@@ -77,10 +78,19 @@ def _tool_entity_metadata(
     return metadata
 
 
+@dataclass(frozen=True)
+class _ToolCallExecution:
+    id: str
+    name: str
+    durable_call: DurableCall
+    entity_metadata: dict[str, Any]
+
+
 async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing tool call requests."""
     event = ToolRequestEvent.from_event(event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
+    tool_call_parallelism = ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
 
     if tool_call_async:
         # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.
@@ -90,6 +100,47 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     success = {}
     error = {}
     external_ids = {}
+    executions = _build_tool_call_executions(
+        event,
+        ctx,
+        responses,
+        success,
+        error,
+        external_ids,
+    )
+
+    if tool_call_async and tool_call_parallelism > 1 and len(executions) > 1:
+        await _execute_parallel(executions, ctx, responses, success, error)
+    else:
+        await _execute_sequentially(
+            executions,
+            tool_call_async=tool_call_async,
+            ctx=ctx,
+            responses=responses,
+            success=success,
+            error=error,
+        )
+
+    ctx.send_event(
+        ToolResponseEvent(
+            request_id=event.id,
+            responses=responses,
+            external_ids=external_ids,
+            success=success,
+            error=error,
+        )
+    )
+
+
+def _build_tool_call_executions(
+    event: ToolRequestEvent,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+    external_ids: dict,
+) -> list[_ToolCallExecution]:
+    executions = []
     for tool_call in event.tool_calls:
         call_id = tool_call["id"]
         name = tool_call["function"]["name"]
@@ -140,36 +191,115 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
             )
             continue
 
-        try:
-            if tool_call_async:
-                response = await ctx.durable_execute_async(tool.call, **call_kwargs)
-            else:
-                response = ctx.durable_execute(tool.call, **call_kwargs)
-            responses[call_id] = response
-            success[call_id] = True
-            ExecutionReporters.succeeded(
-                ctx, ExecutionEntityTypes.TOOL, name, entity_metadata
+        executions.append(
+            _ToolCallExecution(
+                id=call_id,
+                name=name,
+                durable_call=DurableCall(
+                    func=tool.call,
+                    kwargs=call_kwargs,
+                ),
+                entity_metadata=entity_metadata,
             )
-        except Exception as e:
-            responses[call_id] = f"Tool `{name}` execute failed."
-            success[call_id] = False
-            error[call_id] = str(e)
-            ExecutionReporters.failed(
+        )
+    return executions
+
+
+async def _execute_parallel(
+    executions: list[_ToolCallExecution],
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    try:
+        outcomes = await ctx.durable_execute_all_async(
+            [execution.durable_call for execution in executions]
+        )
+        for execution, outcome in zip(executions, outcomes, strict=True):
+            _record_outcome(execution, outcome, ctx, responses, success, error)
+    except Exception as e:
+        for execution in executions:
+            _record_execution_exception(execution, e, ctx, responses, success, error)
+
+
+async def _execute_sequentially(
+    executions: list[_ToolCallExecution],
+    *,
+    tool_call_async: bool,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    for execution in executions:
+        try:
+            call = execution.durable_call
+            if tool_call_async:
+                response = await ctx.durable_execute_async(
+                    call.func,
+                    *call.args,
+                    **(call.kwargs or {}),
+                )
+            else:
+                response = ctx.durable_execute(
+                    call.func,
+                    *call.args,
+                    **(call.kwargs or {}),
+                )
+            responses[execution.id] = response
+            success[execution.id] = True
+            ExecutionReporters.succeeded(
                 ctx,
                 ExecutionEntityTypes.TOOL,
-                name,
-                entity_metadata,
-                e,
-                ExecutionProblemCategories.TOOL_CALL_FAILED,
+                execution.name,
+                execution.entity_metadata,
             )
-    ctx.send_event(
-        ToolResponseEvent(
-            request_id=event.id,
-            responses=responses,
-            external_ids=external_ids,
-            success=success,
-            error=error,
+        except Exception as e:  # noqa: PERF203
+            _record_execution_exception(execution, e, ctx, responses, success, error)
+
+
+def _record_outcome(
+    execution: _ToolCallExecution,
+    outcome: Outcome,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    if outcome.is_failure():
+        _record_execution_exception(
+            execution, outcome.error, ctx, responses, success, error
         )
+    else:
+        responses[execution.id] = outcome.value
+        success[execution.id] = True
+        ExecutionReporters.succeeded(
+            ctx,
+            ExecutionEntityTypes.TOOL,
+            execution.name,
+            execution.entity_metadata,
+        )
+
+
+def _record_execution_exception(
+    execution: _ToolCallExecution,
+    exception: BaseException,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    responses[execution.id] = f"Tool `{execution.name}` execute failed."
+    success[execution.id] = False
+    error[execution.id] = str(exception)
+    ExecutionReporters.failed(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        execution.name,
+        execution.entity_metadata,
+        exception,
+        ExecutionProblemCategories.TOOL_CALL_FAILED,
     )
 
 

@@ -41,4 +41,4 @@ See the [Apache Flink website](https://flink.apache.org/what-is-flink/community/
 
 ### Community Sync
 
-There is a weekly online sync. Everyone is welcome to join. Please find the schedule, agenda for the next sync, and records of previous syncs in this [github discussion page](https://github.com/apache/flink-agents/discussions/66).
+There is a weekly online sync. Everyone is welcome to join. Please find the schedule, agenda for the next sync, and records of previous syncs in this [github discussion page](https://github.com/apache/flink-agents/discussions/419).

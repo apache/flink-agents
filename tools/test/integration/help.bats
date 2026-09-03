@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 @test "--help prints usage and exits 0" {
-    run bash "${BATS_TEST_DIRNAME}/../../install.sh" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" --help
     [ "$status" -eq 0 ]
     case "$output" in *"Apache Flink Agents Installer"*) ;; *) false ;; esac
     case "$output" in *"Options:"*) ;; *) false ;; esac
@@ -10,7 +10,7 @@
 }
 
 @test "-h prints usage and exits 0" {
-    run bash "${BATS_TEST_DIRNAME}/../../install.sh" -h
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "${BATS_TEST_DIRNAME}/../../install.sh" -h
     [ "$status" -eq 0 ]
     case "$output" in *"Apache Flink Agents Installer"*) ;; *) false ;; esac
 }

@@ -179,6 +179,29 @@ public static void processEvent(Event event, RunnerContext ctx) throws Exception
 
 {{< /tabs >}}
 
+{{< hint warning >}}
+A memory set is scoped to the key of the action that obtained it. Call `get_memory_set` /
+`getMemorySet` inside each action that needs one, rather than caching a set and reusing it
+in a later action. Reusing a set would apply another key's operations to the key it was
+originally obtained for, and operating on a set that carries no scope raises an error.
+
+Obtaining a memory set and deleting one both read the key currently in scope, which only
+the action's own thread reads consistently. Both raise wherever they run on a worker
+thread, so passing `getMemorySet` / `get_memory_set` or `deleteMemorySet` /
+`delete_memory_set` to `durableExecuteAsync` / `durable_execute_async` is unsupported: in
+Python, and in Java on JDK 21 and above, the callable runs on a worker thread and the call
+raises. On JDK 11 Java runs the callable inline instead, so the same code does not raise
+today, but it is unsupported there too and will raise once the job moves to a newer JDK.
+
+Operations on a set you already hold are unaffected, since they carry the key the set was
+obtained under. That is why a memory set may be handed to a worker thread but the long-term
+memory itself may not.
+
+Long-term memory also requires a non-empty partition key. A key of `""` carries no
+isolation in the backing store, so obtaining or using a memory set under one raises
+rather than writing memories that no key can read back.
+{{< /hint >}}
+
 ### Adding Items
 
 {{< tabs "Adding Items" >}}
@@ -549,3 +572,5 @@ The isolation hierarchy works as follows:
 This means you can reuse the same memory set name across different partitions, and each partition will normally access only its own memories.
 
 > **Note:** Partition-level isolation uses a textual identity derived from the logical key instead of `key.hashCode()`. Java keys use `String.valueOf(key)`. Default-serialized PyFlink keys are deserialized and use Python `str`; explicitly typed PyFlink keys use `String.valueOf`, except byte-array keys, which use Python's bytes representation. This avoids hash collisions, but distinct keys may still share a memory context if they produce the same text, for example when custom key types have non-unique `toString()` or `__str__()` implementations. Key representations should therefore be stable and unique, and this isolation should not be treated as a security boundary.
+
+An empty partition key is rejected rather than used. The backing store treats an empty `agent_id` as no filter at all, so an empty key would widen every read and delete to every key in the job, and items added under it would be stored with no partition attribution to read back later. A job that can legitimately produce an empty key must map it to a non-empty placeholder before keying the stream; long-term memory cannot do that mapping itself without changing the identity of keys whose memories are already stored.

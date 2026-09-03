@@ -16,14 +16,14 @@ repo_flink_minor() {
 }
 
 @test "--help does not claim every Flink version is tested by default" {
-    run bash "$UT_SH" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" --help
     [ "$status" -eq 0 ]
     case "$output" in *"all versions"*) false ;; *) ;; esac
     case "$output" in *"all Flink versions"*) false ;; *) ;; esac
 }
 
 @test "--help states the default Flink version and which suites -f applies to" {
-    run bash "$UT_SH" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" --help
     [ "$status" -eq 0 ]
     case "$output" in *"Default: $(repo_flink_minor)"*) ;; *) false ;; esac
     # The scope sentence wraps across help lines; compare on collapsed
@@ -56,7 +56,7 @@ repo_flink_minor() {
     # pinning a different version separates interpolation from a literal.
     local fake flowed
     fake="$(make_fake_root_pinning 9.9.9 9.9)"
-    run bash "$fake/tools/ut.sh" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh" --help
     [ "$status" -eq 0 ]
     flowed="$(printf '%s' "$output" | tr -s '[:space:]' ' ')"
     case "$flowed" in
@@ -67,7 +67,7 @@ repo_flink_minor() {
 
 @test "a bare Python run installs the Flink version the root pom pins" {
     shim_bin uv
-    run bash "$UT_SH" -p
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$UT_SH" -p
     [ "$status" -eq 0 ]
     case "$(shim_calls uv)" in
         *"apache-flink~=$(repo_flink_minor).0"*) ;;
@@ -81,7 +81,7 @@ repo_flink_minor() {
     # The fake tree carries the dist module its pom pins, so the defaulted
     # version is a supported one and only the value being read is under test.
     fake="$(make_fake_root '    <flink.version>9.9.9</flink.version>' 9.9)"
-    run bash "$fake/tools/ut.sh" -p
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh" -p
     [ "$status" -eq 0 ]
     case "$(shim_calls uv)" in *"apache-flink~=9.9.0"*) ;; *) false ;; esac
 }
@@ -90,7 +90,7 @@ repo_flink_minor() {
     shim_bin uv
     local fake
     fake="$(make_fake_root '    <flink.version> 9.9.9 </flink.version>' 9.9)"
-    run bash "$fake/tools/ut.sh" -p
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh" -p
     [ "$status" -eq 0 ]
     case "$(shim_calls uv)" in *"apache-flink~=9.9.0"*) ;; *) false ;; esac
 }
@@ -98,7 +98,7 @@ repo_flink_minor() {
 @test "a pom carrying no flink.version at all is fatal" {
     local fake
     fake="$(make_fake_root '    <other.version>1.0.0</other.version>')"
-    run bash "$fake/tools/ut.sh"
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh"
     [ "$status" -eq 1 ]
     # Nothing was read, so the error must not quote a value as though one was.
     case "$output" in
@@ -111,7 +111,7 @@ repo_flink_minor() {
 @test "a two-component flink.version is fatal rather than a one-component token" {
     local fake
     fake="$(make_fake_root '    <flink.version>2.3</flink.version>')"
-    run bash "$fake/tools/ut.sh"
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh"
     [ "$status" -eq 1 ]
     # The value was read; the error has to say so rather than claim it could not be.
     case "$output" in
@@ -124,7 +124,7 @@ repo_flink_minor() {
 @test "a flink.version holding a property reference is fatal rather than a broken token" {
     local fake
     fake="$(make_fake_root '    <flink.version>${flink.2.3.version}</flink.version>')"
-    run bash "$fake/tools/ut.sh"
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$fake/tools/ut.sh"
     [ "$status" -eq 1 ]
     # A value is present, so the error has to quote it rather than report an
     # absent element the way the missing-property case does.

@@ -28,7 +28,7 @@ from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -88,6 +88,12 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
     Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
     subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
     fallback.
+
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, naming the
+    schema class rather than letting the renderer's own error, which names only its
+    internals, surface from a request the provider never sees. A schema that renders
+    but declares no fields is sent as it is, leaving the provider to accept or refuse
+    the document it receives.
     """
     if output_schema is None:
         return None
@@ -100,7 +106,7 @@ def _native_response_format(output_schema: Any) -> Dict[str, Any] | None:
         "type": "json_schema",
         "json_schema": {
             "name": model.__name__,
-            "schema": to_strict_json_schema(model),
+            "schema": render_output_schema(model, to_strict_json_schema),
             "strict": True,
         },
     }
@@ -253,7 +259,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         Returns:
         -------
         ChatMessage
-            Model response message
+            Model response message. When the response carries a finish reason,
+            it is available as ``extra_args["finish_reason"]``.
         """
         tool_specs = None
         if tools is not None:
@@ -291,7 +298,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = response.usage.prompt_tokens
             extra_args["completionTokens"] = response.usage.completion_tokens
 
-        message = response.choices[0].message
+        choice = response.choices[0]
+        if choice.finish_reason is not None:
+            extra_args["finish_reason"] = choice.finish_reason
+
+        message = choice.message
 
         return convert_from_openai_message(message, extra_args)
 

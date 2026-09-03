@@ -17,12 +17,12 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
-import org.apache.beam.sdk.util.Preconditions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.Preconditions;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.ListTopicsResult;
 import org.apache.kafka.clients.admin.NewTopic;
@@ -50,6 +50,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
@@ -95,13 +96,21 @@ public class KafkaActionStateStore implements ActionStateStore {
     // Whether pruning sends tombstone records for log compaction
     private final boolean tombstoneEnabled;
 
+    // When set, only records whose key-group is accepted by this predicate are kept in the
+    // in-memory cache during rebuildState; null means retain all keys (default).
+    private IntPredicate ownershipFilter;
+
+    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
+    private final int maxParallelism;
+
     @VisibleForTesting
     KafkaActionStateStore(
             Map<String, ActionState> actionStates,
             AgentConfiguration agentConfiguration,
             Producer<String, ActionState> producer,
             Consumer<String, ActionState> consumer,
-            String topic) {
+            String topic,
+            int maxParallelism) {
         this.actionStates = actionStates;
         this.producer = producer;
         this.consumer = consumer;
@@ -109,16 +118,23 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
+        this.maxParallelism = maxParallelism;
     }
 
     /** Constructs a new KafkaActionStateStore with custom Kafka configuration. */
-    public KafkaActionStateStore(AgentConfiguration agentConfiguration) {
+    public KafkaActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
+        Preconditions.checkArgument(
+                maxParallelism > 0,
+                "maxParallelism must be positive but was %s; it must be set to the operator's max"
+                        + " parallelism so key-groups match Flink's key-group assignment.",
+                maxParallelism);
+        this.maxParallelism = maxParallelism;
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
         this.topic =
-                Preconditions.checkArgumentNotNull(
+                Preconditions.checkNotNull(
                         agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
                         "Kafka action state topic must be configured");
         // create the topic if not exists
@@ -138,7 +154,7 @@ public class KafkaActionStateStore implements ActionStateStore {
             return;
         }
 
-        String stateKey = generateKey(key, seqNum, action, event);
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
@@ -156,8 +172,7 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
-        String keyStr = key.toString();
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
 
         LOG.debug(
                 "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",
@@ -166,30 +181,16 @@ public class KafkaActionStateStore implements ActionStateStore {
                 stateKey,
                 actionStates.keySet());
 
-        boolean hasDivergence = checkDivergence(keyStr, seqNum);
+        boolean hasDivergence = checkDivergence(key, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
+            // Clean up this key's states with sequence number greater than the requested seqNum.
             actionStates
-                    .entrySet()
+                    .keySet()
                     .removeIf(
-                            entry -> {
-                                // Extract key and sequence number from the state key
-                                try {
-                                    List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                    if (parts.get(0).equals(keyStr)) {
-                                        long stateSeqNum = Long.parseLong(parts.get(1));
-                                        // clean up any states with sequence number greater than
-                                        // the requested seqNum
-                                        return stateSeqNum > seqNum;
-                                    }
-                                } catch (IllegalArgumentException ignored) {
-                                    LOG.debug(
-                                            "Retaining unparseable state key during divergence "
-                                                    + "cleanup: {}",
-                                            entry.getKey());
-                                }
-                                return false;
-                            });
+                            cachedKey ->
+                                    ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                                            cachedKey, key, stateSeqNum -> stateSeqNum > seqNum));
         }
 
         ActionState result = actionStates.get(stateKey);
@@ -202,19 +203,9 @@ public class KafkaActionStateStore implements ActionStateStore {
         return result;
     }
 
-    private boolean checkDivergence(String key, long seqNum) {
+    private boolean checkDivergence(Object key, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
-                        .filter(
-                                stateKey -> {
-                                    try {
-                                        List<String> parts = ActionStateUtil.parseKey(stateKey);
-                                        return parts.get(0).equals(key)
-                                                && Long.parseLong(parts.get(1)) == seqNum;
-                                    } catch (IllegalArgumentException ignored) {
-                                        return false;
-                                    }
-                                })
+                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
                         .count()
                 > 1;
     }
@@ -274,6 +265,9 @@ public class KafkaActionStateStore implements ActionStateStore {
                 // Deserialization failures throw from poll() itself and are handled by the
                 // outer catch, so records here are always fully deserialized.
                 for (ConsumerRecord<String, ActionState> record : records) {
+                    if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
+                        continue;
+                    }
                     if (record.value() == null) {
                         // Tombstone record - remove the key from cache
                         actionStates.remove(record.key());
@@ -292,30 +286,20 @@ public class KafkaActionStateStore implements ActionStateStore {
     }
 
     @Override
+    public void setOwnershipFilter(IntPredicate ownershipFilter) {
+        this.ownershipFilter = ownershipFilter;
+    }
+
+    @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
-        // Collect state keys belonging to this key with sequence number <= seqNum. The parsed
-        // key part must match exactly: prefix matching alone would let pruning key "a_1" match
-        // state keys of the distinct key "a" (whose keys also start with "a_1_").
-        String keyStr = key.toString();
-        String keyPrefix = keyStr + "_";
+        // Collect state keys belonging to this key with sequence number <= seqNum.
         List<String> keysToPrune = new ArrayList<>();
         for (String stateKey : actionStates.keySet()) {
-            if (!stateKey.startsWith(keyPrefix)) {
-                continue;
-            }
-            try {
-                List<String> parts = ActionStateUtil.parseKey(stateKey);
-                if (parts.get(0).equals(keyStr) && Long.parseLong(parts.get(1)) <= seqNum) {
-                    keysToPrune.add(stateKey);
-                }
-            } catch (IllegalArgumentException e) {
-                LOG.warn(
-                        "Cannot parse state key: {}. The entry cannot be pruned and will be "
-                                + "retained in memory and in the topic.",
-                        stateKey,
-                        e);
+            if (ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                    stateKey, key, stateSeqNum -> stateSeqNum <= seqNum)) {
+                keysToPrune.add(stateKey);
             }
         }
 

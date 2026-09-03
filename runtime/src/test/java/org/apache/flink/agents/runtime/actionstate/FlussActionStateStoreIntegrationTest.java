@@ -41,11 +41,12 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Integration tests for {@link FlussActionStateStore} against an embedded Fluss cluster. */
-public class FlussActionStateStoreIT {
+public class FlussActionStateStoreIntegrationTest {
 
     private static final String TEST_DATABASE = "test_flink_agents";
     private static final String TEST_TABLE = "action_state_it";
     private static final String TEST_KEY = "test-key";
+    private static final int MAX_PARALLELISM = 128;
 
     @RegisterExtension
     static final FlussClusterExtension FLUSS_CLUSTER =
@@ -58,7 +59,7 @@ public class FlussActionStateStoreIT {
     @BeforeEach
     void setUp() throws Exception {
         AgentConfiguration config = createAgentConfiguration();
-        store = new FlussActionStateStore(config);
+        store = new FlussActionStateStore(config, MAX_PARALLELISM);
 
         // Wait for table to be ready in the cluster
         waitForTableReady();
@@ -188,7 +189,7 @@ public class FlussActionStateStoreIT {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
         try {
             // Rebuild using the marker; should replay from marker offset to current end
             recoveredStore.rebuildState(List.of(marker));
@@ -199,6 +200,44 @@ public class FlussActionStateStoreIT {
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
             // Data written before the marker should NOT be in the rebuilt cache
             assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+        } finally {
+            recoveredStore.close();
+            // Prevent double-close in tearDown
+            store = null;
+        }
+    }
+
+    /**
+     * Reproduces the orphan-state leak fix: after recovery, a subtask must keep only the keys it
+     * owns and drop keys owned by other subtasks. Here "A" is owned and "B" is foreign, so the
+     * rebuilt cache must contain "A" but not "B".
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void testRebuildStateFiltersForeignKeys() throws Exception {
+        // Capture the recovery marker before any writes so the replay window covers the writes
+        // below (simulates a checkpoint taken before the actions were recorded).
+        Object marker = store.getRecoveryMarker();
+
+        store.put("A", 1L, testAction, testEvent, new ActionState(testEvent));
+        store.put("B", 1L, testAction, testEvent, new ActionState(testEvent));
+        store.close();
+
+        // Simulate recovery into a new store instance that owns only key "A".
+        FlussActionStateStore recoveredStore =
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
+        try {
+            // Own key's key-group computed from the WAL key; the filter accepts only this
+            // key-group.
+            int ownedKeyGroup =
+                    ActionStateUtil.parseKeyGroup(
+                            ActionStateUtil.generateKey("A", 1L, testAction, testEvent, 128));
+            recoveredStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
+            recoveredStore.rebuildState(List.of(marker));
+
+            // Owned key is recovered; foreign key is filtered out and never enters the cache.
+            assertThat(recoveredStore.get("A", 1L, testAction, testEvent)).isNotNull();
+            assertThat(recoveredStore.get("B", 1L, testAction, testEvent)).isNull();
         } finally {
             recoveredStore.close();
             // Prevent double-close in tearDown
@@ -218,7 +257,7 @@ public class FlussActionStateStoreIT {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration());
+                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
         try {
             // Rebuild state from the log using recovery markers
             recoveredStore.rebuildState(List.of(marker));
@@ -247,7 +286,7 @@ public class FlussActionStateStoreIT {
         String multiDb = "test_flink_agents_multi";
         String multiTable = "action_state_multi";
         AgentConfiguration multiConfig = createAgentConfiguration(multiDb, multiTable, 4);
-        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig);
+        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
         try {
             waitForTableReady(multiDb, multiTable);
 
@@ -278,7 +317,8 @@ public class FlussActionStateStoreIT {
             multiStore.close();
 
             // Recover into a new store instance
-            FlussActionStateStore recoveredStore = new FlussActionStateStore(multiConfig);
+            FlussActionStateStore recoveredStore =
+                    new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
             try {
                 recoveredStore.rebuildState(List.of(marker));
 

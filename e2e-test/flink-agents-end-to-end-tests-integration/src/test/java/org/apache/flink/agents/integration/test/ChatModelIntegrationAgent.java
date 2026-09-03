@@ -123,7 +123,7 @@ public class ChatModelIntegrationAgent extends Agent {
         } else if (provider.equals("ANTHROPIC")) {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.ANTHROPIC_SETUP)
                     .addInitialArgument("connection", "chatModelConnection")
-                    .addInitialArgument("model", "claude-sonnet-4-20250514")
+                    .addInitialArgument("model", "claude-sonnet-4-6")
                     .addInitialArgument(
                             "tools",
                             List.of("calculateBMI", "convertTemperature", "createRandomNumber"))

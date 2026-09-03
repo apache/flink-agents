@@ -17,6 +17,9 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
@@ -61,11 +64,13 @@ public class ActionStateSerdeTest {
 
         MemoryUpdate sensoryMemoryUpdate = new MemoryUpdate("sm.test.path", "sm test value");
         MemoryUpdate shortTermMemoryUpdate = new MemoryUpdate("stm.test.path", "stm test value");
+        MemoryUpdate objectCreationUpdate = new MemoryUpdate("stm.test.obj", null, true);
 
         // Create ActionState
         ActionState originalState = new ActionState(inputEvent);
         originalState.addSensoryMemoryUpdate(sensoryMemoryUpdate);
         originalState.addShortTermMemoryUpdate(shortTermMemoryUpdate);
+        originalState.addShortTermMemoryUpdate(objectCreationUpdate);
         originalState.addEvent(outputEvent);
 
         // Serialize
@@ -90,11 +95,18 @@ public class ActionStateSerdeTest {
                 deserializedState.getSensoryMemoryUpdates().get(0);
         assertEquals("sm.test.path", deserializedSensoryMemoryUpdate.getPath());
         assertEquals("sm test value", deserializedSensoryMemoryUpdate.getValue());
-        assertEquals(1, deserializedState.getShortTermMemoryUpdates().size());
+        assertFalse(deserializedSensoryMemoryUpdate.isObjectCreation());
+        assertEquals(2, deserializedState.getShortTermMemoryUpdates().size());
         MemoryUpdate deserializedShortTermMemoryUpdate =
                 deserializedState.getShortTermMemoryUpdates().get(0);
         assertEquals("stm.test.path", deserializedShortTermMemoryUpdate.getPath());
         assertEquals("stm test value", deserializedShortTermMemoryUpdate.getValue());
+        assertFalse(deserializedShortTermMemoryUpdate.isObjectCreation());
+        MemoryUpdate deserializedObjectCreationUpdate =
+                deserializedState.getShortTermMemoryUpdates().get(1);
+        assertEquals("stm.test.obj", deserializedObjectCreationUpdate.getPath());
+        assertNull(deserializedObjectCreationUpdate.getValue());
+        assertTrue(deserializedObjectCreationUpdate.isObjectCreation());
 
         // Verify outputEvents
         assertEquals(1, deserializedState.getOutputEvents().size());
@@ -103,6 +115,29 @@ public class ActionStateSerdeTest {
         OutputEvent deserializedOutputEventTyped = (OutputEvent) deserializedOutputEvent;
         assertEquals("test output", deserializedOutputEventTyped.getOutput());
         assertEquals(123, deserializedOutputEventTyped.getAttr("outputAttr"));
+    }
+
+    @Test
+    public void testLegacyRecordWithoutObjectCreationFieldDefaultsToFalse() throws Exception {
+        // Records written before the objectCreation field existed must keep their original
+        // replay semantics (value writes). Simulate a legacy record by stripping the field from
+        // the serialized JSON before deserializing.
+        ActionState originalState = new ActionState(new InputEvent("legacy input"));
+        originalState.addShortTermMemoryUpdate(new MemoryUpdate("legacy.path", "legacy value"));
+
+        ObjectMapper plainMapper = new ObjectMapper();
+        JsonNode root = plainMapper.readTree(ActionStateSerde.serialize(originalState));
+        for (JsonNode update : root.get("shortTermMemoryUpdates")) {
+            assertTrue(update.has("objectCreation"));
+            ((ObjectNode) update).remove("objectCreation");
+        }
+        byte[] legacyBytes = plainMapper.writeValueAsBytes(root);
+
+        ActionState deserializedState = ActionStateSerde.deserialize(legacyBytes);
+        MemoryUpdate legacyUpdate = deserializedState.getShortTermMemoryUpdates().get(0);
+        assertEquals("legacy.path", legacyUpdate.getPath());
+        assertEquals("legacy value", legacyUpdate.getValue());
+        assertFalse(legacyUpdate.isObjectCreation());
     }
 
     @Test

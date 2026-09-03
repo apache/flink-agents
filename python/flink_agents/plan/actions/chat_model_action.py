@@ -57,6 +57,9 @@ _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
 _RETRY_STATS_CONTEXT = "_RETRY_STATS_CONTEXT"
 _PROMPT_ARGS = "prompt_args"
+_FINISH_REASON = "finish_reason"
+_TRUNCATED_FINISH_REASON = "length"
+_CONTENT_FILTERED_FINISH_REASON = "content_filter"
 
 _logger = logging.getLogger(__name__)
 
@@ -272,6 +275,38 @@ def _generate_structured_output(
     return response
 
 
+def _reject_incomplete_response(response: ChatMessage) -> None:
+    """Reject a response the provider did not finish emitting.
+
+    Evaluated once per chat response, before it is dispatched as text,
+    structured output, or tool calls.
+
+    Args:
+        response: The chat response whose ``finish_reason`` is inspected. Any
+            other reason, and an absent one, are accepted.
+
+    Raises:
+        ValueError: If the finish reason reports the response as cut off by the
+            token budget or withheld by content filtering.
+    """
+    finish_reason = response.extra_args.get(_FINISH_REASON)
+    if finish_reason == _TRUNCATED_FINISH_REASON:
+        error_message = (
+            f"ChatModel response is truncated (finish_reason={finish_reason!r}): "
+            "it exhausted the completion token budget before the model finished, "
+            "so the content is incomplete. Raise the model's max output tokens, "
+            "or ask for a smaller output."
+        )
+        raise ValueError(error_message)
+    if finish_reason == _CONTENT_FILTERED_FINISH_REASON:
+        error_message = (
+            "ChatModel response was withheld by the provider's content filter "
+            f"(finish_reason={finish_reason!r}), so the content is incomplete. "
+            "Adjust the prompt or the provider's content filtering configuration."
+        )
+        raise ValueError(error_message)
+
+
 def _generate_structured_output_with_report(
     ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
 ) -> ChatMessage:
@@ -393,6 +428,10 @@ async def chat(
                     response.extra_args["completionTokens"],
                     request_metric_group,
                 )
+            # A truncated response consumed its full token budget, so the token
+            # metrics above are recorded before this rejects and abandons the
+            # response.
+            _reject_incomplete_response(response)
             if output_schema is not None and len(response.tool_calls) == 0:
                 response = _generate_structured_output_with_report(
                     ctx, response, output_schema

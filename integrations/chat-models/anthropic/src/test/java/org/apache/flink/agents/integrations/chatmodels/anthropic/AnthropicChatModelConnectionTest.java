@@ -19,11 +19,14 @@
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
 import com.anthropic.models.messages.Message;
+import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlock;
 import com.anthropic.models.messages.Usage;
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -38,6 +41,7 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -50,8 +54,10 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import static org.assertj.core.api.Assertions.as;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.InstanceOfAssertFactories.STRING;
 
 /**
  * Unit tests for {@link AnthropicChatModelConnection}'s request construction, its native
@@ -214,7 +220,10 @@ class AnthropicChatModelConnectionTest {
      */
     private static final String CAPABLE_MODEL = "claude-sonnet-4-5";
 
-    /** The connection's own default model, which predates the structured-output cutoff. */
+    /**
+     * A model the provider does not document native structured-output support for, predating the
+     * cutoff.
+     */
     private static final String INCAPABLE_MODEL = "claude-sonnet-4-20250514";
 
     /**
@@ -263,6 +272,30 @@ class AnthropicChatModelConnectionTest {
         public String verdict;
     }
 
+    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member. */
+    public static class Owner {
+        public String verdict;
+        public Pet pet;
+    }
+
     private static Map<String, Object> paramsWithModel(String model, Object jsonPrefill) {
         Map<String, Object> params = params(jsonPrefill);
         params.put("model", model);
@@ -289,6 +322,15 @@ class AnthropicChatModelConnectionTest {
                 .map(schema -> schema.get("properties"))
                 .map(properties -> MAPPER.convertValue(properties, MAP_TYPE).keySet())
                 .orElse(Set.of());
+    }
+
+    /** The JSON Schema the request carries, as the SDK holds it on the output config. */
+    private static String nativeSchemaPayload(AnthropicChatModelConnection.BuiltRequest built) {
+        return built.params
+                .outputConfig()
+                .flatMap(OutputConfig::format)
+                .map(format -> format.schema()._additionalProperties().toString())
+                .orElseThrow();
     }
 
     @ParameterizedTest
@@ -380,6 +422,18 @@ class AnthropicChatModelConnectionTest {
                 .isEqualTo(connection().supportsNativeStructuredOutput(INCAPABLE_MODEL));
         assertThat(configuredCapable.supportsNativeStructuredOutput(CAPABLE_MODEL))
                 .isEqualTo(connection().supportsNativeStructuredOutput(CAPABLE_MODEL));
+    }
+
+    @Test
+    @DisplayName("a polymorphic member is sent as the discriminated union the SDK derives")
+    void testPolymorphicMemberSchemaIsSent() {
+        // Jackson renders this member as an object declaring no properties, while the SDK derives
+        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // a request that works.
+        assertThat(nativeSchemaPayload(build(CAPABLE_MODEL, Owner.class, null)))
+                .contains("bark={type=string}")
+                .contains("meow={type=string}")
+                .contains("kind={const=dog}");
     }
 
     @Test
@@ -578,6 +632,253 @@ class AnthropicChatModelConnectionTest {
         assertPrefillDecisionForModel("claude-opus-4-6", false);
     }
 
+    /**
+     * The models the provider documents as rejecting a non-default sampling parameter, in the order
+     * the connection lists them. Mirroring that order keeps the two lists comparable side by side,
+     * so a name added to one and not the other stands out.
+     */
+    private static Stream<String> samplingUnsupportedModels() {
+        return Stream.of(
+                "claude-opus-4-7",
+                "claude-opus-4-8",
+                "claude-opus-5",
+                "claude-sonnet-5",
+                "claude-fable-5",
+                "claude-mythos-5",
+                "claude-mythos-preview");
+    }
+
+    /**
+     * Names that accept a temperature. The two 4.6-generation names are the load-bearing ones: both
+     * reject a prefill, so deriving the sampling rule from the prefill list would strip a
+     * temperature the provider still accepts.
+     */
+    private static Stream<String> samplingSupportedModels() {
+        return Stream.of(
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-opus-4-5",
+                "claude-sonnet-4-5",
+                "claude-sonnet-4-20250514",
+                "claude-3-5-sonnet-latest",
+                "");
+    }
+
+    /**
+     * Builds a request for {@code model} carrying each supplied sampling parameter, so the caller
+     * can read back which of them survived. {@code temperature} is a top-level parameter while
+     * {@code top_p} and {@code top_k} travel in {@code additional_kwargs}, and a null argument
+     * leaves that parameter out of the request entirely.
+     */
+    private static MessageCreateParams samplingRequest(
+            String model, Double temperature, Double topP, Long topK) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        if (temperature != null) {
+            params.put("temperature", temperature);
+        }
+        Map<String, Object> additionalKwargs = new HashMap<>();
+        if (topP != null) {
+            additionalKwargs.put("top_p", topP);
+        }
+        if (topK != null) {
+            additionalKwargs.put("top_k", topK);
+        }
+        params.put("additional_kwargs", additionalKwargs);
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    /**
+     * Builds a request for {@code model} whose temperature arrives through {@code
+     * additional_kwargs}, the second route the parameter can reach the request body by.
+     */
+    private static MessageCreateParams kwargsTemperatureRequest(String model) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        params.put("additional_kwargs", Map.of("temperature", 0.5d));
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    /**
+     * Builds a request for {@code model} carrying a top-level temperature and a different one in
+     * {@code additional_kwargs}, the case where the two routes disagree about the value.
+     */
+    private static MessageCreateParams competingTemperatureRequest(String model) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        params.put("temperature", 0.1d);
+        params.put("additional_kwargs", Map.of("temperature", 0.5d));
+        return connection().buildRequest(userMessage(), List.of(), params, null).params;
+    }
+
+    /**
+     * A top-level temperature, an {@code additional_kwargs} map and the value the two resolve to.
+     * The map wins only when it holds a number, since only a number reaches the request by either
+     * route.
+     */
+    private static Stream<Arguments> temperatureResolutions() {
+        return Stream.of(
+                Arguments.of(0.1d, Map.of("temperature", 0.5d), 0.5d),
+                Arguments.of(0.1d, Map.of("top_p", 0.9d), 0.1d),
+                Arguments.of(0.1d, Map.of("temperature", "0.5"), 0.1d),
+                Arguments.of(null, Map.of("temperature", 0.5d), 0.5d),
+                Arguments.of(0.1d, null, 0.1d));
+    }
+
+    @ParameterizedTest
+    @MethodSource("samplingUnsupportedModels")
+    @DisplayName("every model documented as rejecting sampling parameters reports unsupported")
+    void testSamplingUnsupportedModelsReportUnsupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isFalse();
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @MethodSource("samplingSupportedModels")
+    @DisplayName("a model outside that list reports sampling supported")
+    void testSamplingSupportedModelsReportSupported(String model) {
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("temperature is dropped on a model that rejects sampling parameters")
+    void testTemperatureDroppedOnUnsupportedModel() {
+        assertThat(samplingRequest("claude-opus-4-7", 0.1d, null, null).temperature()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("top_p is dropped on a model that rejects sampling parameters")
+    void testTopPDroppedOnUnsupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-opus-4-7", null, 0.9d, null);
+
+        assertThat(params.topP()).isEmpty();
+        // An additional_kwargs key with no case of its own reaches the body as a raw property, so
+        // an empty typed field is not on its own proof the parameter was left off the request.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("top_p");
+    }
+
+    @Test
+    @DisplayName("top_k is dropped on a model that rejects sampling parameters")
+    void testTopKDroppedOnUnsupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-opus-4-7", null, null, 5L);
+
+        assertThat(params.topK()).isEmpty();
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("top_k");
+    }
+
+    @Test
+    @DisplayName("all three sampling parameters are sent on a model that accepts them")
+    void testSamplingParamsSentOnSupportedModel() {
+        MessageCreateParams params = samplingRequest("claude-sonnet-4-20250514", 0.1d, 0.9d, 5L);
+
+        assertThat(params.temperature()).contains(0.1d);
+        assertThat(params.topP()).contains(0.9d);
+        assertThat(params.topK()).contains(5L);
+    }
+
+    @Test
+    @DisplayName("temperature supplied through additional_kwargs is dropped on a rejecting model")
+    void testKwargsTemperatureDroppedOnUnsupportedModel() {
+        MessageCreateParams params = kwargsTemperatureRequest("claude-opus-4-7");
+
+        assertThat(params.temperature()).isEmpty();
+        // Without a case of its own the key falls to the default branch and reaches the body as a
+        // raw property, which serializes to the same "temperature" field the typed setter writes.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("temperature");
+    }
+
+    @Test
+    @DisplayName("temperature supplied through additional_kwargs is sent on an accepting model")
+    void testKwargsTemperatureSentOnSupportedModel() {
+        assertThat(kwargsTemperatureRequest("claude-sonnet-4-20250514").temperature())
+                .contains(0.5d);
+    }
+
+    @Test
+    @DisplayName("stop_sequences supplied through additional_kwargs reaches the typed field")
+    void testStopSequencesFromAdditionalKwargs() {
+        Map<String, Object> params = paramsWithModel("claude-sonnet-4-20250514", null);
+        params.put("additional_kwargs", Map.of("stop_sequences", List.of("STOP", "END")));
+
+        MessageCreateParams built =
+                connection().buildRequest(userMessage(), List.of(), params, null).params;
+
+        assertThat(built.stopSequences()).contains(List.of("STOP", "END"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("temperatureResolutions")
+    @DisplayName(
+            "additional_kwargs overrides the top-level temperature only when it holds a number")
+    void testEffectiveTemperature(Object topLevel, Map<String, Object> kwargs, Object expected) {
+        assertThat(AnthropicChatModelConnection.effectiveTemperature(topLevel, kwargs))
+                .isEqualTo(expected);
+    }
+
+    @Test
+    @DisplayName("the additional_kwargs temperature is the one an accepting model is sent")
+    void testCompetingTemperaturesResolveToKwargsOnSupportedModel() {
+        assertThat(competingTemperatureRequest("claude-sonnet-4-20250514").temperature())
+                .contains(0.5d);
+    }
+
+    @Test
+    @DisplayName("neither competing temperature reaches a model that rejects sampling parameters")
+    void testCompetingTemperaturesDroppedOnUnsupportedModel() {
+        // A rejecting name whose temperature no other test drives through buildRequest. The
+        // warning owed for a dropped parameter is tracked per model and parameter for the life of
+        // the JVM, so sharing a name would leave this test's meaning dependent on run order.
+        MessageCreateParams params = competingTemperatureRequest("claude-opus-4-8");
+
+        assertThat(params.temperature()).isEmpty();
+        // An ungated additional_kwargs value reaches the body as a raw property, which serializes
+        // to the same "temperature" field the typed setter writes, so the typed field being empty
+        // is not on its own proof the parameter was left off the request.
+        assertThat(params._additionalBodyProperties()).doesNotContainKey("temperature");
+        // One report is owed for the pair and the request spent it, so nothing is left to report.
+        // That the request above is what spent it holds only while no other test claims this
+        // model name and parameter first; one that did would satisfy this assertion for its own
+        // reason and leave nothing here for it to catch.
+        assertThat(
+                        AnthropicChatModelConnection.samplingWarning(
+                                "claude-opus-4-8", "temperature", 0.5d))
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName(
+            "a dropped sampling parameter owes one warning naming the model, parameter and value")
+    void testDroppedSamplingParamOwesOneWarningPerParameter() {
+        // A name no other test asks a warning for, since the bookkeeping behind it lives for the
+        // life of the JVM and a pair already reported would answer empty here.
+        String model = "claude-mythos-preview";
+
+        Optional<String> first =
+                AnthropicChatModelConnection.samplingWarning(model, "temperature", 0.1d);
+        Optional<String> repeat =
+                AnthropicChatModelConnection.samplingWarning(model, "temperature", 0.1d);
+        Optional<String> other = AnthropicChatModelConnection.samplingWarning(model, "top_p", 0.9d);
+
+        // The message has to identify which request parameter went missing and what it held,
+        // because that is the only trace the dropped value leaves.
+        assertThat(first).get(as(STRING)).contains(model, "temperature", "0.1");
+        // The repeat is silent, but a different parameter is a different fact about the request
+        // and owes a report of its own.
+        assertThat(repeat).isEmpty();
+        assertThat(other).get(as(STRING)).contains(model, "top_p", "0.9");
+    }
+
+    @Test
+    @DisplayName("a 4.6 model rejects the prefill while keeping its sampling parameters")
+    void testSamplingAndPrefillBoundariesDiffer() {
+        // The two rules draw different lines, and this model sits between them: the provider
+        // withdraws prefilling from 4.6 on but sampling parameters only from 4.7 on. Deriving the
+        // sampling rule from the prefill list would drop the temperature here, where the provider
+        // still accepts it.
+        assertThat(AnthropicChatModelConnection.supportsJsonPrefill("claude-sonnet-4-6")).isFalse();
+        assertThat(AnthropicChatModelConnection.supportsSamplingParams("claude-sonnet-4-6"))
+                .isTrue();
+        assertThat(samplingRequest("claude-sonnet-4-6", 0.1d, null, null).temperature())
+                .contains(0.1d);
+    }
+
     @Test
     @DisplayName("json_prefill is applied on a structured-output capable model that accepts it")
     void testPrefillAppliedOnStructuredOutputCapableModel() {
@@ -588,6 +889,79 @@ class AnthropicChatModelConnectionTest {
         assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-5")).isTrue();
 
         assertPrefillDecisionForModel("claude-sonnet-4-5", true);
+    }
+
+    /**
+     * A temperature value that records whether anything rendered it as text.
+     *
+     * <p>The report owed for a dropped sampling parameter is assembled with a {@code %s}
+     * conversion, so the value it names is whichever one had {@code toString()} called on it. A
+     * value that was never rendered was never reported. That is the only handle on the choice from
+     * outside the class: a model rejecting sampling parameters is sent neither candidate, so the
+     * request itself looks the same whichever one the report picked.
+     *
+     * <p>Rendering is the measurement, so observing one taints it. A breakpoint that displays this
+     * value, or a debug print of it, calls {@code toString()} and makes {@code wasRendered()}
+     * answer true regardless of what the code under test did.
+     */
+    private static final class RecordingTemperature extends Number {
+        private final double value;
+        private boolean rendered;
+
+        RecordingTemperature(double value) {
+            this.value = value;
+        }
+
+        boolean wasRendered() {
+            return rendered;
+        }
+
+        @Override
+        public String toString() {
+            rendered = true;
+            return Double.toString(value);
+        }
+
+        @Override
+        public int intValue() {
+            return (int) value;
+        }
+
+        @Override
+        public long longValue() {
+            return (long) value;
+        }
+
+        @Override
+        public float floatValue() {
+            return (float) value;
+        }
+
+        @Override
+        public double doubleValue() {
+            return value;
+        }
+    }
+
+    @Test
+    @DisplayName("a dropped temperature is reported as the additional_kwargs value it resolved to")
+    void testDroppedTemperatureIsReportedAsTheResolvedValue() {
+        // A rejecting name no other test builds a request for or asks a temperature report of.
+        // The report is owed once per model and parameter for the life of the JVM, so a pair
+        // claimed elsewhere first would leave nothing to render here and the first assertion
+        // below would fail: a collision surfaces as a failure, not as a test that still passes
+        // while pinning less.
+        RecordingTemperature topLevel = new RecordingTemperature(0.1d);
+        RecordingTemperature override = new RecordingTemperature(0.5d);
+        Map<String, Object> params = paramsWithModel("claude-mythos-5", null);
+        params.put("temperature", topLevel);
+        params.put("additional_kwargs", Map.of("temperature", override));
+
+        connection().buildRequest(userMessage(), List.of(), params, null);
+
+        assertThat(override.wasRendered()).isTrue();
+        // The overridden value would have named a setting the request was never going to carry.
+        assertThat(topLevel.wasRendered()).isFalse();
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */

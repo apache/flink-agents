@@ -42,7 +42,9 @@ import java.util.concurrent.TimeUnit;
  *
  * <p>Mirrors the Python {@code flink_agents.plan.tools.bash.bash_tool.BashTool}. The framework
  * (e.g. {@code ChatModelAction}) injects {@code allowed_commands} and {@code allowed_script_dirs}
- * at call time; the model only sees {@code command}, {@code timeout} and {@code cwd}.
+ * at call time; the model only sees {@code command}, {@code timeout} and {@code cwd}. File
+ * redirects are rejected except for file-descriptor duplication and closure, and assignments to
+ * execution-changing environment variables are rejected.
  */
 public class BashTool extends Tool {
 

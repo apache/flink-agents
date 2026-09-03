@@ -29,16 +29,16 @@ jobs:
     name: Code Style Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check License Header
         run: tools/check-license.sh
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: 3.12
       - name: Install uv
@@ -61,20 +61,61 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - name: Install bash 4+ (macOS)
+      - uses: actions/checkout@v7
+      - name: Install bash 4.1+ (macOS)
         if: runner.os == 'macOS'
         run: brew install bash
       - name: Run tools script tests
+        run: bash tools/test/run.sh
+
+  # install.sh and ut.sh both run on the bash macOS ships at /bin/bash for their
+  # own users: install.sh is documented as `curl ... | bash`, and ut.sh is
+  # invoked by path from the macOS jobs below. run.sh pins `bash` to the newer
+  # interpreter the harness itself needs, and that pin reaches the scripts under
+  # test as well, so this leg points them back at the one they ship against.
+  tools_script_tests_bash32:
+    name: tools script tests (macos-latest, subject on bash 3.2)
+    runs-on: macos-latest
+    # Declared once for the whole job so the check below and the run below read
+    # the same value. Setting it on the run step alone would let a misspelled
+    # key pass the check and then leave the suite spawning the subjects on the
+    # harness bash, which is the green-over-nothing outcome the check exists to
+    # prevent.
+    env:
+      FLINK_AGENTS_SUT_BASH: /bin/bash
+    steps:
+      - uses: actions/checkout@v4
+      # Only the subjects move; the harness keeps the version its own
+      # assertions need.
+      - name: Install bash 4.1+ for the harness
+        run: brew install bash
+      - name: Confirm the subject interpreter is the bash macOS ships
+        run: |
+          set -eu
+          echo "PATH bash: $(command -v bash)"
+          bash --version | head -1
+          : "${FLINK_AGENTS_SUT_BASH:?is not set, so run.sh would spawn the subjects on the harness bash and this job would cover nothing}"
+          echo "subject:   $FLINK_AGENTS_SUT_BASH"
+          "$FLINK_AGENTS_SUT_BASH" --version | head -1
+          major="$("$FLINK_AGENTS_SUT_BASH" -c 'printf %s "${BASH_VERSINFO[0]}"')"
+          if [ "$major" != "3" ]; then
+              echo "ERROR: $FLINK_AGENTS_SUT_BASH on this runner is bash ${major}.x," >&2
+              echo "not 3.x. This job exists to run the scripts under test on the" >&2
+              echo "bash that macOS ships. On a ${major}.x interpreter it repeats" >&2
+              echo "the default macOS job and covers nothing, so it fails here" >&2
+              echo "rather than report a green result it did not earn." >&2
+              exit 1
+          fi
+      - name: Run tools script tests with the subjects on the bash macOS ships
         run: bash tools/test/run.sh
 
   build_backend_tests:
     name: ut-build-backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install uv
@@ -100,14 +141,14 @@ jobs:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         java-version: ["11", "17", "21"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install uv
@@ -136,14 +177,14 @@ jobs:
         os: [ 'macos-latest', 'ubuntu-latest' ]
         python-version: [ '3.10', '3.11', '3.12' ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
@@ -181,14 +222,14 @@ jobs:
             python-version: '3.12'
             flink-version: "2.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
@@ -230,9 +271,9 @@ jobs:
             java-version: "17"
             flink-version: "2.3"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
@@ -242,35 +283,9 @@ jobs:
         run: bash tools/start_ollama_server.sh
       - name: Run Java IT
         env:
+          ACTION_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           LOG_LEVEL: INFO
         run: tools/ut.sh -j -e -f ${{ matrix.flink-version }}
-
-  elasticsearch_tests:
-    name: Elasticsearch vector-store tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Java
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-      - name: Install flink-agents Java
-        run: bash tools/build.sh -j
-      - name: Start Elasticsearch
-        run: |
-          docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
-          docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
-          timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
-      - name: Run Elasticsearch tests
-        env:
-          ES_HOST: http://localhost:9200
-        run: |
-          mvn -B --no-transfer-progress -pl integrations/vector-stores/elasticsearch -am -Dspotless.skip=true -Drat.skip=true -Dtest=ElasticsearchVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
-      - name: Stop Elasticsearch
-        if: always()
-        run: docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
 
   cross_language_tests:
     name: cross-language [${{ matrix.os }}] [python-${{ matrix.python-version}}] [java-${{ matrix.java-version}}]
@@ -285,7 +300,7 @@ jobs:
         python-version: [ '3.12' ]
         java-version: [ '21' ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Free disk space to ensure Elasticsearch has sufficient space for indexing operations
       # This step removes unnecessary pre-installed tools (~30GB) to prevent disk watermark warnings
       - name: Free disk space
@@ -298,12 +313,12 @@ jobs:
           large-packages: true
           docker-images: true
       - name: Install java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: ${{ matrix.java-version }}
           distribution: 'temurin'
       - name: Install python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install uv
@@ -319,13 +334,24 @@ jobs:
           docker compose -f tools/docker/elasticsearch/docker-compose.yml down -v
           docker compose -f tools/docker/elasticsearch/docker-compose.yml up -d
           timeout 180 bash -c 'until curl -fsS http://localhost:9200/_cluster/health; do sleep 5; done'
+      - name: Run Elasticsearch vector-store tests
+        env:
+          ES_HOST: http://localhost:9200
+        run: |
+          mvn -B --no-transfer-progress -pl integrations/vector-stores/elasticsearch -am -Dspotless.skip=true -Drat.skip=true -Dtest=ElasticsearchVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
       - name: Start Milvus
         run: |
           docker compose -f tools/docker/milvus/docker-compose.yml down -v
           docker compose -f tools/docker/milvus/docker-compose.yml up -d
           timeout 180 bash -c 'until curl -fsS http://localhost:9091/healthz; do sleep 5; done'
+      - name: Run Milvus vector-store tests
+        env:
+          MILVUS_URI: http://localhost:19530
+        run: |
+          mvn -B --no-transfer-progress -pl integrations/vector-stores/milvus -am -Dspotless.skip=true -Drat.skip=true -Dtest=MilvusVectorStoreTest -Dsurefire.failIfNoSpecifiedTests=false test
       - name: Run e2e tests
         env:
+          ACTION_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
           LOG_LEVEL: INFO
         run: |
           export ES_HOST="http://localhost:9200"

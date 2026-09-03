@@ -74,7 +74,7 @@ class SkillTestAgent(Agent):
             clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             api_key=API_KEY,
             api_base_url=BASE_URL,
-            request_timeout=300,
+            timeout=300,
         )
 
     @chat_model_setup
@@ -267,7 +267,7 @@ def test_react_agent_with_skills(tmp_path: Path) -> None:
                 clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
                 api_key=API_KEY,
                 api_base_url=BASE_URL,
-                request_timeout=300,
+                timeout=300,
             ),
         ).add_resource(
             "my_skill",

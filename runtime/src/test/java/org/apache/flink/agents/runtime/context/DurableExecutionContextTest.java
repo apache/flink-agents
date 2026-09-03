@@ -26,8 +26,16 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import javax.tools.JavaCompiler;
+import javax.tools.ToolProvider;
+
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -43,6 +51,20 @@ class DurableExecutionContextTest {
     private long testSequenceNumber;
     private Action mockAction;
     private Event mockEvent;
+
+    public static final class NoPublicStringConstructorException extends Exception {
+        public NoPublicStringConstructorException() {
+            super();
+        }
+
+        private NoPublicStringConstructorException(String message) {
+            super(message);
+        }
+
+        static NoPublicStringConstructorException withMessage(String message) {
+            return new NoPublicStringConstructorException(message);
+        }
+    }
 
     @BeforeEach
     void setUp() {
@@ -103,6 +125,19 @@ class DurableExecutionContextTest {
 
         assertNull(result);
         assertEquals(0, context.getCurrentCallIndex());
+    }
+
+    @Test
+    void testMatchNextOrClearSubsequentCallResultPendingTreatedAsMiss() {
+        actionState.addCallResult(CallResult.pending("funcA", "digestA"));
+
+        RunnerContextImpl.DurableExecutionContext context = createContext();
+
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+
+        assertNull(result);
+        assertEquals(0, context.getCurrentCallIndex());
+        assertTrue(actionState.getCallResults().get(0).isPending());
     }
 
     @Test
@@ -232,6 +267,24 @@ class DurableExecutionContextTest {
     }
 
     @Test
+    void testDurableExecutionExceptionPreservesTimeoutExceptionType() throws Exception {
+        java.util.concurrent.TimeoutException original =
+                new java.util.concurrent.TimeoutException("batch timed out");
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        ObjectMapper mapper = new ObjectMapper();
+        RunnerContextImpl.DurableExecutionException deserialized =
+                mapper.readValue(
+                        mapper.writeValueAsBytes(durableException),
+                        RunnerContextImpl.DurableExecutionException.class);
+
+        Exception recovered = deserialized.toException();
+        assertInstanceOf(java.util.concurrent.TimeoutException.class, recovered);
+        assertEquals("batch timed out", recovered.getMessage());
+    }
+
+    @Test
     void testDurableExecutionExceptionDeserialization() throws Exception {
         // Create and serialize exception
         IllegalArgumentException original = new IllegalArgumentException("Invalid argument: foo");
@@ -247,12 +300,8 @@ class DurableExecutionContextTest {
 
         // Convert back to exception and verify content
         Exception recovered = deserialized.toException();
-        assertTrue(
-                recovered.getMessage().contains("IllegalArgumentException"),
-                "Recovered exception should contain original class name");
-        assertTrue(
-                recovered.getMessage().contains("Invalid argument: foo"),
-                "Recovered exception should contain original message");
+        assertInstanceOf(IllegalArgumentException.class, recovered);
+        assertEquals("Invalid argument: foo", recovered.getMessage());
     }
 
     @Test
@@ -280,13 +329,9 @@ class DurableExecutionContextTest {
 
             // Verify round-trip
             Exception recovered = deserialized.toException();
-            assertTrue(
-                    recovered.getMessage().contains(original.getClass().getName()),
-                    "Recovered exception should contain class: " + original.getClass().getName());
+            assertInstanceOf(original.getClass(), recovered);
             if (original.getMessage() != null && !original.getMessage().isEmpty()) {
-                assertTrue(
-                        recovered.getMessage().contains(original.getMessage()),
-                        "Recovered exception should contain message: " + original.getMessage());
+                assertEquals(original.getMessage(), recovered.getMessage());
             }
         }
     }
@@ -306,6 +351,70 @@ class DurableExecutionContextTest {
                 mapper.readValue(serialized, RunnerContextImpl.DurableExecutionException.class);
 
         Exception recovered = deserialized.toException();
-        assertTrue(recovered.getMessage().contains("RuntimeException"));
+        assertInstanceOf(RuntimeException.class, recovered);
+        assertNull(recovered.getMessage());
+    }
+
+    @Test
+    void testDurableExecutionExceptionFallbackPreservesMessageWhenStringConstructorMissing()
+            throws Exception {
+        NoPublicStringConstructorException original =
+                NoPublicStringConstructorException.withMessage("durable failure");
+        RunnerContextImpl.DurableExecutionException durableException =
+                RunnerContextImpl.DurableExecutionException.fromException(original);
+
+        Exception recovered = durableException.toException();
+
+        assertInstanceOf(RuntimeException.class, recovered);
+        assertEquals(
+                NoPublicStringConstructorException.class.getName() + ": durable failure",
+                recovered.getMessage());
+    }
+
+    @Test
+    void testDurableExecutionExceptionUsesContextClassLoader(@TempDir Path tempDir)
+            throws Exception {
+        Path sourceRoot = tempDir.resolve("src");
+        Path classesDir = tempDir.resolve("classes");
+        Path packageDir = sourceRoot.resolve("usercode");
+        Files.createDirectories(packageDir);
+        Files.createDirectories(classesDir);
+
+        Path sourceFile = packageDir.resolve("TcclOnlyException.java");
+        Files.writeString(
+                sourceFile,
+                "package usercode;\n"
+                        + "public class TcclOnlyException extends Exception {\n"
+                        + "    public TcclOnlyException(String message) {\n"
+                        + "        super(message);\n"
+                        + "    }\n"
+                        + "}\n");
+
+        JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
+        assertNotNull(compiler, "JDK compiler is required for this test");
+        assertEquals(
+                0,
+                compiler.run(null, null, null, "-d", classesDir.toString(), sourceFile.toString()));
+
+        ClassLoader originalLoader = Thread.currentThread().getContextClassLoader();
+        try (URLClassLoader userCodeLoader =
+                new URLClassLoader(new URL[] {classesDir.toUri().toURL()}, null)) {
+            Thread.currentThread().setContextClassLoader(userCodeLoader);
+            assertThrows(
+                    ClassNotFoundException.class,
+                    () -> Class.forName("usercode.TcclOnlyException"));
+
+            RunnerContextImpl.DurableExecutionException durableException =
+                    new RunnerContextImpl.DurableExecutionException(
+                            "usercode.TcclOnlyException", "visible through TCCL");
+
+            Exception recovered = durableException.toException();
+
+            assertEquals("usercode.TcclOnlyException", recovered.getClass().getName());
+            assertSame(userCodeLoader, recovered.getClass().getClassLoader());
+            assertEquals("visible through TCCL", recovered.getMessage());
+        } finally {
+            Thread.currentThread().setContextClassLoader(originalLoader);
+        }
     }
 }

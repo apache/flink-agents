@@ -10,6 +10,10 @@ Linked issue: #xxx
 
 <!-- What is the purpose of this change? -->
 
+### Behavioral Semantics
+
+<!-- For a non-trivial code change whose implementation is largely AI-assisted: interaction decisions, behavioral contracts, and failure behavior. See `contribution-guides/ai-assisted-pr.md`. Remove this heading and this comment otherwise. -->
+
 ### Tests
 
 <!-- How is this change verified? -->

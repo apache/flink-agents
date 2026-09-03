@@ -109,7 +109,7 @@ create_fake_executable() {
     run wait_for_job_healthy "job-id" "example" 5 2
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"reached FINISHED status"* ]]
+    [[ "$output" == *"reached FINISHED status"* ]] || false
 }
 
 @test "job health check accepts a continuously RUNNING job" {
@@ -118,7 +118,7 @@ create_fake_executable() {
     run wait_for_job_healthy "job-id" "example" 5 2
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"remained RUNNING for 2s"* ]]
+    [[ "$output" == *"remained RUNNING for 2s"* ]] || false
 }
 
 @test "job health check rejects a failing job" {
@@ -130,7 +130,7 @@ create_fake_executable() {
     run wait_for_job_healthy "job-id" "example" 5 2
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"entered unexpected state: FAILING"* ]]
+    [[ "$output" == *"entered unexpected state: FAILING"* ]] || false
 }
 
 @test "job health check resets the stability period after a restart" {
@@ -139,7 +139,7 @@ create_fake_executable() {
     run wait_for_job_healthy "job-id" "example" 4 2
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"did not become stably RUNNING or FINISHED"* ]]
+    [[ "$output" == *"did not become stably RUNNING or FINISHED"* ]] || false
 }
 
 @test "submitted job is marked failed when health verification fails" {
@@ -213,7 +213,7 @@ create_fake_executable() {
     run cancel_job_after_check "job-id" "example"
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"no longer occupies the cluster slot"* ]]
+    [[ "$output" == *"no longer occupies the cluster slot"* ]] || false
 }
 
 @test "slow slot cleanup restarts the standalone cluster" {
@@ -247,13 +247,13 @@ create_fake_executable() {
     run cancel_job_after_check "job-id" "example"
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"failed to cancel job job-id"* ]]
+    [[ "$output" == *"failed to cancel job job-id"* ]] || false
 }
 
 @test "CI chat model aliases cover every hardcoded quickstart model" {
-    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3:1.7b "* ]]
-    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3:8b "* ]]
-    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3.5:9b "* ]]
+    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3:1.7b "* ]] || false
+    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3:8b "* ]] || false
+    [[ " ${OLLAMA_CHAT_MODEL_ALIASES[*]} " == *" qwen3.5:9b "* ]] || false
 }
 
 @test "Java submission keeps the attached client alive during validation" {
@@ -310,7 +310,7 @@ create_fake_executable() {
     run main
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Java example discovery failed"* ]]
+    [[ "$output" == *"Java example discovery failed"* ]] || false
 }
 
 @test "main propagates Python quickstart discovery failure" {
@@ -322,7 +322,7 @@ create_fake_executable() {
     run main
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Python quickstart example discovery failed"* ]]
+    [[ "$output" == *"Python quickstart example discovery failed"* ]] || false
 }
 
 @test "main propagates RAG example discovery failure" {
@@ -334,7 +334,7 @@ create_fake_executable() {
     run main
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Python RAG example discovery failed"* ]]
+    [[ "$output" == *"Python RAG example discovery failed"* ]] || false
 }
 
 @test "main propagates RAG knowledge base setup failure" {
@@ -346,7 +346,7 @@ create_fake_executable() {
     run main
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"Cannot run Python RAG examples because setup failed"* ]]
+    [[ "$output" == *"Cannot run Python RAG examples because setup failed"* ]] || false
 }
 
 @test "main skips RAG setup when no RAG examples exist" {
@@ -461,6 +461,6 @@ create_fake_executable() {
 
     [ "$TEST_VENV_ACTIVATED" -eq 1 ]
     [ "$PYFLINK_CLIENT_EXECUTABLE" = "$VENV_DIR/bin/python" ]
-    [[ "$(cat "$PYTHON_CALLS")" == *"-m pip install --quiet"* ]]
-    [[ "$(cat "$PYTHON_CALLS")" == *"apache-flink==$FLINK_VERSION"* ]]
+    [[ "$(cat "$PYTHON_CALLS")" == *"-m pip install --quiet"* ]] || false
+    [[ "$(cat "$PYTHON_CALLS")" == *"apache-flink==$FLINK_VERSION"* ]] || false
 }

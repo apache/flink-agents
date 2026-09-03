@@ -17,17 +17,40 @@
  */
 package org.apache.flink.agents.runtime.python.utils;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.types.Row;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import pemja.core.PythonInterpreter;
+import pemja.core.object.PyObject;
+
+import java.lang.reflect.Field;
+import java.util.HashMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.clearInvocations;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/** Tests for {@link PythonActionExecutor}. */
 class PythonActionExecutorTest {
+
+    private static final String CREATE_ASYNC_THREAD_POOL =
+            "flink_runner_context.create_async_thread_pool";
+    private static final String CLOSE_ASYNC_THREAD_POOL =
+            "flink_runner_context.close_async_thread_pool";
+    private static final String CREATE_FLINK_RUNNER_CONTEXT =
+            "flink_runner_context.create_flink_runner_context";
+    private static final String CLOSE_FLINK_RUNNER_CONTEXT =
+            "flink_runner_context.close_flink_runner_context";
 
     @Test
     void resolvesPickledPythonKeyTextFromPyFlinkKeyRow() throws Exception {
@@ -87,8 +110,189 @@ class PythonActionExecutorTest {
                 .hasMessage("bad pickle");
     }
 
+    /**
+     * A failing thread-pool shutdown must not skip the runner-context cleanup. That cleanup
+     * releases the Python context's long-term memory and resource cache, and {@code
+     * PythonBridgeManager} closes the interpreter immediately behind this call, so a skipped
+     * cleanup never runs at all.
+     */
+    @Test
+    void closeCleansRunnerContextWhenThreadPoolShutdownFails() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(new RuntimeException("thread pool shutdown failed"));
+
+        assertThatThrownBy(executor::close)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("thread pool shutdown failed")
+                // A lone failure arrives with nothing attached to it.
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
+
+        verify(interpreter)
+                .invoke("flink_runner_context.close_flink_runner_context", runnerContext);
+        // The handle is released even on the failing path, so a repeated close cannot double-free.
+        assertThat(executor.getPythonRunnerContext()).isNull();
+    }
+
+    /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
+    @Test
+    void closeReportsFirstFailureWithLaterOneSuppressed() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(new RuntimeException("thread pool shutdown failed"));
+        when(interpreter.invoke("flink_runner_context.close_flink_runner_context", runnerContext))
+                .thenThrow(new RuntimeException("runner context cleanup failed"));
+
+        assertThatThrownBy(executor::close)
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("thread pool shutdown failed")
+                .satisfies(
+                        thrown ->
+                                assertThat(thrown.getSuppressed())
+                                        .extracting(Throwable::getMessage)
+                                        .containsExactly("runner context cleanup failed"));
+    }
+
+    /**
+     * Pins the handler to {@code Throwable}: a non-{@code Exception} failure from the thread-pool
+     * shutdown must still release the runner context, and must reach the caller unwrapped.
+     */
+    @Test
+    void closeCleansRunnerContextWhenThreadPoolShutdownThrowsError() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonActionExecutor executor = newExecutor(interpreter);
+        PyObject threadPool = mock(PyObject.class);
+        PyObject runnerContext = mock(PyObject.class);
+        setField(executor, "pythonAsyncThreadPool", threadPool);
+        setField(executor, "pythonRunnerContext", runnerContext);
+        OutOfMemoryError failure = new OutOfMemoryError("thread pool shutdown failed");
+        when(interpreter.invoke("flink_runner_context.close_async_thread_pool", threadPool))
+                .thenThrow(failure);
+
+        assertThatThrownBy(executor::close).isSameAs(failure);
+
+        verify(interpreter)
+                .invoke("flink_runner_context.close_flink_runner_context", runnerContext);
+    }
+
+    private static void setField(PythonActionExecutor executor, String name, Object value)
+            throws Exception {
+        Field field = PythonActionExecutor.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(executor, value);
+    }
+
+    @Test
+    void releasesPythonObjectsAfterLogicalCleanup() throws Exception {
+        TestFixture fixture = createOpenedExecutor();
+        clearInvocations(fixture.interpreter, fixture.asyncThreadPool, fixture.runnerContextObject);
+
+        fixture.executor.close();
+
+        InOrder closeOrder =
+                inOrder(fixture.interpreter, fixture.asyncThreadPool, fixture.runnerContextObject);
+        closeOrder
+                .verify(fixture.interpreter)
+                .invoke(CLOSE_ASYNC_THREAD_POOL, fixture.asyncThreadPool);
+        closeOrder.verify(fixture.asyncThreadPool).close();
+        closeOrder
+                .verify(fixture.interpreter)
+                .invoke(CLOSE_FLINK_RUNNER_CONTEXT, fixture.runnerContextObject);
+        closeOrder.verify(fixture.runnerContextObject).close();
+    }
+
+    @Test
+    void releasesBothPythonObjectsWhenLogicalCleanupFails() throws Exception {
+        TestFixture fixture = createOpenedExecutor();
+        RuntimeException asyncFailure = new RuntimeException("async cleanup failed");
+        RuntimeException contextFailure = new RuntimeException("context cleanup failed");
+        doThrow(asyncFailure)
+                .when(fixture.interpreter)
+                .invoke(CLOSE_ASYNC_THREAD_POOL, fixture.asyncThreadPool);
+        doThrow(contextFailure)
+                .when(fixture.interpreter)
+                .invoke(CLOSE_FLINK_RUNNER_CONTEXT, fixture.runnerContextObject);
+
+        assertThatThrownBy(fixture.executor::close)
+                .isSameAs(asyncFailure)
+                .hasSuppressedException(contextFailure);
+        InOrder closeOrder =
+                inOrder(fixture.interpreter, fixture.asyncThreadPool, fixture.runnerContextObject);
+        closeOrder
+                .verify(fixture.interpreter)
+                .invoke(CLOSE_ASYNC_THREAD_POOL, fixture.asyncThreadPool);
+        closeOrder.verify(fixture.asyncThreadPool).close();
+        closeOrder
+                .verify(fixture.interpreter)
+                .invoke(CLOSE_FLINK_RUNNER_CONTEXT, fixture.runnerContextObject);
+        closeOrder.verify(fixture.runnerContextObject).close();
+
+        clearInvocations(fixture.interpreter, fixture.asyncThreadPool, fixture.runnerContextObject);
+        fixture.executor.close();
+        verifyNoInteractions(
+                fixture.interpreter, fixture.asyncThreadPool, fixture.runnerContextObject);
+    }
+
     private static PythonActionExecutor newExecutor(PythonInterpreter interpreter)
             throws Exception {
         return new PythonActionExecutor(interpreter, null, null, null, "test-job");
+    }
+
+    private static TestFixture createOpenedExecutor() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
+        JavaResourceAdapter resourceAdapter = mock(JavaResourceAdapter.class);
+        PyObject asyncThreadPool = mock(PyObject.class);
+        PyObject runnerContextObject = mock(PyObject.class);
+        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
+        String planJson = new ObjectMapper().writeValueAsString(plan);
+        String jobIdentifier = "job-1";
+
+        when(interpreter.invoke(
+                        CREATE_ASYNC_THREAD_POOL,
+                        plan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS)))
+                .thenReturn(asyncThreadPool);
+        when(interpreter.invoke(
+                        CREATE_FLINK_RUNNER_CONTEXT,
+                        runnerContext,
+                        planJson,
+                        asyncThreadPool,
+                        resourceAdapter,
+                        jobIdentifier))
+                .thenReturn(runnerContextObject);
+
+        PythonActionExecutor executor =
+                new PythonActionExecutor(
+                        interpreter, plan, resourceAdapter, runnerContext, jobIdentifier);
+        executor.open();
+        return new TestFixture(interpreter, asyncThreadPool, runnerContextObject, executor);
+    }
+
+    private static final class TestFixture {
+        private final PythonInterpreter interpreter;
+        private final PyObject asyncThreadPool;
+        private final PyObject runnerContextObject;
+        private final PythonActionExecutor executor;
+
+        private TestFixture(
+                PythonInterpreter interpreter,
+                PyObject asyncThreadPool,
+                PyObject runnerContextObject,
+                PythonActionExecutor executor) {
+            this.interpreter = interpreter;
+            this.asyncThreadPool = asyncThreadPool;
+            this.runnerContextObject = runnerContextObject;
+            this.executor = executor;
+        }
     }
 }

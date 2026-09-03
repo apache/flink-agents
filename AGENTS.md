@@ -27,6 +27,10 @@ Java tests use JUnit 5 with AssertJ and Mockito. Python tests use pytest; integr
 
 Use concise subjects with bracketed components, matching existing history, such as `[python] Admit bytes in memory values` or `[api][java] Add event constants`. For nontrivial behavior changes, open or link a GitHub issue before the PR. PR titles should include relevant components like `[api]`, `[runtime]`, `[java]`, `[python]`, or `[hotfix]`; describe the change, test evidence, and any compatibility impact. Answer the PR template's generative-AI question, and when such tooling was used, include a `Generated-by: <tool name and version> (<model name and version>)` line, for example `Generated-by: Claude Code 2.1.226 (Claude Opus 4.6)`, in the commit message so it reaches Git history. Repeat the same line in the PR description for reviewer visibility, per the [ASF generative tooling guidance](https://www.apache.org/legal/generative-tooling.html).
 
+## How to Contribute
+
+Start from `.github/CONTRIBUTING.md` for general contribution guidance, covering bug reports, feature proposals, code contribution, and design discussions. Before opening a pull request whose implementation is largely AI-assisted, also read `contribution-guides/ai-assisted-pr.md`. It defines the Implementation Description such a change owes its reviewer: runtime flow, key decisions, interaction decisions, behavioral contracts, failure behavior, compatibility impact, and a contracts-to-tests table, folded into the sections of `.github/PULL_REQUEST_TEMPLATE.md`. It does not apply to a change whose diff is already prose, such as documentation, comments, or site content.
+
 ## Code Review
 
 Before reviewing a PR, read `code_review.md`. For GitHub PRs, read existing unresolved human review threads and include relevant already-raised issues in the local review conclusion, marked as human-raised. Apply its passes for runtime call paths, Java/Python parity, cross-language bridges, root-cause removal, and targeted verification.

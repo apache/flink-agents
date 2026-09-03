@@ -30,10 +30,14 @@ import pemja.core.object.PyObject;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -48,8 +52,12 @@ public class Mem0LongTermMemoryTest {
     @BeforeEach
     void setUp() {
         mocks = MockitoAnnotations.openMocks(this);
-        ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0);
-        when(mockAdapter.invoke(eq("python_java_utils.to_python_memory_set"), any()))
+        ltm = new Mem0LongTermMemory(mockAdapter, mockPyMem0, () -> {});
+        // Operations refuse an absent or empty key, so every test that does not manage its
+        // own context runs under the key an action would have switched to.
+        ltm.switchContext("a-key", "an-action", false);
+        when(mockAdapter.invoke(
+                        eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any()))
                 .thenReturn(mockPyMemorySet);
     }
 
@@ -183,10 +191,11 @@ public class Mem0LongTermMemoryTest {
     }
 
     @Test
-    void testSwitchContextAndCloseForward() {
+    void testSwitchContextAndCloseForward() throws Exception {
         ltm.configureObservation(true, false, true);
         ltm.switchContext("k1", "observation-1", true);
         ltm.drainObservationRecordsJson("k1", "observation-1");
+        ltm.close();
         ltm.close();
 
         verify(mockAdapter)
@@ -219,5 +228,127 @@ public class Mem0LongTermMemoryTest {
                         eq("drain_ltm_observation_records"),
                         eq(Map.of("key", "k1", "observation_id", "observation-1")));
         verify(mockAdapter).callMethod(eq(mockPyMem0), eq("close"), eq(Map.of()));
+        verify(mockPyMem0).close();
+    }
+
+    @Test
+    void testCloseReleasesPythonObjectWhenLogicalCleanupFails() throws Exception {
+        RuntimeException failure = new RuntimeException("logical close failed");
+        doThrow(failure).when(mockAdapter).callMethod(mockPyMem0, "close", Map.of());
+
+        assertThatThrownBy(ltm::close).isSameAs(failure);
+        ltm.close();
+
+        verify(mockAdapter).callMethod(mockPyMem0, "close", Map.of());
+        verify(mockPyMem0).close();
+    }
+
+    @Test
+    void testUnboundSetIsRefusedRatherThanWidened() {
+        MemorySet unbound = new MemorySet("notes");
+        unbound.setLtm(ltm);
+
+        assertThatThrownBy(() -> ltm.add(unbound, List.of("hello"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not bound to a partition key");
+        verify(mockAdapter, never())
+                .invoke(eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any());
+    }
+
+    @Test
+    void testEmptyKeyedSetIsRefusedRatherThanWidened() {
+        MemorySet emptyKeyed = new MemorySet("notes");
+        emptyKeyed.setLtm(ltm);
+        emptyKeyed.setActionContext("", "an-action", false);
+
+        assertThatThrownBy(() -> ltm.add(emptyKeyed, List.of("hello"), null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        verify(mockAdapter, never())
+                .invoke(eq("python_java_utils.to_python_memory_set"), any(), any(), any(), any());
+    }
+
+    @Test
+    void testMemorySetManagementIsRefusedForAnEmptyKey() {
+        ltm.switchContext("", "an-action", false);
+
+        assertThatThrownBy(() -> ltm.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        assertThatThrownBy(() -> ltm.deleteMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("empty partition key");
+        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("delete_memory_set"), any());
+    }
+
+    @Test
+    void testMemorySetIsRefusedBeforeAnyContextSwitch() {
+        Mem0LongTermMemory fresh = new Mem0LongTermMemory(mockAdapter, mockPyMem0, () -> {});
+
+        assertThatThrownBy(() -> fresh.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("no partition key in scope");
+    }
+
+    @Test
+    void testForwardedSetCarriesTheContextItWasObtainedIn() throws Exception {
+        ltm.switchContext("owner", "owner-action", false);
+        MemorySet ms = ltm.getMemorySet("notes");
+
+        ltm.switchContext("other", "other-action", true);
+        ltm.add(ms, List.of("hello"), null);
+
+        verify(mockAdapter)
+                .invoke(
+                        eq("python_java_utils.to_python_memory_set"),
+                        eq("notes"),
+                        eq("owner"),
+                        eq("owner-action"),
+                        eq(false));
+    }
+
+    @Test
+    void testMemorySetManagementIsRefusedOffTheMailboxThread() {
+        Mem0LongTermMemory guarded =
+                new Mem0LongTermMemory(
+                        mockAdapter,
+                        mockPyMem0,
+                        () -> {
+                            throw new IllegalStateException(
+                                    "Expected to be running on the task mailbox thread, but was"
+                                            + " not.");
+                        });
+        // No context switch: with no key in scope, only a checker that runs before the key
+        // is read can produce the mailbox-thread message. That pins the intended order,
+        // because off the mailbox thread the key read is itself unreliable.
+
+        assertThatThrownBy(() -> guarded.getMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("task mailbox thread");
+        assertThatThrownBy(() -> guarded.deleteMemorySet("notes"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("task mailbox thread");
+        verify(mockAdapter, never()).callMethod(eq(mockPyMem0), eq("delete_memory_set"), any());
+    }
+
+    @Test
+    void testSetScopedOperationsRunWithoutTheMailboxThread() {
+        // A set carries the context it was obtained under, so operations on it are safe to
+        // forward to a worker thread. Gating them would break durable async execution.
+        AtomicInteger checkerCalls = new AtomicInteger();
+        Mem0LongTermMemory counting =
+                new Mem0LongTermMemory(mockAdapter, mockPyMem0, checkerCalls::incrementAndGet);
+        counting.switchContext("a-key", "an-action", false);
+        MemorySet ms = counting.getMemorySet("notes");
+        // Guards the assertion below from passing vacuously on a checker that never runs.
+        assertThat(checkerCalls.get()).isOne();
+        checkerCalls.set(0);
+
+        counting.add(ms, List.of("hello"), null);
+        counting.get(ms, null, null, null);
+        counting.delete(ms, null);
+        counting.search(ms, "query", 5, null, Map.of());
+
+        assertThat(checkerCalls.get()).isZero();
     }
 }

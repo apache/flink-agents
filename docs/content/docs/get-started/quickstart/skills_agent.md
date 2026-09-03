@@ -191,6 +191,7 @@ public class MathAgent extends Agent {
 - `@skills`/`@Skills` declares a skill source. `Skills.from_package` (Python) loads skills bundled inside an installed package by `(package, resource)`; `Skills.fromClasspath` (Java) loads them from a classpath resource packaged in the jar.
 - A declared skill is exposed to a model only when the model lists it in `skills`. The `load_skill` and `bash` tools are then added automatically.
 - `allowed_commands` whitelists the shell commands the `bash` tool may run — keep it as narrow as the skill requires.
+- The built-in `bash` tool rejects file redirects and execution-changing environment assignments. File-descriptor duplication and closure remain supported; see the [Skills]({{< ref "docs/development/skills" >}}) documentation for the complete security contract.
 
 ### Integrate the Agent with Flink
 

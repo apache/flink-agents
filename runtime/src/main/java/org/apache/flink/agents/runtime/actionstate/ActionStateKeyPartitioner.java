@@ -40,15 +40,16 @@ public class ActionStateKeyPartitioner implements Partitioner {
         if (!(key instanceof String)) {
             throw new IllegalArgumentException("Key must be a String");
         }
-        String[] keyParts = ((String) key).split("_");
-        if (keyParts.length < 4) {
+
+        String businessKey = ActionStateUtil.businessKeyOf((String) key);
+        if (businessKey == null) {
             throw new IllegalArgumentException("Key format is invalid");
         }
+        if (businessKey.isEmpty()) {
+            throw new IllegalArgumentException("Business key part of the key cannot be empty");
+        }
 
-        // Preserve the existing first-segment partitioning for compatibility with records already
-        // in the topic. Keys beginning with '_' previously could not be written; accepting the
-        // empty first segment makes them usable without moving any existing records.
-        return MathUtils.murmurHash(keyParts[0].hashCode()) % numPartitions;
+        return MathUtils.murmurHash(businessKey.hashCode()) % numPartitions;
     }
 
     @Override

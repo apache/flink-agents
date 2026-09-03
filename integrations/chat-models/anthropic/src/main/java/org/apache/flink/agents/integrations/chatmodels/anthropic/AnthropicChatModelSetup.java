@@ -37,7 +37,7 @@ import java.util.Optional;
  *
  * <ul>
  *   <li><b>connection</b> (required): Name of the AnthropicChatModelConnection resource
- *   <li><b>model</b> (optional): Model name (default: claude-sonnet-4-20250514)
+ *   <li><b>model</b> (optional): Model name (default: claude-sonnet-4-6)
  *   <li><b>temperature</b> (optional): Sampling temperature 0.0-1.0 (default: 0.1)
  *   <li><b>max_tokens</b> (optional): Maximum tokens in response (default: 1024)
  *   <li><b>json_prefill</b> (optional): When true, prefills assistant response with "{" to enforce
@@ -48,8 +48,9 @@ import java.util.Optional;
  *   <li><b>strict_tools</b> (optional): When true, tool calls adhere strictly to the JSON schema.
  *       (default: false)
  *   <li><b>tools</b> (optional): List of tool names available for the model to use
- *   <li><b>additional_kwargs</b> (optional): Additional parameters (top_k, top_p, stop_sequences).
- *       An output_config supplied here takes precedence over one derived from an output schema.
+ *   <li><b>additional_kwargs</b> (optional): Additional parameters (temperature, top_k, top_p,
+ *       stop_sequences). A temperature supplied here takes precedence over the top-level one, and
+ *       an output_config supplied here takes precedence over one derived from an output schema.
  * </ul>
  *
  * <p>Example usage:
@@ -60,7 +61,7 @@ import java.util.Optional;
  *   public static ResourceDesc anthropic() {
  *     return ResourceDescriptor.Builder.newBuilder(AnthropicChatModelSetup.class.getName())
  *             .addInitialArgument("connection", "myAnthropicConnection")
- *             .addInitialArgument("model", "claude-sonnet-4-20250514")
+ *             .addInitialArgument("model", "claude-sonnet-4-6")
  *             .addInitialArgument("temperature", 0.3d)
  *             .addInitialArgument("max_tokens", 2048)
  *             .addInitialArgument("strict_tools", true)
@@ -75,7 +76,7 @@ import java.util.Optional;
  */
 public class AnthropicChatModelSetup extends BaseChatModelSetup {
 
-    private static final String DEFAULT_MODEL = "claude-sonnet-4-20250514";
+    private static final String DEFAULT_MODEL = "claude-sonnet-4-6";
     private static final double DEFAULT_TEMPERATURE = 0.1d;
     private static final long DEFAULT_MAX_TOKENS = 1024L;
     private static final boolean DEFAULT_JSON_PREFILL = false;

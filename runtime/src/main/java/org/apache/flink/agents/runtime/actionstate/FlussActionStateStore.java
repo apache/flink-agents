@@ -51,6 +51,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.IntPredicate;
 import java.util.function.LongPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_DATABASE;
@@ -105,12 +106,20 @@ public class FlussActionStateStore implements ActionStateStore {
     /** In-memory cache for O(1) state lookups; rebuilt from Fluss log on recovery. */
     private final Map<String, ActionState> actionStates;
 
+    // When set, only records whose key-group is accepted by this predicate are kept in the
+    // in-memory cache during rebuildState; null means retain all keys (default).
+    private IntPredicate ownershipFilter;
+
+    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
+    private final int maxParallelism;
+
     @VisibleForTesting
     FlussActionStateStore(
             Map<String, ActionState> actionStates,
             Connection connection,
             Table table,
-            AppendWriter writer) {
+            AppendWriter writer,
+            int maxParallelism) {
         this.agentConfiguration = null;
         this.databaseName = null;
         this.tableName = null;
@@ -119,9 +128,16 @@ public class FlussActionStateStore implements ActionStateStore {
         this.connection = connection;
         this.table = table;
         this.writer = writer;
+        this.maxParallelism = maxParallelism;
     }
 
-    public FlussActionStateStore(AgentConfiguration agentConfiguration) {
+    public FlussActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
+        Preconditions.checkArgument(
+                maxParallelism > 0,
+                "maxParallelism must be positive but was %s; it must be set to the operator's max"
+                        + " parallelism so key-groups match Flink's key-group assignment.",
+                maxParallelism);
+        this.maxParallelism = maxParallelism;
         this.agentConfiguration = agentConfiguration;
         this.databaseName = agentConfiguration.get(FLUSS_ACTION_STATE_DATABASE);
         this.tableName =
@@ -193,7 +209,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
         byte[] payload = ActionStateSerde.serialize(state);
 
         GenericRow row =
@@ -215,13 +231,12 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event);
-        String keyStr = key.toString();
+        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
 
-        boolean hasDivergence = checkDivergence(keyStr, seqNum);
+        boolean hasDivergence = checkDivergence(key, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
-            removeStateEntries(keyStr, stateSeqNum -> stateSeqNum > seqNum);
+            removeStateEntries(key, stateSeqNum -> stateSeqNum > seqNum);
         }
 
         ActionState state = actionStates.get(stateKey);
@@ -229,50 +244,24 @@ public class FlussActionStateStore implements ActionStateStore {
         return state;
     }
 
-    private boolean checkDivergence(String key, long seqNum) {
+    private boolean checkDivergence(Object key, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> k.startsWith(key + "_" + seqNum + "_"))
-                        .filter(
-                                stateKey -> {
-                                    try {
-                                        List<String> parts = ActionStateUtil.parseKey(stateKey);
-                                        return parts.get(0).equals(key)
-                                                && Long.parseLong(parts.get(1)) == seqNum;
-                                    } catch (IllegalArgumentException ignored) {
-                                        return false;
-                                    }
-                                })
+                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
                         .count()
                 > 1;
     }
 
     /**
-     * Removes cached state entries belonging to {@code key} whose parsed sequence number satisfies
-     * {@code seqNumFilter}.
+     * Removes cached state entries whose business-key segment equals {@code key} and whose parsed
+     * sequence number satisfies {@code seqNumFilter}.
      */
-    private void removeStateEntries(String key, LongPredicate seqNumFilter) {
-        String keyPrefix = key + "_";
+    private void removeStateEntries(Object key, LongPredicate seqNumFilter) {
         actionStates
-                .entrySet()
+                .keySet()
                 .removeIf(
-                        entry -> {
-                            if (!entry.getKey().startsWith(keyPrefix)) {
-                                return false;
-                            }
-                            try {
-                                List<String> parts = ActionStateUtil.parseKey(entry.getKey());
-                                if (!parts.get(0).equals(key)) {
-                                    return false;
-                                }
-                                long stateSeqNum = Long.parseLong(parts.get(1));
-                                return seqNumFilter.test(stateSeqNum);
-                            } catch (Exception ignored) {
-                                LOG.debug(
-                                        "Retaining unparseable state key during cleanup: {}",
-                                        entry.getKey());
-                            }
-                            return false;
-                        });
+                        cachedKey ->
+                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                                        cachedKey, key, seqNumFilter));
     }
 
     /**
@@ -455,11 +444,19 @@ public class FlussActionStateStore implements ActionStateStore {
             }
             InternalRow row = record.getRow();
             String stateKey = row.getString(COL_STATE_KEY).toString();
+            if (!ActionStateUtil.isKeyRetained(ownershipFilter, stateKey)) {
+                continue;
+            }
             byte[] payload = row.getBytes(COL_STATE_PAYLOAD);
             ActionState state = ActionStateSerde.deserialize(payload);
             actionStates.put(stateKey, state);
         }
         return lastSeenOffset;
+    }
+
+    @Override
+    public void setOwnershipFilter(IntPredicate ownershipFilter) {
+        this.ownershipFilter = ownershipFilter;
     }
 
     private Map<Integer, Long> getBucketEndOffsets() {
@@ -500,7 +497,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning in-memory state for key: {} up to seqNum: {}", key, seqNum);
-        removeStateEntries(key.toString(), stateSeqNum -> stateSeqNum <= seqNum);
+        removeStateEntries(key, stateSeqNum -> stateSeqNum <= seqNum);
     }
 
     @Override

@@ -38,11 +38,19 @@ cleanup_tmpfiles() {
         rm -rf "$f" 2>/dev/null || true
     done
 }
-trap cleanup_tmpfiles EXIT
-# Some interactive read combinations (notably `read -e` under stdin redirection)
-# can swallow SIGINT, leaving the user pressing Ctrl+C with no effect. Install
-# an explicit INT trap so Ctrl+C always lands.
-trap 'die_cancelled' INT
+# Traps belong to a run, not to a source. The test suite and the e2e scripts
+# source this file under FLINK_AGENTS_INSTALL_SH_NO_RUN=1 to call individual
+# functions, and a top-level `trap` replaces the handlers whoever sourced us
+# already installed: bats in particular reports a failing or skipped result from
+# inside its own EXIT trap, so displacing it makes that result vanish from the
+# output.
+if [[ "${FLINK_AGENTS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    trap cleanup_tmpfiles EXIT
+    # Some interactive read combinations (notably `read -e` under stdin
+    # redirection) can swallow SIGINT, leaving the user pressing Ctrl+C with no
+    # effect. Install an explicit INT trap so Ctrl+C always lands.
+    trap 'die_cancelled' INT
+fi
 
 mktempfile() {
     local f
@@ -379,7 +387,10 @@ on_error() {
     } >&2
     exit "$rc"
 }
-trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+# Armed only for a run, for the reason given at the EXIT and INT traps above.
+if [[ "${FLINK_AGENTS_INSTALL_SH_NO_RUN:-0}" != "1" ]]; then
+    trap 'on_error $? $LINENO "$BASH_COMMAND"' ERR
+fi
 
 INSTALL_STAGE_TOTAL=5
 INSTALL_STAGE_CURRENT=0
@@ -1022,9 +1033,20 @@ reconcile_plan_after_edit() {
 # Quote a value for safe re-sourcing by the parent shell via single-quoted
 # assignment. Any embedded single quotes are escaped by closing/reopening
 # the quoted string.
+#
+# Implementation note: the escape is supplied through a variable rather than
+# written inline. Written inline as ${v//\'/\'\\\'\'}, bash 3.2 (macOS
+# /bin/bash) emits 'it\'\\'\'s' where the intended output is 'it'\''s'. The
+# 3.2 form is not valid shell, so sourcing the dumped state file fails with
+# "unexpected EOF while looking for matching `'" and the value is lost.
+# Held in escaped_quote the escape reaches the output untouched: 3.2.57 and
+# 5.3.15 emit identical bytes. Keep escaped_quote at a single backslash;
+# with two, they stop matching.
+# tools/test/unit/edit_plan_quote.bats pins this under a real bash 3.x.
 edit_plan_quote() {
     local v="$1"
-    printf "'%s'" "${v//\'/\'\\\'\'}"
+    local escaped_quote="'\\''"
+    printf "'%s'" "${v//\'/$escaped_quote}"
 }
 
 # Write the subset of plan variables we may have modified to a sourceable

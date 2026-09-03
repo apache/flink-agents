@@ -32,7 +32,7 @@ class ResourceType(Enum):
     """Type enum of resource.
 
     Currently, support chat_model, chat_model_server, tool, embedding_model,
-    vector_store, prompt, mcp_server, skills.
+    vector_store, prompt, mcp_server, skills, model_router.
     """
 
     CHAT_MODEL = "chat_model"
@@ -44,6 +44,11 @@ class ResourceType(Enum):
     PROMPT = "prompt"
     MCP_SERVER = "mcp_server"
     SKILLS = "skills"
+    # Java-side in-chat model routing (FLIP; full Python routing is a follow-up).
+    # Present so a Java plan containing a MODEL_ROUTER resource deserializes on the
+    # Python side: mixed jobs (Java router + Python actions) must not fail at
+    # operator open with a ValidationError.
+    MODEL_ROUTER = "model_router"
 
 
 class Resource(BaseModel, ABC):
@@ -261,6 +266,10 @@ class ResourceName:
         VLLM_CONNECTION = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelConnection"
         VLLM_SETUP = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelSetup"
 
+        # Watsonx
+        WATSONX_CONNECTION = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection"
+        WATSONX_SETUP = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup"
+
         # Java Wrapper
         JAVA_WRAPPER_CONNECTION = (
             "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
@@ -302,6 +311,10 @@ class ResourceName:
             # vLLM (OpenAI-compatible)
             VLLM_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelConnection"
             VLLM_SETUP = "org.apache.flink.agents.integrations.chatmodels.openai.VLLMChatModelSetup"
+
+            # IBM watsonx.ai
+            WATSONX_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection"
+            WATSONX_SETUP = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup"
 
     class EmbeddingModel:
         """EmbeddingModel resource names."""

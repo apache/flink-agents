@@ -113,8 +113,31 @@ class TestValidateCommand:
     def test_allow_env_prefix(self) -> None:
         assert validate_command("FOO=bar echo hi", ["echo"], []) is None
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "PATH",
+            "BASH_ENV",
+            "ENV",
+            "SHELLOPTS",
+            "CDPATH",
+            "LD_PRELOAD",
+            "LD_LIBRARY_PATH",
+            "DYLD_INSERT_LIBRARIES",
+        ],
+    )
+    def test_reject_execution_changing_env_prefix(self, name: str) -> None:
+        assert validate_command(f"{name}=unsafe echo hi", ["echo"], []) == (
+            f"Environment variable assignment '{name}' is not allowed."
+        )
+
     def test_reject_env_prefix_command_not_whitelisted(self) -> None:
         assert validate_command("FOO=bar rm -rf /", ["echo"], []) is not None
+
+    def test_reject_standalone_variable_assignment(self) -> None:
+        error = validate_command("VALUE='1 + 2'", ["echo"], [])
+        assert error is not None
+        assert "executable" in error
 
     # -- injection vectors: MUST be rejected ------------------------------
 
@@ -165,6 +188,16 @@ class TestValidateCommand:
         error = validate_command("f() { echo hi; }", ["echo"], [])
         assert error is not None
 
+    def test_reject_declaration_command(self) -> None:
+        error = validate_command("declare -i VALUE='1 + 2'", ["echo"], [])
+        assert error is not None
+        assert "declaration_command" in error
+
+    def test_reject_arithmetic_expansion(self) -> None:
+        error = validate_command("echo $((1 + 2))", ["echo"], [])
+        assert error is not None
+        assert "arithmetic_expansion" in error
+
     def test_reject_heredoc(self) -> None:
         error = validate_command("cat <<EOF\n$(rm /)\nEOF", ["cat"], [])
         assert error is not None
@@ -177,11 +210,35 @@ class TestValidateCommand:
     def test_allow_brace_expansion(self) -> None:
         assert validate_command("echo {a,b,c}", ["echo"], []) is None
 
-    def test_allow_redirect_to_file(self) -> None:
-        assert validate_command("echo hi > /tmp/out", ["echo"], []) is None
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo hi > /tmp/out",
+            "echo hi >> /tmp/out",
+            "echo hi 2> /tmp/err",
+            "echo hi < /tmp/in",
+            "echo hi >2",
+            "echo hi >&/tmp/out",
+        ],
+    )
+    def test_reject_file_redirect(self, command: str) -> None:
+        assert validate_command(command, ["echo"], []) == (
+            "File redirects are not allowed; only file-descriptor duplication "
+            "and closure are permitted."
+        )
 
-    def test_allow_stderr_redirect(self) -> None:
-        assert validate_command("echo hi 2>&1", ["echo"], []) is None
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo hi 2>&1",
+            "echo hi >&2",
+            "echo hi <&0",
+            "echo hi 2>&-",
+            "echo hi 3>&1-",
+        ],
+    )
+    def test_allow_fd_only_redirect(self, command: str) -> None:
+        assert validate_command(command, ["echo"], []) is None
 
 
 class TestBashTool:
@@ -236,6 +293,32 @@ class TestBashTool:
             allowed_script_dirs=[],
         )
         assert "Command rejected" in result
+
+    def test_reject_substitution_re_evaluated_by_integer_declaration(
+        self, tool: BashTool, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "integer-declaration-marker"
+        result = tool.call(
+            command=f"declare -i VALUE='$(touch {marker})'",
+            timeout=10,
+            allowed_commands=[],
+            allowed_script_dirs=[],
+        )
+        assert "Command rejected" in result
+        assert not marker.exists()
+
+    def test_reject_substitution_re_evaluated_by_arithmetic_expansion(
+        self, tool: BashTool, tmp_path: Path
+    ) -> None:
+        marker = tmp_path / "arithmetic-expansion-marker"
+        result = tool.call(
+            command=f"VALUE='$(touch {marker})'; echo $((VALUE))",
+            timeout=10,
+            allowed_commands=["echo"],
+            allowed_script_dirs=[],
+        )
+        assert "Command rejected" in result
+        assert not marker.exists()
 
     def test_no_allowed_commands_rejects_everything(self, tool: BashTool) -> None:
         result = tool.call(command="echo hello", timeout=10)

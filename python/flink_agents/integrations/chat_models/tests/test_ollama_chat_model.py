@@ -15,11 +15,14 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 import os
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
@@ -42,7 +45,7 @@ client = pull_model(test_model)
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat() -> None:
-    server = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
+    server = OllamaChatModelConnection(request_timeout=120.0)
     response = server.chat(
         [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
     )
@@ -76,7 +79,7 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:
     client is None, reason="Ollama client is not available or test model is missing"
 )
 def test_ollama_chat_with_tools() -> None:
-    connection = OllamaChatModelConnection(name="ollama", request_timeout=120.0)
+    connection = OllamaChatModelConnection(request_timeout=120.0)
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
@@ -88,7 +91,6 @@ def test_ollama_chat_with_tools() -> None:
     mock_ctx.get_resource = get_resource
 
     llm = OllamaChatModelSetup(
-        name="ollama",
         connection="ollama",
         model=test_model,
         tools=["add"],
@@ -110,6 +112,45 @@ def test_ollama_chat_with_tools() -> None:
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
     assert add(**tool_call["function"]["arguments"]) == 3
+
+
+class Person(BaseModel):
+    """A flat output schema with one string field and one integer field."""
+
+    name: str
+    age: int
+
+
+@pytest.mark.skipif(
+    client is None, reason="Ollama client is not available or test model is missing"
+)
+def test_ollama_chat_with_output_schema() -> None:
+    """Verify a BaseModel schema constrains the server response to that schema.
+
+    Asserts schema conformance only. Ollama constrains decoding to the schema on
+    the server side, so the shape of the response is guaranteed while its values
+    are not; asserting the values would depend on the model's accuracy.
+    """
+    server = OllamaChatModelConnection(request_timeout=120.0)
+
+    response = server.chat(
+        [
+            ChatMessage(
+                role=MessageRole.USER,
+                content="Ada Lovelace is 36 years old. Extract the person.",
+            )
+        ],
+        model=test_model,
+        output_schema=OutputSchema(output_schema=Person),
+        think=False,
+    )
+
+    payload = json.loads(response.content)
+    assert {"name", "age"}.issubset(payload)
+
+    person = Person.model_validate_json(response.content)
+    assert isinstance(person.name, str)
+    assert isinstance(person.age, int)
 
 
 def test_model_field_roundtrip() -> None:
@@ -136,7 +177,7 @@ def test_extract_think_tags() -> None:
     assert reasoning == "This is just my thought process."
 
     # Test with no think tags
-    content = "This is a regular response without any thinking tags."
+    content = "| 1  | 2  |\n\n    This is a regular response without thinking tags."
     cleaned, reasoning = OllamaChatModelConnection._extract_reasoning(content)
     assert cleaned == content
     assert reasoning is None
@@ -155,7 +196,7 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     # Configure mock client to return our mock response
     mock_client.chat.return_value = mock_response
     # Create model with mocked client
-    connection = OllamaChatModelConnection(name="ollama")
+    connection = OllamaChatModelConnection()
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         return connection
@@ -164,7 +205,6 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     mock_ctx.get_resource = get_resource
 
     llm = OllamaChatModelSetup(
-        name="ollama",
         connection="ollama",
         model=test_model,
         extract_reasoning=True,

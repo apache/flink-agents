@@ -18,11 +18,13 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
@@ -46,6 +48,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -76,13 +79,38 @@ public class ToolCallActionTest {
     static class FakeRunnerContext implements RunnerContext {
         private final List<Event> sentEvents = new ArrayList<>();
         private final AgentConfiguration config =
-                new AgentConfiguration(Map.of("tenant_id", "tenant-1"));
+                new AgentConfiguration(
+                        Map.of(
+                                "tenant_id",
+                                "tenant-1",
+                                AgentExecutionOptions.TOOL_CALL_ASYNC.getKey(),
+                                true));
+        private final List<String> durableExecuteIds = new ArrayList<>();
+        private final List<String> durableExecuteAsyncIds = new ArrayList<>();
+        private final List<List<String>> durableExecuteAllAsyncIds = new ArrayList<>();
+        private final AtomicInteger queryOrderCalls = new AtomicInteger();
+        private List<Outcome<ToolResponse>> durableExecuteAllAsyncOutcomes;
         private ToolParameterInjection injection = ToolParameterInjection.fromConfig("tenant_id");
         private MemoryObject sensoryMemory;
         private MemoryObject shortTermMemory;
 
         FakeRunnerContext withInjection(ToolParameterInjection injection) {
             this.injection = injection;
+            return this;
+        }
+
+        FakeRunnerContext withToolCallAsync(boolean enabled) {
+            config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, enabled);
+            return this;
+        }
+
+        FakeRunnerContext withToolCallParallelism(int parallelism) {
+            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, parallelism);
+            return this;
+        }
+
+        FakeRunnerContext withDurableExecuteAllAsyncOutcomes(List<Outcome<ToolResponse>> outcomes) {
+            this.durableExecuteAllAsyncOutcomes = outcomes;
             return this;
         }
 
@@ -156,12 +184,33 @@ public class ToolCallActionTest {
 
         @Override
         public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+            durableExecuteIds.add(callable.getId());
             return callable.call();
         }
 
         @Override
         public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+            durableExecuteAsyncIds.add(callable.getId());
             return callable.call();
+        }
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+                throws Exception {
+            List<String> ids = new ArrayList<>();
+            for (DurableCallable<T> callable : callables) {
+                ids.add(callable.getId());
+            }
+            durableExecuteAllAsyncIds.add(ids);
+            if (durableExecuteAllAsyncOutcomes != null) {
+                return (List<Outcome<T>>) (List<?>) durableExecuteAllAsyncOutcomes;
+            }
+            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
+            for (DurableCallable<T> callable : callables) {
+                outcomes.add(Outcome.success(callable.call()));
+            }
+            return outcomes;
         }
 
         @Override
@@ -394,20 +443,142 @@ public class ToolCallActionTest {
         assertThat(response.getError()).containsEntry("call-1", "Tool does not exist.");
     }
 
+    @Test
+    void processToolRequestUsesParallelBatchForMultipleTools() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext();
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        assertThat(ctx.durableExecuteAllAsyncIds)
+                .containsExactly(List.of("tool-call", "tool-call"));
+        assertThat(ctx.durableExecuteAsyncIds).isEmpty();
+        assertThat(ctx.durableExecuteIds).isEmpty();
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
+        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("tenant-1:order-2");
+    }
+
+    @Test
+    void processToolRequestUsesSerialAsyncWhenParallelismIsOne() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext().withToolCallParallelism(1);
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call", "tool-call");
+        assertThat(ctx.durableExecuteIds).isEmpty();
+    }
+
+    @Test
+    void processToolRequestUsesSyncWhenAsyncDisabled() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext().withToolCallAsync(false);
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.durableExecuteAsyncIds).isEmpty();
+        assertThat(ctx.durableExecuteIds).containsExactly("tool-call", "tool-call");
+    }
+
+    @Test
+    void processToolRequestDoesNotBatchSingleTool() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext();
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
+
+        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call");
+        assertThat(ctx.durableExecuteIds).isEmpty();
+    }
+
+    @Test
+    void processToolRequestExcludesMissingToolFromParallelBatch() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public Resource getResource(String name, ResourceType type) throws Exception {
+                        if ("missingTool".equals(name)) {
+                            throw new RuntimeException("missing resource");
+                        }
+                        return super.getResource(name, type);
+                    }
+                };
+
+        ToolCallAction.processToolRequest(
+                new ToolRequestEvent(
+                        "model",
+                        List.of(
+                                toolCall("missingTool", "missing-call", "order-0"),
+                                toolCall("queryOrder", "call-1", "order-1"),
+                                toolCall("queryOrder", "call-2", "order-2"))),
+                ctx);
+
+        assertThat(ctx.durableExecuteAllAsyncIds)
+                .containsExactly(List.of("tool-call", "tool-call"));
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("missing-call", false);
+        assertThat(response.getError()).containsEntry("missing-call", "missing resource");
+    }
+
+    @Test
+    void processToolRequestRecordsOutcomeFailureAsToolError() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext()
+                        .withDurableExecuteAllAsyncOutcomes(
+                                List.of(
+                                        Outcome.success(ToolResponse.success("ok")),
+                                        Outcome.failure(new RuntimeException("boom"))));
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", true);
+        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("ok");
+        assertThat(response.getSuccess()).containsEntry("call-2", false);
+        assertThat(response.getResponses().get("call-2").getError())
+                .isEqualTo("Tool queryOrder execute failed.");
+        assertThat(response.getError()).containsEntry("call-2", "boom");
+    }
+
+    @Test
+    void processToolRequestRecordsInfrastructureFailureForAllParallelTools() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public <T> List<Outcome<T>> durableExecuteAllAsync(
+                            List<DurableCallable<T>> callables) throws Exception {
+                        throw new IllegalStateException("persist failed");
+                    }
+                };
+
+        ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", false);
+        assertThat(response.getSuccess()).containsEntry("call-2", false);
+        assertThat(response.getError()).containsEntry("call-1", "persist failed");
+        assertThat(response.getError()).containsEntry("call-2", "persist failed");
+    }
+
     private static ToolRequestEvent toolRequest(String toolName) {
-        return new ToolRequestEvent(
-                "model",
-                List.of(
-                        Map.of(
-                                "id",
-                                "call-1",
-                                "type",
-                                "function",
-                                "function",
-                                Map.of(
-                                        "name",
-                                        toolName,
-                                        "arguments",
-                                        Map.of("orderId", "order-1")))));
+        return new ToolRequestEvent("model", List.of(toolCall(toolName, "call-1", "order-1")));
+    }
+
+    private static ToolRequestEvent toolRequest(String toolName, String... ids) {
+        List<Map<String, Object>> toolCalls = new ArrayList<>();
+        for (int i = 0; i < ids.length; i++) {
+            toolCalls.add(toolCall(toolName, ids[i], "order-" + (i + 1)));
+        }
+        return new ToolRequestEvent("model", toolCalls);
+    }
+
+    private static Map<String, Object> toolCall(String toolName, String id, String orderId) {
+        return Map.of(
+                "id",
+                id,
+                "type",
+                "function",
+                "function",
+                Map.of("name", toolName, "arguments", Map.of("orderId", orderId)));
     }
 }

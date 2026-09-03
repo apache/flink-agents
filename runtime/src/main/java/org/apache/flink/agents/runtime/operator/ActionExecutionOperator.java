@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
-import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
@@ -36,6 +35,7 @@ import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.memory.MemoryUpdateReplayer;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
@@ -73,6 +73,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
 import static org.apache.flink.util.Preconditions.checkState;
@@ -193,7 +194,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         eventRouter.open(builtInMetrics);
 
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
+        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
         durableExecManager.initializeKeyedStates(getRuntimeContext());
 
@@ -440,19 +442,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     key);
             isFinished = true;
             outputEvents = actionTask.finalizeOutputEvents(actionState.getOutputEvents());
-            for (MemoryUpdate memoryUpdate : actionState.getShortTermMemoryUpdates()) {
-                actionTask
-                        .getRunnerContext()
-                        .getShortTermMemory()
-                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
-            }
-
-            for (MemoryUpdate memoryUpdate : actionState.getSensoryMemoryUpdates()) {
-                actionTask
-                        .getRunnerContext()
-                        .getSensoryMemory()
-                        .set(memoryUpdate.getPath(), memoryUpdate.getValue());
-            }
+            MemoryUpdateReplayer.replay(
+                    actionTask.getRunnerContext().getShortTermMemory(),
+                    actionState.getShortTermMemoryUpdates());
+            MemoryUpdateReplayer.replay(
+                    actionTask.getRunnerContext().getSensoryMemory(),
+                    actionState.getSensoryMemoryUpdates());
             notifyActionReused(actionTask);
         } else {
             // Initialize ActionState if not exists, or use existing one for recovery
@@ -596,34 +591,64 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void close() throws Exception {
-        // Must close before pythonInterpreter since cached resources may hold Python references.
-        if (resourceCache != null) {
-            resourceCache.close();
-        }
-        if (contextManager != null) {
-            contextManager.close();
-        }
-        if (pythonBridge != null) {
-            pythonBridge.close();
-        }
-        if (eventLogWriter != null) {
-            eventLogWriter.close();
-        }
-        if (durableExecManager != null) {
-            durableExecManager.close();
+        // Close every component even when an earlier one fails, so a failing close cannot leak
+        // the components behind it or skip super.close(). The first failure is rethrown with
+        // the later ones suppressed. Order is preserved: the resource cache must close before
+        // pythonInterpreter since cached resources may hold Python references.
+        //
+        // The ladder catches Throwable, not Exception, and IOUtils.closeAll is deliberately not
+        // used: both stop at the first non-Exception Throwable without closing what follows,
+        // which is the very leak this method has to avoid.
+        Throwable firstFailure = null;
+        for (AutoCloseable closeable :
+                new AutoCloseable[] {
+                    resourceCache, contextManager, pythonBridge, eventLogWriter, durableExecManager
+                }) {
+            if (closeable == null) {
+                continue;
+            }
+            try {
+                closeable.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
         }
 
-        super.close();
+        try {
+            super.close();
+        } catch (Throwable t) {
+            firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+        }
+
+        if (firstFailure != null) {
+            ExceptionUtils.rethrowException(firstFailure);
+        }
     }
 
     @Override
     public void initializeState(StateInitializationContext context) throws Exception {
         super.initializeState(context);
 
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig());
-        durableExecManager.handleRecovery(getOperatorStateBackend());
+        int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
+        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
 
         stateManager = new OperatorStateManager();
+
+        // Drop action-state records owned by other subtasks during rebuild. UnionListState
+        // broadcasts every subtask's recovery marker, so a naive replay would load all keys into
+        // every subtask's cache, where the foreign ones are never pruned (orphan-state leak).
+        //
+        // The ownership filter operates on the key-group embedded in the action-state record key.
+        // The key-group was computed from the original typed key via
+        // KeyGroupRangeAssignment.assignToKeyGroup, which matches how Flink assigns keyed-state
+        // ownership. This avoids the type-dependent hashing mismatch that would occur if ownership
+        // were reconstructed from the string form of the business key (e.g., Long(1) hashes to
+        // key-group 86 while String("1") hashes to 54).
+        KeyGroupRange currentSubtaskKeyGroupRange =
+                stateManager.getCurrentSubtaskKeyGroupRange(maxParallelism, getRuntimeContext());
+        IntPredicate ownershipFilter = currentSubtaskKeyGroupRange::contains;
+
+        durableExecManager.handleRecovery(getOperatorStateBackend(), ownershipFilter);
 
         // Resolve the agent's stable job identifier:
         //  - If the user set it via AgentConfigOptions.JOB_IDENTIFIER, use that.

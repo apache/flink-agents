@@ -72,12 +72,25 @@ class MemorySetItem(BaseModel):
 class MemorySet(BaseModel):
     """Represents a long term memory set contains memory items.
 
+    A set is bound to the action context it was obtained in. Operations run on a
+    worker thread when submitted through ``durable_execute_async``, by which time
+    the owning long term memory may already have switched to another partition
+    key, so they take the context from the set rather than from it. A set must
+    therefore be obtained per action and not reused across actions.
+
     Attributes:
         name: The name of this memory set.
+        partition_key: The partition key this set is scoped to.
+        observation_id: Identifier for the owning action's observations.
+        observation_suppressed: Whether observation is suppressed for the owning
+            action.
     """
 
     name: str
     ltm: "BaseLongTermMemory" = Field(default=None, exclude=True)
+    partition_key: str | None = Field(default=None, exclude=True)
+    observation_id: str = Field(default="", exclude=True)
+    observation_suppressed: bool = Field(default=False, exclude=True)
 
     def add(
         self,
@@ -150,6 +163,13 @@ class BaseLongTermMemory(ABC, BaseModel):
     def get_memory_set(self, name: str) -> MemorySet:
         """Get the memory set by name. If it does not exist, create it.
 
+        The returned set is bound to the calling action, so call this from the action
+        body itself; calling it from another thread raises. Obtain one per action rather
+        than holding one across actions. Operating on a set whose partition key is
+        absent or empty raises rather than silently widening the operation to every
+        partition key, and this method itself raises unless a non-empty partition key is
+        in scope.
+
         Args:
             name: The name of the memory set.
 
@@ -160,6 +180,12 @@ class BaseLongTermMemory(ABC, BaseModel):
     @abstractmethod
     def delete_memory_set(self, name: str) -> bool:
         """Delete the memory set.
+
+        Unlike the set-scoped operations, this takes a name and applies to the key
+        currently in scope, so it must be called from the action body; calling it from
+        another thread raises. It can target a different key than ``MemorySet.delete``
+        on a same-named set would, and raises unless a non-empty partition key is in
+        scope.
 
         Args:
             name: The name of the memory set.

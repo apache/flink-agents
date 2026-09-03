@@ -22,6 +22,16 @@ from typing import Any, Callable
 import cloudpickle
 
 
+def durable_identity_for_call(
+    func: Callable,
+    args: tuple,
+    kwargs: dict | None,
+) -> tuple[str, str]:
+    """Return the durable journal identity for a single callable invocation."""
+    call_kwargs = kwargs or {}
+    return _compute_function_id(func), _compute_args_digest(args, call_kwargs)
+
+
 def _compute_function_id(func: Callable) -> str:
     """Compute a stable function identifier from a callable."""
     module_obj = inspect.getmodule(func)

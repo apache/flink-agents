@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.openai.errors.BadRequestException;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
@@ -39,8 +41,10 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -56,6 +60,40 @@ class OpenAICompletionsConnectionTest {
     public static class Person {
         public String name;
         public int age;
+    }
+
+    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
+    @JsonSubTypes({
+        @JsonSubTypes.Type(value = Dog.class, name = "dog"),
+        @JsonSubTypes.Type(value = Cat.class, name = "cat")
+    })
+    public abstract static class Pet {}
+
+    /** One arm of the {@link Pet} union. */
+    public static class Dog extends Pet {
+        public String bark;
+    }
+
+    /** The other arm of the {@link Pet} union. */
+    public static class Cat extends Pet {
+        public String meow;
+    }
+
+    /** Holds a polymorphic member. */
+    public static class Owner {
+        public String name;
+        public Pet pet;
+    }
+
+    /** The JSON Schema the request carries, as the SDK holds it on the response format. */
+    private static String nativeSchemaPayload(ChatCompletionCreateParams params) {
+        return params.responseFormat()
+                .orElseThrow()
+                .asJsonSchema()
+                .jsonSchema()
+                ._schema()
+                .toString();
     }
 
     private static OpenAICompletionsConnection connection() {
@@ -148,6 +186,98 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
+    @DisplayName("The finish reason reported by the provider reaches the response extra args")
+    void testResponseCarriesFinishReason() throws IOException {
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingFinishReason("length")) {
+            ChatMessage response =
+                    connection(endpoint.baseUrl())
+                            .chat(userMessage(), List.of(), params("gpt-4o"), null);
+
+            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+        }
+    }
+
+    @Test
+    @DisplayName("A finish reason outside the documented set is stored as received")
+    void testResponseCarriesUnknownFinishReasonVerbatim() throws IOException {
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingFinishReason("some_vendor_reason")) {
+            ChatMessage response =
+                    connection(endpoint.baseUrl())
+                            .chat(userMessage(), List.of(), params("gpt-4o"), null);
+
+            assertThat(response.getExtraArgs())
+                    .containsEntry("finish_reason", "some_vendor_reason");
+        }
+    }
+
+    @Test
+    @DisplayName("An empty finish reason is recorded rather than discarded")
+    void testResponseCarriesEmptyFinishReason() throws IOException {
+        // The choice carries a value, so it is recorded; emptiness is not treated as absence.
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingFinishReason("")) {
+            ChatMessage response =
+                    connection(endpoint.baseUrl())
+                            .chat(userMessage(), List.of(), params("gpt-4o"), null);
+
+            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+        }
+    }
+
+    @Test
+    @DisplayName("The finish reason is captured independently of the token metrics")
+    void testResponseCarriesFinishReasonWithoutUsage() throws IOException {
+        // The metrics come from the usage report the response here omits, so the absent
+        // promptTokens proves that branch did not run and could not have written the reason.
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingFinishReasonWithoutUsage("tool_calls")) {
+            ChatMessage response =
+                    connection(endpoint.baseUrl())
+                            .chat(userMessage(), List.of(), params("gpt-4o"), null);
+
+            assertThat(response.getExtraArgs())
+                    .containsEntry("finish_reason", "tool_calls")
+                    .doesNotContainKey("promptTokens");
+        }
+    }
+
+    @Test
+    @DisplayName("A choice with no finish_reason member yields no key and no error")
+    void testNoFinishReasonKeyWhenMemberAbsent() throws IOException {
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingNoFinishReasonMember()) {
+            assertNoFinishReasonKey(endpoint);
+        }
+    }
+
+    @Test
+    @DisplayName("A choice whose finish_reason is JSON null yields no key and no error")
+    void testNoFinishReasonKeyWhenJsonNull() throws IOException {
+        try (FakeOpenAICompletionsEndpoint endpoint =
+                FakeOpenAICompletionsEndpoint.servingNullFinishReason()) {
+            assertNoFinishReasonKey(endpoint);
+        }
+    }
+
+    private static void assertNoFinishReasonKey(FakeOpenAICompletionsEndpoint endpoint) {
+        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException for both of these
+        // response shapes, so reading the value has to go through the raw field.
+        OpenAICompletionsConnection connection = connection(endpoint.baseUrl());
+        AtomicReference<ChatMessage> response = new AtomicReference<>();
+
+        assertThatCode(
+                        () ->
+                                response.set(
+                                        connection.chat(
+                                                userMessage(), List.of(), params("gpt-4o"), null)))
+                .doesNotThrowAnyException();
+
+        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+    }
+
+    @Test
     @DisplayName("Native response_format json_schema strict applied for a POJO on a capable model")
     void testNativeAppliedForPojoCapableModel() {
         ChatCompletionCreateParams params =
@@ -156,6 +286,26 @@ class OpenAICompletionsConnectionTest {
         assertThat(params.responseFormat()).isPresent();
         ResponseFormatJsonSchema jsonSchema = params.responseFormat().get().asJsonSchema();
         assertThat(jsonSchema.jsonSchema().strict()).contains(true);
+        // Asserting the members rather than only the flags: a schema declaring no properties
+        // would satisfy strict() and the derived name while constraining nothing at all.
+        assertThat(nativeSchemaPayload(params))
+                .contains("name={type=string}")
+                .contains("age={type=integer}");
+    }
+
+    @Test
+    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    void testPolymorphicMemberSchemaIsSent() {
+        // Jackson renders this member as an object declaring no properties, while the SDK derives
+        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // a request that works.
+        ChatCompletionCreateParams request =
+                connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Owner.class);
+
+        assertThat(nativeSchemaPayload(request))
+                .contains("bark={type=string}")
+                .contains("meow={type=string}")
+                .contains("kind={const=dog}");
     }
 
     @Test

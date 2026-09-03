@@ -21,27 +21,27 @@
 BUILD_SCRIPT="${BATS_TEST_DIRNAME}/../../build.sh"
 
 @test "build --help prints usage and exits 0" {
-    run bash "$BUILD_SCRIPT" --help
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" --help
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Build Flink Agents Java and Python artifacts"* ]]
-    [[ "$output" == *"Usage:"* ]]
-    [[ "$output" == *"--java"* ]]
-    [[ "$output" == *"--python"* ]]
+    [[ "$output" == *"Build Flink Agents Java and Python artifacts"* ]] || false
+    [[ "$output" == *"Usage:"* ]] || false
+    [[ "$output" == *"--java"* ]] || false
+    [[ "$output" == *"--python"* ]] || false
 }
 
 @test "build -h prints usage and exits 0" {
-    run bash "$BUILD_SCRIPT" -h
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" -h
 
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Usage:"* ]]
+    [[ "$output" == *"Usage:"* ]] || false
 }
 
 @test "build rejects an unknown option with usage" {
-    run bash "$BUILD_SCRIPT" --no-such-option
+    run "${FLINK_AGENTS_SUT_BASH:-bash}" "$BUILD_SCRIPT" --no-such-option
 
     [ "$status" -eq 1 ]
-    [[ "$output" == *"Error: Unknown option '--no-such-option'"* ]]
-    [[ "$output" == *"Usage:"* ]]
-    [[ "$output" != *"show_help: command not found"* ]]
+    [[ "$output" == *"Error: Unknown option '--no-such-option'"* ]] || false
+    [[ "$output" == *"Usage:"* ]] || false
+    [[ "$output" != *"show_help: command not found"* ]] || false
 }

@@ -93,6 +93,27 @@ public abstract class BaseChatModelConnection extends Resource {
      * schema into a native provider parameter overrides this overload, and reports its capability
      * via {@link #supportsNativeStructuredOutput(String)}.
      *
+     * <p>No connection translates an {@link org.apache.flink.agents.api.agents.OutputSchema}, and
+     * so a {@code RowTypeInfo}, natively, and what follows differs by connection. One that
+     * overrides this overload applies its native parameter only for a POJO {@link Class}, so it
+     * skips the {@code RowTypeInfo} and leaves the request unchanged, and the caller keeps the
+     * prompt-engineering fallback. One that does not override it rejects the {@code RowTypeInfo}
+     * through the default body above, which refuses every non-null schema alike. The skip is a
+     * deliberate, permanent fallback rather than a translation still to be written; the rejection
+     * is the separate case of a connection that could otherwise only drop the schema silently.
+     *
+     * <p>An overriding connection renders a POJO with its provider SDK's own schema generator, and
+     * a render failure is not reported here because those generators produce a schema for every
+     * class they are handed. The asymmetry with the Python side is imposed by the vendor libraries
+     * rather than chosen: Pydantic genuinely raises on a model it cannot express, and the Python
+     * connections wrap that. A schema the SDK does render is sent as rendered even when it declares
+     * no properties; whether such a document is usable is the receiving provider's to judge.
+     *
+     * <p>The ReAct prompt path renders through a different generator, Jackson, rather than through
+     * any provider SDK, and a POJO Jackson cannot render is rejected there rather than reaching the
+     * prompt. Because the two paths use different generators, that rejection says nothing about
+     * what a connection does with the same POJO.
+     *
      * @param messages the input chat messages
      * @param tools the tools can be called by the model
      * @param modelParams the additional arguments passed to the model

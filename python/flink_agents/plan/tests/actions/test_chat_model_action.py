@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -23,10 +24,12 @@ from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
     _TOOL_CALL_CONTEXT,
     _TOOL_REQUEST_EVENT_CONTEXT,
     _clean_llm_response,
+    _generate_structured_output_with_report,
     _get_tool_request_event_context,
     _save_tool_request_event_context,
     _update_tool_call_context,
@@ -207,3 +210,30 @@ def test_save_get_preserves_model_and_prompt_args():
     context = _get_tool_request_event_context(mem, event_id)
     assert context["model"] == "ollama"
     assert context["prompt_args"] == prompt_args
+
+
+_PARSEABLE_CONTENT = '{"result": 42}'
+
+
+def _response(extra_args) -> ChatMessage:
+    return ChatMessage(
+        role=MessageRole.ASSISTANT,
+        content=_PARSEABLE_CONTENT,
+        extra_args=extra_args,
+    )
+
+
+def _parse(ctx, extra_args) -> ChatMessage:
+    return _generate_structured_output_with_report(
+        ctx, _response(extra_args), OutputSchema(output_schema=_Result)
+    )
+
+
+def test_accepted_finish_reason_reports_parser_execution():
+    ctx = MagicMock(spec=ExecutionReporter)
+
+    _parse(ctx, {"finish_reason": "stop"})
+
+    ctx.report_execution_started.assert_called_once()
+    ctx.report_execution_succeeded.assert_called_once()
+    ctx.report_execution_failed.assert_not_called()

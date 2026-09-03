@@ -54,7 +54,7 @@ class DurableExecutionManagerTest {
     void noStoreModeMakesAllMaybeOperationsNoOp() throws Exception {
         DurableExecutionManager dem = new DurableExecutionManager(null);
         // No ACTION_STATE_STORE_BACKEND set → no default store should be created.
-        dem.maybeInitActionStateStore(new AgentConfiguration());
+        dem.maybeInitActionStateStore(new AgentConfiguration(), 128);
 
         assertThat(dem.hasDurableStore()).isFalse();
         assertThat(dem.getActionStateStore()).isNull();
@@ -232,7 +232,7 @@ class DurableExecutionManagerTest {
         when(opBackend.getUnionListState(any(ListStateDescriptor.class))).thenReturn(markerState);
         when(markerState.get()).thenReturn(List.of("test-marker"));
 
-        dem.handleRecovery(opBackend);
+        dem.handleRecovery(opBackend, null);
 
         // InMemoryActionStateStore.rebuildState is a no-op (lines 62–64), so state mutation is
         // not observable here — the test verifies the call contract only.

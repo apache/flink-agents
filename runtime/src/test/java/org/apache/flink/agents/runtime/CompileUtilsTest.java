@@ -17,8 +17,10 @@
  */
 package org.apache.flink.agents.runtime;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorTest;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -26,15 +28,18 @@ import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
+import org.apache.flink.types.Row;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link CompileUtils}. */
 public class CompileUtilsTest {
@@ -101,13 +106,81 @@ public class CompileUtilsTest {
     @Test
     void detectsPickledAndExplicitByteArrayPythonKeyTypes() {
         assertThat(
-                        CompileUtils.isPickledPythonKeyType(
-                                Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO)))
+                        CompileUtils.isPickledPythonFieldType(
+                                Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO),
+                                0))
                 .isTrue();
         assertThat(
-                        CompileUtils.isPickledPythonKeyType(
-                                Types.ROW(Types.PRIMITIVE_ARRAY(Types.BYTE))))
+                        CompileUtils.isPickledPythonFieldType(
+                                Types.ROW(Types.PRIMITIVE_ARRAY(Types.BYTE)), 0))
                 .isFalse();
+    }
+
+    @Test
+    void detectsPickledAndNonPickledPythonValueTypes() {
+        assertThat(
+                        CompileUtils.isPickledPythonFieldType(
+                                Types.ROW(
+                                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO,
+                                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO),
+                                1))
+                .isTrue();
+        assertThat(
+                        CompileUtils.isPickledPythonFieldType(
+                                Types.ROW(
+                                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO,
+                                        Types.PRIMITIVE_ARRAY(Types.BYTE)),
+                                1))
+                .isFalse();
+        assertThat(
+                        CompileUtils.isPickledPythonFieldType(
+                                Types.ROW(
+                                        PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO,
+                                        Types.STRING),
+                                1))
+                .isFalse();
+    }
+
+    @Test
+    void rejectsRawByteArrayPythonInputBeforeDeserializingTheAgentPlan() {
+        KeyedStream<Row, Row> inputDataStream =
+                createPythonInputStream(Types.PRIMITIVE_ARRAY(Types.BYTE));
+
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(inputDataStream, "not-json"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("only supports PyFlink input values")
+                .hasMessageContaining("raw byte-array");
+    }
+
+    @Test
+    void acceptsPickledPythonInputBeforeDeserializingTheAgentPlan() {
+        KeyedStream<Row, Row> inputDataStream =
+                createPythonInputStream(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO);
+
+        assertThatThrownBy(() -> CompileUtils.connectToAgent(inputDataStream, "not-json"))
+                .isInstanceOf(JsonProcessingException.class);
+    }
+
+    @Test
+    void rejectsMalformedPythonInputType() {
+        assertThatThrownBy(
+                        () ->
+                                CompileUtils.isPickledPythonFieldType(
+                                        Types.ROW(
+                                                PickledByteArrayTypeInfo
+                                                        .PICKLED_BYTE_ARRAY_TYPE_INFO),
+                                        1))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("contain 2 fields");
+    }
+
+    private static KeyedStream<Row, Row> createPythonInputStream(TypeInformation<?> valueType) {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        TypeInformation<Row> inputType =
+                Types.ROW(PickledByteArrayTypeInfo.PICKLED_BYTE_ARRAY_TYPE_INFO, valueType);
+        Row input = Row.of(new byte[0], new byte[0]);
+        return env.fromData(Collections.singletonList(input), inputType)
+                .keyBy(value -> Row.of(value.getField(0)));
     }
 
     private static List<Long> getTestSequence() {

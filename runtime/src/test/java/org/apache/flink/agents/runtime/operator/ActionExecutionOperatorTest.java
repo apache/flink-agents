@@ -48,10 +48,13 @@ import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
+import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
@@ -59,6 +62,8 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
+import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
+import org.apache.flink.streaming.api.operators.StreamOperatorStateHandler;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
@@ -68,6 +73,7 @@ import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -83,11 +89,15 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -613,6 +623,173 @@ public class ActionExecutionOperatorTest {
         ltmField.set(operator, ltm);
     }
 
+    private static void replaceOperatorField(
+            ActionExecutionOperator<?, ?> operator, String name, Object value) throws Exception {
+        Field field = ActionExecutionOperator.class.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(operator, value);
+    }
+
+    /**
+     * Swaps the state handler {@link AbstractStreamOperator} inherits, returning the previous one.
+     *
+     * <p>{@code super.close()} compiles to {@code stateHandler.dispose()} and binds statically, so
+     * a subclass cannot intercept the call. Replacing the inherited handler is what makes the super
+     * call observable, and what lets it be made to fail.
+     */
+    private static StreamOperatorStateHandler replaceStateHandler(
+            ActionExecutionOperator<?, ?> operator, StreamOperatorStateHandler handler)
+            throws Exception {
+        Field field = AbstractStreamOperator.class.getDeclaredField("stateHandler");
+        field.setAccessible(true);
+        StreamOperatorStateHandler previous = (StreamOperatorStateHandler) field.get(operator);
+        field.set(operator, handler);
+        return previous;
+    }
+
+    private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> openCloseTestHarness()
+            throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class));
+        testHarness.open();
+        return testHarness;
+    }
+
+    /** The operator's five closeable components, stubbed so each close is observable. */
+    private static final class CloseComponents {
+        private final ResourceCache resourceCache = mock(ResourceCache.class);
+        private final ActionTaskContextManager contextManager =
+                mock(ActionTaskContextManager.class);
+        private final PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
+        private final EventLogWriter eventLogWriter = mock(EventLogWriter.class);
+        private final DurableExecutionManager durableExecManager =
+                mock(DurableExecutionManager.class);
+
+        private void installInto(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "resourceCache", resourceCache);
+            replaceOperatorField(operator, "contextManager", contextManager);
+            replaceOperatorField(operator, "pythonBridge", pythonBridge);
+            replaceOperatorField(operator, "eventLogWriter", eventLogWriter);
+            replaceOperatorField(operator, "durableExecManager", durableExecManager);
+        }
+
+        /** Detaches the mocks so the harness teardown does not re-trigger the failure. */
+        private void detachFrom(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "resourceCache", null);
+            replaceOperatorField(operator, "contextManager", null);
+            replaceOperatorField(operator, "pythonBridge", null);
+            replaceOperatorField(operator, "eventLogWriter", null);
+            replaceOperatorField(operator, "durableExecManager", null);
+        }
+
+        /**
+         * Verifies every component was released, in the documented order, with {@code
+         * super.close()} last.
+         *
+         * <p>Order is load-bearing rather than incidental: {@code resourceCache} must close before
+         * {@code pythonBridge} because cached resources may hold Python references, and {@code
+         * super.close()} disposes the state backends the components run against.
+         */
+        private void verifyClosedInOrder(StreamOperatorStateHandler stateHandler) throws Exception {
+            InOrder inOrder =
+                    inOrder(
+                            resourceCache,
+                            contextManager,
+                            pythonBridge,
+                            eventLogWriter,
+                            durableExecManager,
+                            stateHandler);
+            inOrder.verify(resourceCache).close();
+            inOrder.verify(contextManager).close();
+            inOrder.verify(pythonBridge).close();
+            inOrder.verify(eventLogWriter).close();
+            inOrder.verify(durableExecManager).close();
+            inOrder.verify(stateHandler).dispose();
+        }
+    }
+
+    /**
+     * A failing component must not strand the ones behind it. This matters most for {@code
+     * resourceCache}, which closes first and aggregates its own failures, and for {@code
+     * pythonBridge}, which releases the embedded Python interpreter.
+     *
+     * <p>Also pins that {@code super.close()} still runs. {@link AbstractStreamOperator#close()}
+     * disposes the state handler, so skipping it strands the state backends.
+     */
+    @Test
+    void closeClosesEveryComponentWhenAnEarlierCloseFails() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                openCloseTestHarness();
+        ActionExecutionOperator<Long, Object> operator =
+                (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+        CloseComponents components = new CloseComponents();
+        doThrow(new IllegalStateException("resource cache close failed"))
+                .when(components.resourceCache)
+                .close();
+        components.installInto(operator);
+        StreamOperatorStateHandler stateHandler = mock(StreamOperatorStateHandler.class);
+        StreamOperatorStateHandler realStateHandler = replaceStateHandler(operator, stateHandler);
+
+        try {
+            assertThatThrownBy(operator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("resource cache close failed")
+                    // Contract 3: with super.close() healthy, nothing is attached to the failure.
+                    .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
+
+            components.verifyClosedInOrder(stateHandler);
+        } finally {
+            components.detachFrom(operator);
+            replaceStateHandler(operator, realStateHandler);
+            testHarness.close();
+        }
+    }
+
+    /**
+     * A {@code super.close()} failure must aggregate with the component failures rather than
+     * replace them: the earlier component failure still reaches the caller, with the super failure
+     * attached to it as suppressed.
+     */
+    @Test
+    void closeAggregatesSuperCloseFailureWithComponentFailure() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                openCloseTestHarness();
+        ActionExecutionOperator<Long, Object> operator =
+                (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+        CloseComponents components = new CloseComponents();
+        doThrow(new IllegalStateException("resource cache close failed"))
+                .when(components.resourceCache)
+                .close();
+        components.installInto(operator);
+        StreamOperatorStateHandler stateHandler = mock(StreamOperatorStateHandler.class);
+        doThrow(new IllegalStateException("state handler dispose failed"))
+                .when(stateHandler)
+                .dispose();
+        StreamOperatorStateHandler realStateHandler = replaceStateHandler(operator, stateHandler);
+
+        try {
+            assertThatThrownBy(operator::close)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessage("resource cache close failed")
+                    .satisfies(
+                            thrown ->
+                                    assertThat(thrown.getSuppressed())
+                                            .extracting(Throwable::getMessage)
+                                            .containsExactly("state handler dispose failed"));
+
+            components.verifyClosedInOrder(stateHandler);
+        } finally {
+            components.detachFrom(operator);
+            replaceStateHandler(operator, realStateHandler);
+            testHarness.close();
+        }
+    }
+
     /** Java-side stand-in for the Python-backed LTM wrapper used to observe the failure path. */
     private static final class RecordingMem0LongTermMemory extends Mem0LongTermMemory {
         private final List<String> recordedKeys = new ArrayList<>();
@@ -627,7 +804,7 @@ public class ActionExecutionOperatorTest {
         private RuntimeException drainFailure;
 
         private RecordingMem0LongTermMemory() {
-            super(null, null);
+            super(null, null, () -> {});
         }
 
         @Override
@@ -1759,6 +1936,117 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
+    void testReplayReappliesNewObjectMemoryUpdatesIntoEmptyState() throws Exception {
+        AgentPlan agentPlan = TestAgent.getNestedMemoryAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.set(0);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get()).isEqualTo(1);
+        }
+
+        // Simulate recovery from a checkpoint taken before the input was processed: the keyed
+        // memory state is empty, but the completed ActionState survives in the store, so the
+        // action is skipped and its memory updates are replayed. The newObject update must be
+        // re-applied as an object creation — replaying it as set("user", null) would create a
+        // null value leaf and the subsequent set("user.score", ...) replay would fail.
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(8L);
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get())
+                    .as("Completed action must not be re-executed during replay")
+                    .isEqualTo(1);
+        }
+    }
+
+    @Test
+    void testReplayReappliesNewObjectMemoryUpdatesOverRestoredState() throws Exception {
+        AgentPlan agentPlan = TestAgent.getNestedMemoryAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.set(0);
+        OperatorSubtaskState snapshot;
+
+        // Both inputs must share one Flink key so the second input's replay runs over the state
+        // the first input left behind.
+        KeySelector<Long, Long> constantKey = value -> 0L;
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        constantKey,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            // First input for this key: the action creates the "user" object, and the checkpoint
+            // taken afterwards persists it in the keyed memory state.
+            testHarness.processElement(new StreamRecord<>(7L));
+            operator.waitInFlightEventsFinished();
+            snapshot = testHarness.snapshot(1L, 1L);
+
+            // Second input for the same key: the action completes (its ActionState survives in
+            // the store), but the job "fails" before the next checkpoint.
+            testHarness.processElement(new StreamRecord<>(9L));
+            operator.waitInFlightEventsFinished();
+
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get()).isEqualTo(2);
+        }
+
+        // Recovery: the restored memory state already contains "user" as a nested object (from
+        // the first input), and the second input is re-delivered. Its action is completed in the
+        // ActionState store, so its memory updates are replayed against the restored state. The
+        // newObject update must tolerate the already existing object — replaying it as
+        // set("user", null) would throw "Cannot overwrite object with value" and crash-loop
+        // recovery.
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                        constantKey,
+                        TypeInformation.of(Long.class))) {
+            testHarness.initializeState(snapshot);
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+            testHarness.processElement(new StreamRecord<>(9L));
+            operator.waitInFlightEventsFinished();
+
+            List<StreamRecord<Object>> recordOutput =
+                    (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+            assertThat(recordOutput).hasSize(1);
+            assertThat(recordOutput.get(0).getValue()).isEqualTo(10L);
+            assertThat(TestAgent.NESTED_MEMORY_ACTION_CALL_COUNTER.get())
+                    .as("Completed action must not be re-executed during replay")
+                    .isEqualTo(2);
+        }
+    }
+
+    @Test
     void testReplayRebindsOutputLineage() throws Exception {
         AgentPlan agentPlan = TestAgent.getAgentPlan(false);
         long inputValue = 7L;
@@ -2039,6 +2327,153 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    /**
+     * Regression test: durable-store lookups must use the original typed key, never its string
+     * form. The key-group segment embedded in every action-state record key is derived from the
+     * typed key's hash, so a stringified lookup computes a different key-group at maxParallelism
+     * greater than 1 and every recovery read misses, silently re-executing completed durable calls.
+     * Harness maxParallelism of 1 masks this (all keys collapse to key-group 0), hence the
+     * realistic maxParallelism here.
+     */
+    @Test
+    void testDurableRecoveryHitsCacheWithTypedKeyAtRealisticMaxParallelism() throws Exception {
+        final int maxParallelism = 128;
+        final long key = 1L;
+        // Fixture guard: the regression only manifests when the typed key and its string form
+        // hash to different key-groups.
+        assertThat(KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism))
+                .isNotEqualTo(
+                        KeyGroupRangeAssignment.assignToKeyGroup(
+                                String.valueOf(key), maxParallelism));
+
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+
+        for (int run = 0; run < 2; run++) {
+            try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                    new KeyedOneInputStreamOperatorTestHarness<>(
+                            new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
+                            (KeySelector<Long, Long>) value -> value,
+                            TypeInformation.of(Long.class),
+                            maxParallelism,
+                            1,
+                            0)) {
+                testHarness.open();
+                ActionExecutionOperator<Long, Object> operator =
+                        (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+
+                testHarness.processElement(new StreamRecord<>(key));
+                operator.waitInFlightEventsFinished();
+
+                List<StreamRecord<Object>> recordOutput =
+                        (List<StreamRecord<Object>>) testHarness.getRecordOutput();
+                assertThat(recordOutput).hasSize(1);
+                assertThat(recordOutput.get(0).getValue()).isEqualTo(key * 3);
+            }
+        }
+
+        assertThat(TestAgent.DURABLE_CALL_COUNTER.get())
+                .as("Second run must recover from the durable store instead of re-executing")
+                .isEqualTo(1);
+    }
+
+    /**
+     * Regression test for the recovery ownership check: the key-group embedded in a persisted
+     * action-state record key is derived from the original typed key, and after rescaling it must
+     * be accepted by exactly the subtask that Flink assigns that key to. Under the old scheme —
+     * ownership recomputed by hashing the string form of the business key — the true owner (subtask
+     * of Long(1)'s key-group) would have dropped its own record while a foreign subtask retained
+     * it, re-executing completed actions and leaking orphan state.
+     */
+    @Test
+    void testOwnershipFilterAcceptsTypedKeyGroupOnlyOnOwnerSubtask() throws Exception {
+        final int maxParallelism = 128;
+        final int parallelism = 2;
+        final long key = 1L;
+        AgentPlan agentPlan = TestAgent.getDurableSyncAgentPlan();
+
+        // Phase 1: run with the typed key so the store holds records whose embedded key-group was
+        // computed from Long(1), not from "1".
+        InMemoryActionStateStore writerStore = new InMemoryActionStateStore(false);
+        TestAgent.DURABLE_CALL_COUNTER.set(0);
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> writerHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, writerStore),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class),
+                        maxParallelism,
+                        1,
+                        0)) {
+            writerHarness.open();
+            writerHarness.processElement(new StreamRecord<>(key));
+            ((ActionExecutionOperator<Long, Object>) writerHarness.getOperator())
+                    .waitInFlightEventsFinished();
+        }
+
+        List<String> persistedKeys =
+                writerStore.getKeyedActionStates().values().stream()
+                        .flatMap(states -> states.keySet().stream())
+                        .collect(Collectors.toList());
+        assertThat(persistedKeys).isNotEmpty();
+        int embeddedKeyGroup = ActionStateUtil.parseKeyGroup(persistedKeys.get(0));
+        assertThat(embeddedKeyGroup)
+                .isEqualTo(KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism));
+
+        int ownerSubtask =
+                KeyGroupRangeAssignment.computeOperatorIndexForKeyGroup(
+                        maxParallelism, parallelism, embeddedKeyGroup);
+        int stringDerivedKeyGroup =
+                KeyGroupRangeAssignment.assignToKeyGroup(String.valueOf(key), maxParallelism);
+        // Fixture guard: the string-derived key-group must land on the other subtask, mirroring
+        // the original ownership bug.
+        assertThat(
+                        KeyGroupRangeAssignment.computeOperatorIndexForKeyGroup(
+                                maxParallelism, parallelism, stringDerivedKeyGroup))
+                .isNotEqualTo(ownerSubtask);
+
+        // Phase 2: restart at parallelism 2 and capture the ownership filter each subtask
+        // installs on its store during recovery.
+        FilterCapturingActionStateStore ownerStore = new FilterCapturingActionStateStore();
+        FilterCapturingActionStateStore nonOwnerStore = new FilterCapturingActionStateStore();
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> ownerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory<>(agentPlan, true, ownerStore),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                parallelism,
+                                ownerSubtask);
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> nonOwnerHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory<>(
+                                        agentPlan, true, nonOwnerStore),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class),
+                                maxParallelism,
+                                parallelism,
+                                1 - ownerSubtask)) {
+            ownerHarness.open();
+            nonOwnerHarness.open();
+
+            assertThat(ownerStore.capturedOwnershipFilter).isNotNull();
+            assertThat(nonOwnerStore.capturedOwnershipFilter).isNotNull();
+
+            assertThat(ownerStore.capturedOwnershipFilter.test(embeddedKeyGroup))
+                    .as("The subtask owning the typed key's key-group must retain the record")
+                    .isTrue();
+            assertThat(nonOwnerStore.capturedOwnershipFilter.test(embeddedKeyGroup))
+                    .as("Every other subtask must drop the record")
+                    .isFalse();
+            assertThat(ownerStore.capturedOwnershipFilter.test(stringDerivedKeyGroup))
+                    .as(
+                            "String-derived key-group must not be owned by the typed key's owner;"
+                                    + " otherwise the original string-hash ownership bug would be"
+                                    + " undetectable")
+                    .isFalse();
+        }
+    }
+
     /** Tests that durableExecute properly handles exceptions thrown by the supplier. */
     @Test
     void testDurableExecuteExceptionHandling() throws Exception {
@@ -2298,7 +2733,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteReconcilableRecoverySuccess() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 1L;
         long input = 1L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
@@ -2343,7 +2778,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteReconcilableRecoveryException() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableReconcilableAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 2L;
         long input = 2L;
         TestAgent.RECONCILABLE_RECOVERY_BEHAVIOR = TestAgent.ReconcileBehavior.EXCEPTION;
@@ -2431,7 +2866,7 @@ public class ActionExecutionOperatorTest {
     @Test
     void testDurableExecuteRecoveryMixedCompletionOnlyAndReconcilableCalls() throws Exception {
         AgentPlan agentPlan = TestAgent.getDurableMixedRecoveryAgentPlan();
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
+        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false, 1);
         long key = 1L;
         long input = 1L;
         TestAgent.MIXED_RECONCILE_BEHAVIOR = TestAgent.ReconcileBehavior.SUCCESS;
@@ -2493,6 +2928,10 @@ public class ActionExecutionOperatorTest {
         public static final java.util.concurrent.atomic.AtomicBoolean FOLLOWING_ACTION_EXECUTED =
                 new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        public static final java.util.concurrent.atomic.AtomicInteger
+                NESTED_MEMORY_ACTION_CALL_COUNTER =
+                        new java.util.concurrent.atomic.AtomicInteger(0);
+
         public static class MiddleEvent extends Event {
             public static final String EVENT_TYPE = "MiddleEvent";
 
@@ -2526,6 +2965,19 @@ public class ActionExecutionOperatorTest {
                 MemoryObject mem = context.getShortTermMemory();
                 Long tmp = (Long) mem.get("tmp").getValue();
                 context.sendEvent(new OutputEvent(tmp * 2));
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+        }
+
+        public static void nestedMemoryAction(Event event, RunnerContext context) {
+            NESTED_MEMORY_ACTION_CALL_COUNTER.incrementAndGet();
+            Long inputData = (Long) InputEvent.fromEvent(event).getInput();
+            try {
+                MemoryObject mem = context.getShortTermMemory();
+                mem.newObject("user");
+                mem.set("user.score", inputData + 1);
+                context.sendEvent(new OutputEvent(inputData + 1));
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -2900,6 +3352,29 @@ public class ActionExecutionOperatorTest {
                 }
 
                 return new AgentPlan(actions, new HashMap<>(), config);
+            } catch (Exception e) {
+                ExceptionUtils.rethrow(e);
+            }
+            return null;
+        }
+
+        /** Creates an AgentPlan with a single action that creates a nested memory object. */
+        public static AgentPlan getNestedMemoryAgentPlan() {
+            try {
+                Action nestedMemoryAction =
+                        new Action(
+                                "nestedMemoryAction",
+                                new JavaFunction(
+                                        TestAgent.class,
+                                        "nestedMemoryAction",
+                                        new Class<?>[] {Event.class, RunnerContext.class}),
+                                Collections.singletonList(InputEvent.EVENT_TYPE));
+                Map<String, List<Action>> actionsByEvent = new HashMap<>();
+                actionsByEvent.put(
+                        InputEvent.EVENT_TYPE, Collections.singletonList(nestedMemoryAction));
+                Map<String, Action> actions = new HashMap<>();
+                actions.put(nestedMemoryAction.getName(), nestedMemoryAction);
+                return new AgentPlan(actions, new HashMap<>(), new AgentConfiguration());
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }
@@ -3312,6 +3787,24 @@ public class ActionExecutionOperatorTest {
         InputEvent event = new InputEvent(input);
         Action action = agentPlan.getActions().get(actionName);
         return actionStateStore.get(key, 0L, action, event);
+    }
+
+    /**
+     * Records the ownership filter that {@code DurableExecutionManager.handleRecovery} installs on
+     * the store during operator recovery, so tests can assert which key-groups a given subtask
+     * would retain.
+     */
+    private static class FilterCapturingActionStateStore extends InMemoryActionStateStore {
+        private volatile IntPredicate capturedOwnershipFilter;
+
+        private FilterCapturingActionStateStore() {
+            super(false);
+        }
+
+        @Override
+        public void setOwnershipFilter(IntPredicate ownershipFilter) {
+            this.capturedOwnershipFilter = ownershipFilter;
+        }
     }
 
     private static class RecordingActionStateStore extends InMemoryActionStateStore {

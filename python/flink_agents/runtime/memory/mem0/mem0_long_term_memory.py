@@ -24,7 +24,7 @@ import queue
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from pydantic import ConfigDict, Field, PrivateAttr, field_validator
 from typing_extensions import override
@@ -123,6 +123,41 @@ def _create_flink_agents_config_classes() -> tuple:
     return _FlinkAgentsLlmConfig, _FlinkAgentsEmbedderConfig
 
 
+def _reject_empty_partition_key(key: str) -> str:
+    """Return ``key`` unless it is empty, which cannot scope an operation.
+
+    Mem0 matches on ``agent_id`` only when it is truthy, so an empty key widens
+    every operation to all keys sharing the job id and set name, and stores added
+    items with no ``agent_id`` at all.
+    """
+    if not key:
+        msg = (
+            "Long-term memory cannot be scoped to an empty partition key. Mem0 "
+            "ignores an empty agent_id, so the operation would reach every key "
+            "sharing the job id and set name, and added items would be stored "
+            "unattributed. Key the stream by a non-empty value."
+        )
+        raise ValueError(msg)
+    return key
+
+
+def _bound_partition_key(memory_set: MemorySet) -> str:
+    """Return the partition key the set is scoped to.
+
+    An unbound set would widen every operation to all keys sharing the job id and
+    set name, which for a delete means deleting another key's items. Refuse the
+    operation instead.
+    """
+    if memory_set.partition_key is None:
+        msg = (
+            f"Memory set {memory_set.name!r} is not bound to a partition key. "
+            "Obtain it with get_memory_set inside the action that uses it, rather "
+            "than constructing it directly or reusing one across actions."
+        )
+        raise ValueError(msg)
+    return _reject_empty_partition_key(memory_set.partition_key)
+
+
 class Mem0LongTermMemory(InternalBaseLongTermMemory):
     """Long-Term Memory backed by Mem0.
 
@@ -136,10 +171,19 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         description="The runner context to retrieve resources.", exclude=True
     )
 
+    mailbox_thread_checker: Callable[[], None] = Field(
+        description="Raises when called off the Flink mailbox thread. Whole-memory-set "
+        "management reads the partition key currently in scope, which only the mailbox "
+        "thread can read consistently.",
+        exclude=True,
+    )
+
     job_id: str = Field(description="Unique identifier for the job.")
 
-    key: str = Field(
-        default="", description="Unique identifier for the keyed partition."
+    key: str | None = Field(
+        default=None,
+        description="Keyed partition currently in scope, or None before the first "
+        "context switch.",
     )
 
     chat_model_name: str = Field(
@@ -184,6 +228,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         chat_model_name: str,
         embedding_model_name: str,
         vector_store_name: str,
+        mailbox_thread_checker: Callable[[], None],
     ) -> None:
         """Initialize the Mem0-based Long-Term Memory.
 
@@ -194,6 +239,8 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             embedding_model_name: Resource name of the embedding model.
             vector_store_name: Resource name of a
                 ``CollectionManageableVectorStore`` to back Mem0.
+            mailbox_thread_checker: Callable that raises when invoked off the
+                Flink mailbox thread.
         """
         # Resolve metric group upfront on the main thread so that it is
         # safe to use from any thread later.
@@ -205,6 +252,7 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         )
         super().__init__(
             ctx=ctx,
+            mailbox_thread_checker=mailbox_thread_checker,
             job_id=job_id,
             chat_model_name=chat_model_name,
             embedding_model_name=embedding_model_name,
@@ -425,29 +473,74 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
 
         return json.dumps([record.to_wire() for record in records], ensure_ascii=False)
 
+    def _current_partition_key(self) -> str:
+        """Return the partition key currently in scope.
+
+        Whole-set management operations read the key from the memory rather than
+        from a set, so they are only correct once an action has switched context.
+        """
+        if self.key is None:
+            msg = (
+                "Long-term memory has no partition key in scope. Call this from "
+                "an action body, which always runs under a partition key, rather "
+                "than before the first action has run."
+            )
+            raise ValueError(msg)
+        return _reject_empty_partition_key(self.key)
+
     @override
     def get_memory_set(self, name: str) -> MemorySet:
         """Get the memory set by name.
+
+        The current partition key and observation context are copied onto the set
+        so that operations submitted to a worker thread stay scoped to the action
+        that obtained it. Only the mailbox thread reads that context consistently,
+        so this method refuses to run on any other thread.
 
         Args:
             name: The name of the memory set.
 
         Returns:
             The memory set.
+
+        Raises:
+            ValueError: If the partition key in scope is absent or empty.
+            Exception: Called from a thread other than the mailbox thread. The
+                refusal originates on the Java side and reaches Python through the
+                bridge, so the concrete type is whatever that marshals to.
         """
-        return MemorySet(name=name, ltm=self)
+        self.mailbox_thread_checker()
+        return MemorySet(
+            name=name,
+            ltm=self,
+            partition_key=self._current_partition_key(),
+            observation_id=self._observation_id,
+            observation_suppressed=self._observation_suppressed,
+        )
 
     @override
     def delete_memory_set(self, name: str) -> bool:
         """Delete a memory set and all its items.
+
+        Takes a name rather than a ``MemorySet``, so it has no bound context to read
+        and uses the key currently in scope. It therefore refuses to run outside the
+        mailbox thread, and deleting a whole set can target a different key than
+        ``MemorySet.delete`` on a set of the same name would.
 
         Args:
             name: The name of the memory set.
 
         Returns:
             True if the memory set was deleted.
+
+        Raises:
+            ValueError: If the partition key in scope is absent or empty.
+            Exception: Called from a thread other than the mailbox thread. The
+                refusal originates on the Java side and reaches Python through the
+                bridge, so the concrete type is whatever that marshals to.
         """
-        observation_key = self.key
+        self.mailbox_thread_checker()
+        observation_key = self._current_partition_key()
         observation_id = self._observation_id
         observation_enabled = (
             self._update_observation_enabled and not self._observation_suppressed
@@ -485,10 +578,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of IDs of the added memories.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._update_observation_enabled and not self._observation_suppressed
+            self._update_observation_enabled and not memory_set.observation_suppressed
         )
         if isinstance(memory_items, str):
             memory_items = [memory_items]
@@ -550,10 +643,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of memory items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._get_observation_enabled and not self._observation_suppressed
+            self._get_observation_enabled and not memory_set.observation_suppressed
         )
         if ids is not None:
             if isinstance(ids, str):
@@ -605,10 +698,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
             memory_set: The memory set to delete from.
             ids: Optional ID or list of IDs. If None, deletes all items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._update_observation_enabled and not self._observation_suppressed
+            self._update_observation_enabled and not memory_set.observation_suppressed
         )
         if ids is None:
             self._mem0_instance.delete_all(
@@ -662,10 +755,10 @@ class Mem0LongTermMemory(InternalBaseLongTermMemory):
         Returns:
             List of matching memory items.
         """
-        observation_key = self.key
-        observation_id = self._observation_id
+        observation_key = _bound_partition_key(memory_set)
+        observation_id = memory_set.observation_id
         observation_enabled = (
-            self._search_observation_enabled and not self._observation_suppressed
+            self._search_observation_enabled and not memory_set.observation_suppressed
         )
         result = self._mem0_instance.search(
             query=query,

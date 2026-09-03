@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
+from collections.abc import Callable
 from typing import Any, Dict
 
 from flink_agents.api.resource import Resource, ResourceType
@@ -23,6 +25,38 @@ from flink_agents.plan.function import JavaFunction
 from flink_agents.plan.resource_provider import JavaResourceProvider, ResourceProvider
 from flink_agents.plan.tools.function_tool import FunctionTool
 from flink_agents.runtime.resource_context import ResourceContextImpl
+
+_LOG = logging.getLogger(__name__)
+
+
+def _failure_of(close: Callable[[], None]) -> Exception | None:
+    """Run ``close``, returning any failure instead of raising it.
+
+    Keeps the caller's cleanup loop free of a ``try`` block so one bad component
+    cannot end the iteration.
+    """
+    try:
+        close()
+    except Exception as e:
+        return e
+    return None
+
+
+def _first_or_logged(
+    failure: Exception | None, previous: Exception | None, what: str
+) -> Exception | None:
+    """Keep the first failure and log any later one.
+
+    The Python analogue of Flink's ``ExceptionUtils.firstOrSuppressed``. Later
+    failures are logged rather than attached, because ``ExceptionGroup`` requires
+    3.11 and this package supports 3.10.
+    """
+    if failure is None:
+        return previous
+    if previous is None:
+        return failure
+    _LOG.warning("Suppressed failure closing %s.", what, exc_info=failure)
+    return previous
 
 
 class ResourceCache:
@@ -100,9 +134,29 @@ class ResourceCache:
         cached ``SkillManager`` (releasing materialized skill temp dirs). This
         is what releases skill resources on operator close, including Flink
         failover when the JVM stays up.
+
+        Every resource is closed even when an earlier one fails, so a single bad
+        resource cannot strand the ones behind it, the cache clear, or the
+        resource context. The first failure is re-raised; later ones are logged.
+
+        This mirrors the Java ``ResourceCache.close()`` contract. Two differences
+        are deliberate. Java catches ``Throwable`` to keep a non-``Exception``
+        failure from stopping the loop; the Python equivalent is ``Exception``,
+        since it already covers what Java calls ``Error`` (``MemoryError`` and
+        friends) while ``BaseException`` would also swallow ``KeyboardInterrupt``
+        and ``SystemExit``, which cleanup must not do. And Java attaches later
+        failures with ``addSuppressed``; ``ExceptionGroup`` needs 3.11 and this
+        package supports 3.10, so later failures are logged instead of attached.
         """
+        first_failure: Exception | None = None
         for typed in self._cache.values():
             for resource in typed.values():
-                resource.close()
+                first_failure = _first_or_logged(
+                    _failure_of(resource.close), first_failure, "resource"
+                )
         self._cache.clear()
-        self._resource_context.close()
+        first_failure = _first_or_logged(
+            _failure_of(self._resource_context.close), first_failure, "resource context"
+        )
+        if first_failure is not None:
+            raise first_failure

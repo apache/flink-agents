@@ -17,15 +17,24 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 /**
  * Java-specific implementation of RunnerContext that includes ContinuationActionExecutor for async
@@ -75,6 +84,177 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                 callable, reconcileCallable, () -> executeAsyncCallable(callable));
     }
 
+    @Override
+    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+            throws Exception {
+        if (callables.isEmpty()) {
+            return List.of();
+        }
+        if (durableExecutionContext == null) {
+            return executeAllWithoutDurableState(callables);
+        }
+
+        String argsDigest = "";
+        int base = durableExecutionContext.getCurrentCallIndex();
+        BatchExecutionPlan<T> plan = buildBatchExecutionPlan(callables, base, argsDigest);
+
+        reservePendingBatchIfNeeded(callables, argsDigest, plan);
+
+        BatchExecutionResult<T> executed = executeOutcomeSuppliers(plan.suppliers);
+        finalizeExecutedOutcomes(callables, base, argsDigest, plan, executed);
+
+        advanceCallIndexBy(callables.size());
+        return plan.outcomes;
+    }
+
+    private <T> BatchExecutionPlan<T> buildBatchExecutionPlan(
+            List<DurableCallable<T>> callables, int base, String argsDigest) throws Exception {
+        BatchExecutionPlan<T> plan = new BatchExecutionPlan<>(callables.size());
+        for (int i = 0; i < callables.size(); i++) {
+            DurableCallable<T> callable = callables.get(i);
+            CallResult current = getCallResultAt(base + i);
+            if (current == null) {
+                markReservationStart(plan, i);
+                addExecutableCall(plan, i, callable::call);
+                continue;
+            }
+            if (!current.matches(callable.getId(), argsDigest)) {
+                clearCallResultsFromAndPersist(base + i);
+                plan.needsReservation = true;
+                plan.executionStart = i;
+                addExecutableCall(plan, i, callable::call);
+                appendRemainingExecutions(callables, plan, i + 1);
+                break;
+            }
+            if (current.isPending()) {
+                Callable<T> reconcileCallable = callable.reconciler();
+                Callable<T> executionCallable =
+                        reconcileCallable != null ? reconcileCallable : callable::call;
+                addExecutableCall(plan, i, executionCallable);
+            } else {
+                plan.outcomes.add(
+                        readTerminalOutcomeAt(
+                                base + i, callable.getId(), argsDigest, callable.getResultClass()));
+            }
+        }
+        return plan;
+    }
+
+    private <T> void markReservationStart(BatchExecutionPlan<T> plan, int callIndex) {
+        plan.needsReservation = true;
+        if (plan.executionStart < 0) {
+            plan.executionStart = callIndex;
+        }
+    }
+
+    private <T> void addExecutableCall(
+            BatchExecutionPlan<T> plan, int callIndex, Callable<T> executionCallable) {
+        plan.outcomes.add(null);
+        plan.suppliers.add(executionCallable);
+        plan.executableCallIndexes.add(callIndex);
+    }
+
+    private <T> void appendRemainingExecutions(
+            List<DurableCallable<T>> callables, BatchExecutionPlan<T> plan, int startIndex) {
+        for (int i = startIndex; i < callables.size(); i++) {
+            DurableCallable<T> remaining = callables.get(i);
+            addExecutableCall(plan, i, remaining::call);
+        }
+    }
+
+    private <T> void reservePendingBatchIfNeeded(
+            List<DurableCallable<T>> callables, String argsDigest, BatchExecutionPlan<T> plan) {
+        if (!plan.needsReservation) {
+            return;
+        }
+        List<String> ids = new ArrayList<>();
+        List<String> argsDigests = new ArrayList<>();
+        for (DurableCallable<T> callable :
+                callables.subList(plan.executionStart, callables.size())) {
+            ids.add(callable.getId());
+            argsDigests.add(argsDigest);
+        }
+        reservePendingBatch(ids, argsDigests);
+    }
+
+    private <T> void finalizeExecutedOutcomes(
+            List<DurableCallable<T>> callables,
+            int base,
+            String argsDigest,
+            BatchExecutionPlan<T> plan,
+            BatchExecutionResult<T> executed)
+            throws Exception {
+        for (int i = 0; i < executed.getOutcomes().size(); i++) {
+            int callIndex = plan.executableCallIndexes.get(i);
+            Outcome<T> outcome = executed.getOutcomes().get(i);
+            DurableCallable<T> callable = callables.get(callIndex);
+            if (!executed.wasStarted(i)) {
+                plan.outcomes.set(callIndex, outcome);
+                continue;
+            }
+            try {
+                finalizeCallAt(
+                        base + callIndex,
+                        callable.getId(),
+                        argsDigest,
+                        serializeDurableResult(outcome.getValue()),
+                        serializeDurableException(outcome.getError()));
+            } catch (Exception e) {
+                outcome = Outcome.failure(e);
+            }
+            plan.outcomes.set(callIndex, outcome);
+        }
+    }
+
+    private static class BatchExecutionPlan<T> {
+        private final List<Outcome<T>> outcomes;
+        private final List<Callable<T>> suppliers = new ArrayList<>();
+        private final List<Integer> executableCallIndexes = new ArrayList<>();
+        private boolean needsReservation;
+        private int executionStart = -1;
+
+        private BatchExecutionPlan(int size) {
+            this.outcomes = new ArrayList<>(size);
+        }
+    }
+
+    private <T> List<Outcome<T>> executeAllWithoutDurableState(List<DurableCallable<T>> callables) {
+        List<Callable<T>> suppliers = new ArrayList<>();
+        for (DurableCallable<T> callable : callables) {
+            suppliers.add(callable::call);
+        }
+        return executeOutcomeSuppliers(suppliers).getOutcomes();
+    }
+
+    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers) {
+        if (suppliers.isEmpty()) {
+            return new BatchExecutionResult<>(List.of(), new boolean[0]);
+        }
+        if (continuationExecutor == null || continuationContext == null) {
+            List<Outcome<T>> outcomes =
+                    suppliers.stream()
+                            .map(
+                                    supplier -> {
+                                        try {
+                                            return Outcome.success(supplier.call());
+                                        } catch (Exception e) {
+                                            return Outcome.<T>failure(e);
+                                        }
+                                    })
+                            .collect(Collectors.toList());
+            boolean[] started = new boolean[suppliers.size()];
+            Arrays.fill(started, true);
+            return new BatchExecutionResult<>(outcomes, started);
+        }
+        Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
+        Duration timeout =
+                timeoutMs == null || timeoutMs <= 0 ? null : Duration.ofMillis(timeoutMs);
+        Integer parallelism = getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
+        int parallelismCap = parallelism == null ? 1 : Math.max(parallelism, 1);
+        return continuationExecutor.executeAllAsync(
+                continuationContext, suppliers, timeout, parallelismCap);
+    }
+
     private <T> T executeAsyncCallable(DurableCallable<T> callable) throws Exception {
 
         Supplier<T> wrappedSupplier =
@@ -102,5 +282,10 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         } catch (DurableExecutionRuntimeException e) {
             throw (Exception) e.getCause();
         }
+    }
+
+    @Override
+    public void close() throws Exception {
+        super.close();
     }
 }
