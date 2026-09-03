@@ -20,7 +20,13 @@ package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerator;
+import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
+import com.github.victools.jsonschema.generator.SchemaVersion;
+import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -39,7 +45,12 @@ import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.InferenceConfiguration;
+import software.amazon.awssdk.services.bedrockruntime.model.JsonSchemaDefinition;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
+import software.amazon.awssdk.services.bedrockruntime.model.OutputConfig;
+import software.amazon.awssdk.services.bedrockruntime.model.OutputFormat;
+import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatStructure;
+import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatType;
 import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ToolConfiguration;
 import software.amazon.awssdk.services.bedrockruntime.model.ToolInputSchema;
@@ -54,6 +65,10 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -88,6 +103,51 @@ import java.util.stream.Collectors;
 public class BedrockChatModelConnection extends BaseChatModelConnection {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Models AWS documents structured-output support for on the bedrock-runtime endpoint. There is
+    // no single list page: the feature page delegates the per-model answer to the individual model
+    // cards, where each card carries it as a "Structured outputs" bullet in the Supported or Not
+    // Supported column of its "Features supported using bedrock-runtime endpoint" table.
+    //
+    // The ids are the Model ID column of each card's Programmatic Access table, read from the
+    // bedrock-runtime row. A card commonly prints a different id for bedrock-mantle and can carry
+    // opposite verdicts for the two, so the endpoint an id was read from is part of what makes the
+    // entry correct. This connection calls Converse on bedrock-runtime.
+    //
+    // Matching is exact, never by prefix. A Bedrock id already pins the vendor, the snapshot date
+    // and the version in one string, so there is no alias for a prefix to cover, and a prefix would
+    // over-capture: "qwen.qwen3" admits qwen.qwen3-vl-235b-a22b, which AWS documents as not
+    // supported, and "anthropic.claude-sonnet-4" admits anthropic.claude-sonnet-4-20250514-v1:0,
+    // whose card carries no answer at all. Exact matching also keeps irregular id shapes correct
+    // with no normalisation rule: mistral.mistral-large-3-675b-instruct carries no version suffix,
+    // openai.gpt-oss-120b-1:0 carries "-1:0" rather than "-v1:0".
+    //
+    // A card whose capability table carries the bullet in neither column is undocumented rather
+    // than negative, and is absent from this set for that reason.
+    private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
+            Set.of(
+                    "anthropic.claude-sonnet-4-5-20250929-v1:0",
+                    "anthropic.claude-opus-4-5-20251101-v1:0",
+                    "anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "mistral.mistral-large-3-675b-instruct",
+                    "openai.gpt-oss-120b-1:0",
+                    "openai.gpt-oss-20b-1:0",
+                    "qwen.qwen3-235b-a22b-2507-v1:0",
+                    "qwen.qwen3-32b-v1:0",
+                    "qwen.qwen3-coder-30b-a3b-v1:0",
+                    "qwen.qwen3-coder-480b-a35b-v1:0",
+                    "qwen.qwen3-coder-next",
+                    "qwen.qwen3-next-80b-a3b");
+
+    // A cross-Region inference profile id is a model id behind a geographic or global prefix, and
+    // AWS documents structured output as working through cross-Region inference. The prefix set is
+    // open-ended — the documentation names members by example and states that new profiles may
+    // be created — so a leading segment is matched by shape rather than against a fixed list,
+    // which would already have missed the documented us-gov. profiles. The charset excludes ":"
+    // and "/", so no ARN can be shortened this way, and the strip is attempted only after the id
+    // itself fails to match, so a bare model id is never shortened.
+    private static final Pattern INFERENCE_PROFILE_PREFIX = Pattern.compile("^[a-z0-9-]+\\.(.+)$");
+
     private final BedrockRuntimeClient client;
     private final String defaultModel;
     private final RetryExecutor retryExecutor;
@@ -117,10 +177,61 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                         .build();
     }
 
+    /**
+     * Whether AWS documents structured-output support for {@code effectiveModel}.
+     *
+     * <p>See the allowlist above for the source of truth, for why the match is exact, and for why a
+     * geographic or global inference-profile prefix is stripped before it.
+     *
+     * <p>Every ARN reports {@code false}. A provisioned-throughput, imported-model,
+     * custom-model-deployment, application-inference-profile or marketplace-endpoint ARN identifies
+     * a resource without naming the model behind it, and a prompt-router ARN names a set whose
+     * member is chosen per request, so for none of them is an answer derivable from the identifier
+     * the request carries. An unrecognized identifier reports {@code false} so that it degrades to
+     * the prompt-engineering fallback rather than failing at the provider.
+     *
+     * <p>A null or blank model reports {@code false} rather than throwing: {@code resolveModel}
+     * rejects one before a request is built, but this method is part of the connection contract and
+     * answers for whatever it is given. Only the null case needs a guard of its own, because the
+     * allowlist is an immutable Set whose {@code contains(null)} throws; a blank model is merely
+     * absent from it.
+     *
+     * <p>Reads no instance state, so capability stays answerable independently of how the
+     * connection was configured.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        // Load-bearing: the allowlist is an immutable Set, whose contains(null) throws rather than
+        // reporting absence.
+        if (effectiveModel == null || effectiveModel.isBlank()) {
+            return false;
+        }
+        if (NATIVE_STRUCTURED_OUTPUT_MODELS.contains(effectiveModel)) {
+            return true;
+        }
+        Matcher profile = INFERENCE_PROFILE_PREFIX.matcher(effectiveModel);
+        return profile.matches() && NATIVE_STRUCTURED_OUTPUT_MODELS.contains(profile.group(1));
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        ConverseRequest request = buildRequest(messages, tools, modelParams);
+        return chat(messages, tools, modelParams, null);
+    }
+
+    /**
+     * Translates {@code outputSchema} into Converse's native {@code outputConfig} when it is a POJO
+     * {@link Class} and the effective model is one AWS documents as supporting it. Any other schema
+     * form — notably a {@code RowTypeInfo} wrapped in {@code OutputSchema} — and any other model
+     * leave the request unconstrained, so that the caller keeps the prompt-engineering fallback.
+     */
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        ConverseRequest request = buildRequest(messages, tools, modelParams, outputSchema);
         String modelId = request.modelId();
 
         ConverseResponse response =
@@ -138,8 +249,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Translate the flink-agents call arguments into a Converse request: the effective model id,
-     * the SYSTEM/conversation message split, the tool configuration, and the inference
-     * configuration.
+     * the SYSTEM/conversation message split, the tool configuration, the inference configuration,
+     * and the native output configuration when the schema and the model both admit one.
      *
      * <p>Package-private so a test can assert the request body without issuing a live call through
      * the Bedrock runtime client.
@@ -151,11 +262,17 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * @param tools the tools to advertise, or {@code null} / empty for none
      * @param modelParams per-call parameters; {@code model}, {@code temperature} and {@code
      *     max_tokens} are read, and {@code null} is accepted
+     * @param outputSchema the schema the response should conform to, or {@code null} for an
+     *     unconstrained response; applied natively only for a POJO {@link Class} on a model that
+     *     supports it, and otherwise left to the caller's prompt-engineering fallback
      * @return the request to send to Converse
      * @throws IllegalArgumentException if neither the call nor the connection supplies a model id
      */
     ConverseRequest buildRequest(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         String modelId = resolveModel(modelParams);
 
         List<ChatMessage> systemMsgs =
@@ -209,7 +326,73 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
         }
 
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelId)) {
+            requestBuilder.outputConfig(nativeOutputConfig((Class<?>) outputSchema));
+        }
+
         return requestBuilder.build();
+    }
+
+    /**
+     * Wraps the schema derived from {@code schemaClass} in the request element Converse reads it
+     * from.
+     *
+     * <p>Converse takes the schema as serialized text rather than as a document, unlike the tool
+     * input schema on the same request, so the derived schema is written out here.
+     */
+    private static OutputConfig nativeOutputConfig(Class<?> schemaClass) {
+        return OutputConfig.builder()
+                .textFormat(
+                        OutputFormat.builder()
+                                .type(OutputFormatType.JSON_SCHEMA)
+                                .structure(
+                                        OutputFormatStructure.builder()
+                                                .jsonSchema(
+                                                        JsonSchemaDefinition.builder()
+                                                                .schema(
+                                                                        toNativeSchema(schemaClass)
+                                                                                .toString())
+                                                                .build())
+                                                .build())
+                                .build())
+                .build();
+    }
+
+    // Derives the JSON schema from a POJO class. Every setting below addresses a concrete way the
+    // generated schema otherwise fails to constrain generation:
+    //
+    //   - DRAFT_2020_12 is the dialect Bedrock validates a schema against, so the schema
+    //     declares it rather than the generator's older default.
+    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
+    //     properties of their own, named after the accessor call, e.g. "getSummary()".
+    //   - The required check marks every field required except an Optional one. The default marks
+    //     nothing required, which lets a model omit fields at will, while marking everything
+    //     required would force the fields a caller declared omissible.
+    //   - The Jackson module makes the schema name properties the way Jackson names them. The
+    //     response is read back into the same class with an ObjectMapper, so a property that
+    //     @JsonProperty renames or @JsonIgnore drops has to be stated in the schema under the name
+    //     the mapper reads, or a response that satisfies the schema still fails to deserialize.
+    //     It is applied with no JacksonOption, so it contributes property naming and visibility
+    //     only: the required set stays the one configured above.
+    //
+    // A Map's value schema is deliberately left underived. Bedrock accepts additionalProperties
+    // only as false, and rejects a schema that carries it as a subschema, so typing map values
+    // would trade an unconstrained map for a rejected request. A Map field reaches the model as a
+    // bare object.
+    //
+    // A self-referencing class derives its own field as a reference back to the schema root,
+    // whatever the required check says. Bedrock does not accept a recursive schema and rejects the
+    // request before the model runs, so declaring the field Optional does not rescue it; only
+    // flattening the recursion does.
+    private static JsonNode toNativeSchema(Class<?> schemaClass) {
+        SchemaGeneratorConfigBuilder configBuilder =
+                new SchemaGeneratorConfigBuilder(
+                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
+                        .with(new JacksonModule());
+        configBuilder
+                .forFields()
+                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
+        return new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass);
     }
 
     private static boolean isRetryable(Exception e) {
