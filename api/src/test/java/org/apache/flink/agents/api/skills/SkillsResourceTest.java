@@ -195,7 +195,9 @@ class SkillsResourceTest {
         for (String url :
                 List.of(
                         "https://example.com:bad/x.zip?token=top-secret",
-                        "https://user:supersecret/x.zip?token=TOPSECRET")) {
+                        "https://user:supersecret/x.zip?token=TOPSECRET",
+                        "https://user:sup:ersecret/x.zip?token=TOPSECRET",
+                        "https://user:999999/x.zip?token=TOPSECRET")) {
             IllegalArgumentException malformedPort =
                     assertThrows(IllegalArgumentException.class, () -> Skills.fromUrl(url), url);
             assertNull(malformedPort.getCause());
