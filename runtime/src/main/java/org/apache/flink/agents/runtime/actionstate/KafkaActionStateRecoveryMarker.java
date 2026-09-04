@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.annotation.Internal;
+
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.HashMap;
@@ -27,6 +29,7 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /** Versioned Kafka topic identity and per-partition offsets used to rebuild action state. */
+@Internal
 public final class KafkaActionStateRecoveryMarker implements Serializable {
 
     private static final long serialVersionUID = 1L;

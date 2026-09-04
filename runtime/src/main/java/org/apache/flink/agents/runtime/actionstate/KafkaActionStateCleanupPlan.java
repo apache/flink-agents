@@ -21,6 +21,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
 import org.apache.kafka.common.Uuid;
 
@@ -41,6 +42,7 @@ import java.util.Set;
 import java.util.TreeMap;
 
 /** Immutable, reviewable Kafka prefix-cleanup boundary derived from one recovery point. */
+@Internal
 public final class KafkaActionStateCleanupPlan implements Serializable {
 
     private static final long serialVersionUID = 1L;

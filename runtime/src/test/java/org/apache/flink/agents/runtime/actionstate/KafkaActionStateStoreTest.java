@@ -1092,6 +1092,10 @@ public class KafkaActionStateStoreTest {
                     public void append(KafkaActionStateCleanupCoordinator.Operation value) {}
 
                     @Override
+                    public void validateOffsetsAvailable(
+                            String topic, String topicId, Map<Integer, Long> offsets) {}
+
+                    @Override
                     public void deleteBefore(
                             String topic, String topicId, Map<Integer, Long> offsets) {}
 

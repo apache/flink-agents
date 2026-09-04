@@ -165,6 +165,20 @@ class KafkaActionStateCleanupPlanTest {
                 .hasMessageContaining("one physical Kafka topic");
     }
 
+    @Test
+    void testRejectsMarkersWithDifferentPartitionSets() {
+        KafkaActionStateRecoveryMarker missingPartition =
+                new KafkaActionStateRecoveryMarker("action-state", "topic-id", Map.of(0, 10L));
+
+        assertThatThrownBy(
+                        () ->
+                                KafkaActionStateCleanupPlan.fromRecoveryMarkers(
+                                        "checkpoint-42",
+                                        List.of(marker(Map.of(0, 10L, 1, 20L)), missingPartition)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("different Kafka partition sets");
+    }
+
     private static KafkaActionStateRecoveryMarker marker(Map<Integer, Long> offsets) {
         return new KafkaActionStateRecoveryMarker("action-state", "topic-id", offsets);
     }

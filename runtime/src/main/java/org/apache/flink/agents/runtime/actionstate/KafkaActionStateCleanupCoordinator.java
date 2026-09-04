@@ -22,6 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
 import org.apache.kafka.clients.admin.AdminClient;
@@ -76,6 +77,7 @@ import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CON
  * same plan is idempotent: an unfinished committed operation retries deletion and advances to
  * {@link Status#APPLIED} only after Kafka reports beginning offsets at or beyond the boundary.
  */
+@Internal
 public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
 
     private static final Duration OPERATION_TIMEOUT = Duration.ofSeconds(30);
@@ -176,6 +178,8 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
                     "Cleanup plan %s does not advance the committed boundary %s",
                     plan.getPlanId(),
                     currentBoundary);
+            transport.validateOffsetsAvailable(
+                    plan.getTopic(), plan.getTopicId(), plan.getOffsets());
             transport.append(Operation.committed(plan));
         }
 
@@ -330,6 +334,9 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
 
         void append(Operation operation) throws Exception;
 
+        void validateOffsetsAvailable(String topic, String topicId, Map<Integer, Long> offsets)
+                throws Exception;
+
         void deleteBefore(String topic, String topicId, Map<Integer, Long> offsets)
                 throws Exception;
     }
@@ -438,7 +445,7 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
         Preconditions.checkState(
                 record.key().equals(operation.getPlan().getPlanId()),
                 "Cleanup control record key does not match its plan ID");
-        Operation previous = operations.put(record.key(), operation);
+        Operation previous = operations.get(record.key());
         Preconditions.checkState(
                 previous == null || previous.getPlan().equals(operation.getPlan()),
                 "Cleanup control record changed immutable plan %s",
@@ -449,6 +456,7 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
                         || operation.getStatus() == Status.APPLIED,
                 "Cleanup control record regressed applied plan %s",
                 record.key());
+        operations.put(record.key(), operation);
     }
 
     private static final class KafkaTransport implements Transport {
@@ -580,6 +588,33 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
         }
 
         @Override
+        public void validateOffsetsAvailable(
+                String topic, String expectedTopicId, Map<Integer, Long> offsets) throws Exception {
+            validateTopicIdentity(topic, expectedTopicId, offsets.keySet());
+            Map<TopicPartition, Long> beginningOffsets =
+                    listOffsets(topic, offsets.keySet(), OffsetSpec.earliest());
+            Map<TopicPartition, Long> endOffsets =
+                    listOffsets(topic, offsets.keySet(), OffsetSpec.latest());
+            validateTopicIdentity(topic, expectedTopicId, offsets.keySet());
+            offsets.forEach(
+                    (partition, requestedOffset) -> {
+                        TopicPartition topicPartition = new TopicPartition(topic, partition);
+                        Long beginningOffset = beginningOffsets.get(topicPartition);
+                        Long endOffset = endOffsets.get(topicPartition);
+                        Preconditions.checkArgument(
+                                beginningOffset != null
+                                        && endOffset != null
+                                        && requestedOffset >= beginningOffset
+                                        && requestedOffset <= endOffset,
+                                "Cannot commit Kafka cleanup boundary for %s at offset %s because the available range is [%s, %s]",
+                                topicPartition,
+                                requestedOffset,
+                                beginningOffset,
+                                endOffset);
+                    });
+        }
+
+        @Override
         public void deleteBefore(String topic, String expectedTopicId, Map<Integer, Long> offsets)
                 throws Exception {
             validateTopicIdentity(topic, expectedTopicId, offsets.keySet());
@@ -594,16 +629,8 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
                     .all()
                     .get(OPERATION_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
 
-            Map<TopicPartition, OffsetSpec> earliestRequests = new HashMap<>();
-            recordsToDelete
-                    .keySet()
-                    .forEach(partition -> earliestRequests.put(partition, OffsetSpec.earliest()));
-            Map<TopicPartition, Long> beginningOffsets = new HashMap<>();
-            adminClient
-                    .listOffsets(earliestRequests)
-                    .all()
-                    .get(OPERATION_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
-                    .forEach((partition, info) -> beginningOffsets.put(partition, info.offset()));
+            Map<TopicPartition, Long> beginningOffsets =
+                    listOffsets(topic, offsets.keySet(), OffsetSpec.earliest());
             offsets.forEach(
                     (partition, target) -> {
                         TopicPartition topicPartition = new TopicPartition(topic, partition);
@@ -616,6 +643,20 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
                                 beginning);
                     });
             validateTopicIdentity(topic, expectedTopicId, offsets.keySet());
+        }
+
+        private Map<TopicPartition, Long> listOffsets(
+                String topic, Set<Integer> partitions, OffsetSpec offsetSpec) throws Exception {
+            Map<TopicPartition, OffsetSpec> requests = new HashMap<>();
+            partitions.forEach(
+                    partition -> requests.put(new TopicPartition(topic, partition), offsetSpec));
+            Map<TopicPartition, Long> offsets = new HashMap<>();
+            adminClient
+                    .listOffsets(requests)
+                    .all()
+                    .get(OPERATION_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS)
+                    .forEach((partition, info) -> offsets.put(partition, info.offset()));
+            return offsets;
         }
 
         private void validateTopicIdentity(

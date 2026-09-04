@@ -80,6 +80,30 @@ class KafkaActionStateCleanupCoordinatorTest {
     }
 
     @Test
+    void testAppliedRecordFailureRetriesDeletionFromCommittedPlan() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        transport.failNextAppliedAppend = true;
+        KafkaActionStateCleanupCoordinator coordinator =
+                new KafkaActionStateCleanupCoordinator(transport);
+        KafkaActionStateCleanupPlan plan = plan("checkpoint-42", 10L, 20L);
+
+        assertThatThrownBy(() -> coordinator.apply(plan))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("simulated applied append failure");
+        assertThat(transport.operations.get(plan.getPlanId()).getStatus())
+                .isEqualTo(KafkaActionStateCleanupCoordinator.Status.COMMITTED);
+
+        assertThat(coordinator.apply(plan))
+                .isEqualTo(KafkaActionStateCleanupCoordinator.Status.APPLIED);
+        assertThat(transport.events)
+                .containsExactly(
+                        "append:COMMITTED",
+                        "delete:{0=10, 1=20}",
+                        "delete:{0=10, 1=20}",
+                        "append:APPLIED");
+    }
+
+    @Test
     void testCommittedBoundaryRejectsOldRestoreBeforeDeleteSucceeds() throws Exception {
         FakeTransport transport = new FakeTransport();
         transport.failNextDelete = true;
@@ -121,6 +145,50 @@ class KafkaActionStateCleanupCoordinatorTest {
         assertThatThrownBy(() -> coordinator.apply(plan("checkpoint-41", 9L, 20L)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("does not advance");
+    }
+
+    @Test
+    void testRejectsBoundaryBelowAvailableBeginningBeforeCommit() {
+        FakeTransport transport = new FakeTransport();
+        transport.beginningOffsets.put(0, 11L);
+        KafkaActionStateCleanupCoordinator coordinator =
+                new KafkaActionStateCleanupCoordinator(transport);
+
+        assertThatThrownBy(() -> coordinator.apply(plan("checkpoint-42", 10L, 20L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("available range is [11");
+        assertThat(transport.operations).isEmpty();
+        assertThat(transport.events).isEmpty();
+    }
+
+    @Test
+    void testRejectsBoundaryAboveAvailableEndBeforeCommit() {
+        FakeTransport transport = new FakeTransport();
+        transport.endOffsets.put(1, 19L);
+        KafkaActionStateCleanupCoordinator coordinator =
+                new KafkaActionStateCleanupCoordinator(transport);
+
+        assertThatThrownBy(() -> coordinator.apply(plan("checkpoint-42", 10L, 20L)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("available range is [0, 19]");
+        assertThat(transport.operations).isEmpty();
+        assertThat(transport.events).isEmpty();
+    }
+
+    @Test
+    void testCommittedPlanRetriesAfterKafkaBeginningPassesBoundary() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        KafkaActionStateCleanupPlan plan = plan("checkpoint-42", 10L, 20L);
+        transport.operations.put(
+                plan.getPlanId(), KafkaActionStateCleanupCoordinator.Operation.committed(plan));
+        transport.beginningOffsets.put(0, 11L);
+        transport.beginningOffsets.put(1, 21L);
+        KafkaActionStateCleanupCoordinator coordinator =
+                new KafkaActionStateCleanupCoordinator(transport);
+
+        assertThat(coordinator.apply(plan))
+                .isEqualTo(KafkaActionStateCleanupCoordinator.Status.APPLIED);
+        assertThat(transport.events).containsExactly("delete:{0=10, 1=20}", "append:APPLIED");
     }
 
     @Test
@@ -217,6 +285,33 @@ class KafkaActionStateCleanupCoordinatorTest {
     }
 
     @Test
+    void testRejectsAppliedStatusRegressionWithoutChangingBoundary() throws Exception {
+        KafkaActionStateCleanupPlan plan = plan("checkpoint-42", 10L, 20L);
+        KafkaActionStateCleanupCoordinator.Operation applied =
+                KafkaActionStateCleanupCoordinator.Operation.committed(plan)
+                        .withStatus(KafkaActionStateCleanupCoordinator.Status.APPLIED);
+        Map<String, KafkaActionStateCleanupCoordinator.Operation> operations =
+                new LinkedHashMap<>();
+        operations.put(plan.getPlanId(), applied);
+        ConsumerRecord<String, String> regression =
+                new ConsumerRecord<>(
+                        "action-state-control",
+                        0,
+                        1L,
+                        plan.getPlanId(),
+                        KafkaActionStateCleanupCoordinator.Operation.committed(plan).toJson());
+
+        assertThatThrownBy(
+                        () ->
+                                KafkaActionStateCleanupCoordinator.applyControlRecord(
+                                        operations, regression))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("regressed applied plan");
+        assertThat(operations.get(plan.getPlanId()).getStatus())
+                .isEqualTo(KafkaActionStateCleanupCoordinator.Status.APPLIED);
+    }
+
+    @Test
     void testRejectsFractionalControlRecordSchema() throws Exception {
         KafkaActionStateCleanupCoordinator.Operation operation =
                 KafkaActionStateCleanupCoordinator.Operation.committed(
@@ -306,6 +401,17 @@ class KafkaActionStateCleanupCoordinatorTest {
     }
 
     @Test
+    void testRejectsSharedDataAndControlTopicBeforeConnecting() {
+        AgentConfiguration configuration = new AgentConfiguration();
+        configuration.set(KAFKA_ACTION_STATE_TOPIC, "action-state");
+        configuration.set(KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC, "action-state");
+
+        assertThatThrownBy(() -> KafkaActionStateCleanupCoordinator.create(configuration))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must differ from the data topic");
+    }
+
+    @Test
     void testControlTopicRequiresCompactionWithoutDeleteRetention() {
         assertThatCode(
                         () ->
@@ -343,7 +449,11 @@ class KafkaActionStateCleanupCoordinatorTest {
                 new LinkedHashMap<>();
         private final List<String> events = new ArrayList<>();
         private final Map<Integer, Long> deletedOffsets = new HashMap<>();
+        private final Map<Integer, Long> beginningOffsets = new HashMap<>(Map.of(0, 0L, 1, 0L));
+        private final Map<Integer, Long> endOffsets =
+                new HashMap<>(Map.of(0, Long.MAX_VALUE, 1, Long.MAX_VALUE));
         private boolean failNextDelete;
+        private boolean failNextAppliedAppend;
         private boolean closed;
         private int describeCalls;
 
@@ -360,8 +470,33 @@ class KafkaActionStateCleanupCoordinatorTest {
 
         @Override
         public void append(KafkaActionStateCleanupCoordinator.Operation operation) {
+            if (operation.getStatus() == KafkaActionStateCleanupCoordinator.Status.APPLIED
+                    && failNextAppliedAppend) {
+                failNextAppliedAppend = false;
+                throw new IllegalStateException("simulated applied append failure");
+            }
             events.add("append:" + operation.getStatus());
             operations.put(operation.getPlan().getPlanId(), operation);
+        }
+
+        @Override
+        public void validateOffsetsAvailable(
+                String topic, String topicId, Map<Integer, Long> offsets) {
+            offsets.forEach(
+                    (partition, requestedOffset) -> {
+                        long beginningOffset = beginningOffsets.get(partition);
+                        long endOffset = endOffsets.get(partition);
+                        if (requestedOffset < beginningOffset || requestedOffset > endOffset) {
+                            throw new IllegalArgumentException(
+                                    String.format(
+                                            "Cannot commit Kafka cleanup boundary for %s-%s at offset %s because the available range is [%s, %s]",
+                                            topic,
+                                            partition,
+                                            requestedOffset,
+                                            beginningOffset,
+                                            endOffset));
+                        }
+                    });
         }
 
         @Override
