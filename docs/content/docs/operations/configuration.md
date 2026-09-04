@@ -187,18 +187,16 @@ Here are the configuration options for Kafka-based Action State Store.
 
 ##### Checkpoint-aligned Kafka cleanup
 
-Checkpoint-aligned cleanup is an explicit administrative operation. Use Flink's State Processor API to read the selected checkpoint or savepoint's union state named by `KafkaActionStateRecoveryMarker.UNION_STATE_NAME`, using `TypeInformation.of(Object.class)`. Collect every marker and create an immutable plan with `KafkaActionStateCleanupPlan.fromRecoveryMarkers(recoveryPoint, markers)`. Legacy map markers can still be restored, but cannot authorize deletion because they do not identify the physical Kafka topic.
-
-`KafkaActionStateCleanupTool` provides the same workflow for Java and Python jobs. Run it with the Flink Agents runtime JAR and the matching Flink State Processor API JAR on the classpath:
+Checkpoint-aligned cleanup is an explicit administrative operation. `KafkaActionStateCleanupTool` provides the same command-line workflow for Java and Python jobs. Run it with the Flink Agents runtime JAR and the matching Flink State Processor API JAR on the classpath:
 
 ```text
 plan --checkpoint PATH (--operator-uid UID | --operator-uid-hash HASH) --output FILE
 apply --plan FILE --bootstrap-servers SERVERS --control-topic TOPIC [--replication-factor N]
 ```
 
-The `plan` command creates a new file and refuses to overwrite an existing plan. The `apply` command verifies the content-derived plan ID before contacting Kafka.
+The `plan` command reads all recovery markers from the selected checkpoint or savepoint through Flink's State Processor API, creates a deterministic plan using the earliest required offset per partition, and refuses to overwrite an existing output file. Legacy map markers can still be restored by a job, but cannot authorize deletion because they do not identify the physical Kafka topic. The `apply` command verifies the content-derived plan ID before contacting Kafka.
 
-Review and retain the plan's deterministic JSON before applying it. Call `KafkaActionStateCleanupCoordinator.create(configuration).apply(KafkaActionStateCleanupPlan.fromJson(json))` to create or validate the control topic and apply the plan. The coordinator writes `COMMITTED` before calling Kafka `deleteRecords`, verifies every resulting beginning offset, and then writes `APPLIED`. Reapplying the same plan retries an interrupted committed operation without changing its boundary. Set `kafkaActionStateCleanupControlTopic` on the job only after the first plan is committed; recovery requires the configured topic to exist and contain a committed boundary, and fails closed if the topic is missing or empty.
+Review and retain the plan's deterministic JSON before applying it. The coordinator verifies that the selected offsets are still available, writes `COMMITTED` before calling Kafka `deleteRecords`, verifies every resulting beginning offset, and then writes `APPLIED`. Reapplying the same plan retries an interrupted committed operation without changing its boundary. Set `kafkaActionStateCleanupControlTopic` on the job only after the first plan is committed; recovery requires the configured topic to exist and contain a committed boundary, and fails closed if the topic is missing or empty.
 
 For the first cleanup on an existing job, stop the job, create and apply the plan from the recovery point that will become the oldest supported one, and restart from that same point with `kafkaActionStateCleanupControlTopic` configured. This avoids a failover window in which the old running job does not yet know the committed boundary. Once the job is running with boundary enforcement enabled, later forward-only plans may be applied while it runs. Run only one `apply` operation at a time; concurrent incomparable plans fail closed and require operator intervention. Do not recreate the action-state topic or change its partitions while an apply operation is running: the coordinator checks the topic ID and partition set before and after deletion, but Kafka addresses `deleteRecords` by topic name and cannot atomically fence topic lifecycle changes.
 
