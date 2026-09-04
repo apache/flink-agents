@@ -17,9 +17,11 @@
 #################################################################################
 """Unit tests for URLSkillRepository."""
 
+import hashlib
 import threading
 import zipfile
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -78,22 +80,131 @@ def zip_server(skills_zip_path: Path) -> "tuple[str, type[_ZipHandler]]":
 class TestURLSkillRepository:
     def test_load_from_url(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, _handler = zip_server
-        repo = URLSkillRepository(url)
+        digest = hashlib.sha256(_handler.zip_bytes).hexdigest().upper()
+        repo = URLSkillRepository(url, sha256=digest, allow_insecure_http=True)
 
         skills = repo.get_skills()
         names = {s.name for s in skills}
         assert names == {"github", "nano-banana-pro"}
 
     def test_non_http_url_rejected(self) -> None:
-        with pytest.raises(ValueError, match="Only http"):
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
             URLSkillRepository("file:///tmp/skills.zip")
 
-        with pytest.raises(ValueError, match="Only http"):
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)"):
             URLSkillRepository("ftp://example.com/skills.zip")
+
+    def test_plain_http_rejected_by_default(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, _handler = zip_server
+        with pytest.raises(ValueError, match="disabled by default"):
+            URLSkillRepository(url)
+
+    def test_sha256_mismatch_rejected_before_extraction(
+        self, zip_server: "tuple[str, type[_ZipHandler]]"
+    ) -> None:
+        url, handler = zip_server
+        archive = BytesIO()
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../evil.txt", "pwn")
+        handler.zip_bytes = archive.getvalue()
+
+        signed_url = f"{url}?token=top-secret#fragment"
+        with pytest.raises(ValueError, match="SHA-256 mismatch") as exc_info:
+            URLSkillRepository(signed_url, sha256="0" * 64, allow_insecure_http=True)
+        assert url in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://:443/skills.zip",
+            "https://example.com:bad/skills.zip",
+            "https://example.com:65536/skills.zip",
+        ],
+    )
+    def test_invalid_host_and_port_rejected_before_download(self, url: str) -> None:
+        with pytest.raises(ValueError, match=r"valid host|valid port"):
+            URLSkillRepository(url)
+
+    def test_ambiguous_invalid_port_is_redacted_before_download(self) -> None:
+        url = "https://user:supersecret/skills.zip?token=TOPSECRET"
+        with pytest.raises(ValueError, match="valid port") as exc_info:
+            URLSkillRepository(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "supersecret" not in str(exc_info.value)
+        assert "TOPSECRET" not in str(exc_info.value)
+
+    def test_scoped_ipv6_is_rejected_before_download(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            URLSkillRepository("https://[fe80::1%25lo0]/skills.zip")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://exa_mple.com/skills.zip",
+            "https://tést.com/skills.zip",
+            "https://\N{KELVIN SIGN}.com/skills.zip",
+            "https://%65xample.com/skills.zip",
+            "https://-example.com/skills.zip",
+            "https://example-.com/skills.zip",
+            "https://.example.com/skills.zip",
+            "https://example..com/skills.zip",
+            "https://a../skills.zip",
+            "https://../skills.zip",
+            "https://999.999.999.999/skills.zip",
+            "https://127.1/skills.zip",
+            "https://1.2.3/skills.zip",
+            "https://foo.123/skills.zip",
+            "https://foo.1bar/skills.zip",
+            "https://1.2.3.4.5/skills.zip",
+            "https://1.2.3./skills.zip",
+            "https://1.2.3.4./skills.zip",
+            "https://[v1.foo]/skills.zip",
+        ],
+    )
+    def test_invalid_hostname_syntax_rejected_before_download(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            URLSkillRepository(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/x zip?token=top-secret",
+            "https://example.com/%invalid?token=top-secret",
+            "https://[fe80::1%eth0]/x.zip?token=top-secret",
+            "https://example.com/skills[1].zip?token=top-secret",
+            "https:user:password?token=top-secret",
+        ],
+    )
+    def test_malformed_url_is_rejected_without_leaking_query(self, url: str) -> None:
+        with pytest.raises(ValueError) as exc_info:
+            URLSkillRepository(url)
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_user_info_is_rejected_without_leaking_secrets(self) -> None:
+        url = "https://user:password@example.com/x.zip?token=top-secret"
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            URLSkillRepository(url)
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_malformed_sha256_rejected_before_download(self) -> None:
+        with pytest.raises(ValueError, match="64 hexadecimal"):
+            URLSkillRepository(
+                "http://127.0.0.1:1/skills.zip",
+                sha256="invalid",
+                allow_insecure_http=True,
+            )
 
     def test_404_error(self, zip_server: "tuple[str, type[_ZipHandler]]") -> None:
         url, handler = zip_server
         handler.status = 404
 
-        with pytest.raises(HTTPError):
-            URLSkillRepository(url)
+        with pytest.raises(HTTPError) as exc_info:
+            URLSkillRepository(f"{url}?token=top-secret", allow_insecure_http=True)
+        assert "top-secret" not in str(exc_info.value)

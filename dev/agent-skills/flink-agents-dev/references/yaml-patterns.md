@@ -215,7 +215,8 @@ does not decide how Skills are deployed:
 | YAML field | Runtime scheme | Supported loader | Required deployment condition |
 |---|---|---|---|
 | `paths` | `local` | Python and Java | Each TaskManager can resolve the directory or ZIP path |
-| `urls` | `url` | Python and Java | Each TaskManager can reach the HTTP(S) ZIP URL |
+| `urls` | `url` | Python and Java | Each TaskManager can reach the HTTPS ZIP URL |
+| `url_sources` | `url` | Python and Java | Each TaskManager can reach the HTTPS ZIP URL, or plain HTTP is explicitly enabled; optional `sha256` pins the archive |
 | `classpath` | `classpath` | Java only | Skill resources are present on the runtime classpath, normally in the application JAR |
 | `package` | `package` | Python only | Skill resources are package data in an installed Python package/wheel |
 
@@ -227,7 +228,7 @@ distribution. Generate a visibly unresolved declaration that lists the valid for
 skills:
   - name: runtime_skills
     # TODO(required): replace this placeholder with the chosen source.
-    # Supported forms: paths, urls, Python package, or Java classpath.
+    # Supported forms: paths, urls, url_sources, Python package, or Java classpath.
     paths: [TODO_REQUIRED_SKILL_SOURCE]
 ```
 
@@ -237,17 +238,20 @@ Do not package, mount, download, or validate a source that the user has not supp
 
 Do not choose `package` merely because the implementation is Python or `classpath`
 merely because it is Java. Language only constrains the valid bundled scheme. Use
-`paths` or `urls` for a supported cross-language source. A relative `paths` entry is
-resolved in the TaskManager runtime, not guaranteed to be the submitting client's
-working directory; success in a local MiniCluster does not prove cluster-wide path
-availability.
+`paths`, `urls`, or `url_sources` for a supported cross-language source.
 
-Multiple source fields can coexist when the user explicitly requests composition.
-The loaders append sources in `paths`, `urls`, `classpath`, `package` order, and a
-later source replaces an earlier registration with the same Skill frontmatter name.
-Avoid duplicate names and implicit fallback behavior. An unsupported scheme fails
-at load time; a runtime does not skip it as a fallback. Prefer immutable, versioned
-URLs; the YAML schema does not provide a checksum field, so do not invent one.
+A relative `paths` entry is resolved in the TaskManager runtime, not guaranteed to be
+the submitting client's working directory; success in a local MiniCluster does not prove
+cluster-wide path availability.
+
+Multiple source fields can coexist when the user explicitly requests composition. The
+loaders append sources in `paths`, `urls`, `url_sources`, `classpath`, `package` order,
+and a later source replaces an earlier registration with the same Skill frontmatter
+name.
+
+Avoid duplicate names and implicit fallback behavior. An unsupported scheme fails at
+load time; a runtime does not skip it as a fallback. Prefer immutable, versioned URLs.
+Use `url_sources` with `sha256` when the user provides an archive digest.
 
 Declaring a Skills Resource only makes Skills available. To activate one after its
 business content and source are filled, add its `SKILL.md` name to a chat model

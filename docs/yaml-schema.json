@@ -323,7 +323,7 @@
     },
     "SkillsSpec": {
       "additionalProperties": false,
-      "description": "Declarative Skills resource: one or more skill sources grouped by scheme.\n\nEach list below maps to a skill source scheme:\n\n- ``paths`` \u2014 ``local`` scheme: directories or ``.zip`` files\n- ``urls`` \u2014 ``url`` scheme: ``http(s)`` URLs pointing to a ``.zip``\n- ``classpath`` \u2014 ``classpath`` scheme (Java-only at runtime): resource\n  paths on the Java classpath\n- ``package`` \u2014 ``package`` scheme (Python-only at runtime): resources\n  inside installed Python packages, given as ``{package, resource}`` pairs\n\nAt least one of the four must be non-empty. ``classpath`` is exposed on\nPython for YAML schema parity with Java \u2014 it deserializes successfully\nbut ``SkillManager`` on Python will fail at load time because Python does\nnot register a ``classpath`` handler.",
+      "description": "Declarative Skills resource: one or more skill sources grouped by scheme.\n\nEach list below maps to a skill source scheme:\n\n- ``paths`` \u2014 ``local`` scheme: directories or ``.zip`` files\n- ``urls`` \u2014 ``url`` scheme: HTTPS URLs pointing to ``.zip`` archives\n- ``url_sources`` \u2014 ``url`` scheme: archive configurations with optional\n  digest and transport policy\n- ``classpath`` \u2014 ``classpath`` scheme (Java-only at runtime): resource\n  paths on the Java classpath\n- ``package`` \u2014 ``package`` scheme (Python-only at runtime): resources\n  inside installed Python packages, given as ``{package, resource}`` pairs\n\nAt least one source list must be non-empty. ``classpath`` is exposed on\nPython for YAML schema parity with Java \u2014 it deserializes successfully\nbut ``SkillManager`` on Python will fail at load time because Python does\nnot register a ``classpath`` handler.",
       "properties": {
         "classpath": {
           "items": {
@@ -348,6 +348,13 @@
             "type": "string"
           },
           "title": "Paths",
+          "type": "array"
+        },
+        "url_sources": {
+          "items": {
+            "$ref": "#/$defs/UrlSkillSpec"
+          },
+          "title": "Url Sources",
           "type": "array"
         },
         "urls": {
@@ -445,6 +452,38 @@
         "name"
       ],
       "title": "ToolSpec",
+      "type": "object"
+    },
+    "UrlSkillSpec": {
+      "additionalProperties": false,
+      "description": "A URL-backed skill archive with optional integrity and transport policy.",
+      "properties": {
+        "allow_insecure_http": {
+          "default": false,
+          "title": "Allow Insecure Http",
+          "type": "boolean"
+        },
+        "sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sha256"
+        },
+        "url": {
+          "title": "Url",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "title": "UrlSkillSpec",
       "type": "object"
     }
   },

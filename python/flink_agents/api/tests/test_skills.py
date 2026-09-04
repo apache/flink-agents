@@ -17,6 +17,8 @@
 #################################################################################
 """Tests for the Skills resource API."""
 
+import pytest
+
 from flink_agents.api.skills import Skills, SkillSourceSpec
 
 
@@ -31,10 +33,175 @@ class TestSkillsFactories:
     def test_from_url_emits_url_scheme(self) -> None:
         s = Skills.from_url("https://example.com/x.zip")
         assert s.sources == [
+            SkillSourceSpec(scheme="url", params={"url": "https://example.com/x.zip"})
+        ]
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://localhost/x.zip",
+            "https://127.0.0.1/x.zip",
+            "https://[::1]/x.zip",
+            "https://example.com./x.zip",
+            "https://example.com:/x.zip",
+            "https://example.com:65535/x.zip",
+            "https://999/x.zip",
+            "https://1bar/x.zip",
+            "https://999./x.zip",
+        ],
+    )
+    def test_from_url_accepts_shared_valid_host_syntax(self, url: str) -> None:
+        assert Skills.from_url(url).sources[0].params["url"] == url
+
+    def test_from_url_rejects_scoped_ipv6(self) -> None:
+        with pytest.raises(
+            ValueError, match="must not include an IPv6 zone identifier"
+        ):
+            Skills.from_url("https://[fe80::1%25lo0]/x.zip")
+
+    def test_from_url_with_sha256_emits_integrity_param(self) -> None:
+        digest = "A" * 64
+        s = Skills.from_url_with_sha256("https://example.com/x.zip", digest)
+        assert s.sources == [
             SkillSourceSpec(
-                scheme="url", params={"url": "https://example.com/x.zip"}
+                scheme="url",
+                params={"url": "https://example.com/x.zip", "sha256": digest},
             )
         ]
+
+    def test_from_url_unsafe_requires_explicit_param(self) -> None:
+        s = Skills.from_url_unsafe("http://example.com/x.zip")
+        assert s.sources[0].params["allow_insecure_http"] == "true"
+
+    def test_from_url_unsafe_with_sha256_emits_both_params(self) -> None:
+        digest = "a" * 64
+        s = Skills.from_url_unsafe_with_sha256("http://example.com/x.zip", digest)
+        assert s.sources[0].params == {
+            "url": "http://example.com/x.zip",
+            "sha256": digest,
+            "allow_insecure_http": "true",
+        }
+
+    def test_from_url_rejects_plain_http_by_default(self) -> None:
+        with pytest.raises(ValueError, match="disabled by default"):
+            Skills.from_url("http://example.com/x.zip")
+
+    def test_from_url_with_sha256_rejects_malformed_digest(self) -> None:
+        with pytest.raises(ValueError, match="64 hexadecimal"):
+            Skills.from_url_with_sha256("https://example.com/x.zip", "invalid")
+
+    def test_from_url_rejects_unsupported_scheme_clearly(self) -> None:
+        url = "ftp://user:password@example.com/x.zip?token=secret#part"
+        with pytest.raises(ValueError, match=r"Only HTTP\(S\)") as exc_info:
+            Skills.from_url(url)
+        assert "password" not in str(exc_info.value)
+        assert "secret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://:443/x.zip",
+            "https://example.com:bad/x.zip",
+            "https://example.com:65536/x.zip",
+        ],
+    )
+    def test_from_url_rejects_invalid_host_and_port(self, url: str) -> None:
+        with pytest.raises(ValueError, match=r"valid host|valid port"):
+            Skills.from_url(url)
+
+    def test_from_url_redacts_ambiguous_invalid_port(self) -> None:
+        url = "https://user:supersecret/x.zip?token=TOPSECRET"
+        with pytest.raises(ValueError, match="valid port") as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "supersecret" not in str(exc_info.value)
+        assert "TOPSECRET" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://%65xample.com/x.zip",
+            "https://-example.com/x.zip",
+            "https://example-.com/x.zip",
+            "https://.example.com/x.zip",
+            "https://example..com/x.zip",
+            "https://a../x.zip",
+            "https://../x.zip",
+            "https://999.999.999.999/x.zip",
+            "https://127.1/x.zip",
+            "https://1.2.3/x.zip",
+            "https://foo.123/x.zip",
+            "https://foo.1bar/x.zip",
+            "https://1.2.3.4.5/x.zip",
+            "https://1.2.3./x.zip",
+            "https://1.2.3.4./x.zip",
+            "https://[v1.foo]/x.zip",
+        ],
+    )
+    def test_from_url_rejects_invalid_hostname_syntax(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            Skills.from_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://skill_server/x.zip",
+            "https://tést.com/x.zip",
+            "https://\N{KELVIN SIGN}.com/x.zip",
+        ],
+    )
+    def test_from_url_rejects_compatibility_sensitive_hosts(self, url: str) -> None:
+        with pytest.raises(ValueError, match="valid host"):
+            Skills.from_url(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/skills%5B1%5D.zip",
+            "https://example.com/x.zip?a[0]=1",
+            "https://example.com/x.zip#f[1]",
+        ],
+    )
+    def test_from_url_accepts_brackets_outside_raw_path(self, url: str) -> None:
+        assert Skills.from_url(url).sources[0].params["url"] == url
+
+    def test_from_url_rejects_user_info_without_leaking_secrets(self) -> None:
+        url = "https://user:password@example.com/x.zip?token=secret#part"
+        with pytest.raises(ValueError, match="must not include user info") as exc_info:
+            Skills.from_url(url)
+        assert "password" not in str(exc_info.value)
+        assert "secret" not in str(exc_info.value)
+
+    def test_from_url_redacts_opaque_malformed_credentials(self) -> None:
+        url = "https:user:password?token=top-secret"
+        with pytest.raises(ValueError) as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "password" not in str(exc_info.value)
+        assert "top-secret" not in str(exc_info.value)
+
+    def test_from_url_redacts_unsafe_control_characters(self) -> None:
+        url = "https://u:pw@example.com/a\x1b[31mred?token=SECRET"
+        with pytest.raises(ValueError, match="Invalid skill URL") as exc_info:
+            Skills.from_url(url)
+        assert str(exc_info.value).endswith("<redacted>")
+        assert "\x1b" not in str(exc_info.value)
+        assert "pw" not in str(exc_info.value)
+        assert "SECRET" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://exa mple.com/x.zip",
+            "https://example.com/%invalid",
+            "https://[fe80::1%eth0]/x.zip",
+            "https://[::1/x.zip",
+            "https://example.com/skills[1].zip",
+        ],
+    )
+    def test_from_url_rejects_malformed_url(self, url: str) -> None:
+        with pytest.raises(ValueError, match="Invalid skill URL"):
+            Skills.from_url(url)
 
     def test_from_package_single_pair(self) -> None:
         s = Skills.from_package(("my_pkg", "skills"))
@@ -60,7 +227,12 @@ class TestSkillsFactories:
             sources=[
                 SkillSourceSpec(scheme="local", params={"path": "/a"}),
                 SkillSourceSpec(
-                    scheme="url", params={"url": "https://e.com/x.zip"}
+                    scheme="url",
+                    params={
+                        "url": "http://e.com/x.zip",
+                        "sha256": "a" * 64,
+                        "allow_insecure_http": "true",
+                    },
                 ),
                 SkillSourceSpec(
                     scheme="package",
@@ -69,6 +241,7 @@ class TestSkillsFactories:
             ]
         )
         dumped = s.model_dump()
+        assert dumped["sources"][1]["params"]["allow_insecure_http"] == "true"
         restored = Skills.model_validate(dumped)
         assert restored.sources == s.sources
 

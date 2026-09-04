@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -61,6 +62,18 @@ class SkillSourceRegistryTest {
                 assertThrows(
                         IllegalArgumentException.class, () -> SkillSourceRegistry.get("package"));
         assertTrue(ex.getMessage().contains("package"));
+    }
+
+    @Test
+    void urlLocationDescriptionOmitsCredentialsAndQuery() {
+        String description =
+                SkillSourceRegistry.get("url")
+                        .describeLocation(
+                                Map.of(
+                                        "url",
+                                        "https://user:password@example.com/x.zip?token=secret#part"));
+
+        assertEquals("https://example.com/x.zip", description);
     }
 
     @Test

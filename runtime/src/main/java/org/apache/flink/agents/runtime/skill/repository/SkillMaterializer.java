@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -25,6 +26,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,6 +53,8 @@ public final class SkillMaterializer {
     private static final Logger LOG = LoggerFactory.getLogger(SkillMaterializer.class);
 
     private static final String TEMP_DIR_PREFIX = "flink-agents-skills-";
+
+    private static final int MAX_REDIRECTS = 10;
 
     private static final int JAR_URL_PREFIX_LEN = "jar:".length();
 
@@ -253,21 +257,116 @@ public final class SkillMaterializer {
      * @throws IOException on connect / read failures or HTTP error responses.
      */
     public static Path downloadToTempFile(String url, int timeoutMs) throws IOException {
-        URL u = new URL(url);
-        HttpURLConnection conn = (HttpURLConnection) u.openConnection();
-        conn.setConnectTimeout(timeoutMs);
-        conn.setReadTimeout(timeoutMs);
-        conn.setRequestMethod("GET");
+        return downloadToTempFile(url, timeoutMs, false);
+    }
+
+    /**
+     * Download {@code url}, optionally permitting plain HTTP transport.
+     *
+     * @throws IOException on connect / read failures or HTTP error responses.
+     */
+    public static Path downloadToTempFile(String url, int timeoutMs, boolean allowInsecureHttp)
+            throws IOException {
+        URL u;
+        try {
+            u = new URL(url);
+        } catch (MalformedURLException ignored) {
+            throw new IOException("Invalid skill URL: " + SkillUrlUtils.redact(url));
+        }
+        String initialProtocol = requireValidDownloadUrl(u, allowInsecureHttp);
+        boolean followRedirects = HttpURLConnection.getFollowRedirects();
         Path tmpZip = Files.createTempFile(TEMP_DIR_PREFIX, ".zip");
-        try (InputStream in = conn.getInputStream()) {
-            Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+        HttpURLConnection conn = null;
+        try {
+            URL effectiveUrl = u;
+            int redirects = 0;
+            while (true) {
+                conn = (HttpURLConnection) effectiveUrl.openConnection();
+                conn.setConnectTimeout(timeoutMs);
+                conn.setReadTimeout(timeoutMs);
+                conn.setRequestMethod("GET");
+                // Validate each redirect ourselves before opening its target. This also preserves
+                // the JVM-wide switch that lets deployments disable redirects.
+                conn.setInstanceFollowRedirects(false);
+                int responseCode = conn.getResponseCode();
+                if (isRedirectStatus(responseCode)) {
+                    String location = conn.getHeaderField("Location");
+                    if (location == null) {
+                        throw new IOException(
+                                "Skill URL returned an invalid redirect to: <redacted>");
+                    }
+                    URL redirectUrl;
+                    try {
+                        redirectUrl = new URL(effectiveUrl, location);
+                    } catch (MalformedURLException ignored) {
+                        throw new IOException(
+                                "Skill URL returned an invalid redirect to: "
+                                        + SkillUrlUtils.redact(location));
+                    }
+                    if (!followRedirects) {
+                        throw new IOException(
+                                "Skill URL returned an unsupported redirect to: "
+                                        + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
+                    }
+                    String redirectProtocol = requireValidDownloadUrl(redirectUrl, true);
+                    if (!redirectProtocol.equals(initialProtocol)) {
+                        throw new IOException(
+                                "Skill URL returned an unsupported redirect to: "
+                                        + SkillUrlUtils.redact(redirectUrl.toExternalForm()));
+                    }
+                    if (redirects >= MAX_REDIRECTS) {
+                        throw new IOException("Skill URL returned too many redirects");
+                    }
+                    redirects++;
+                    conn.disconnect();
+                    conn = null;
+                    effectiveUrl = redirectUrl;
+                    continue;
+                }
+                if (responseCode < 200 || responseCode >= 300) {
+                    throw new IOException(
+                            "Skill URL returned HTTP "
+                                    + responseCode
+                                    + ": "
+                                    + SkillUrlUtils.redact(effectiveUrl.toExternalForm()));
+                }
+                try (InputStream in = conn.getInputStream()) {
+                    if (!u.toExternalForm().equals(effectiveUrl.toExternalForm())) {
+                        LOG.warn(
+                                "Skill URL redirected from {} to {}",
+                                SkillUrlUtils.redact(u.toExternalForm()),
+                                SkillUrlUtils.redact(effectiveUrl.toExternalForm()));
+                    }
+                    Files.copy(in, tmpZip, StandardCopyOption.REPLACE_EXISTING);
+                }
+                break;
+            }
         } catch (IOException e) {
             Files.deleteIfExists(tmpZip);
             throw e;
         } finally {
-            conn.disconnect();
+            if (conn != null) {
+                conn.disconnect();
+            }
         }
         return tmpZip;
+    }
+
+    private static boolean isRedirectStatus(int responseCode) {
+        return responseCode == HttpURLConnection.HTTP_MOVED_PERM
+                || responseCode == HttpURLConnection.HTTP_MOVED_TEMP
+                || responseCode == HttpURLConnection.HTTP_SEE_OTHER
+                || responseCode == 307
+                || responseCode == 308;
+    }
+
+    private static String requireValidDownloadUrl(URL url, boolean allowInsecureHttp)
+            throws IOException {
+        try {
+            return SkillUrlUtils.validate(url.toExternalForm(), allowInsecureHttp);
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage());
+        }
     }
 
     private static void deleteRecursively(Path path) {

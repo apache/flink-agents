@@ -205,9 +205,21 @@ def _build_skills(spec: SkillsSpec) -> Skills:
     sources: List[SkillSourceSpec] = [
         SkillSourceSpec(scheme="local", params={"path": p}) for p in spec.paths
     ]
-    sources.extend(
-        SkillSourceSpec(scheme="url", params={"url": u}) for u in spec.urls
-    )
+    sources.extend(Skills.from_url(*spec.urls).sources)
+    for url_spec in spec.url_sources:
+        if url_spec.allow_insecure_http:
+            url_skills = (
+                Skills.from_url_unsafe(url_spec.url)
+                if url_spec.sha256 is None
+                else Skills.from_url_unsafe_with_sha256(url_spec.url, url_spec.sha256)
+            )
+        else:
+            url_skills = (
+                Skills.from_url(url_spec.url)
+                if url_spec.sha256 is None
+                else Skills.from_url_with_sha256(url_spec.url, url_spec.sha256)
+            )
+        sources.extend(url_skills.sources)
     sources.extend(
         SkillSourceSpec(scheme="classpath", params={"resource": r})
         for r in spec.classpath

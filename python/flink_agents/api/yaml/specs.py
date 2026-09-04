@@ -27,7 +27,14 @@ import sys
 from enum import Enum
 from typing import Annotated, Any, Dict, List, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    field_validator,
+    model_validator,
+)
 
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
@@ -148,19 +155,31 @@ class PackageSkillSpec(BaseModel):
     resource: str
 
 
+class UrlSkillSpec(BaseModel):
+    """A URL-backed skill archive with optional integrity and transport policy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    sha256: str | None = None
+    allow_insecure_http: StrictBool = False
+
+
 class SkillsSpec(BaseModel):
     """Declarative Skills resource: one or more skill sources grouped by scheme.
 
     Each list below maps to a skill source scheme:
 
     - ``paths`` — ``local`` scheme: directories or ``.zip`` files
-    - ``urls`` — ``url`` scheme: ``http(s)`` URLs pointing to a ``.zip``
+    - ``urls`` — ``url`` scheme: HTTPS URLs pointing to ``.zip`` archives
+    - ``url_sources`` — ``url`` scheme: archive configurations with optional
+      digest and transport policy
     - ``classpath`` — ``classpath`` scheme (Java-only at runtime): resource
       paths on the Java classpath
     - ``package`` — ``package`` scheme (Python-only at runtime): resources
       inside installed Python packages, given as ``{package, resource}`` pairs
 
-    At least one of the four must be non-empty. ``classpath`` is exposed on
+    At least one source list must be non-empty. ``classpath`` is exposed on
     Python for YAML schema parity with Java — it deserializes successfully
     but ``SkillManager`` on Python will fail at load time because Python does
     not register a ``classpath`` handler.
@@ -171,15 +190,29 @@ class SkillsSpec(BaseModel):
     name: str
     paths: List[str] = Field(default_factory=list)
     urls: List[str] = Field(default_factory=list)
+    url_sources: List[UrlSkillSpec] = Field(default_factory=list)
     classpath: List[str] = Field(default_factory=list)
     package: List[PackageSkillSpec] = Field(default_factory=list)
 
+    @field_validator(
+        "paths", "urls", "url_sources", "classpath", "package", mode="before"
+    )
+    @classmethod
+    def _normalize_null_sources(cls, value: object) -> object:
+        return [] if value is None else value
+
     @model_validator(mode="after")
     def _require_one_source(self) -> "SkillsSpec":
-        if not (self.paths or self.urls or self.classpath or self.package):
+        if not (
+            self.paths
+            or self.urls
+            or self.url_sources
+            or self.classpath
+            or self.package
+        ):
             msg = (
                 f"skills '{self.name}': at least one of "
-                "paths/urls/classpath/package must be non-empty."
+                "paths/urls/url_sources/classpath/package must be non-empty."
             )
             raise ValueError(msg)
         return self
