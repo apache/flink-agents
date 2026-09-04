@@ -31,6 +31,7 @@ import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.DockerClientFactory;
 import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.util.HashMap;
 import java.util.List;
@@ -56,7 +57,8 @@ class KafkaActionStateCleanupCoordinatorIntegrationTest {
                 DockerClientFactory.instance().isDockerAvailable(),
                 "Docker is required for the Kafka cleanup integration test");
 
-        try (KafkaContainer kafka = new KafkaContainer("apache/kafka-native:3.8.0")) {
+        try (KafkaContainer kafka =
+                new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"))) {
             kafka.start();
             String dataTopic = "action-state";
             String controlTopic = "action-state-control";
