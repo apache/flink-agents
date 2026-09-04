@@ -81,6 +81,19 @@ public class AgentConfigOptions {
     public static final ConfigOption<Integer> KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR =
             new ConfigOption<>("kafkaActionStateTopicReplicationFactor", Integer.class, 1);
 
+    /**
+     * The config parameter determines whether pruning sends tombstone (null-valued) records to the
+     * Kafka action state topic so log compaction can reclaim pruned keys. Defaults to {@code
+     * false}: disabling this option does not invalidate older restore points through pruning, but
+     * the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning
+     * remains usable, but restoring an earlier checkpoint or savepoint may replay tombstones
+     * written after that restore point, erasing action state the replay still needs and causing
+     * already completed actions to re-execute. Enable only if the job never restores from earlier
+     * checkpoints or savepoints, or if re-executing actions is acceptable.
+     */
+    public static final ConfigOption<Boolean> KAFKA_ACTION_STATE_TOMBSTONE_ENABLED =
+            new ConfigOption<>("kafkaActionStateTombstoneEnabled", Boolean.class, false);
+
     /** The config parameter specifies the Fluss bootstrap servers. */
     public static final ConfigOption<String> FLUSS_BOOTSTRAP_SERVERS =
             new ConfigOption<>("flussBootstrapServers", String.class, "localhost:9123");

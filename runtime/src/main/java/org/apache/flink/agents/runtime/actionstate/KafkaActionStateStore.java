@@ -52,6 +52,7 @@ import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntPredicate;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR;
@@ -92,6 +93,9 @@ public class KafkaActionStateStore implements ActionStateStore {
     // Kafka topic that stores action states
     private final String topic;
 
+    // Whether pruning sends tombstone records for log compaction
+    private final boolean tombstoneEnabled;
+
     // When set, only records whose key-group is accepted by this predicate are kept in the
     // in-memory cache during rebuildState; null means retain all keys (default).
     private IntPredicate ownershipFilter;
@@ -113,6 +117,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.topic = topic;
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
+        this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
         this.maxParallelism = maxParallelism;
     }
 
@@ -127,6 +132,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
+        this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
         this.topic =
                 Preconditions.checkNotNull(
                         agentConfiguration.get(KAFKA_ACTION_STATE_TOPIC),
@@ -256,17 +262,17 @@ public class KafkaActionStateStore implements ActionStateStore {
                     break;
                 }
 
+                // Deserialization failures throw from poll() itself and are handled by the
+                // outer catch, so records here are always fully deserialized.
                 for (ConsumerRecord<String, ActionState> record : records) {
-                    try {
-                        if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
-                            continue;
-                        }
+                    if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
+                        continue;
+                    }
+                    if (record.value() == null) {
+                        // Tombstone record - remove the key from cache
+                        actionStates.remove(record.key());
+                    } else {
                         actionStates.put(record.key(), record.value());
-                    } catch (Exception e) {
-                        LOG.warn(
-                                "Failed to deserialize action state record: {}",
-                                record.value().toString(),
-                                e);
                     }
                 }
 
@@ -288,14 +294,50 @@ public class KafkaActionStateStore implements ActionStateStore {
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
 
-        // Remove states from in-memory cache for this key up to the specified sequence
-        // number
-        actionStates
-                .keySet()
-                .removeIf(
-                        cachedKey ->
-                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
-                                        cachedKey, key, stateSeqNum -> stateSeqNum <= seqNum));
+        // Collect state keys belonging to this key with sequence number <= seqNum.
+        List<String> keysToPrune = new ArrayList<>();
+        for (String stateKey : actionStates.keySet()) {
+            if (ActionStateUtil.matchesBusinessKeyWithSeqNum(
+                    stateKey, key, stateSeqNum -> stateSeqNum <= seqNum)) {
+                keysToPrune.add(stateKey);
+            }
+        }
+
+        // Send tombstones to Kafka so log compaction can reclaim storage; opt-in because
+        // tombstones break replay when restoring a checkpoint/savepoint older than the prune
+        // (see KAFKA_ACTION_STATE_TOMBSTONE_ENABLED). Send failures surface asynchronously,
+        // so report them via callback; the records then persist until manual cleanup.
+        if (tombstoneEnabled && producer != null && !keysToPrune.isEmpty()) {
+            try {
+                for (String stateKey : keysToPrune) {
+                    producer.send(
+                            new ProducerRecord<>(topic, stateKey, null),
+                            (metadata, exception) -> {
+                                if (exception != null) {
+                                    LOG.warn(
+                                            "Failed to send tombstone record for state key: {}. "
+                                                    + "The record will persist in the topic "
+                                                    + "until manual cleanup.",
+                                            stateKey,
+                                            exception);
+                                }
+                            });
+                }
+                LOG.debug(
+                        "Queued {} tombstone records to Kafka for key: {}",
+                        keysToPrune.size(),
+                        key);
+            } catch (Exception e) {
+                LOG.warn(
+                        "Failed to send tombstone records to Kafka for key: {}. "
+                                + "Records will persist in the topic until manual cleanup.",
+                        key,
+                        e);
+            }
+        }
+
+        // Remove from in-memory cache (always, regardless of tombstone success)
+        actionStates.keySet().removeAll(keysToPrune);
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }
