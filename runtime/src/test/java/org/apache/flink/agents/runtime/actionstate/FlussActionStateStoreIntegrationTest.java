@@ -21,9 +21,15 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.fluss.client.Connection;
+import org.apache.fluss.client.ConnectionFactory;
 import org.apache.fluss.client.admin.Admin;
+import org.apache.fluss.client.table.Table;
+import org.apache.fluss.client.table.writer.AppendWriter;
 import org.apache.fluss.metadata.TableInfo;
 import org.apache.fluss.metadata.TablePath;
+import org.apache.fluss.row.BinaryString;
+import org.apache.fluss.row.GenericRow;
 import org.apache.fluss.server.testutils.FlussClusterExtension;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +47,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /** Integration tests for {@link FlussActionStateStore} against an embedded Fluss cluster. */
 public class FlussActionStateStoreIntegrationTest {
@@ -207,6 +214,44 @@ public class FlussActionStateStoreIntegrationTest {
             recoveredStore.close();
             // Prevent double-close in tearDown
             store = null;
+        }
+    }
+
+    @Test
+    void testRebuildStateRejectsLegacyRecordFormat() throws Exception {
+        Object marker = store.getRecoveryMarker();
+        String legacyKey = "0_1_event-uuid_action-uuid_business-key";
+        TablePath tablePath = TablePath.of(TEST_DATABASE, TEST_TABLE);
+        try (Connection connection =
+                        ConnectionFactory.createConnection(FLUSS_CLUSTER.getClientConfig());
+                Table table = connection.getTable(tablePath)) {
+            AppendWriter writer = table.newAppend().createWriter();
+            writer.append(
+                            GenericRow.of(
+                                    BinaryString.fromString(legacyKey),
+                                    ActionStateSerde.serialize(new ActionState(testEvent)),
+                                    BinaryString.fromString("legacy-key")))
+                    .get();
+            writer.flush();
+        }
+
+        store.close();
+        store = null;
+        FlussActionStateStore recoveredStore =
+                new FlussActionStateStore(
+                        createAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
+        try {
+            recoveredStore.setOwnershipFilter(keyGroup -> true);
+
+            Throwable failure = catchThrowable(() -> recoveredStore.rebuildState(List.of(marker)));
+
+            assertThat(failure).isInstanceOf(RuntimeException.class);
+            assertThat(failure.getCause())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Unsupported action-state key format")
+                    .hasMessageContaining(legacyKey);
+        } finally {
+            recoveredStore.close();
         }
     }
 
