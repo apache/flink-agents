@@ -146,6 +146,12 @@ class AgentConfigOptions:
         default=False,
     )
 
+    KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC = ConfigOption(
+        key="kafkaActionStateCleanupControlTopic",
+        config_type=str,
+        default=None,
+    )
+
     FLUSS_BOOTSTRAP_SERVERS = ConfigOption(
         key="flussBootstrapServers",
         config_type=str,
