@@ -23,26 +23,33 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.KeyedStateFunction;
 import org.apache.flink.runtime.state.OperatorStateBackend;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedConstruction;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -50,6 +57,37 @@ import static org.mockito.Mockito.when;
 
 /** Contract tests for {@link DurableExecutionManager}. */
 class DurableExecutionManagerTest {
+
+    @Test
+    void defaultKafkaStoreUsesProvidedKeySerializerAndMaxParallelism() throws Exception {
+        int maxParallelism = 128;
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(ACTION_STATE_STORE_BACKEND, "kafka");
+        AtomicReference<ActionStateKeyEncoder> capturedEncoder = new AtomicReference<>();
+
+        try (MockedConstruction<KafkaActionStateStore> stores =
+                mockConstruction(
+                        KafkaActionStateStore.class,
+                        (store, context) ->
+                                capturedEncoder.set(
+                                        (ActionStateKeyEncoder) context.arguments().get(1)))) {
+            DurableExecutionManager manager = new DurableExecutionManager(null);
+
+            manager.maybeInitActionStateStore(config, maxParallelism, LongSerializer.INSTANCE);
+
+            assertThat(stores.constructed()).hasSize(1);
+            assertThat(manager.getActionStateStore()).isSameAs(stores.constructed().get(0));
+            Action action = TestActions.noopAction();
+            Event event = new InputEvent(1L);
+            String actual = capturedEncoder.get().generateKey(1L, 0L, action, event);
+            String expected =
+                    new ActionStateKeyEncoder(maxParallelism, LongSerializer.INSTANCE)
+                            .generateKey(1L, 0L, action, event);
+            assertThat(actual).isEqualTo(expected);
+
+            manager.close();
+        }
+    }
 
     @Test
     void noStoreModeMakesAllMaybeOperationsNoOp() throws Exception {

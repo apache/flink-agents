@@ -118,14 +118,45 @@ class ActionStateKeyEncoderTest {
                 .hasMessageContaining("serializer fingerprint");
     }
 
+    @Test
+    void businessKeySerializationFailureIsReported() {
+        ActionStateKeyEncoder encoder =
+                new ActionStateKeyEncoder(MAX_PARALLELISM, new TestKeySerializer(1, true, false));
+
+        assertThatThrownBy(() -> encoder.generateBusinessKeyIdentity("key"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Failed to serialize the Flink key")
+                .hasCauseInstanceOf(IOException.class);
+    }
+
+    @Test
+    void serializerSnapshotFailureIsReported() {
+        assertThatThrownBy(
+                        () ->
+                                new ActionStateKeyEncoder(
+                                        MAX_PARALLELISM, new TestKeySerializer(1, false, true)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Failed to fingerprint the Flink key serializer")
+                .hasCauseInstanceOf(IOException.class);
+    }
+
     private static final class TestKeySerializer extends TypeSerializer<Object> {
 
         private static final long serialVersionUID = 1L;
 
         private final int encodingVersion;
+        private final boolean failSerialization;
+        private final boolean failSnapshot;
 
         private TestKeySerializer(int encodingVersion) {
+            this(encodingVersion, false, false);
+        }
+
+        private TestKeySerializer(
+                int encodingVersion, boolean failSerialization, boolean failSnapshot) {
             this.encodingVersion = encodingVersion;
+            this.failSerialization = failSerialization;
+            this.failSnapshot = failSnapshot;
         }
 
         @Override
@@ -135,7 +166,7 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public TypeSerializer<Object> duplicate() {
-            return new TestKeySerializer(encodingVersion);
+            return new TestKeySerializer(encodingVersion, failSerialization, failSnapshot);
         }
 
         @Override
@@ -160,6 +191,9 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public void serialize(Object record, DataOutputView target) throws IOException {
+            if (failSerialization) {
+                throw new IOException("key serialization failed");
+            }
             target.writeInt(encodingVersion);
             target.writeUTF(record.toString());
         }
@@ -183,7 +217,7 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public TypeSerializerSnapshot<Object> snapshotConfiguration() {
-            return new TestKeySerializerSnapshot(encodingVersion);
+            return new TestKeySerializerSnapshot(encodingVersion, failSnapshot);
         }
 
         @Override
@@ -201,11 +235,17 @@ class ActionStateKeyEncoderTest {
     public static final class TestKeySerializerSnapshot implements TypeSerializerSnapshot<Object> {
 
         private int encodingVersion;
+        private boolean failWrite;
 
         public TestKeySerializerSnapshot() {}
 
         private TestKeySerializerSnapshot(int encodingVersion) {
+            this(encodingVersion, false);
+        }
+
+        private TestKeySerializerSnapshot(int encodingVersion, boolean failWrite) {
             this.encodingVersion = encodingVersion;
+            this.failWrite = failWrite;
         }
 
         @Override
@@ -215,6 +255,9 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public void writeSnapshot(DataOutputView out) throws IOException {
+            if (failWrite) {
+                throw new IOException("serializer snapshot failed");
+            }
             out.writeInt(encodingVersion);
         }
 
