@@ -251,7 +251,8 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         return map;
     }
 
-    private GenerateContentConfig buildConfig(
+    // Package-visible for unit testing of the request-config assembly.
+    GenerateContentConfig buildConfig(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments) {
