@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.kafka.clients.consumer.Consumer;
+import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.producer.Callback;
@@ -49,12 +50,17 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.assertj.core.api.Assertions.entry;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
@@ -75,6 +81,28 @@ public class KafkaActionStateStoreTest {
     private ActionState testActionState;
     private Map<String, ActionState> actionStates;
 
+    @Test
+    void testRejectsBlankCleanupControlTopicBeforeConnecting() {
+        AgentConfiguration configuration = new AgentConfiguration();
+        configuration.set(AgentConfigOptions.KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC, "  ");
+
+        assertThatThrownBy(() -> new KafkaActionStateStore(configuration, MAX_PARALLELISM))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Kafka action-state cleanup control topic must not be blank");
+    }
+
+    @Test
+    void testRejectsTombstonesWithCleanupControlTopicBeforeConnecting() {
+        AgentConfiguration configuration = new AgentConfiguration();
+        configuration.set(
+                AgentConfigOptions.KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC, "control-topic");
+        configuration.set(AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED, true);
+
+        assertThatThrownBy(() -> new KafkaActionStateStore(configuration, MAX_PARALLELISM))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("tombstones cannot be enabled");
+    }
+
     @BeforeEach
     void setUp() throws Exception {
         mockProducer =
@@ -83,7 +111,31 @@ public class KafkaActionStateStoreTest {
                         new ActionStateKeyPartitioner(),
                         new StringSerializer(),
                         new ActionStateKafkaSeder());
-        mockConsumer = new MockConsumer<>(EARLIEST.name());
+        mockConsumer =
+                new MockConsumer<String, ActionState>(EARLIEST.name()) {
+                    @Override
+                    public synchronized void commitSync() {
+                        throw new AssertionError(
+                                "Action-state replay must not commit consumer-group offsets");
+                    }
+                };
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        mockConsumer.updateBeginningOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        0L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        0L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
         mockConsumer.assign(
                 List.of(new TopicPartition(TEST_TOPIC, 0), new TopicPartition(TEST_TOPIC, 1)));
         actionStates = new HashMap<>();
@@ -193,36 +245,35 @@ public class KafkaActionStateStoreTest {
     void testRecoveryMarker() throws Exception {
         // Test getting initial recovery marker
         Object initialMarker = actionStateStore.getRecoveryMarker();
-        assertNotNull(initialMarker);
-        assertTrue(initialMarker instanceof Map);
-        assertTrue(((Map<?, ?>) initialMarker).isEmpty());
+        assertThat(initialMarker).isInstanceOf(KafkaActionStateRecoveryMarker.class);
+        KafkaActionStateRecoveryMarker initialRecoveryMarker =
+                (KafkaActionStateRecoveryMarker) initialMarker;
+        assertThat(initialRecoveryMarker.getSchemaVersion())
+                .isEqualTo(KafkaActionStateRecoveryMarker.CURRENT_SCHEMA_VERSION);
+        assertThat(initialRecoveryMarker.getTopic()).isEqualTo(TEST_TOPIC);
+        assertThat(initialRecoveryMarker.getTopicId()).isEqualTo("test-topic-id:" + TEST_TOPIC);
+        assertThat(initialRecoveryMarker.getOffsets()).containsOnly(entry(0, 0L), entry(1, 0L));
 
-        mockConsumer.updatePartitions(
-                TEST_TOPIC,
-                List.of(
-                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
-                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
         mockConsumer.updateEndOffsets(
                 Map.of(
                         new TopicPartition(TEST_TOPIC, 0),
                         5L,
                         new TopicPartition(TEST_TOPIC, 1),
                         3L));
-        for (int i = 0; i < 5; i++) {
-            mockConsumer.addRecord(
-                    new ConsumerRecord<>(
-                            TEST_TOPIC,
-                            0,
-                            i++,
-                            "key",
-                            new ActionState(null, null, null, null, null, false)));
-        }
         // Test getting recovery marker after putting state
         Object secondMarker = actionStateStore.getRecoveryMarker();
-        assertTrue(initialMarker instanceof Map);
-        assertFalse(((Map<?, ?>) secondMarker).isEmpty());
-        assertThat((Map<Integer, Long>) secondMarker).containsEntry(0, 5L);
-        assertThat((Map<Integer, Long>) secondMarker).containsEntry(1, 3L);
+        assertThat(secondMarker).isInstanceOf(KafkaActionStateRecoveryMarker.class);
+        assertThat(((KafkaActionStateRecoveryMarker) secondMarker).getOffsets())
+                .containsOnly(entry(0, 5L), entry(1, 3L));
+    }
+
+    @Test
+    void testRebuildConsumerDisablesOffsetResetAndAutoCommit() {
+        Properties consumerProperties = actionStateStore.createConsumerProp();
+
+        assertThat(consumerProperties)
+                .containsEntry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none")
+                .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
     }
 
     @Test
@@ -456,6 +507,13 @@ public class KafkaActionStateStoreTest {
             mockConsumer.addRecord(
                     new ConsumerRecord<>(record.topic(), 0, i++, record.key(), record.value()));
         }
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        i,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+        actionStates.clear();
 
         actionStateStore.rebuildState(recoveryMarkers);
 
@@ -478,9 +536,312 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testRebuildStateFromVersionedMarker() throws Exception {
+        String stateKey =
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
+        mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 0L, stateKey, testActionState));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        1L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 0L, 1, 0L));
+
+        actionStateStore.rebuildState(List.of(marker));
+
+        assertThat(actionStates).containsEntry(stateKey, testActionState);
+    }
+
+    @Test
+    void testRebuildStateContinuesAfterEmptyPollAndStopsAtCapturedEnd() throws Exception {
+        String includedKey =
+                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
+        String laterKey =
+                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM);
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        1L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+        mockConsumer.schedulePollTask(() -> {});
+        mockConsumer.schedulePollTask(
+                () -> {
+                    mockConsumer.addRecord(
+                            new ConsumerRecord<>(TEST_TOPIC, 0, 0L, includedKey, testActionState));
+                    mockConsumer.addRecord(
+                            new ConsumerRecord<>(TEST_TOPIC, 0, 1L, laterKey, testActionState));
+                });
+
+        actionStateStore.rebuildState(List.of(Map.of(0, 0L, 1, 0L)));
+
+        assertThat(actionStates)
+                .containsEntry(includedKey, testActionState)
+                .doesNotContainKey(laterKey);
+    }
+
+    @Test
+    void testRebuildStateRejectsUnavailableEarlierOffset() {
+        mockConsumer.updateBeginningOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        5L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        10L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(Map.of(0, 4L, 1, 0L))));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Cannot rebuild Kafka action state for test-action-state-0: requested offset 4 is outside the available range [5, 10]");
+    }
+
+    @Test
+    void testRebuildStateRejectsOffsetBeyondEnd() {
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        10L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(Map.of(0, 11L, 1, 0L))));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Cannot rebuild Kafka action state for test-action-state-0: requested offset 11 is outside the available range [0, 10]");
+    }
+
+    @Test
+    void testRebuildStateRejectsRecreatedTopic() {
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "old-topic-id", Map.of(0, 0L, 1, 0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(marker)));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Kafka action-state topic test-action-state has ID test-topic-id:test-action-state, but the recovery marker expects old-topic-id; the topic may have been recreated");
+    }
+
+    @Test
+    void testRebuildStateRejectsUnsupportedMarkerSchema() {
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        99, TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 0L, 1, 0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(marker)));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Unsupported Kafka action-state recovery marker schema 99, expected 1");
+    }
+
+    @Test
+    void testRebuildStateRejectsMixedLegacyAndVersionedMarkers() {
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 0L, 1, 0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(marker, Map.of(0, 0L, 1, 0L))));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Cannot restore from a mixture of versioned and legacy Kafka recovery markers");
+    }
+
+    @Test
+    void testRebuildStateRejectsChangedPartitionSet() {
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(Map.of(0, 0L))));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Kafka action-state recovery marker contains partitions [0], but topic test-action-state currently has partitions [0, 1]");
+    }
+
+    @Test
+    void testRecoveryMarkerRejectsTopicPartitionChange() {
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 2, null, null, null)));
+
+        RuntimeException error =
+                assertThrows(RuntimeException.class, actionStateStore::getRecoveryMarker);
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Kafka action-state topic test-action-state changed while the job was running; expected ID test-topic-id:test-action-state and partitions [0, 1] but found ID test-topic-id:test-action-state and partitions [0, 1, 2]");
+    }
+
+    @Test
+    void testRebuildStateRefreshesTopicMetadataBeforeReplay() {
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 0L, 1, 0L));
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 2, null, null, null)));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> actionStateStore.rebuildState(List.of(marker)));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Kafka action-state topic test-action-state changed while the job was running; expected ID test-topic-id:test-action-state and partitions [0, 1] but found ID test-topic-id:test-action-state and partitions [0, 1, 2]");
+    }
+
+    @Test
+    void testRebuildStateRechecksTopicMetadataImmediatelyBeforeReadingOffsets() {
+        AtomicInteger metadataLoads = new AtomicInteger();
+        MockConsumer<String, ActionState> changingConsumer =
+                new MockConsumer<String, ActionState>(EARLIEST.name()) {
+                    @Override
+                    public synchronized List<PartitionInfo> partitionsFor(String topic) {
+                        if (metadataLoads.incrementAndGet() == 3) {
+                            updatePartitions(
+                                    topic,
+                                    List.of(
+                                            new PartitionInfo(topic, 0, null, null, null),
+                                            new PartitionInfo(topic, 1, null, null, null),
+                                            new PartitionInfo(topic, 2, null, null, null)));
+                        }
+                        return super.partitionsFor(topic);
+                    }
+                };
+        changingConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        new HashMap<>(),
+                        new AgentConfiguration(),
+                        mockProducer,
+                        changingConsumer,
+                        TEST_TOPIC,
+                        MAX_PARALLELISM);
+        KafkaActionStateRecoveryMarker marker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 0L, 1, 0L));
+
+        RuntimeException error =
+                assertThrows(RuntimeException.class, () -> store.rebuildState(List.of(marker)));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Kafka action-state topic test-action-state changed while the job was running; expected ID test-topic-id:test-action-state and partitions [0, 1] but found ID test-topic-id:test-action-state and partitions [0, 1, 2]");
+    }
+
+    @Test
+    void testRebuildStateRejectsMarkerOlderThanCommittedCleanupBoundary() {
+        KafkaActionStateCleanupPlan plan =
+                KafkaActionStateCleanupPlan.fromRecoveryMarkers(
+                        "checkpoint-42",
+                        List.of(
+                                new KafkaActionStateRecoveryMarker(
+                                        TEST_TOPIC,
+                                        "test-topic-id:" + TEST_TOPIC,
+                                        Map.of(0, 5L, 1, 0L))));
+        KafkaActionStateStore cleanupAwareStore = cleanupAwareStore(committedCoordinator(plan));
+        KafkaActionStateRecoveryMarker oldMarker =
+                new KafkaActionStateRecoveryMarker(
+                        TEST_TOPIC, "test-topic-id:" + TEST_TOPIC, Map.of(0, 4L, 1, 0L));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> cleanupAwareStore.rebuildState(List.of(oldMarker)));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Cannot restore Kafka action state for test-action-state-0 from offset 4 because the committed cleanup boundary is 5");
+    }
+
+    @Test
+    void testRebuildStateRejectsLegacyMarkerWhenCleanupBoundaryIsConfigured() {
+        KafkaActionStateCleanupPlan plan =
+                KafkaActionStateCleanupPlan.fromRecoveryMarkers(
+                        "checkpoint-42",
+                        List.of(
+                                new KafkaActionStateRecoveryMarker(
+                                        TEST_TOPIC,
+                                        "test-topic-id:" + TEST_TOPIC,
+                                        Map.of(0, 0L, 1, 0L))));
+        KafkaActionStateStore cleanupAwareStore = cleanupAwareStore(committedCoordinator(plan));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> cleanupAwareStore.rebuildState(List.of(Map.of(0, 0L, 1, 0L))));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Checkpoint-aligned cleanup requires versioned Kafka recovery markers");
+    }
+
+    @Test
+    void testRebuildStateRejectsMissingMarkerAfterCleanupWasCommitted() {
+        KafkaActionStateCleanupPlan plan =
+                KafkaActionStateCleanupPlan.fromRecoveryMarkers(
+                        "checkpoint-42",
+                        List.of(
+                                new KafkaActionStateRecoveryMarker(
+                                        TEST_TOPIC,
+                                        "test-topic-id:" + TEST_TOPIC,
+                                        Map.of(0, 5L, 1, 0L))));
+        KafkaActionStateStore cleanupAwareStore = cleanupAwareStore(committedCoordinator(plan));
+
+        RuntimeException error =
+                assertThrows(
+                        RuntimeException.class,
+                        () -> cleanupAwareStore.rebuildState(Collections.emptyList()));
+
+        assertThat(error)
+                .hasRootCauseMessage(
+                        "Cannot initialize Kafka action state without a recovery marker because cleanup boundary {0=5, 1=0} is committed");
+    }
+
+    @Test
     void testRebuildStateRemovesTombstonedKeys() throws Exception {
         // Arrange - two state records followed by a tombstone for the first key
-        List<Object> recoveryMarkers = List.of(Map.of(0, 0L));
+        List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
         String key1 =
                 ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
         String key2 =
@@ -488,11 +849,14 @@ public class KafkaActionStateStoreTest {
         mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 0L, key1, testActionState));
         mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 1L, key2, testActionState));
         mockConsumer.addRecord(new ConsumerRecord<>(TEST_TOPIC, 0, 2L, key1, null));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        3L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
 
-        // Act
         actionStateStore.rebuildState(recoveryMarkers);
-
-        // Assert - the tombstoned key is removed, the other key is restored
         assertThat(actionStates).doesNotContainKey(key1);
         assertThat(actionStates.get(key2)).isEqualTo(testActionState);
     }
@@ -514,7 +878,6 @@ public class KafkaActionStateStoreTest {
             return messages;
         }
     }
-
     /**
      * After recovery, only the keys accepted by the ownership filter should enter the in-memory
      * cache. Here key "A" is owned and "B" is foreign, so "B" must be skipped while "A" is kept.
@@ -533,6 +896,12 @@ public class KafkaActionStateStoreTest {
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyB, testActionState));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        offset,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
@@ -563,6 +932,12 @@ public class KafkaActionStateStoreTest {
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyB, testActionState));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        offset,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
@@ -631,6 +1006,12 @@ public class KafkaActionStateStoreTest {
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, malformedKey, testActionState));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        offset,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
@@ -659,6 +1040,12 @@ public class KafkaActionStateStoreTest {
                         TEST_TOPIC, 0, offset++, unparseableGroupKey, testActionState));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, offset++, stateKeyA, testActionState));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        offset,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        0L));
 
         List<Object> recoveryMarkers = List.of(Map.of(0, 0L, 1, 0L));
 
@@ -670,6 +1057,48 @@ public class KafkaActionStateStoreTest {
         assertThat(actionStates).doesNotContainKey(unparseableGroupKey);
     }
 
+    private KafkaActionStateStore cleanupAwareStore(
+            KafkaActionStateCleanupCoordinator coordinator) {
+        return new KafkaActionStateStore(
+                actionStates,
+                new AgentConfiguration(),
+                mockProducer,
+                mockConsumer,
+                TEST_TOPIC,
+                MAX_PARALLELISM,
+                coordinator);
+    }
+
+    private static KafkaActionStateCleanupCoordinator committedCoordinator(
+            KafkaActionStateCleanupPlan plan) {
+        KafkaActionStateCleanupCoordinator.Operation operation =
+                KafkaActionStateCleanupCoordinator.Operation.committed(plan);
+        return new KafkaActionStateCleanupCoordinator(
+                new KafkaActionStateCleanupCoordinator.Transport() {
+                    @Override
+                    public KafkaActionStateCleanupCoordinator.TopicMetadata describeTopic(
+                            String topic) {
+                        return new KafkaActionStateCleanupCoordinator.TopicMetadata(
+                                plan.getTopicId(), Set.copyOf(plan.getOffsets().keySet()));
+                    }
+
+                    @Override
+                    public Map<String, KafkaActionStateCleanupCoordinator.Operation>
+                            readOperations() {
+                        return Map.of(plan.getPlanId(), operation);
+                    }
+
+                    @Override
+                    public void append(KafkaActionStateCleanupCoordinator.Operation value) {}
+
+                    @Override
+                    public void deleteBefore(
+                            String topic, String topicId, Map<Integer, Long> offsets) {}
+
+                    @Override
+                    public void close() {}
+                });
+    }
     /** Contract: the consumer is closed even when closing the producer throws. */
     @Test
     @SuppressWarnings("unchecked")
