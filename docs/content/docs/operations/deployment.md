@@ -102,6 +102,16 @@ The same persisted action state is also used by fine-grained durable execution.
 **Note**: Currently, Kafka and Fluss are supported as the external action state store.
 {{< /hint >}}
 
+{{< hint warning >}}
+The current versioned action-state key format is not compatible with records written in the earlier unversioned format. When upgrading a job that still has unversioned action-state records in its recovery range, use a fresh Kafka topic or Fluss table and start without an older checkpoint or savepoint. Recovery rejects the old format instead of guessing which typed Flink key it represents.
+
+Versioned action-state keys include a fingerprint of the operator key serializer. Restoring existing action state requires the same key type and byte-for-byte-equivalent serializer snapshot configuration. Changing the key serializer or its configuration requires a fresh action-state topic or table and a start without an older checkpoint or savepoint; recovery rejects a mismatched serializer fingerprint.
+
+Dedicate each Kafka topic or Fluss table to one logical Flink Agents operator, shared by that operator's subtasks. Action-state keys do not contain a job or operator namespace, so sharing a backend between logical operators can allow otherwise identical records to collide.
+{{< /hint >}}
+
+The business-key component stored in the backend is a SHA-256 digest rather than the serialized key itself. This keeps record keys bounded and avoids embedding raw key bytes, but it is not encryption; protect the action-state backend with appropriate access controls.
+
 See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for configuration options.
 
 {{< hint info >}}
