@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.watsonx;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -41,6 +42,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WatsonxChatModelLiveTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
+
+    /** Flat output schema for the live structured-output call. */
+    public static class Answer {
+        public String verdict;
+        public int score;
+    }
 
     static boolean credentialsAvailable() {
         return isSet("WATSONX_URL")
@@ -82,5 +89,30 @@ class WatsonxChatModelLiveTest {
         assertThat(response.getContent()).isNotBlank();
         assertThat(response.getExtraArgs().get("promptTokens")).isNotNull();
         assertThat(response.getExtraArgs().get("completionTokens")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("A POJO output schema comes back as content that deserializes into it")
+    void testChatWithOutputSchema() throws Exception {
+        ChatMessage response =
+                connection()
+                        .chat(
+                                List.of(
+                                        new ChatMessage(
+                                                MessageRole.USER,
+                                                "Rate the sentence \"the build is green\" and"
+                                                        + " report a verdict and a score.")),
+                                List.of(),
+                                Map.of("model", model(), "max_tokens", 200),
+                                Answer.class);
+
+        // This is the only check that the schema was applied rather than answered with prose. A
+        // reply that does not deserialize is a result to investigate rather than a diagnosis on
+        // its own: the schema may not have been enforced, or may not have described the type the
+        // caller passed, or the reply may carry a property the schema permits — no
+        // additionalProperties: false is sent — but this reader rejects.
+        assertThat(response.getContent()).isNotBlank();
+        Answer answer = new ObjectMapper().readValue(response.getContent(), Answer.class);
+        assertThat(answer.verdict).isNotNull();
     }
 }

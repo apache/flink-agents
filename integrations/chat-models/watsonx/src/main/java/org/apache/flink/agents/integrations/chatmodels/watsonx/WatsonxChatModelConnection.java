@@ -24,6 +24,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.victools.jsonschema.generator.Option;
+import com.github.victools.jsonschema.generator.OptionPreset;
+import com.github.victools.jsonschema.generator.SchemaGenerator;
+import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
+import com.github.victools.jsonschema.generator.SchemaVersion;
+import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
+import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -46,6 +53,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -236,14 +244,65 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return value;
     }
 
+    /**
+     * Whether watsonx.ai can constrain generation to a schema for {@code effectiveModel}.
+     *
+     * <p>Always {@code true}, and deliberately independent of the argument. The constraint is
+     * applied by the serving runtime, through vLLM guided decoding, rather than by a per-model
+     * capability. IBM states that chat API support requires the vLLM runtime, on its pages about
+     * inferencing <i>custom</i> foundation models; it does not state in so many words that its own
+     * provided models are served the same way. That last step rests instead on the chat request
+     * body exposing vLLM's guided-decoding parameters verbatim.
+     *
+     * <p>There is no allowlist because IBM publishes no per-model structured-output signal to key
+     * on: the foundation-model comparison table has columns for chat and tool interaction and none
+     * for structured output, and the model-specs API exposes no such flag. A list written here
+     * would encode a gate nobody documents and would report not-capable for models that do work.
+     *
+     * <p>This diverges from the base contract, which describes capability as model-dependent and
+     * requires an unrecognized model to report {@code false}. That rule guards against failing at
+     * the provider for a model whose capability is unknown; here capability is a property of the
+     * endpoint rather than of the model, so there is no unknown to guard against.
+     *
+     * <p>Reads no instance state, so capability stays answerable independently of how the
+     * connection was configured.
+     */
+    @Override
+    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+        return true;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+        return doChat(messages, tools, modelParams, null);
+    }
+
+    /**
+     * Translates {@code outputSchema} into watsonx.ai's native {@code response_format} field when
+     * it is a POJO {@link Class}. Any other schema form — notably a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema} — has no native translation here and leaves the request unconstrained,
+     * so that the prompt-engineering fallback still governs the response.
+     */
+    @Override
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
+        return doChat(messages, tools, modelParams, outputSchema);
+    }
+
+    private ChatMessage doChat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         try {
             final String modelName = (String) modelParams.get("model");
             final boolean extractReasoning =
                     Boolean.TRUE.equals(modelParams.get("extract_reasoning"));
-            final ObjectNode payload = buildPayload(messages, tools, modelParams);
+            final ObjectNode payload = buildPayload(messages, tools, modelParams, outputSchema);
             if (projectId != null && !projectId.isEmpty()) {
                 payload.put("project_id", projectId);
             } else {
@@ -397,10 +456,14 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     }
 
     @VisibleForTesting
-    static ObjectNode buildPayload(
-            List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+    ObjectNode buildPayload(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            Map<String, Object> modelParams,
+            Object outputSchema) {
         final ObjectNode payload = MAPPER.createObjectNode();
-        payload.put("model_id", (String) modelParams.get("model"));
+        final String modelName = (String) modelParams.get("model");
+        payload.put("model_id", modelName);
         payload.set("messages", convertMessages(messages));
 
         if (tools != null && !tools.isEmpty()) {
@@ -418,6 +481,40 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         @SuppressWarnings("unchecked")
         final Map<String, Object> additionalKwargs =
                 (Map<String, Object>) modelParams.get("additional_kwargs");
+
+        // Native structured output applies only for a POJO Class schema; any other schema form,
+        // such as a RowTypeInfo wrapped in OutputSchema, keeps the prompt-engineering fallback.
+        // The derived schema is a request field of its own rather than a sampling option, so it is
+        // written at the payload root. When no native translation applies the key stays absent
+        // rather than being written as a null, which would still be a present field on the wire.
+        //
+        // TODO(#912): the requested strategy is not visible here, so a request that explicitly
+        // asked for NATIVE cannot be told apart from one that merely resolved to it. Capability is
+        // unconditional on this connection, so the schema form is the only way through to an
+        // unconstrained response: a caller who asked for NATIVE and passed a schema this branch
+        // cannot translate gets one silently. Once strategy resolution is wired up, NATIVE must
+        // either bypass this re-check or fail explicitly.
+        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+            // A caller reaches the same payload field through either channel. Only the branch that
+            // actually sends a derived schema may reject the caller's value; every path that skips
+            // it leaves that value untouched. A null is not a conflict, because both write loops
+            // below skip null values and it therefore never reaches the payload.
+            final boolean callerSuppliedResponseFormat =
+                    modelParams.get("response_format") != null
+                            || (additionalKwargs != null
+                                    && additionalKwargs.get("response_format") != null);
+            if (callerSuppliedResponseFormat) {
+                throw new IllegalArgumentException(
+                        "The "
+                                + ((Class<?>) outputSchema).getSimpleName()
+                                + " output schema is sent as response_format, so response_format"
+                                + " must not also be set in the model parameters or in"
+                                + " additional_kwargs. Remove that value, or omit the output"
+                                + " schema to set response_format directly.");
+            }
+            payload.set("response_format", toNativeResponseFormat((Class<?>) outputSchema));
+        }
+
         if (additionalKwargs != null) {
             final Set<String> collisions = new java.util.HashSet<>(additionalKwargs.keySet());
             collisions.retainAll(RESERVED_ADDITIONAL_KWARGS);
@@ -447,6 +544,66 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             }
         }
         return payload;
+    }
+
+    // Derives the response_format value watsonx.ai expects from a POJO class. Every setting below
+    // addresses a concrete way the generated schema otherwise misstates the contract:
+    //
+    //   - DRAFT_2020_12 is the draft pydantic generates on the Python side, so a schema derived
+    //     from a Java class states the same contract in the same dialect.
+    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
+    //     properties of their own, named after the accessor call, e.g. "getDerived()".
+    //   - MAP_VALUES_AS_ADDITIONAL_PROPERTIES gives a Map its value schema. Without it the map
+    //     admits any value, and a response that satisfies the schema can still fail to deserialize
+    //     into the declared value type at the caller.
+    //   - Sorting fields before methods and applying no further comparison leaves properties in
+    //     declaration order, which is the order pydantic emits, so the documents the two languages
+    //     derive from the same shape stay aligned.
+    //   - The required check marks every field required except an Optional one. The default marks
+    //     nothing required, which lets a model omit fields at will, while marking everything
+    //     required would force the fields a caller declared omissible.
+    //   - The Jackson module makes the schema name properties the way Jackson names them, because
+    //     a caller deserializing the response into this class honors @JsonProperty and skips
+    //     @JsonIgnore. This connection returns the content as a string and never deserializes into
+    //     the schema class, so a property stated under the wrong name produces a response that
+    //     satisfies the schema and still fails to read back, at the caller rather than here. It is
+    //     applied with no JacksonOption, so it contributes property naming and visibility only:
+    //     the required set and the property order stay the ones configured below.
+    //
+    // Two settings are deliberately absent:
+    //
+    //   - FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT is omitted for cross-language parity:
+    //     pydantic's plain schema does not emit additionalProperties: false, so emitting it on the
+    //     Java side alone would make the two documents disagree. The endpoint does not require it,
+    //     whether or not strict is set.
+    //   - DEFINITION_FOR_MAIN_SCHEMA is left off, which is victools' default. Turning it on only
+    //     moves the document root into $defs and makes the root a $ref, and nothing establishes
+    //     that watsonx benefits from either shape, so there is no reason to deviate. It does not
+    //     gate recursion: a self-referential type generates either way, as {"child": {"$ref": "#"}}
+    //     with the option off, and any type used twice is extracted into $defs regardless. A
+    //     recursive POJO reaches the provider unguarded either way, and this setting cannot
+    //     change that.
+    private static ObjectNode toNativeResponseFormat(Class<?> schemaClass) {
+        SchemaGeneratorConfigBuilder configBuilder =
+                new SchemaGeneratorConfigBuilder(
+                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
+                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
+                        .with(new JacksonModule());
+        configBuilder
+                .forTypesInGeneral()
+                .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
+        configBuilder
+                .forFields()
+                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
+
+        final ObjectNode responseFormat = MAPPER.createObjectNode();
+        responseFormat.put("type", "json_schema");
+        final ObjectNode jsonSchema = responseFormat.putObject("json_schema");
+        jsonSchema.put("name", schemaClass.getSimpleName());
+        jsonSchema.set(
+                "schema", new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass));
+        jsonSchema.put("strict", true);
+        return responseFormat;
     }
 
     /**
