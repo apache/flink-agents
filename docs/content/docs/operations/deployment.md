@@ -108,6 +108,10 @@ See [Action State Store Configuration]({{< ref "docs/operations/configuration#ac
 **Note**: Enabling Kafka action-state tombstones can invalidate checkpoints or savepoints older than the prune and cause completed actions to execute again. See [Action State Store Configuration]({{< ref "docs/operations/configuration#action-state-store" >}}) for the recovery trade-off.
 {{< /hint >}}
 
+{{< hint warning >}}
+**Note**: A committed checkpoint-aligned Kafka cleanup boundary permanently makes older recovery points unsupported. Every subsequent run and restore must use the same cleanup control topic so the runtime can reject those recovery points before replay. See [Checkpoint-aligned Kafka cleanup]({{< ref "docs/operations/configuration#checkpoint-aligned-kafka-cleanup" >}}).
+{{< /hint >}}
+
 {{< hint info >}}
 **Note**: Exactly-once action consistency is guaranteed only if, after recovering from the same checkpoint, inputs for each key arrive in the same order as before recovery. If this ordering requirement is not met, the system falls back to exactly-once output consistency.
 {{< /hint >}}

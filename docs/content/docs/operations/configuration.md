@@ -183,6 +183,28 @@ Here are the configuration options for Kafka-based Action State Store.
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
 | `kafkaActionStateTombstoneEnabled`  | false                    | Boolean | Whether pruning sends tombstone records so log compaction can reclaim pruned keys on a compacted action-state topic. Off by default: pruning does not invalidate older restore points, but the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning remains usable, but restoring an earlier checkpoint or savepoint may replay later tombstones and re-execute already completed actions. Enable only if the job never restores from earlier checkpoints or savepoints, or if re-executing actions is acceptable. |
+| `kafkaActionStateCleanupControlTopic` | (none)                 | String  | Separate, single-partition topic containing committed checkpoint-aligned cleanup boundaries. It must use `cleanup.policy=compact` without delete retention, differ from the action-state topic, and be dedicated to the same job recovery history. Setting it enables boundary enforcement during recovery. It cannot be combined with `kafkaActionStateTombstoneEnabled`. |
+
+##### Checkpoint-aligned Kafka cleanup
+
+Checkpoint-aligned cleanup is an explicit administrative operation. Use Flink's State Processor API to read the selected checkpoint or savepoint's union state named by `KafkaActionStateRecoveryMarker.UNION_STATE_NAME`, using `TypeInformation.of(Object.class)`. Collect every marker and create an immutable plan with `KafkaActionStateCleanupPlan.fromRecoveryMarkers(recoveryPoint, markers)`. Legacy map markers can still be restored, but cannot authorize deletion because they do not identify the physical Kafka topic.
+
+`KafkaActionStateCleanupTool` provides the same workflow for Java and Python jobs. Run it with the Flink Agents runtime JAR and the matching Flink State Processor API JAR on the classpath:
+
+```text
+plan --checkpoint PATH (--operator-uid UID | --operator-uid-hash HASH) --output FILE
+apply --plan FILE --bootstrap-servers SERVERS --control-topic TOPIC [--replication-factor N]
+```
+
+The `plan` command creates a new file and refuses to overwrite an existing plan. The `apply` command verifies the content-derived plan ID before contacting Kafka.
+
+Review and retain the plan's deterministic JSON before applying it. Call `KafkaActionStateCleanupCoordinator.create(configuration).apply(KafkaActionStateCleanupPlan.fromJson(json))` to create or validate the control topic and apply the plan. The coordinator writes `COMMITTED` before calling Kafka `deleteRecords`, verifies every resulting beginning offset, and then writes `APPLIED`. Reapplying the same plan retries an interrupted committed operation without changing its boundary. Set `kafkaActionStateCleanupControlTopic` on the job only after the first plan is committed; recovery requires the configured topic to exist and contain a committed boundary, and fails closed if the topic is missing or empty.
+
+For the first cleanup on an existing job, stop the job, create and apply the plan from the recovery point that will become the oldest supported one, and restart from that same point with `kafkaActionStateCleanupControlTopic` configured. This avoids a failover window in which the old running job does not yet know the committed boundary. Once the job is running with boundary enforcement enabled, later forward-only plans may be applied while it runs. Run only one `apply` operation at a time; concurrent incomparable plans fail closed and require operator intervention. Do not recreate the action-state topic or change its partitions while an apply operation is running: the coordinator checks the topic ID and partition set before and after deletion, but Kafka addresses `deleteRecords` by topic name and cannot atomically fence topic lifecycle changes.
+
+The action-state topic and control topic must be dedicated to one job's recovery history. Once any boundary has been committed, every future run and restore of that history must retain the same control-topic configuration; omitting or changing it removes logical boundary enforcement. The boundary can move only forward. A checkpoint whose marker is below the committed boundary is rejected even if Kafka has not finished physical deletion.
+
+Per-key tombstones and checkpoint-aligned cleanup are mutually exclusive. Tombstones are not tied to the selected recovery boundary and could invalidate a checkpoint that checkpoint-aligned cleanup promises to retain.
 
 #### Fluss-based Action State Store
 
