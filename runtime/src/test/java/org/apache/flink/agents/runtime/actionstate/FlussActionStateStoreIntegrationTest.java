@@ -38,6 +38,8 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_ACTION_STATE_TABLE_BUCKETS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_BOOTSTRAP_SERVERS;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Integration tests for {@link FlussActionStateStore} against an embedded Fluss cluster. */
@@ -59,7 +61,7 @@ public class FlussActionStateStoreIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         AgentConfiguration config = createAgentConfiguration();
-        store = new FlussActionStateStore(config, MAX_PARALLELISM);
+        store = new FlussActionStateStore(config, createKeyEncoder(MAX_PARALLELISM));
 
         // Wait for table to be ready in the cluster
         waitForTableReady();
@@ -189,7 +191,8 @@ public class FlussActionStateStoreIntegrationTest {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
+                new FlussActionStateStore(
+                        createAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
         try {
             // Rebuild using the marker; should replay from marker offset to current end
             recoveredStore.rebuildState(List.of(marker));
@@ -225,13 +228,13 @@ public class FlussActionStateStoreIntegrationTest {
 
         // Simulate recovery into a new store instance that owns only key "A".
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
+                new FlussActionStateStore(
+                        createAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
         try {
             // Own key's key-group computed from the WAL key; the filter accepts only this
             // key-group.
             int ownedKeyGroup =
-                    ActionStateUtil.parseKeyGroup(
-                            ActionStateUtil.generateKey("A", 1L, testAction, testEvent, 128));
+                    ActionStateUtil.parseKeyGroup(generateKey("A", 1L, testAction, testEvent, 128));
             recoveredStore.setOwnershipFilter(kg -> kg == ownedKeyGroup);
             recoveredStore.rebuildState(List.of(marker));
 
@@ -257,7 +260,8 @@ public class FlussActionStateStoreIntegrationTest {
 
         // Simulate recovery: new store instance
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createAgentConfiguration(), MAX_PARALLELISM);
+                new FlussActionStateStore(
+                        createAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
         try {
             // Rebuild state from the log using recovery markers
             recoveredStore.rebuildState(List.of(marker));
@@ -286,7 +290,8 @@ public class FlussActionStateStoreIntegrationTest {
         String multiDb = "test_flink_agents_multi";
         String multiTable = "action_state_multi";
         AgentConfiguration multiConfig = createAgentConfiguration(multiDb, multiTable, 4);
-        FlussActionStateStore multiStore = new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
+        FlussActionStateStore multiStore =
+                new FlussActionStateStore(multiConfig, createKeyEncoder(MAX_PARALLELISM));
         try {
             waitForTableReady(multiDb, multiTable);
 
@@ -318,7 +323,7 @@ public class FlussActionStateStoreIntegrationTest {
 
             // Recover into a new store instance
             FlussActionStateStore recoveredStore =
-                    new FlussActionStateStore(multiConfig, MAX_PARALLELISM);
+                    new FlussActionStateStore(multiConfig, createKeyEncoder(MAX_PARALLELISM));
             try {
                 recoveredStore.rebuildState(List.of(marker));
 

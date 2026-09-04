@@ -44,6 +44,7 @@ import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
@@ -195,7 +196,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         eventRouter.open(builtInMetrics);
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
+        durableExecManager.maybeInitActionStateStore(
+                agentPlan.getConfig(), maxParallelism, getActionStateKeySerializer());
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
         durableExecManager.initializeKeyedStates(getRuntimeContext());
 
@@ -630,7 +632,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         super.initializeState(context);
 
         int maxParallelism = getRuntimeContext().getTaskInfo().getMaxNumberOfParallelSubtasks();
-        durableExecManager.maybeInitActionStateStore(agentPlan.getConfig(), maxParallelism);
+        durableExecManager.maybeInitActionStateStore(
+                agentPlan.getConfig(), maxParallelism, getActionStateKeySerializer());
 
         stateManager = new OperatorStateManager();
 
@@ -662,6 +665,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     StateUtils.getSingleValueFromState(
                             context, "identifier_state", String.class, initialJobIdentifier);
         }
+    }
+
+    private TypeSerializer<?> getActionStateKeySerializer() {
+        return getKeyedStateBackend().getKeySerializer();
     }
 
     @Override

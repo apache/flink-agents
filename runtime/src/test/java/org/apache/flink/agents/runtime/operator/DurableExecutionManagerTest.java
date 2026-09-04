@@ -29,6 +29,7 @@ import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.KeyedStateFunction;
 import org.apache.flink.runtime.state.OperatorStateBackend;
@@ -54,7 +55,7 @@ class DurableExecutionManagerTest {
     void noStoreModeMakesAllMaybeOperationsNoOp() throws Exception {
         DurableExecutionManager dem = new DurableExecutionManager(null);
         // No ACTION_STATE_STORE_BACKEND set → no default store should be created.
-        dem.maybeInitActionStateStore(new AgentConfiguration(), 128);
+        dem.maybeInitActionStateStore(new AgentConfiguration(), 128, mock(TypeSerializer.class));
 
         assertThat(dem.hasDurableStore()).isFalse();
         assertThat(dem.getActionStateStore()).isNull();

@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -56,7 +57,6 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS;
-import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 import static org.apache.kafka.clients.CommonClientConfigs.BOOTSTRAP_SERVERS_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.CLIENT_ID_CONFIG;
 import static org.apache.kafka.clients.consumer.ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG;
@@ -70,6 +70,7 @@ import static org.apache.kafka.clients.producer.ProducerConfig.VALUE_SERIALIZER_
  * This class provides methods to put, get, and retrieve all action states associated with a given
  * key and action.
  */
+@Internal
 public class KafkaActionStateStore implements ActionStateStore {
 
     private static final Duration CONSUMER_POLL_TIMEOUT = Duration.ofMillis(1000);
@@ -96,8 +97,7 @@ public class KafkaActionStateStore implements ActionStateStore {
     // in-memory cache during rebuildState; null means retain all keys (default).
     private IntPredicate ownershipFilter;
 
-    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
-    private final int maxParallelism;
+    private final ActionStateKeyEncoder keyEncoder;
 
     @VisibleForTesting
     KafkaActionStateStore(
@@ -106,24 +106,25 @@ public class KafkaActionStateStore implements ActionStateStore {
             Producer<String, ActionState> producer,
             Consumer<String, ActionState> consumer,
             String topic,
-            int maxParallelism) {
+            ActionStateKeyEncoder keyEncoder) {
         this.actionStates = actionStates;
         this.producer = producer;
         this.consumer = consumer;
         this.topic = topic;
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
-        this.maxParallelism = maxParallelism;
+        this.keyEncoder = Preconditions.checkNotNull(keyEncoder, "keyEncoder cannot be null");
     }
 
-    /** Constructs a new KafkaActionStateStore with custom Kafka configuration. */
-    public KafkaActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
-        Preconditions.checkArgument(
-                maxParallelism > 0,
-                "maxParallelism must be positive but was %s; it must be set to the operator's max"
-                        + " parallelism so key-groups match Flink's key-group assignment.",
-                maxParallelism);
-        this.maxParallelism = maxParallelism;
+    /**
+     * Creates a Kafka-backed store using the operator's action-state key encoder.
+     *
+     * @param agentConfiguration the Kafka action-state configuration.
+     * @param keyEncoder the encoder configured from the operator's keyed-state serializer.
+     */
+    public KafkaActionStateStore(
+            AgentConfiguration agentConfiguration, ActionStateKeyEncoder keyEncoder) {
+        this.keyEncoder = Preconditions.checkNotNull(keyEncoder, "keyEncoder cannot be null");
         this.actionStates = new HashMap<>();
         this.latestKeySeqNum = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
@@ -148,7 +149,7 @@ public class KafkaActionStateStore implements ActionStateStore {
             return;
         }
 
-        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
+        String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
@@ -166,7 +167,8 @@ public class KafkaActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
+        String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
+        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
 
         LOG.debug(
                 "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",
@@ -175,7 +177,7 @@ public class KafkaActionStateStore implements ActionStateStore {
                 stateKey,
                 actionStates.keySet());
 
-        boolean hasDivergence = checkDivergence(key, seqNum);
+        boolean hasDivergence = checkDivergence(businessKeyIdentity, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
             // Clean up this key's states with sequence number greater than the requested seqNum.
@@ -183,8 +185,10 @@ public class KafkaActionStateStore implements ActionStateStore {
                     .keySet()
                     .removeIf(
                             cachedKey ->
-                                    ActionStateUtil.matchesBusinessKeyWithSeqNum(
-                                            cachedKey, key, stateSeqNum -> stateSeqNum > seqNum));
+                                    ActionStateUtil.matchesBusinessKeyIdentityWithSeqNum(
+                                            cachedKey,
+                                            businessKeyIdentity,
+                                            stateSeqNum -> stateSeqNum > seqNum));
         }
 
         ActionState result = actionStates.get(stateKey);
@@ -197,9 +201,12 @@ public class KafkaActionStateStore implements ActionStateStore {
         return result;
     }
 
-    private boolean checkDivergence(Object key, long seqNum) {
+    private boolean checkDivergence(String businessKeyIdentity, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
+                        .filter(
+                                k ->
+                                        ActionStateUtil.matchesBusinessKeyIdentityAndSeqNum(
+                                                k, businessKeyIdentity, seqNum))
                         .count()
                 > 1;
     }
@@ -257,17 +264,10 @@ public class KafkaActionStateStore implements ActionStateStore {
                 }
 
                 for (ConsumerRecord<String, ActionState> record : records) {
-                    try {
-                        if (!ActionStateUtil.isKeyRetained(ownershipFilter, record.key())) {
-                            continue;
-                        }
-                        actionStates.put(record.key(), record.value());
-                    } catch (Exception e) {
-                        LOG.warn(
-                                "Failed to deserialize action state record: {}",
-                                record.value().toString(),
-                                e);
+                    if (!keyEncoder.isKeyRetained(ownershipFilter, record.key())) {
+                        continue;
                     }
+                    actionStates.put(record.key(), record.value());
                 }
 
                 // Commit offsets manually
@@ -287,6 +287,7 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
+        String businessKeyIdentity = keyEncoder.generateBusinessKeyIdentity(key);
 
         // Remove states from in-memory cache for this key up to the specified sequence
         // number
@@ -294,8 +295,10 @@ public class KafkaActionStateStore implements ActionStateStore {
                 .keySet()
                 .removeIf(
                         cachedKey ->
-                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
-                                        cachedKey, key, stateSeqNum -> stateSeqNum <= seqNum));
+                                ActionStateUtil.matchesBusinessKeyIdentityWithSeqNum(
+                                        cachedKey,
+                                        businessKeyIdentity,
+                                        stateSeqNum -> stateSeqNum <= seqNum));
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }

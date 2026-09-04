@@ -910,7 +910,7 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
 
             // Verify that action states were created during processing
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).isNotEmpty();
 
@@ -918,7 +918,7 @@ public class ActionExecutionOperatorTest {
             assertThat(actionStates.size()).isEqualTo(1);
 
             // Verify each action state contains expected information
-            for (Map.Entry<String, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
+            for (Map.Entry<Object, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
                 for (Map.Entry<String, ActionState> entry : outerEntry.getValue().entrySet()) {
                     ActionState state = entry.getValue();
                     assertThat(state).isNotNull();
@@ -1527,18 +1527,20 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
 
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).hasSize(1);
 
             // Verify specific action states by examining the keys
-            for (Map.Entry<String, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
+            for (Map.Entry<Object, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
                 for (Map.Entry<String, ActionState> entry : outerEntry.getValue().entrySet()) {
                     String stateKey = entry.getKey();
                     ActionState state = entry.getValue();
 
-                    // Verify the state key contains the expected key and action information
-                    assertThat(stateKey).contains(inputValue.toString());
+                    // Verify the state key is current-format and belongs to the typed input key.
+                    assertThat(stateKey).startsWith("v2:");
+                    assertThat(ActionStateUtil.parseKeyGroup(stateKey))
+                            .isEqualTo(KeyGroupRangeAssignment.assignToKeyGroup(inputValue, 128));
 
                     // Verify task event is properly stored
                     Event taskEvent = state.getTaskEvent();
@@ -1630,7 +1632,7 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
 
             // Verify initial state creation
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).isNotEmpty();
             int initialStateCount = actionStates.size();
@@ -1876,8 +1878,7 @@ public class ActionExecutionOperatorTest {
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(outputRecords).hasSize(1);
             assertThat(outputRecords.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
-            assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
-                    .hasSize(2);
+            assertThat(actionStateStore.getKeyedActionStates().get(inputValue)).hasSize(2);
 
             List<RecordedEvent> replayEvents = RecordingEventLogger.events();
             assertThat(replayEvents)
