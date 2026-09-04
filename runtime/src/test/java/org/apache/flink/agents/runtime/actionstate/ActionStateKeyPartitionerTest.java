@@ -63,9 +63,9 @@ public class ActionStateKeyPartitionerTest {
 
     @Test
     void testValidKeyPartitioning() {
-        String key1 = "0_1_event1_action1_bk1";
-        String key2 = "5_1_event2_action2_bk2";
-        String key3 = "9_1_event3_action3_bk3";
+        String key1 = "v2:0_1_event1_action1_serializer_bk1";
+        String key2 = "v2:5_1_event2_action2_serializer_bk2";
+        String key3 = "v2:9_1_event3_action3_serializer_bk3";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
@@ -83,9 +83,9 @@ public class ActionStateKeyPartitionerTest {
     @Test
     void testSameBusinessKeyConsistentPartitioning() {
         // Keys sharing the same business key (trailing segment) go to the same partition
-        String key1 = "5_1_event1_action1_123";
-        String key2 = "5_2_event2_action2_123";
-        String key3 = "5_3_event3_action3_123";
+        String key1 = "v2:5_1_event1_action1_serializer_123";
+        String key2 = "v2:5_2_event2_action2_serializer_123";
+        String key3 = "v2:5_3_event3_action3_serializer_123";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key1, key1.getBytes(), null, null, cluster);
@@ -126,6 +126,7 @@ public class ActionStateKeyPartitionerTest {
         // Keys that lack the expected segment count are rejected.
         String invalidKey1 = "onlyonepart";
         String invalidKey2 = "only_twoparts";
+        String legacyKey = "5_1_event_action_business-key";
 
         IllegalArgumentException exception1 =
                 assertThrows(
@@ -152,25 +153,36 @@ public class ActionStateKeyPartitionerTest {
                                         null,
                                         cluster));
         assertEquals("Key format is invalid", exception2.getMessage());
+
+        IllegalArgumentException legacyException =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                partitioner.partition(
+                                        TEST_TOPIC,
+                                        legacyKey,
+                                        legacyKey.getBytes(),
+                                        null,
+                                        null,
+                                        cluster));
+        assertEquals("Key format is invalid", legacyException.getMessage());
     }
 
     @Test
-    void testEmptyBusinessKeyPartThrowException() {
-        String invalidKey = "5_1_event_action_";
+    void testEmptyBusinessKeyIdentityThrowsException() {
+        String invalidKey = "v2:5_1_event_action_serializer_";
         IllegalArgumentException exception =
                 assertThrows(
                         IllegalArgumentException.class,
                         () ->
                                 partitioner.partition(
                                         TEST_TOPIC, invalidKey, null, null, null, cluster));
-        assertEquals("Business key part of the key cannot be empty", exception.getMessage());
+        assertEquals("Business key identity cannot be empty", exception.getMessage());
     }
 
     @Test
-    void testBusinessKeyContainingSeparatorIsValid() {
-        // The business key occupies the trailing segment, so it may contain the separator
-        // (e.g. "tenant_user") without breaking partitioning.
-        String key = "0_1_event_action_tenant_user";
+    void testEncodedIdentityIsValid() {
+        String key = "v2:0_1_event_action_serializer_dGVuYW50X3VzZXI=";
 
         int partition = partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);
 
@@ -179,12 +191,12 @@ public class ActionStateKeyPartitionerTest {
 
     @Test
     void testPartitionDistribution() {
-        // Test that different first key parts go to potentially different partitions
+        // Test that different trailing business-key identities are distributed across partitions.
         Map<Integer, Integer> partitionCounts = new HashMap<>();
 
         // Generate keys with different business keys (trailing segment)
         for (int i = 0; i < 100; i++) {
-            String key = "0_1_event_action_" + i;
+            String key = "v2:0_1_event_action_serializer_" + i;
             int partition =
                     partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);
 
@@ -220,7 +232,7 @@ public class ActionStateKeyPartitionerTest {
                         java.util.Collections.emptySet(),
                         java.util.Collections.emptySet());
 
-        String key = "5_1_event1_action1_123";
+        String key = "v2:5_1_event1_action1_serializer_123";
         int partition =
                 partitioner.partition(
                         TEST_TOPIC, key, key.getBytes(), null, null, singlePartitionCluster);
@@ -231,7 +243,7 @@ public class ActionStateKeyPartitionerTest {
     @Test
     void testHashConsistency() {
         // Same key should always produce the same partition
-        String key = "5_1_event1_action1_123";
+        String key = "v2:5_1_event1_action1_serializer_123";
 
         int partition1 =
                 partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);

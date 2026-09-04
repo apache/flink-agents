@@ -17,12 +17,15 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.MathUtils;
 import org.apache.kafka.clients.producer.Partitioner;
 import org.apache.kafka.common.Cluster;
 
 import java.util.Map;
 
+/** Partitions versioned action-state records by their encoded business-key identity. */
+@Internal
 public class ActionStateKeyPartitioner implements Partitioner {
 
     @Override
@@ -41,15 +44,15 @@ public class ActionStateKeyPartitioner implements Partitioner {
             throw new IllegalArgumentException("Key must be a String");
         }
 
-        String businessKey = ActionStateUtil.businessKeyOf((String) key);
-        if (businessKey == null) {
+        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf((String) key);
+        if (businessKeyIdentity == null) {
             throw new IllegalArgumentException("Key format is invalid");
         }
-        if (businessKey.isEmpty()) {
-            throw new IllegalArgumentException("Business key part of the key cannot be empty");
+        if (businessKeyIdentity.isEmpty()) {
+            throw new IllegalArgumentException("Business key identity cannot be empty");
         }
 
-        return MathUtils.murmurHash(businessKey.hashCode()) % numPartitions;
+        return MathUtils.murmurHash(businessKeyIdentity.hashCode()) % numPartitions;
     }
 
     @Override

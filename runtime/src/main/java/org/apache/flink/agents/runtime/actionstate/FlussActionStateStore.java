@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -63,7 +64,6 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SASL_PASSWORD;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SASL_USERNAME;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SECURITY_PROTOCOL;
-import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 import static org.apache.fluss.config.ConfigOptions.BOOTSTRAP_SERVERS;
 import static org.apache.fluss.config.ConfigOptions.CLIENT_SASL_JAAS_CONFIG;
 import static org.apache.fluss.config.ConfigOptions.CLIENT_SASL_JAAS_PASSWORD;
@@ -76,6 +76,7 @@ import static org.apache.fluss.config.ConfigOptions.CLIENT_SECURITY_PROTOCOL;
  * All state is maintained in an in-memory map for fast lookups, with the Fluss log table providing
  * durability and recovery support.
  */
+@Internal
 public class FlussActionStateStore implements ActionStateStore {
 
     private static final Logger LOG = LoggerFactory.getLogger(FlussActionStateStore.class);
@@ -88,6 +89,7 @@ public class FlussActionStateStore implements ActionStateStore {
     // Column names in the Fluss table schema
     private static final String COL_NAME_STATE_KEY = "state_key";
     private static final String COL_NAME_STATE_PAYLOAD = "state_payload";
+    // The historical column name is retained; values are business-key identity digests.
     private static final String COL_NAME_AGENT_KEY = "agent_key";
 
     // Column indices in the Fluss table schema
@@ -110,8 +112,7 @@ public class FlussActionStateStore implements ActionStateStore {
     // in-memory cache during rebuildState; null means retain all keys (default).
     private IntPredicate ownershipFilter;
 
-    // The operator's maximum parallelism, used to compute key-groups consistently with Flink.
-    private final int maxParallelism;
+    private final ActionStateKeyEncoder keyEncoder;
 
     @VisibleForTesting
     FlussActionStateStore(
@@ -119,7 +120,7 @@ public class FlussActionStateStore implements ActionStateStore {
             Connection connection,
             Table table,
             AppendWriter writer,
-            int maxParallelism) {
+            ActionStateKeyEncoder keyEncoder) {
         this.agentConfiguration = null;
         this.databaseName = null;
         this.tableName = null;
@@ -128,16 +129,18 @@ public class FlussActionStateStore implements ActionStateStore {
         this.connection = connection;
         this.table = table;
         this.writer = writer;
-        this.maxParallelism = maxParallelism;
+        this.keyEncoder = Preconditions.checkNotNull(keyEncoder, "keyEncoder cannot be null");
     }
 
-    public FlussActionStateStore(AgentConfiguration agentConfiguration, int maxParallelism) {
-        Preconditions.checkArgument(
-                maxParallelism > 0,
-                "maxParallelism must be positive but was %s; it must be set to the operator's max"
-                        + " parallelism so key-groups match Flink's key-group assignment.",
-                maxParallelism);
-        this.maxParallelism = maxParallelism;
+    /**
+     * Creates a Fluss-backed store using the operator's action-state key encoder.
+     *
+     * @param agentConfiguration the Fluss action-state configuration.
+     * @param keyEncoder the encoder configured from the operator's keyed-state serializer.
+     */
+    public FlussActionStateStore(
+            AgentConfiguration agentConfiguration, ActionStateKeyEncoder keyEncoder) {
+        this.keyEncoder = Preconditions.checkNotNull(keyEncoder, "keyEncoder cannot be null");
         this.agentConfiguration = agentConfiguration;
         this.databaseName = agentConfiguration.get(FLUSS_ACTION_STATE_DATABASE);
         this.tableName =
@@ -209,14 +212,15 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
+        String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
+        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
         byte[] payload = ActionStateSerde.serialize(state);
 
         GenericRow row =
                 GenericRow.of(
                         BinaryString.fromString(stateKey),
                         payload,
-                        BinaryString.fromString(key.toString()));
+                        BinaryString.fromString(businessKeyIdentity));
 
         // Synchronous write ensures the record is durable before returning.
         // TODO: Optimize throughput via batching + flush() once Fluss supports it
@@ -231,12 +235,13 @@ public class FlussActionStateStore implements ActionStateStore {
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
-        String stateKey = generateKey(key, seqNum, action, event, maxParallelism);
+        String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
+        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
 
-        boolean hasDivergence = checkDivergence(key, seqNum);
+        boolean hasDivergence = checkDivergence(businessKeyIdentity, seqNum);
 
         if (!actionStates.containsKey(stateKey) || hasDivergence) {
-            removeStateEntries(key, stateSeqNum -> stateSeqNum > seqNum);
+            removeStateEntries(businessKeyIdentity, stateSeqNum -> stateSeqNum > seqNum);
         }
 
         ActionState state = actionStates.get(stateKey);
@@ -244,24 +249,27 @@ public class FlussActionStateStore implements ActionStateStore {
         return state;
     }
 
-    private boolean checkDivergence(Object key, long seqNum) {
+    private boolean checkDivergence(String businessKeyIdentity, long seqNum) {
         return actionStates.keySet().stream()
-                        .filter(k -> ActionStateUtil.matchesBusinessKeyAndSeqNum(k, key, seqNum))
+                        .filter(
+                                k ->
+                                        ActionStateUtil.matchesBusinessKeyIdentityAndSeqNum(
+                                                k, businessKeyIdentity, seqNum))
                         .count()
                 > 1;
     }
 
     /**
-     * Removes cached state entries whose business-key segment equals {@code key} and whose parsed
-     * sequence number satisfies {@code seqNumFilter}.
+     * Removes cached state entries whose business-key identity equals {@code businessKeyIdentity}
+     * and whose parsed sequence number satisfies {@code seqNumFilter}.
      */
-    private void removeStateEntries(Object key, LongPredicate seqNumFilter) {
+    private void removeStateEntries(String businessKeyIdentity, LongPredicate seqNumFilter) {
         actionStates
                 .keySet()
                 .removeIf(
                         cachedKey ->
-                                ActionStateUtil.matchesBusinessKeyWithSeqNum(
-                                        cachedKey, key, seqNumFilter));
+                                ActionStateUtil.matchesBusinessKeyIdentityWithSeqNum(
+                                        cachedKey, businessKeyIdentity, seqNumFilter));
     }
 
     /**
@@ -444,7 +452,7 @@ public class FlussActionStateStore implements ActionStateStore {
             }
             InternalRow row = record.getRow();
             String stateKey = row.getString(COL_STATE_KEY).toString();
-            if (!ActionStateUtil.isKeyRetained(ownershipFilter, stateKey)) {
+            if (!keyEncoder.isKeyRetained(ownershipFilter, stateKey)) {
                 continue;
             }
             byte[] payload = row.getBytes(COL_STATE_PAYLOAD);
@@ -497,7 +505,8 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning in-memory state for key: {} up to seqNum: {}", key, seqNum);
-        removeStateEntries(key, stateSeqNum -> stateSeqNum <= seqNum);
+        removeStateEntries(
+                keyEncoder.generateBusinessKeyIdentity(key), stateSeqNum -> stateSeqNum <= seqNum);
     }
 
     @Override

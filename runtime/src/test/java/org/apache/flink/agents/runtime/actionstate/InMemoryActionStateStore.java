@@ -20,13 +20,13 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 
 import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-
-import static org.apache.flink.agents.runtime.actionstate.ActionStateUtil.generateKey;
 
 /**
  * An in-memory implementation of {@link ActionStateStore} for testing and local execution purposes.
@@ -36,9 +36,9 @@ public class InMemoryActionStateStore implements ActionStateStore {
 
     private static final int DEFAULT_MAX_PARALLELISM = 128;
 
-    private final Map<String, Map<String, ActionState>> keyedActionStates;
+    private final Map<Object, Map<String, ActionState>> keyedActionStates;
     private final boolean doCleanup;
-    private final int maxParallelism;
+    private final ActionStateKeyEncoder keyEncoder;
 
     public InMemoryActionStateStore(boolean doCleanup) {
         this(doCleanup, DEFAULT_MAX_PARALLELISM);
@@ -47,23 +47,27 @@ public class InMemoryActionStateStore implements ActionStateStore {
     public InMemoryActionStateStore(boolean doCleanup, int maxParallelism) {
         this.keyedActionStates = new HashMap<>();
         this.doCleanup = doCleanup;
-        this.maxParallelism = maxParallelism;
+        this.keyEncoder =
+                new ActionStateKeyEncoder(
+                        maxParallelism,
+                        TypeInformation.of(Object.class)
+                                .createSerializer(new SerializerConfigImpl()));
     }
 
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws IOException {
         Map<String, ActionState> actionStates =
-                keyedActionStates.getOrDefault(key.toString(), new HashMap<>());
-        actionStates.put(generateKey(key, seqNum, action, event, maxParallelism), state);
-        keyedActionStates.put(key.toString(), actionStates);
+                keyedActionStates.getOrDefault(key, new HashMap<>());
+        actionStates.put(keyEncoder.generateKey(key, seqNum, action, event), state);
+        keyedActionStates.put(key, actionStates);
     }
 
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws IOException {
         return keyedActionStates
-                .getOrDefault(key.toString(), new HashMap<>())
-                .get(generateKey(key, seqNum, action, event, maxParallelism));
+                .getOrDefault(key, new HashMap<>())
+                .get(keyEncoder.generateKey(key, seqNum, action, event));
     }
 
     @Override
@@ -74,12 +78,12 @@ public class InMemoryActionStateStore implements ActionStateStore {
     @Override
     public void pruneState(Object key, long seqNum) {
         if (doCleanup) {
-            keyedActionStates.remove(key.toString());
+            keyedActionStates.remove(key);
         }
     }
 
     @VisibleForTesting
-    public Map<String, Map<String, ActionState>> getKeyedActionStates() {
+    public Map<Object, Map<String, ActionState>> getKeyedActionStates() {
         return keyedActionStates;
     }
 
