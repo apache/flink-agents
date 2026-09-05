@@ -168,7 +168,7 @@ public class KafkaActionStateStore implements ActionStateStore {
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
-        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
+        String businessKeyIdentity = keyEncoder.generateBusinessKeyIdentity(key);
 
         LOG.debug(
                 "Looking up action state: key={}, seqNum={}, stateKey={}, cachedStates={}",

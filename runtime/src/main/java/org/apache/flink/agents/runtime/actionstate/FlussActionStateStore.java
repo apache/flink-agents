@@ -89,7 +89,7 @@ public class FlussActionStateStore implements ActionStateStore {
     // Column names in the Fluss table schema
     private static final String COL_NAME_STATE_KEY = "state_key";
     private static final String COL_NAME_STATE_PAYLOAD = "state_payload";
-    // The historical column name is retained; values are business-key identity digests.
+    // Bucket-distribution column holding the business-key identity digest.
     private static final String COL_NAME_AGENT_KEY = "agent_key";
 
     // Column indices in the Fluss table schema
@@ -213,7 +213,7 @@ public class FlussActionStateStore implements ActionStateStore {
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws Exception {
         String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
-        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
+        String businessKeyIdentity = keyEncoder.generateBusinessKeyIdentity(key);
         byte[] payload = ActionStateSerde.serialize(state);
 
         GenericRow row =
@@ -236,7 +236,7 @@ public class FlussActionStateStore implements ActionStateStore {
     @Override
     public ActionState get(Object key, long seqNum, Action action, Event event) throws Exception {
         String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
-        String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
+        String businessKeyIdentity = keyEncoder.generateBusinessKeyIdentity(key);
 
         boolean hasDivergence = checkDivergence(businessKeyIdentity, seqNum);
 
