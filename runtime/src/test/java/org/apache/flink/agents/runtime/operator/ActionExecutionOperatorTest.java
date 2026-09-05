@@ -50,15 +50,19 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
@@ -74,6 +78,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.MockedConstruction;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -89,6 +94,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
@@ -98,6 +104,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -141,6 +148,47 @@ public class ActionExecutionOperatorTest {
             recordOutput = (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(2);
             assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
+        }
+    }
+
+    /**
+     * The default store must derive key identity from the serializer of the operator's keyed-state
+     * backend. A generic serializer would give the same key a different identity than keyed state.
+     */
+    @Test
+    void testDefaultStoreUsesKeyedStateBackendSerializer() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "kafka");
+        AtomicReference<ActionStateKeyEncoder> capturedEncoder = new AtomicReference<>();
+
+        try (MockedConstruction<KafkaActionStateStore> stores =
+                        mockConstruction(
+                                KafkaActionStateStore.class,
+                                (store, context) ->
+                                        capturedEncoder.set(
+                                                (ActionStateKeyEncoder)
+                                                        context.arguments().get(1)));
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory(
+                                        TestAgent.getAgentPlanWithConfig(config), true),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class))) {
+            testHarness.open();
+
+            assertThat(stores.constructed()).hasSize(1);
+            String identity = capturedEncoder.get().generateBusinessKeyIdentity(7L);
+            assertThat(identity)
+                    .isEqualTo(
+                            new ActionStateKeyEncoder(1, LongSerializer.INSTANCE)
+                                    .generateBusinessKeyIdentity(7L));
+            assertThat(identity)
+                    .isNotEqualTo(
+                            new ActionStateKeyEncoder(
+                                            1,
+                                            TypeInformation.of(Object.class)
+                                                    .createSerializer(new SerializerConfigImpl()))
+                                    .generateBusinessKeyIdentity(7L));
         }
     }
 
