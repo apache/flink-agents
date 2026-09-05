@@ -442,6 +442,44 @@ public class ActionStateUtilTest {
     }
 
     @Test
+    public void testRecoveryErrorsBoundEveryFieldAndCause() throws Exception {
+        String valid = generateKey("A", 1, new NoOpAction("action"), new InputEvent("input"), 128);
+        List<String> parts = ActionStateUtil.parseKey(valid);
+        for (int index = 0; index < parts.size(); index++) {
+            String malformed = withSegment(parts, index, "x".repeat(10000));
+            IllegalStateException failure =
+                    assertThrows(
+                            IllegalStateException.class,
+                            () -> createKeyEncoder(128).isKeyRetained(null, malformed));
+            assertTrue(failure.getMessage().contains("truncated"));
+            assertBoundedMessages(failure);
+        }
+
+        for (String malformed : List.of("legacy_" + "x".repeat(10000), "v2:" + "x".repeat(10000))) {
+            assertBoundedMessages(
+                    assertThrows(
+                            IllegalStateException.class,
+                            () -> createKeyEncoder(128).isKeyRetained(null, malformed)));
+        }
+
+        // Short fields can still raise parser exceptions, such as an overflowing long.
+        String overflowingSequence = withSegment(parts, 1, "99999999999999999999");
+        IllegalStateException failure =
+                assertThrows(
+                        IllegalStateException.class,
+                        () -> createKeyEncoder(128).isKeyRetained(null, overflowingSequence));
+        assertTrue(failure.getCause() instanceof NumberFormatException);
+        assertBoundedMessages(failure);
+    }
+
+    private static void assertBoundedMessages(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            assertTrue(cause.getMessage().length() < 1024);
+            assertFalse(cause.getMessage().contains("x".repeat(257)));
+        }
+    }
+
+    @Test
     public void testMatchesBusinessKeyIsSegmentExact() throws Exception {
         Action action = new NoOpAction("match-action");
         InputEvent event = new InputEvent("match-input");

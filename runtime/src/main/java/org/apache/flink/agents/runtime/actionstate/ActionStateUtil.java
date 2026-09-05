@@ -62,6 +62,10 @@ public final class ActionStateUtil {
     // This preserves the typed identity used by keyed state instead of collapsing distinct keys
     // through Object.toString(), while keeping durable keys bounded in size and avoiding embedding
     // serialized business-key data directly.
+    //
+    // Flink can accept a serializer reconfiguration that reads old bytes but writes new bytes for
+    // the same key. The snapshot fingerprint makes recovery reject that change before a lookup can
+    // silently miss the old digest. It also conservatively rejects byte-stable reconfigurations.
     private static final int KEY_GROUP_SEGMENT = 0;
     private static final int SEQ_NUM_SEGMENT = 1;
     private static final int EVENT_UUID_SEGMENT = 2;
@@ -69,6 +73,8 @@ public final class ActionStateUtil {
     private static final int SERIALIZER_FINGERPRINT_SEGMENT = 4;
     private static final int BUSINESS_KEY_IDENTITY_SEGMENT = 5;
     static final int KEY_SEGMENT_COUNT = 6;
+    // Longest key prefix echoed in recovery errors: legacy keys can embed raw user key text.
+    private static final int MAX_KEY_LENGTH_IN_MESSAGES = 256;
 
     static <K> String generateKey(
             @Nonnull K key,
@@ -77,7 +83,7 @@ public final class ActionStateUtil {
             @Nonnull Event event,
             int maxParallelism,
             @Nonnull TypeSerializer<K> keySerializer,
-            String serializerFingerprint)
+            @Nonnull String serializerFingerprint)
             throws IOException {
         Preconditions.checkNotNull(key, "key cannot be null.");
         Preconditions.checkNotNull(action, "action cannot be null.");
@@ -116,8 +122,11 @@ public final class ActionStateUtil {
         return sha256Base64(output.getCopyOfBuffer());
     }
 
+    /**
+     * Fingerprints the serializer's snapshot, including its version and configuration, once per
+     * store. Custom serializers must describe all encoding changes in their snapshots.
+     */
     static String generateSerializerFingerprint(TypeSerializer<?> keySerializer) {
-        Preconditions.checkNotNull(keySerializer, "keySerializer cannot be null.");
         DataOutputSerializer output = new DataOutputSerializer(128);
         try {
             TypeSerializerSnapshotSerializationUtil.writeSerializerSnapshot(
@@ -217,20 +226,20 @@ public final class ActionStateUtil {
         if (parts == null) {
             if (stateKey != null && stateKey.startsWith(KEY_FORMAT_VERSION + ":")) {
                 throw new IllegalStateException(
-                        "Malformed v2 action-state key during recovery: " + stateKey);
+                        "Malformed v2 action-state key during recovery: " + describeKey(stateKey));
             }
             throw new IllegalStateException(
                     "Unsupported action-state key format during recovery. The durable state was "
                             + "written by an incompatible version; use a new action-state topic or "
                             + "table when starting without an old checkpoint or savepoint. Key: "
-                            + stateKey);
+                            + describeKey(stateKey));
         }
         int keyGroup = parseCanonicalKeyGroup(parts[KEY_GROUP_SEGMENT], stateKey);
         if (keyGroup < 0 || keyGroup >= maxParallelism) {
             throw new IllegalStateException(
                     String.format(
                             "Action-state key-group %s is outside the configured range [0, %s). Key: %s",
-                            keyGroup, maxParallelism, stateKey));
+                            keyGroup, maxParallelism, describeKey(stateKey)));
         }
         validateRecoveryFields(parts, expectedSerializerFingerprint, stateKey);
         return ownershipFilter == null || ownershipFilter.test(keyGroup);
@@ -267,6 +276,7 @@ public final class ActionStateUtil {
     }
 
     private static int parseCanonicalKeyGroup(String encodedKeyGroup, String stateKey) {
+        validateFieldLength(encodedKeyGroup, 11, "key-group", stateKey);
         try {
             int keyGroup = Integer.parseInt(encodedKeyGroup);
             if (!Integer.toString(keyGroup).equals(encodedKeyGroup)) {
@@ -276,9 +286,9 @@ public final class ActionStateUtil {
         } catch (NumberFormatException e) {
             throw new IllegalStateException(
                     "Invalid key-group '"
-                            + encodedKeyGroup
+                            + describeKey(encodedKeyGroup)
                             + "' in action-state key during recovery: "
-                            + stateKey,
+                            + describeKey(stateKey),
                     e);
         }
     }
@@ -288,16 +298,19 @@ public final class ActionStateUtil {
         validateSequenceNumber(parts[SEQ_NUM_SEGMENT], stateKey);
         validateUuid("event UUID", parts[EVENT_UUID_SEGMENT], stateKey);
         validateUuid("action UUID", parts[ACTION_UUID_SEGMENT], stateKey);
-        validateDigest(
-                parts[SERIALIZER_FINGERPRINT_SEGMENT],
-                "serializer fingerprint",
-                expectedSerializerFingerprint,
-                stateKey);
-        validateDigest(
-                parts[BUSINESS_KEY_IDENTITY_SEGMENT], "business-key identity", null, stateKey);
+        validateDigest(parts[SERIALIZER_FINGERPRINT_SEGMENT], "serializer fingerprint", stateKey);
+        validateDigest(parts[BUSINESS_KEY_IDENTITY_SEGMENT], "business-key identity", stateKey);
+        if (!expectedSerializerFingerprint.equals(parts[SERIALIZER_FINGERPRINT_SEGMENT])) {
+            throw new IllegalStateException(
+                    "Action-state key serializer fingerprint does not match the operator key serializer. "
+                            + "Restore with the original serializer configuration, or use a fresh "
+                            + "action-state topic or table and start without an old checkpoint or savepoint. Key: "
+                            + describeKey(stateKey));
+        }
     }
 
     private static void validateSequenceNumber(String encodedSequenceNumber, String stateKey) {
+        validateFieldLength(encodedSequenceNumber, 20, "sequence number", stateKey);
         try {
             long sequenceNumber = Long.parseLong(encodedSequenceNumber);
             if (sequenceNumber < 0
@@ -307,14 +320,15 @@ public final class ActionStateUtil {
         } catch (NumberFormatException e) {
             throw new IllegalStateException(
                     "Invalid sequence number '"
-                            + encodedSequenceNumber
+                            + describeKey(encodedSequenceNumber)
                             + "' in action-state key during recovery: "
-                            + stateKey,
+                            + describeKey(stateKey),
                     e);
         }
     }
 
     private static void validateUuid(String fieldName, String encodedUuid, String stateKey) {
+        validateFieldLength(encodedUuid, 36, fieldName, stateKey);
         try {
             UUID uuid = UUID.fromString(encodedUuid);
             if (!uuid.toString().equals(encodedUuid)) {
@@ -325,18 +339,15 @@ public final class ActionStateUtil {
                     "Invalid "
                             + fieldName
                             + " '"
-                            + encodedUuid
+                            + describeKey(encodedUuid)
                             + "' in action-state key during recovery: "
-                            + stateKey,
+                            + describeKey(stateKey),
                     e);
         }
     }
 
-    private static void validateDigest(
-            String encodedDigest,
-            String fieldName,
-            @Nullable String expectedDigest,
-            String stateKey) {
+    private static void validateDigest(String encodedDigest, String fieldName, String stateKey) {
+        validateFieldLength(encodedDigest, 44, fieldName, stateKey);
         try {
             byte[] digest = Base64.getDecoder().decode(encodedDigest);
             if (digest.length != 32
@@ -348,16 +359,36 @@ public final class ActionStateUtil {
                     "Invalid "
                             + fieldName
                             + " '"
-                            + encodedDigest
+                            + describeKey(encodedDigest)
                             + "' in action-state key during recovery: "
-                            + stateKey,
+                            + describeKey(stateKey),
                     e);
         }
-        if (expectedDigest != null && !expectedDigest.equals(encodedDigest)) {
+    }
+
+    /** Checks length before parsing so parser exceptions also carry bounded input. */
+    private static void validateFieldLength(
+            String field, int maxLength, String fieldName, String stateKey) {
+        if (field.length() > maxLength) {
             throw new IllegalStateException(
-                    "Action-state key serializer fingerprint does not match the operator key serializer. Key: "
-                            + stateKey);
+                    "Invalid "
+                            + fieldName
+                            + " '"
+                            + describeKey(field)
+                            + "' in action-state key during recovery: "
+                            + describeKey(stateKey));
         }
+    }
+
+    /** Bounds a key or field for error messages; legacy keys can carry raw user key text. */
+    private static String describeKey(@Nullable String stateKey) {
+        if (stateKey == null || stateKey.length() <= MAX_KEY_LENGTH_IN_MESSAGES) {
+            return String.valueOf(stateKey);
+        }
+        return stateKey.substring(0, MAX_KEY_LENGTH_IN_MESSAGES)
+                + "... (truncated, "
+                + stateKey.length()
+                + " chars)";
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
