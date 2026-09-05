@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.fluss.client.Connection;
 import org.apache.fluss.client.ConnectionFactory;
 import org.apache.fluss.client.admin.Admin;
@@ -252,6 +253,28 @@ public class FlussActionStateStoreIntegrationTest {
                     .hasMessageContaining(legacyKey);
         } finally {
             recoveredStore.close();
+        }
+    }
+
+    @Test
+    void testRebuildStateRejectsSerializerMismatchBeforeOwnershipFiltering() throws Exception {
+        Object marker = store.getRecoveryMarker();
+        ActionState completed = new ActionState(testEvent);
+        completed.markCompleted();
+        store.put(TEST_KEY, 1L, testAction, testEvent, completed);
+        store.close();
+        store = null;
+
+        try (FlussActionStateStore recovered =
+                new FlussActionStateStore(
+                        createAgentConfiguration(),
+                        new ActionStateKeyEncoder(MAX_PARALLELISM, LongSerializer.INSTANCE))) {
+            recovered.setOwnershipFilter(group -> false);
+            Throwable failure = catchThrowable(() -> recovered.rebuildState(List.of(marker)));
+            assertThat(failure).isInstanceOf(RuntimeException.class);
+            assertThat(failure.getCause())
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("serializer fingerprint");
         }
     }
 

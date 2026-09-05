@@ -32,9 +32,10 @@ import java.util.function.IntPredicate;
 /**
  * Encodes and validates versioned action-state keys using an operator's keyed-state serializer.
  *
- * <p>The serializer snapshot fingerprint is part of every encoded key. Recovery therefore fails
- * closed if a restored operator uses a different serializer configuration, even when Flink regards
- * the new serializer as schema-compatible.
+ * <p>Every key carries a fingerprint of the serializer snapshot. Recovery requires an identical
+ * snapshot even when Flink accepts the new serializer: reading old bytes successfully does not
+ * guarantee that serializing the same key produces the same digest. Custom key serializers must
+ * produce deterministic bytes and describe encoding changes in their snapshots.
  */
 @Internal
 public final class ActionStateKeyEncoder {

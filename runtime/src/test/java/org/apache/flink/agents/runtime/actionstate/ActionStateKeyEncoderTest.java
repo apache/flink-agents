@@ -23,14 +23,20 @@ import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.api.common.typeutils.TypeSerializerSchemaCompatibility;
 import org.apache.flink.api.common.typeutils.TypeSerializerSnapshot;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.core.memory.DataInputView;
 import org.apache.flink.core.memory.DataOutputView;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.Serializable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Tests for {@link ActionStateKeyEncoder}. */
 class ActionStateKeyEncoderTest {
@@ -38,17 +44,7 @@ class ActionStateKeyEncoderTest {
     private static final int MAX_PARALLELISM = 128;
 
     @Test
-    void serializerFingerprintIsStableAcrossEquivalentInstances() {
-        ActionStateKeyEncoder first =
-                new ActionStateKeyEncoder(MAX_PARALLELISM, new TestKeySerializer(1));
-        ActionStateKeyEncoder second =
-                new ActionStateKeyEncoder(MAX_PARALLELISM, new TestKeySerializer(1));
-
-        assertThat(first.getSerializerFingerprint()).isEqualTo(second.getSerializerFingerprint());
-    }
-
-    @Test
-    void fingerprintIsStableAcrossIndependentLongSerializers() throws Exception {
+    void keysAreStableAcrossIndependentLongSerializers() throws Exception {
         ActionStateKeyEncoder first =
                 new ActionStateKeyEncoder(
                         MAX_PARALLELISM,
@@ -59,18 +55,16 @@ class ActionStateKeyEncoderTest {
                         MAX_PARALLELISM,
                         TypeInformation.of(Long.class)
                                 .createSerializer(new SerializerConfigImpl()));
+        String stateKey =
+                first.generateKey(1L, 1L, new NoOpAction("action"), new InputEvent("input"));
 
-        assertThat(restored.getSerializerFingerprint()).isEqualTo(first.getSerializerFingerprint());
-        assertThat(
-                        restored.isKeyRetained(
-                                keyGroup -> true,
-                                first.generateKey(
-                                        1L, 1L, new NoOpAction("action"), new InputEvent("input"))))
-                .isTrue();
+        assertThat(restored.generateKey(1L, 1L, new NoOpAction("action"), new InputEvent("input")))
+                .isEqualTo(stateKey);
+        assertThat(restored.isKeyRetained(keyGroup -> true, stateKey)).isTrue();
     }
 
     @Test
-    void fingerprintIsStableAcrossIndependentGenericSerializers() throws Exception {
+    void keysAreStableAcrossIndependentGenericSerializers() throws Exception {
         ActionStateKeyEncoder first =
                 new ActionStateKeyEncoder(
                         MAX_PARALLELISM,
@@ -81,47 +75,80 @@ class ActionStateKeyEncoderTest {
                         MAX_PARALLELISM,
                         TypeInformation.of(Object.class)
                                 .createSerializer(new SerializerConfigImpl()));
+        String stateKey =
+                first.generateKey("key", 1L, new NoOpAction("action"), new InputEvent("input"));
 
-        assertThat(restored.getSerializerFingerprint()).isEqualTo(first.getSerializerFingerprint());
         assertThat(
-                        restored.isKeyRetained(
-                                keyGroup -> true,
-                                first.generateKey(
-                                        "key",
-                                        1L,
-                                        new NoOpAction("action"),
-                                        new InputEvent("input"))))
-                .isTrue();
+                        restored.generateKey(
+                                "key", 1L, new NoOpAction("action"), new InputEvent("input")))
+                .isEqualTo(stateKey);
+        assertThat(restored.isKeyRetained(keyGroup -> true, stateKey)).isTrue();
     }
 
+    /**
+     * A changed snapshot is conservatively rejected even when a particular key's bytes stay equal.
+     */
     @Test
-    void recoveryRejectsSerializerThatRequiresMigration() throws Exception {
-        TestKeySerializer previousSerializer = new TestKeySerializer(1);
-        TestKeySerializer changedSerializer = new TestKeySerializer(2);
-        assertThat(
-                        changedSerializer
-                                .snapshotConfiguration()
-                                .resolveSchemaCompatibility(
-                                        previousSerializer.snapshotConfiguration())
-                                .isCompatibleAfterMigration())
-                .isTrue();
+    void recoveryRejectsChangedSnapshotEvenWhenKeyBytesStayEqual() throws Exception {
+        TypeSerializer<Object> before =
+                TypeInformation.of(Object.class).createSerializer(new SerializerConfigImpl());
+        SerializerConfigImpl reconfigured = new SerializerConfigImpl();
+        reconfigured.registerKryoType(UnrelatedRegisteredType.class);
+        TypeSerializer<Object> after =
+                TypeInformation.of(Object.class).createSerializer(reconfigured);
+        var compatibility =
+                after.snapshotConfiguration()
+                        .resolveSchemaCompatibility(before.snapshotConfiguration());
+        assertThat(compatibility.isCompatibleWithReconfiguredSerializer()).isTrue();
 
-        ActionStateKeyEncoder writer =
-                new ActionStateKeyEncoder(MAX_PARALLELISM, previousSerializer);
+        ActionStateKeyEncoder writer = new ActionStateKeyEncoder(MAX_PARALLELISM, before);
+        ActionStateKeyEncoder restored =
+                new ActionStateKeyEncoder(
+                        MAX_PARALLELISM, compatibility.getReconfiguredSerializer());
         String stateKey =
                 writer.generateKey("key", 1L, new NoOpAction("action"), new InputEvent("input"));
-        ActionStateKeyEncoder restored =
-                new ActionStateKeyEncoder(MAX_PARALLELISM, changedSerializer);
 
+        assertThat(restored.generateBusinessKeyIdentity("key"))
+                .isEqualTo(writer.generateBusinessKeyIdentity("key"));
         assertThatThrownBy(() -> restored.isKeyRetained(keyGroup -> true, stateKey))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("serializer fingerprint");
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void serializerSnapshotFailureIsReported() throws Exception {
+        TypeSerializer<Object> serializer = mock(TypeSerializer.class);
+        TypeSerializerSnapshot<Object> snapshot = mock(TypeSerializerSnapshot.class);
+        IOException failure = new IOException("snapshot write failed");
+        when(serializer.duplicate()).thenReturn(serializer);
+        when(serializer.snapshotConfiguration()).thenReturn(snapshot);
+        doThrow(failure).when(snapshot).writeSnapshot(any());
+
+        assertThatThrownBy(() -> new ActionStateKeyEncoder(MAX_PARALLELISM, serializer))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Failed to fingerprint the Flink key serializer")
+                .hasCause(failure);
+    }
+
+    @Test
+    void differentKeyTypesProduceDifferentIdentities() {
+        ActionStateKeyEncoder longEncoder =
+                new ActionStateKeyEncoder(MAX_PARALLELISM, LongSerializer.INSTANCE);
+        ActionStateKeyEncoder genericEncoder =
+                new ActionStateKeyEncoder(
+                        MAX_PARALLELISM,
+                        TypeInformation.of(Object.class)
+                                .createSerializer(new SerializerConfigImpl()));
+
+        assertThat(longEncoder.generateBusinessKeyIdentity(1L))
+                .isNotEqualTo(genericEncoder.generateBusinessKeyIdentity(1L));
+    }
+
+    @Test
     void businessKeySerializationFailureIsReported() {
         ActionStateKeyEncoder encoder =
-                new ActionStateKeyEncoder(MAX_PARALLELISM, new TestKeySerializer(1, true, false));
+                new ActionStateKeyEncoder(MAX_PARALLELISM, new FailingKeySerializer());
 
         assertThatThrownBy(() -> encoder.generateBusinessKeyIdentity("key"))
                 .isInstanceOf(IllegalStateException.class)
@@ -129,35 +156,13 @@ class ActionStateKeyEncoderTest {
                 .hasCauseInstanceOf(IOException.class);
     }
 
-    @Test
-    void serializerSnapshotFailureIsReported() {
-        assertThatThrownBy(
-                        () ->
-                                new ActionStateKeyEncoder(
-                                        MAX_PARALLELISM, new TestKeySerializer(1, false, true)))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Failed to fingerprint the Flink key serializer")
-                .hasCauseInstanceOf(IOException.class);
+    public static class UnrelatedRegisteredType implements Serializable {
+        public int value;
     }
 
-    private static final class TestKeySerializer extends TypeSerializer<Object> {
+    private static final class FailingKeySerializer extends TypeSerializer<Object> {
 
         private static final long serialVersionUID = 1L;
-
-        private final int encodingVersion;
-        private final boolean failSerialization;
-        private final boolean failSnapshot;
-
-        private TestKeySerializer(int encodingVersion) {
-            this(encodingVersion, false, false);
-        }
-
-        private TestKeySerializer(
-                int encodingVersion, boolean failSerialization, boolean failSnapshot) {
-            this.encodingVersion = encodingVersion;
-            this.failSerialization = failSerialization;
-            this.failSnapshot = failSnapshot;
-        }
 
         @Override
         public boolean isImmutableType() {
@@ -166,7 +171,7 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public TypeSerializer<Object> duplicate() {
-            return new TestKeySerializer(encodingVersion, failSerialization, failSnapshot);
+            return new FailingKeySerializer();
         }
 
         @Override
@@ -191,16 +196,11 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public void serialize(Object record, DataOutputView target) throws IOException {
-            if (failSerialization) {
-                throw new IOException("key serialization failed");
-            }
-            target.writeInt(encodingVersion);
-            target.writeUTF(record.toString());
+            throw new IOException("key serialization failed");
         }
 
         @Override
         public Object deserialize(DataInputView source) throws IOException {
-            source.readInt();
             return source.readUTF();
         }
 
@@ -211,42 +211,27 @@ class ActionStateKeyEncoderTest {
 
         @Override
         public void copy(DataInputView source, DataOutputView target) throws IOException {
-            target.writeInt(source.readInt());
             target.writeUTF(source.readUTF());
         }
 
         @Override
         public TypeSerializerSnapshot<Object> snapshotConfiguration() {
-            return new TestKeySerializerSnapshot(encodingVersion, failSnapshot);
+            return new FailingKeySerializerSnapshot();
         }
 
         @Override
         public boolean equals(Object other) {
-            return other instanceof TestKeySerializer
-                    && encodingVersion == ((TestKeySerializer) other).encodingVersion;
+            return other instanceof FailingKeySerializer;
         }
 
         @Override
         public int hashCode() {
-            return encodingVersion;
+            return FailingKeySerializer.class.hashCode();
         }
     }
 
-    public static final class TestKeySerializerSnapshot implements TypeSerializerSnapshot<Object> {
-
-        private int encodingVersion;
-        private boolean failWrite;
-
-        public TestKeySerializerSnapshot() {}
-
-        private TestKeySerializerSnapshot(int encodingVersion) {
-            this(encodingVersion, false);
-        }
-
-        private TestKeySerializerSnapshot(int encodingVersion, boolean failWrite) {
-            this.encodingVersion = encodingVersion;
-            this.failWrite = failWrite;
-        }
+    public static final class FailingKeySerializerSnapshot
+            implements TypeSerializerSnapshot<Object> {
 
         @Override
         public int getCurrentVersion() {
@@ -254,34 +239,20 @@ class ActionStateKeyEncoderTest {
         }
 
         @Override
-        public void writeSnapshot(DataOutputView out) throws IOException {
-            if (failWrite) {
-                throw new IOException("serializer snapshot failed");
-            }
-            out.writeInt(encodingVersion);
-        }
+        public void writeSnapshot(DataOutputView out) {}
 
         @Override
-        public void readSnapshot(int readVersion, DataInputView in, ClassLoader userCodeClassLoader)
-                throws IOException {
-            encodingVersion = in.readInt();
-        }
+        public void readSnapshot(int readVersion, DataInputView in, ClassLoader classLoader) {}
 
         @Override
         public TypeSerializer<Object> restoreSerializer() {
-            return new TestKeySerializer(encodingVersion);
+            return new FailingKeySerializer();
         }
 
         @Override
         public TypeSerializerSchemaCompatibility<Object> resolveSchemaCompatibility(
                 TypeSerializerSnapshot<Object> oldSerializerSnapshot) {
-            if (!(oldSerializerSnapshot instanceof TestKeySerializerSnapshot)) {
-                return TypeSerializerSchemaCompatibility.incompatible();
-            }
-            TestKeySerializerSnapshot previous = (TestKeySerializerSnapshot) oldSerializerSnapshot;
-            return encodingVersion == previous.encodingVersion
-                    ? TypeSerializerSchemaCompatibility.compatibleAsIs()
-                    : TypeSerializerSchemaCompatibility.compatibleAfterMigration();
+            return TypeSerializerSchemaCompatibility.compatibleAsIs();
         }
     }
 }
