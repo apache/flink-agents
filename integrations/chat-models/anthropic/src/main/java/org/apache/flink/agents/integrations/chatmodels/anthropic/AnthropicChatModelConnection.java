@@ -28,6 +28,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
+import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
@@ -769,8 +770,19 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         if (!toolCalls.isEmpty()) {
             chatMessage.setToolCalls(toolCalls);
         }
+        response.stopReason()
+                .ifPresent(
+                        reason ->
+                                chatMessage
+                                        .getExtraArgs()
+                                        .put("finish_reason", toFinishReason(reason)));
 
         return chatMessage;
+    }
+
+    /** Maps Anthropic's token-limit reason to the shared chat action's canonical value. */
+    private static String toFinishReason(StopReason reason) {
+        return StopReason.MAX_TOKENS.equals(reason) ? "length" : reason.asString();
     }
 
     /**
