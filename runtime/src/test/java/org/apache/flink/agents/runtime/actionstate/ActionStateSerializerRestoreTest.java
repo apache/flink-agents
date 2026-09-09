@@ -35,6 +35,7 @@ import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
+import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -96,6 +97,9 @@ class ActionStateSerializerRestoreTest {
             Map<String, ActionState> cache = new HashMap<>();
             MockConsumer<String, ActionState> consumer = new MockConsumer<>("earliest");
             TopicPartition partition = new TopicPartition(TOPIC, 0);
+            consumer.updatePartitions(
+                    TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
+            consumer.updateEndOffsets(Map.of(partition, 1L));
             consumer.assign(List.of(partition));
             consumer.updateBeginningOffsets(Map.of(partition, 0L));
             consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, 0, stateKey, completed));
