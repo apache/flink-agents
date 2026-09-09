@@ -24,8 +24,10 @@ from pathlib import Path
 from typing import AsyncIterator
 from urllib.parse import parse_qs, urlparse
 
+import anyio
 import pytest
 from mcp.client.auth import OAuthClientProvider, TokenStorage
+from mcp.client.session import ClientSession
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from mcp.types import CallToolResult, TextContent
 from pydantic import AnyUrl
@@ -166,7 +168,7 @@ def test_mcp_tool_roundtrip_preserves_metadata() -> None:
     }
 
 
-class _ProtocolErrorSession:
+class _ProtocolErrorClientSession(ClientSession):
     async def call_tool(self, *args: object, **kwargs: object) -> CallToolResult:
         return CallToolResult(
             content=[TextContent(type="text", text="business failure")],
@@ -176,8 +178,17 @@ class _ProtocolErrorSession:
 
 class _ProtocolErrorServer(MCPServer):
     @asynccontextmanager
-    async def _get_session(self) -> AsyncIterator[_ProtocolErrorSession]:
-        yield _ProtocolErrorSession()
+    async def _get_session(self) -> AsyncIterator[ClientSession]:
+        server_send, client_receive = anyio.create_memory_object_stream(1)
+        client_send, server_receive = anyio.create_memory_object_stream(1)
+        async with (
+            server_send,
+            client_receive,
+            client_send,
+            server_receive,
+            _ProtocolErrorClientSession(client_receive, client_send) as session,
+        ):
+            yield session
 
 
 class _ProtocolSuccessSession:

@@ -247,11 +247,10 @@ class MCPServer(Resource, ABC):
                 read_timeout_seconds=timedelta(seconds=self.timeout),
             )
 
-            content = [extract_mcp_content_item(item) for item in result.content]
-
-            if result.isError:
-                msg = f"MCP tool '{tool_name}' returned an error: {content}"
-                raise RuntimeError(msg)
+        content = [extract_mcp_content_item(item) for item in result.content]
+        if result.isError:
+            msg = f"MCP tool '{tool_name}' returned an error: {content}"
+            raise RuntimeError(msg)
 
         return content
 
