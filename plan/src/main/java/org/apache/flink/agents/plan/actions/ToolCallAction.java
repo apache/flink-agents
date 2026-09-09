@@ -64,7 +64,8 @@ public class ToolCallAction {
                 List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
-    public static void processToolRequest(Event event, RunnerContext ctx) {
+    public static void processToolRequest(Event event, RunnerContext ctx)
+            throws InterruptedException {
         ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
         int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
@@ -76,6 +77,10 @@ public class ToolCallAction {
         List<ToolCallExecution> executions =
                 buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
 
+        // executeParallel/executeSequentially let InterruptedException propagate rather than
+        // recording it as a tool error, so a cancellation here skips sendEvent below entirely:
+        // no ToolResponseEvent goes out, no further chat call gets driven off a cancelled tool
+        // call, and the action is never persisted as completed on the back of it.
         if (toolCallAsync && toolCallParallelism > 1 && executions.size() > 1) {
             executeParallel(executions, ctx, success, error, responses);
         } else {
@@ -196,7 +201,8 @@ public class ToolCallAction {
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws InterruptedException {
         List<DurableCallable<ToolResponse>> callables = new ArrayList<>(executions.size());
         for (ToolCallExecution execution : executions) {
             callables.add(execution.callable);
@@ -206,6 +212,12 @@ public class ToolCallAction {
             for (int i = 0; i < outcomes.size(); i++) {
                 recordOutcome(executions.get(i), outcomes.get(i), ctx, success, error, responses);
             }
+        } catch (InterruptedException e) {
+            // A cancellation signal, not a batch failure: propagate immediately instead of
+            // recording every execution as a tool error and letting the caller send a
+            // ToolResponseEvent that drives the action loop onward.
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             for (ToolCallExecution execution : executions) {
                 recordExecutionException(execution, e, success, error, responses);
@@ -230,7 +242,8 @@ public class ToolCallAction {
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws InterruptedException {
         for (ToolCallExecution execution : executions) {
             try {
                 ToolResponse response =
@@ -253,6 +266,12 @@ public class ToolCallAction {
                             execution.name,
                             execution.entityMetadata);
                 }
+            } catch (InterruptedException e) {
+                // A cancellation signal, not a tool failure: propagate immediately instead of
+                // recording it as a tool error and letting the loop move on to (or past) the
+                // remaining executions and the caller send a ToolResponseEvent for it.
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
                 recordExecutionException(execution, e, success, error, responses);
                 ExecutionReporters.failed(

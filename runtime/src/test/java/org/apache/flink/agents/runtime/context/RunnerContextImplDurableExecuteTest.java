@@ -31,6 +31,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -125,6 +126,45 @@ class RunnerContextImplDurableExecuteTest {
         CallResult pending =
                 context.getDurableExecutionContext().getActionState().getCallResults().get(0);
         assertTrue(pending.isPending(), "interrupted pending slot should remain unfinalized");
+    }
+
+    @Test
+    void testDurableExecuteAllAsyncStopsBatchOnInterruptionInsteadOfRecordingFailure() {
+        RunnerContextImpl context = createContext(new ActionState(null));
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-call-1", String.class, () -> "ok");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>(
+                        "batch-call-2",
+                        String.class,
+                        () -> {
+                            throw new InterruptedException("cancelled");
+                        });
+        TestDurableCallable<String> third =
+                new TestDurableCallable<>(
+                        "batch-call-3",
+                        String.class,
+                        () -> fail("later callables must not run once the batch is interrupted"));
+
+        Thread.interrupted();
+
+        assertThrows(
+                InterruptedException.class,
+                () -> context.durableExecuteAllAsync(List.of(first, second, third)));
+
+        assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+        assertEquals(1, first.getCallCount());
+        assertEquals(1, second.getCallCount());
+        assertEquals(0, third.getCallCount(), "callables after the interrupted one must not run");
+        // batch-call-1 genuinely completed before the interruption, so it's correctly persisted;
+        // batch-call-2's interruption must not be recorded as a failed Outcome, though — it
+        // should propagate out of durableExecuteAllAsync instead, same as any other
+        // durableExecute call, leaving nothing persisted for it.
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
+        CallResult persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertEquals("batch-call-1", persisted.getFunctionId());
+        assertTrue(persisted.isSuccess());
     }
 
     @Test

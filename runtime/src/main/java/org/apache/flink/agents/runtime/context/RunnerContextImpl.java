@@ -496,6 +496,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         for (DurableCallable<T> callable : callables) {
             try {
                 outcomes.add(Outcome.success(durableExecute(callable)));
+            } catch (InterruptedException e) {
+                // A cancellation signal, not a genuine call failure: stop scheduling the
+                // remaining callables and propagate immediately, instead of recording it as a
+                // failed outcome and continuing on to the rest of the batch.
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
                 outcomes.add(Outcome.failure(e));
             }

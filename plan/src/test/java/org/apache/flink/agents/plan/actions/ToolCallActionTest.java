@@ -51,6 +51,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 public class ToolCallActionTest {
 
@@ -428,7 +429,7 @@ public class ToolCallActionTest {
     }
 
     @Test
-    void processToolRequestUsesFallbackWhenMissingToolErrorHasNoMessage() {
+    void processToolRequestUsesFallbackWhenMissingToolErrorHasNoMessage() throws Exception {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
@@ -558,6 +559,80 @@ public class ToolCallActionTest {
         assertThat(response.getSuccess()).containsEntry("call-2", false);
         assertThat(response.getError()).containsEntry("call-1", "persist failed");
         assertThat(response.getError()).containsEntry("call-2", "persist failed");
+    }
+
+    @Test
+    void processToolRequestPropagatesInterruptionInsteadOfRecordingToolError() {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+                        throw new InterruptedException("cancelled");
+                    }
+                }.withToolCallAsync(false);
+
+        Thread.interrupted();
+
+        assertThatExceptionOfType(InterruptedException.class)
+                .isThrownBy(
+                        () -> ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx));
+
+        assertThat(Thread.interrupted()).as("interrupt status should be restored").isTrue();
+        // No ToolResponseEvent should go out for a cancelled call: the loop must not fold the
+        // interruption into a tool-error response and drive a further chat call off it.
+        assertThat(ctx.sentEvents).isEmpty();
+    }
+
+    @Test
+    void processToolRequestStopsSequentialLoopOnFirstInterruptionWithoutRunningLaterTools() {
+        AtomicInteger calls = new AtomicInteger();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public <T> T durableExecute(DurableCallable<T> callable) throws Exception {
+                        if (calls.incrementAndGet() == 1) {
+                            throw new InterruptedException("cancelled");
+                        }
+                        return callable.call();
+                    }
+                }.withToolCallAsync(false);
+
+        Thread.interrupted();
+
+        assertThatExceptionOfType(InterruptedException.class)
+                .isThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        toolRequest("queryOrder", "call-1", "call-2"), ctx));
+
+        Thread.interrupted();
+        assertThat(calls.get())
+                .as("the second tool call must not run once the first is interrupted")
+                .isEqualTo(1);
+        assertThat(ctx.sentEvents).isEmpty();
+    }
+
+    @Test
+    void processToolRequestPropagatesInterruptionFromParallelBatchWithoutRecordingToolErrors() {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext() {
+                    @Override
+                    public <T> List<Outcome<T>> durableExecuteAllAsync(
+                            List<DurableCallable<T>> callables) throws Exception {
+                        throw new InterruptedException("cancelled");
+                    }
+                };
+
+        Thread.interrupted();
+
+        assertThatExceptionOfType(InterruptedException.class)
+                .isThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        toolRequest("queryOrder", "call-1", "call-2"), ctx));
+
+        assertThat(Thread.interrupted()).as("interrupt status should be restored").isTrue();
+        assertThat(ctx.sentEvents).isEmpty();
     }
 
     private static ToolRequestEvent toolRequest(String toolName) {
