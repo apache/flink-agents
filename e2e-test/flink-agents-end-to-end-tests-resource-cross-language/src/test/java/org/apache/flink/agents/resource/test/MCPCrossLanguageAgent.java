@@ -59,6 +59,13 @@ public class MCPCrossLanguageAgent extends Agent {
 
             ToolResponse response = add.call(new ToolParameters(Map.of("a", 1, "b", 2)));
             Assertions.assertTrue(response.getResult().toString().contains("3"));
+
+            Tool failingTool = (Tool) ctx.getResource("fail_with_recovery_hint", ResourceType.TOOL);
+            ToolResponse failedResponse =
+                    failingTool.call(new ToolParameters(Map.of("query", "all records")));
+            Assertions.assertTrue(failedResponse.isError());
+            Assertions.assertTrue(
+                    failedResponse.getError().contains("retry with a narrower query"));
             System.out.println("[TEST] MCP Tools PASSED");
 
             Prompt askSum = (Prompt) ctx.getResource("ask_sum", ResourceType.PROMPT);

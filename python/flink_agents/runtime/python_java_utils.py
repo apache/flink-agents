@@ -196,10 +196,21 @@ def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> A
     ``ToolResponse`` without inspecting user payloads.
     """
     from flink_agents.api.function import PythonFunction
-    from flink_agents.api.tools import ToolResponse
 
     descriptor = PythonFunction(module=module, qualname=qual_name)
     result = descriptor.as_callable()(**kwargs)
+    return _encode_python_tool_result(result)
+
+
+def invoke_python_tool_instance(tool: Tool, kwargs: Dict[str, Any]) -> Any:
+    """Invoke a Python Tool instance and encode its result for the Java bridge."""
+    return _encode_python_tool_result(tool.call(**kwargs))
+
+
+def _encode_python_tool_result(result: Any) -> Dict[str, Any]:
+    """Encode raw values and explicit ToolResponses without inspecting user payloads."""
+    from flink_agents.api.tools import ToolResponse
+
     if not isinstance(result, ToolResponse):
         return {
             "__flink_agents_tool_result__": "raw",

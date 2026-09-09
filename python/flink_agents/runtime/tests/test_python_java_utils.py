@@ -31,6 +31,7 @@ from flink_agents.runtime.python_java_utils import (
     convert_to_python_key_text,
     get_python_tool_metadata,
     invoke_python_tool,
+    invoke_python_tool_instance,
     to_python_memory_set,
     wrap_to_input_event,
 )
@@ -52,6 +53,11 @@ def failed_python_tool(value: str) -> ToolResponse:
 
 def successful_python_tool(value: str) -> ToolResponse:
     return ToolResponse.success(value, execution_time_ms=5, tool_name="successful")
+
+
+class _FailedTool:
+    def call(self, value: str) -> ToolResponse:
+        return failed_python_tool(value)
 
 
 def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
@@ -97,6 +103,19 @@ def test_invoke_python_tool_preserves_explicit_success() -> None:
         "error": None,
         "execution_time_ms": 5,
         "tool_name": "successful",
+    }
+
+
+def test_invoke_python_tool_instance_preserves_explicit_failure() -> None:
+    result = invoke_python_tool_instance(_FailedTool(), {"value": "failed"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": None,
+        "success": False,
+        "error": "failed",
+        "execution_time_ms": 7,
+        "tool_name": "failed",
     }
 
 
