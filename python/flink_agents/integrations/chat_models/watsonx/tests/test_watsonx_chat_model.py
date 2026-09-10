@@ -130,6 +130,7 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response.extra_args["model_name"] == test_model
     assert response.extra_args["promptTokens"] == 100
     assert response.extra_args["completionTokens"] == 50
+    assert response.extra_args["finish_reason"] == "stop"
     model_inference.assert_called_once_with(
         model_id=test_model,
         api_client=api_client,
@@ -137,6 +138,63 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
         space_id=None,
         max_retries=0,
     )
+
+
+def _setup_llm(
+    mock_model: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> WatsonxChatModelSetup:
+    model_inference = MagicMock(return_value=mock_model)
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.ModelInference",
+        model_inference,
+    )
+
+    connection = _fake_connection()
+    connection._client = MagicMock()
+
+    def get_resource(name: str, type: ResourceType) -> Resource:
+        return connection
+
+    mock_ctx = MagicMock(spec=ResourceContext)
+    mock_ctx.get_resource = get_resource
+
+    llm = WatsonxChatModelSetup(
+        model=test_model,
+        connection="watsonx",
+        resource_context=mock_ctx,
+    )
+    llm.open()
+    return llm
+
+
+def test_watsonx_chat_carries_unknown_finish_reason_verbatim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A finish reason outside the documented set is stored as received."""
+    mock_model = MagicMock()
+    mock_model.chat.return_value = _mock_chat_response(
+        {"role": "assistant", "content": "hi"}, finish_reason="some_vendor_reason"
+    )
+    llm = _setup_llm(mock_model, monkeypatch)
+
+    response = llm.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+
+    assert response.extra_args["finish_reason"] == "some_vendor_reason"
+
+
+def test_watsonx_chat_no_finish_reason_key_when_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response with no finish reason yields no key and no error."""
+    mock_model = MagicMock()
+    mock_model.chat.return_value = _mock_chat_response(
+        {"role": "assistant", "content": "hi"}, finish_reason=None
+    )
+    llm = _setup_llm(mock_model, monkeypatch)
+
+    response = llm.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+
+    assert "finish_reason" not in response.extra_args
 
 
 def test_watsonx_tool_call_response_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
