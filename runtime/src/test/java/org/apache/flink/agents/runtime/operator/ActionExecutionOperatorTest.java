@@ -1586,7 +1586,7 @@ public class ActionExecutionOperatorTest {
                     ActionState state = entry.getValue();
 
                     // Verify the state key is current-format and belongs to the typed input key.
-                    assertThat(stateKey).startsWith("v2:");
+                    assertThat(ActionStateUtil.parseKey(stateKey)).hasSize(5);
                     assertThat(ActionStateUtil.parseKeyGroup(stateKey))
                             .isEqualTo(KeyGroupRangeAssignment.assignToKeyGroup(inputValue, 128));
 
