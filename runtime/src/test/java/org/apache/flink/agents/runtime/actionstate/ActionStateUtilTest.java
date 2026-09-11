@@ -210,8 +210,8 @@ public class ActionStateUtilTest {
         // Parse the generated key
         List<String> parsedParts = ActionStateUtil.parseKey(generatedKey);
 
-        // Verify: [keyGroup, seqNum, eventUUID, actionUUID, serializer, businessKeyIdentity].
-        assertEquals(6, parsedParts.size());
+        // Verify: [keyGroup, seqNum, eventUUID, actionUUID, businessKeyIdentity].
+        assertEquals(5, parsedParts.size());
         assertTrue(Integer.parseInt(parsedParts.get(0)) >= 0); // keyGroup
         assertEquals(String.valueOf(seqNum), parsedParts.get(1));
         // The event and action UUID segments are non-empty.
@@ -219,7 +219,7 @@ public class ActionStateUtilTest {
         assertTrue(parsedParts.get(3).length() > 0);
         assertEquals(
                 ActionStateUtil.generateBusinessKeyIdentity(key, KEY_SERIALIZER),
-                parsedParts.get(5));
+                parsedParts.get(4));
     }
 
     @Test
@@ -235,7 +235,7 @@ public class ActionStateUtilTest {
 
         assertEquals(
                 ActionStateUtil.generateBusinessKeyIdentity(originalKey, KEY_SERIALIZER),
-                parsedParts.get(5));
+                parsedParts.get(4));
         assertEquals(String.valueOf(seqNum), parsedParts.get(1));
     }
 
@@ -285,7 +285,7 @@ public class ActionStateUtilTest {
 
         assertEquals(
                 ActionStateUtil.generateBusinessKeyIdentity(key, KEY_SERIALIZER),
-                parsedParts.get(5));
+                parsedParts.get(4));
         assertEquals(String.valueOf(seqNum), parsedParts.get(1));
     }
 
@@ -302,8 +302,7 @@ public class ActionStateUtilTest {
         List<String> parsed2 = ActionStateUtil.parseKey(key2);
 
         // Business keys and sequence numbers differ.
-        assertEquals(parsed1.get(4), parsed2.get(4)); // serializer fingerprint
-        assertNotEquals(parsed1.get(5), parsed2.get(5)); // businessKey
+        assertNotEquals(parsed1.get(4), parsed2.get(4)); // businessKey
         assertNotEquals(parsed1.get(1), parsed2.get(1)); // seqNum
 
         // But event and action UUIDs should be the same (same event and action)
@@ -360,7 +359,7 @@ public class ActionStateUtilTest {
                         new NoOpAction("valid-action"),
                         new InputEvent("valid-input"),
                         MAX_PARALLELISM);
-        String invalid = "v2:not-a-number" + valid.substring(valid.indexOf('_'));
+        String invalid = "not-a-number" + valid.substring(valid.indexOf('_'));
         IllegalStateException failure =
                 assertThrows(
                         IllegalStateException.class,
@@ -405,8 +404,7 @@ public class ActionStateUtilTest {
                         withSegment(parts, 2, "not-a-uuid"),
                         withSegment(parts, 2, "1-1-1-1-1"),
                         withSegment(parts, 3, "1-1-1-1-1"),
-                        withSegment(parts, 4, "not-a-digest"),
-                        withSegment(parts, 5, "not-a-digest"));
+                        withSegment(parts, 4, "not-a-digest"));
 
         for (String invalidKey : invalidKeys) {
             assertThrows(
@@ -426,7 +424,7 @@ public class ActionStateUtilTest {
                 ActionStateUtil.generateBusinessKeyIdentity(businessKey, KEY_SERIALIZER);
 
         assertEquals(businessKeyIdentity, ActionStateUtil.businessKeyIdentityOf(stateKey));
-        assertEquals(businessKeyIdentity, ActionStateUtil.parseKey(stateKey).get(5));
+        assertEquals(businessKeyIdentity, ActionStateUtil.parseKey(stateKey).get(4));
         assertTrue(ActionStateUtil.matchesBusinessKeyIdentity(stateKey, businessKeyIdentity));
         assertTrue(
                 ActionStateUtil.matchesBusinessKeyIdentityAndSeqNum(
@@ -455,7 +453,7 @@ public class ActionStateUtilTest {
             assertBoundedMessages(failure);
         }
 
-        for (String malformed : List.of("legacy_" + "x".repeat(10000), "v2:" + "x".repeat(10000))) {
+        for (String malformed : List.of("legacy_" + "x".repeat(10000), "" + "x".repeat(10000))) {
             assertBoundedMessages(
                     assertThrows(
                             IllegalStateException.class,
@@ -583,7 +581,6 @@ public class ActionStateUtilTest {
     private static String withSegment(List<String> parsedParts, int index, String replacement) {
         List<String> parts = new ArrayList<>(parsedParts);
         parts.set(index, replacement);
-        parts.set(0, "v2:" + parts.get(0));
         return String.join("_", parts);
     }
 }

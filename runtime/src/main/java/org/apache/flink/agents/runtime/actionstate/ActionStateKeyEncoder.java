@@ -20,7 +20,6 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.Internal;
-import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.util.Preconditions;
 
@@ -30,19 +29,16 @@ import java.io.IOException;
 import java.util.function.IntPredicate;
 
 /**
- * Encodes and validates versioned action-state keys using an operator's keyed-state serializer.
+ * Encodes and validates action-state keys using an operator's keyed-state serializer.
  *
- * <p>Every key carries a fingerprint of the serializer snapshot. Recovery requires an identical
- * snapshot even when Flink accepts the new serializer: reading old bytes successfully does not
- * guarantee that serializing the same key produces the same digest. Custom key serializers must
- * produce deterministic bytes and describe encoding changes in their snapshots.
+ * <p>Recovery requires unchanged key types and serializer configuration. Key serializers must
+ * produce deterministic bytes; changes that alter those bytes can make completed state unreachable.
  */
 @Internal
 public final class ActionStateKeyEncoder {
 
     private final int maxParallelism;
     private final TypeSerializer<Object> keySerializer;
-    private final String serializerFingerprint;
 
     public ActionStateKeyEncoder(int maxParallelism, TypeSerializer<?> keySerializer) {
         Preconditions.checkArgument(
@@ -51,14 +47,12 @@ public final class ActionStateKeyEncoder {
                 maxParallelism);
         this.maxParallelism = maxParallelism;
         this.keySerializer = duplicateKeySerializer(keySerializer);
-        this.serializerFingerprint =
-                ActionStateUtil.generateSerializerFingerprint(this.keySerializer);
     }
 
     public String generateKey(Object key, long seqNum, Action action, Event event)
             throws IOException {
         return ActionStateUtil.generateKey(
-                key, seqNum, action, event, maxParallelism, keySerializer, serializerFingerprint);
+                key, seqNum, action, event, maxParallelism, keySerializer);
     }
 
     public String generateBusinessKeyIdentity(Object key) {
@@ -66,13 +60,7 @@ public final class ActionStateKeyEncoder {
     }
 
     public boolean isKeyRetained(@Nullable IntPredicate ownershipFilter, String stateKey) {
-        return ActionStateUtil.isKeyRetained(
-                ownershipFilter, stateKey, maxParallelism, serializerFingerprint);
-    }
-
-    @VisibleForTesting
-    String getSerializerFingerprint() {
-        return serializerFingerprint;
+        return ActionStateUtil.isKeyRetained(ownershipFilter, stateKey, maxParallelism);
     }
 
     @SuppressWarnings("unchecked")

@@ -24,7 +24,7 @@ import org.apache.kafka.common.Cluster;
 
 import java.util.Map;
 
-/** Partitions versioned action-state records by their encoded business-key identity. */
+/** Partitions action-state records by their encoded business-key identity. */
 @Internal
 public class ActionStateKeyPartitioner implements Partitioner {
 

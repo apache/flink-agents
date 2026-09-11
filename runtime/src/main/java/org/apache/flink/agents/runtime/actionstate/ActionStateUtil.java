@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
-import org.apache.flink.api.common.typeutils.TypeSerializerSnapshotSerializationUtil;
 import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
 import org.apache.flink.util.Preconditions;
@@ -52,27 +51,20 @@ public final class ActionStateUtil {
                     .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true)
                     .build();
     private static final String KEY_SEPARATOR = "_";
-    private static final String KEY_FORMAT_VERSION = "v2";
-    private static final String KEY_GROUP_PREFIX = KEY_FORMAT_VERSION + ":";
 
     // Composite key layout:
-    // v2:keyGroup_seqNum_eventUUID_actionUUID_serializerFingerprint_businessKeyDigest.
+    // keyGroup_seqNum_eventUUID_actionUUID_businessKeyDigest.
     //
     // The final segment contains a SHA-256 digest of the bytes produced by Flink's key serializer.
     // This preserves the typed identity used by keyed state instead of collapsing distinct keys
     // through Object.toString(), while keeping durable keys bounded in size and avoiding embedding
     // serialized business-key data directly.
-    //
-    // Flink can accept a serializer reconfiguration that reads old bytes but writes new bytes for
-    // the same key. The snapshot fingerprint makes recovery reject that change before a lookup can
-    // silently miss the old digest. It also conservatively rejects byte-stable reconfigurations.
     private static final int KEY_GROUP_SEGMENT = 0;
     private static final int SEQ_NUM_SEGMENT = 1;
     private static final int EVENT_UUID_SEGMENT = 2;
     private static final int ACTION_UUID_SEGMENT = 3;
-    private static final int SERIALIZER_FINGERPRINT_SEGMENT = 4;
-    private static final int BUSINESS_KEY_IDENTITY_SEGMENT = 5;
-    static final int KEY_SEGMENT_COUNT = 6;
+    private static final int BUSINESS_KEY_IDENTITY_SEGMENT = 4;
+    static final int KEY_SEGMENT_COUNT = 5;
     // Longest key prefix echoed in recovery errors: legacy keys can embed raw user key text.
     private static final int MAX_KEY_LENGTH_IN_MESSAGES = 256;
 
@@ -82,14 +74,12 @@ public final class ActionStateUtil {
             @Nonnull Action action,
             @Nonnull Event event,
             int maxParallelism,
-            @Nonnull TypeSerializer<K> keySerializer,
-            @Nonnull String serializerFingerprint)
+            @Nonnull TypeSerializer<K> keySerializer)
             throws IOException {
         Preconditions.checkNotNull(key, "key cannot be null.");
         Preconditions.checkNotNull(action, "action cannot be null.");
         Preconditions.checkNotNull(event, "event cannot be null.");
         Preconditions.checkNotNull(keySerializer, "keySerializer cannot be null.");
-        Preconditions.checkNotNull(serializerFingerprint, "serializerFingerprint cannot be null.");
         Preconditions.checkArgument(seqNum >= 0, "seqNum must be nonnegative but was %s.", seqNum);
         Preconditions.checkArgument(
                 maxParallelism > 0,
@@ -99,11 +89,10 @@ public final class ActionStateUtil {
         int keyGroup = KeyGroupRangeAssignment.assignToKeyGroup(key, maxParallelism);
         return String.join(
                 KEY_SEPARATOR,
-                KEY_GROUP_PREFIX + keyGroup,
+                String.valueOf(keyGroup),
                 String.valueOf(seqNum),
                 generateUUIDForEvent(event),
                 generateUUIDForAction(action),
-                serializerFingerprint,
                 generateBusinessKeyIdentity(key, keySerializer));
     }
 
@@ -123,25 +112,9 @@ public final class ActionStateUtil {
     }
 
     /**
-     * Fingerprints the serializer's snapshot, including its version and configuration, once per
-     * store. Custom serializers must describe all encoding changes in their snapshots.
-     */
-    static String generateSerializerFingerprint(TypeSerializer<?> keySerializer) {
-        DataOutputSerializer output = new DataOutputSerializer(128);
-        try {
-            TypeSerializerSnapshotSerializationUtil.writeSerializerSnapshot(
-                    output, keySerializer.snapshotConfiguration());
-        } catch (IOException e) {
-            throw new IllegalStateException(
-                    "Failed to fingerprint the Flink key serializer for durable action state", e);
-        }
-        return sha256Base64(output.getCopyOfBuffer());
-    }
-
-    /**
      * Parses a composite state key into its semantic fields, in the order {@code [keyGroup, seqNum,
-     * eventUUID, actionUUID, serializerFingerprint, businessKeyIdentity]}. Throws when {@code key}
-     * is not in the current format.
+     * eventUUID, actionUUID, businessKeyIdentity]}. Throws when {@code key} is not in the current
+     * format.
      */
     public static List<String> parseKey(String key) {
         Preconditions.checkNotNull(key, "key cannot be null.");
@@ -152,7 +125,6 @@ public final class ActionStateUtil {
                 parts[SEQ_NUM_SEGMENT],
                 parts[EVENT_UUID_SEGMENT],
                 parts[ACTION_UUID_SEGMENT],
-                parts[SERIALIZER_FINGERPRINT_SEGMENT],
                 parts[BUSINESS_KEY_IDENTITY_SEGMENT]);
     }
 
@@ -215,23 +187,12 @@ public final class ActionStateUtil {
      * or discarding durable state that cannot be attributed safely.
      */
     static boolean isKeyRetained(
-            @Nullable IntPredicate ownershipFilter,
-            String stateKey,
-            int maxParallelism,
-            String expectedSerializerFingerprint) {
+            @Nullable IntPredicate ownershipFilter, String stateKey, int maxParallelism) {
         Preconditions.checkArgument(maxParallelism > 0, "maxParallelism must be positive.");
-        Preconditions.checkNotNull(
-                expectedSerializerFingerprint, "expectedSerializerFingerprint cannot be null.");
         String[] parts = splitValidatedKey(stateKey);
         if (parts == null) {
-            if (stateKey != null && stateKey.startsWith(KEY_FORMAT_VERSION + ":")) {
-                throw new IllegalStateException(
-                        "Malformed v2 action-state key during recovery: " + describeKey(stateKey));
-            }
             throw new IllegalStateException(
-                    "Unsupported action-state key format during recovery. The durable state was "
-                            + "written by an incompatible version; use a new action-state topic or "
-                            + "table when starting without an old checkpoint or savepoint. Key: "
+                    "Malformed action-state key during recovery: expected five fields. Key: "
                             + describeKey(stateKey));
         }
         int keyGroup = parseCanonicalKeyGroup(parts[KEY_GROUP_SEGMENT], stateKey);
@@ -241,7 +202,7 @@ public final class ActionStateUtil {
                             "Action-state key-group %s is outside the configured range [0, %s). Key: %s",
                             keyGroup, maxParallelism, describeKey(stateKey)));
         }
-        validateRecoveryFields(parts, expectedSerializerFingerprint, stateKey);
+        validateRecoveryFields(parts, stateKey);
         return ownershipFilter == null || ownershipFilter.test(keyGroup);
     }
 
@@ -267,11 +228,9 @@ public final class ActionStateUtil {
             return null;
         }
         String[] parts = key.split(KEY_SEPARATOR, KEY_SEGMENT_COUNT);
-        if (parts.length != KEY_SEGMENT_COUNT
-                || !parts[KEY_GROUP_SEGMENT].startsWith(KEY_GROUP_PREFIX)) {
+        if (parts.length != KEY_SEGMENT_COUNT) {
             return null;
         }
-        parts[KEY_GROUP_SEGMENT] = parts[KEY_GROUP_SEGMENT].substring(KEY_GROUP_PREFIX.length());
         return parts;
     }
 
@@ -293,20 +252,11 @@ public final class ActionStateUtil {
         }
     }
 
-    private static void validateRecoveryFields(
-            String[] parts, String expectedSerializerFingerprint, String stateKey) {
+    private static void validateRecoveryFields(String[] parts, String stateKey) {
         validateSequenceNumber(parts[SEQ_NUM_SEGMENT], stateKey);
         validateUuid("event UUID", parts[EVENT_UUID_SEGMENT], stateKey);
         validateUuid("action UUID", parts[ACTION_UUID_SEGMENT], stateKey);
-        validateDigest(parts[SERIALIZER_FINGERPRINT_SEGMENT], "serializer fingerprint", stateKey);
         validateDigest(parts[BUSINESS_KEY_IDENTITY_SEGMENT], "business-key identity", stateKey);
-        if (!expectedSerializerFingerprint.equals(parts[SERIALIZER_FINGERPRINT_SEGMENT])) {
-            throw new IllegalStateException(
-                    "Action-state key serializer fingerprint does not match the operator key serializer. "
-                            + "Restore with the original serializer configuration, or use a fresh "
-                            + "action-state topic or table and start without an old checkpoint or savepoint. Key: "
-                            + describeKey(stateKey));
-        }
     }
 
     private static void validateSequenceNumber(String encodedSequenceNumber, String stateKey) {

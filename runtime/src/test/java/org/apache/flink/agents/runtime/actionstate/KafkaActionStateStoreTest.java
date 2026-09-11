@@ -396,7 +396,7 @@ public class KafkaActionStateStoreTest {
         assertThat(actionStates).doesNotContainKey(numericState).containsKey(stringState);
     }
 
-    /** Old state-key formats fail recovery instead of being guessed or silently discarded. */
+    /** Malformed fields fail recovery before a record enters the cache. */
     @Test
     void testRebuildStateRejectsUnrecognizedFormatKeys() {
         String legacyKey = "12_1_event-uuid_action-uuid_business-key";
@@ -412,14 +412,14 @@ public class KafkaActionStateStoreTest {
 
         assertThat(failure.getCause())
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Unsupported action-state key format");
+                .hasMessageContaining("Invalid event UUID");
     }
 
     /** A current-format key with a nonnumeric key-group fails recovery instead of being dropped. */
     @Test
     void testRebuildStateRejectsKeyWithUnparsableKeyGroup() throws Exception {
         String valid = generateKey("A", 1L, testAction, testEvent, MAX_PARALLELISM);
-        String unparseableGroupKey = "v2:not-a-number" + valid.substring(valid.indexOf('_'));
+        String unparseableGroupKey = "not-a-number" + valid.substring(valid.indexOf('_'));
         mockConsumer.addRecord(
                 new ConsumerRecord<>(TEST_TOPIC, 0, 0L, unparseableGroupKey, testActionState));
 

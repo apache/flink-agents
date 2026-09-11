@@ -21,7 +21,6 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
-import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.fluss.client.Connection;
 import org.apache.fluss.client.ConnectionFactory;
 import org.apache.fluss.client.admin.Admin;
@@ -219,7 +218,7 @@ public class FlussActionStateStoreIntegrationTest {
     }
 
     @Test
-    void testRebuildStateRejectsLegacyRecordFormat() throws Exception {
+    void testRebuildStateRejectsMalformedFieldsBeforeOwnershipFiltering() throws Exception {
         Object marker = store.getRecoveryMarker();
         String legacyKey = "0_1_event-uuid_action-uuid_business-key";
         TablePath tablePath = TablePath.of(TEST_DATABASE, TEST_TABLE);
@@ -242,39 +241,17 @@ public class FlussActionStateStoreIntegrationTest {
                 new FlussActionStateStore(
                         createAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
         try {
-            recoveredStore.setOwnershipFilter(keyGroup -> true);
+            recoveredStore.setOwnershipFilter(keyGroup -> false);
 
             Throwable failure = catchThrowable(() -> recoveredStore.rebuildState(List.of(marker)));
 
             assertThat(failure).isInstanceOf(RuntimeException.class);
             assertThat(failure.getCause())
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("Unsupported action-state key format")
+                    .hasMessageContaining("Invalid event UUID")
                     .hasMessageContaining(legacyKey);
         } finally {
             recoveredStore.close();
-        }
-    }
-
-    @Test
-    void testRebuildStateRejectsSerializerMismatchBeforeOwnershipFiltering() throws Exception {
-        Object marker = store.getRecoveryMarker();
-        ActionState completed = new ActionState(testEvent);
-        completed.markCompleted();
-        store.put(TEST_KEY, 1L, testAction, testEvent, completed);
-        store.close();
-        store = null;
-
-        try (FlussActionStateStore recovered =
-                new FlussActionStateStore(
-                        createAgentConfiguration(),
-                        new ActionStateKeyEncoder(MAX_PARALLELISM, LongSerializer.INSTANCE))) {
-            recovered.setOwnershipFilter(group -> false);
-            Throwable failure = catchThrowable(() -> recovered.rebuildState(List.of(marker)));
-            assertThat(failure).isInstanceOf(RuntimeException.class);
-            assertThat(failure.getCause())
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("serializer fingerprint");
         }
     }
 

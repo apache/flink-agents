@@ -29,14 +29,9 @@ import org.apache.flink.core.memory.DataOutputView;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
-import java.io.Serializable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
 /** Tests for {@link ActionStateKeyEncoder}. */
 class ActionStateKeyEncoderTest {
@@ -85,52 +80,6 @@ class ActionStateKeyEncoderTest {
         assertThat(restored.isKeyRetained(keyGroup -> true, stateKey)).isTrue();
     }
 
-    /**
-     * A changed snapshot is conservatively rejected even when a particular key's bytes stay equal.
-     */
-    @Test
-    void recoveryRejectsChangedSnapshotEvenWhenKeyBytesStayEqual() throws Exception {
-        TypeSerializer<Object> before =
-                TypeInformation.of(Object.class).createSerializer(new SerializerConfigImpl());
-        SerializerConfigImpl reconfigured = new SerializerConfigImpl();
-        reconfigured.registerKryoType(UnrelatedRegisteredType.class);
-        TypeSerializer<Object> after =
-                TypeInformation.of(Object.class).createSerializer(reconfigured);
-        var compatibility =
-                after.snapshotConfiguration()
-                        .resolveSchemaCompatibility(before.snapshotConfiguration());
-        assertThat(compatibility.isCompatibleWithReconfiguredSerializer()).isTrue();
-
-        ActionStateKeyEncoder writer = new ActionStateKeyEncoder(MAX_PARALLELISM, before);
-        ActionStateKeyEncoder restored =
-                new ActionStateKeyEncoder(
-                        MAX_PARALLELISM, compatibility.getReconfiguredSerializer());
-        String stateKey =
-                writer.generateKey("key", 1L, new NoOpAction("action"), new InputEvent("input"));
-
-        assertThat(restored.generateBusinessKeyIdentity("key"))
-                .isEqualTo(writer.generateBusinessKeyIdentity("key"));
-        assertThatThrownBy(() -> restored.isKeyRetained(keyGroup -> true, stateKey))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("serializer fingerprint");
-    }
-
-    @Test
-    @SuppressWarnings("unchecked")
-    void serializerSnapshotFailureIsReported() throws Exception {
-        TypeSerializer<Object> serializer = mock(TypeSerializer.class);
-        TypeSerializerSnapshot<Object> snapshot = mock(TypeSerializerSnapshot.class);
-        IOException failure = new IOException("snapshot write failed");
-        when(serializer.duplicate()).thenReturn(serializer);
-        when(serializer.snapshotConfiguration()).thenReturn(snapshot);
-        doThrow(failure).when(snapshot).writeSnapshot(any());
-
-        assertThatThrownBy(() -> new ActionStateKeyEncoder(MAX_PARALLELISM, serializer))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Failed to fingerprint the Flink key serializer")
-                .hasCause(failure);
-    }
-
     @Test
     void differentKeyTypesProduceDifferentIdentities() {
         ActionStateKeyEncoder longEncoder =
@@ -154,10 +103,6 @@ class ActionStateKeyEncoderTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Failed to serialize the Flink key")
                 .hasCauseInstanceOf(IOException.class);
-    }
-
-    public static class UnrelatedRegisteredType implements Serializable {
-        public int value;
     }
 
     private static final class FailingKeySerializer extends TypeSerializer<Object> {

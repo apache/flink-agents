@@ -25,7 +25,9 @@ import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.api.common.typeutils.TypeSerializerSnapshotSerializationUtil;
 import org.apache.flink.api.java.typeutils.GenericTypeInfo;
+import org.apache.flink.core.memory.DataOutputSerializer;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
@@ -43,7 +45,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Checks action-state compatibility with the serializer returned by a real keyed-state restore. */
 class ActionStateSerializerRestoreTest {
@@ -52,15 +53,12 @@ class ActionStateSerializerRestoreTest {
 
     @ParameterizedTest
     @ValueSource(booleans = {false, true})
-    void recoveryChecksSerializerReturnedByKeyedBackend(boolean registerKeyType) throws Exception {
-        TypeSerializer<Object> previous =
-                TypeInformation.of(Object.class).createSerializer(new SerializerConfigImpl());
-        SerializerConfigImpl nextConfig = new SerializerConfigImpl();
-        if (registerKeyType) {
-            nextConfig.registerKryoType(TestKey.class);
-        }
-        TypeSerializer<Object> next = TypeInformation.of(Object.class).createSerializer(nextConfig);
-        TestKey key = new TestKey(7);
+    void recoveryKeepsCompletedStateAfterPojoSubclassCacheChanges(boolean useSubclass)
+            throws Exception {
+        TypeSerializer<Object> previous = pojoSerializer();
+        TypeSerializer<Object> next = pojoSerializer();
+        TestKey key = useSubclass ? new SubclassKey(7) : new TestKey(7);
+        byte[] initialSnapshot = snapshotBytes(previous);
         ActionStateKeyEncoder writer = new ActionStateKeyEncoder(MAX_PARALLELISM, previous);
         NoOpAction action = new NoOpAction("action");
         InputEvent event = new InputEvent("input");
@@ -69,9 +67,13 @@ class ActionStateSerializerRestoreTest {
         completed.markCompleted();
 
         OperatorSubtaskState checkpoint;
-        try (var harness = harness(new KeyedStateProbe(), previous)) {
+        KeyedStateProbe originalOperator = new KeyedStateProbe();
+        try (var harness = harness(originalOperator, previous)) {
             harness.open();
             harness.processElement(new StreamRecord<>(key));
+            // Populate the backend serializer's subclass cache before checkpointing, as occurs
+            // when a backend serializes keys during normal processing.
+            originalOperator.keySerializer().serialize(key, new DataOutputSerializer(64));
             checkpoint = harness.snapshot(1, 1);
         }
 
@@ -79,21 +81,16 @@ class ActionStateSerializerRestoreTest {
         try (var harness = harness(restoredOperator, next)) {
             harness.initializeState(checkpoint);
             harness.open();
-            // Heap state remains readable after Kryo registration changes.
+            // Restore the same job and serializer configuration.
             restoredOperator.setCurrentKey(key);
             assertThat(restoredOperator.value.value()).isEqualTo(42L);
 
             ActionStateKeyEncoder restored =
                     new ActionStateKeyEncoder(MAX_PARALLELISM, restoredOperator.keySerializer());
-            if (registerKeyType) {
-                assertThat(restored.generateBusinessKeyIdentity(key))
-                        .isNotEqualTo(writer.generateBusinessKeyIdentity(key));
-                // Validate foreign records as well: filtering must not hide incompatible state.
-                assertThatThrownBy(() -> restored.isKeyRetained(group -> false, stateKey))
-                        .isInstanceOf(IllegalStateException.class)
-                        .hasMessageContaining("serializer fingerprint");
-            } else {
-                assertThat(restored.generateKey(key, 1, action, event)).isEqualTo(stateKey);
+            assertThat(restored.generateKey(key, 1, action, event)).isEqualTo(stateKey);
+            if (useSubclass) {
+                assertThat(snapshotBytes(restoredOperator.keySerializer()))
+                        .isNotEqualTo(initialSnapshot);
             }
 
             Map<String, ActionState> cache = new HashMap<>();
@@ -105,21 +102,36 @@ class ActionStateSerializerRestoreTest {
             try (KafkaActionStateStore store =
                     new KafkaActionStateStore(
                             cache, new AgentConfiguration(), null, consumer, TOPIC, restored)) {
-                if (registerKeyType) {
-                    assertThatThrownBy(() -> store.rebuildState(List.of(Map.of(0, 0L))))
-                            .isInstanceOf(RuntimeException.class)
-                            .hasRootCauseInstanceOf(IllegalStateException.class)
-                            .hasStackTraceContaining("serializer fingerprint");
-                    assertThat(cache).isEmpty();
-                } else {
-                    store.rebuildState(List.of(Map.of(0, 0L)));
-                    assertThat(store.get(key, 1, action, event)).isSameAs(completed);
-                    store.pruneState(key, 1);
-                    assertThat(cache).isEmpty();
-                }
+                store.rebuildState(List.of(Map.of(0, 0L)));
+                assertThat(store.get(key, 1, action, event)).isSameAs(completed);
+                store.pruneState(key, 1);
+                assertThat(cache).isEmpty();
             }
         } finally {
             checkpoint.discardState();
+        }
+    }
+
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static TypeSerializer<Object> pojoSerializer() {
+        return (TypeSerializer)
+                TypeInformation.of(TestKey.class).createSerializer(new SerializerConfigImpl());
+    }
+
+    private static byte[] snapshotBytes(TypeSerializer<?> serializer) throws Exception {
+        DataOutputSerializer output = new DataOutputSerializer(128);
+        TypeSerializerSnapshotSerializationUtil.writeSerializerSnapshot(
+                output, serializer.snapshotConfiguration());
+        return output.getCopyOfBuffer();
+    }
+
+    public static class SubclassKey extends TestKey {
+        public String extra = "subclass";
+
+        public SubclassKey() {}
+
+        SubclassKey(int value) {
+            super(value);
         }
     }
 
@@ -158,12 +170,12 @@ class ActionStateSerializerRestoreTest {
             value.update(42L);
         }
 
-        private TypeSerializer<?> keySerializer() {
+        private TypeSerializer<Object> keySerializer() {
             return getKeyedStateBackend().getKeySerializer();
         }
     }
 
-    public static final class TestKey implements Serializable {
+    public static class TestKey implements Serializable {
         public int value;
 
         public TestKey() {}
