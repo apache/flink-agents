@@ -95,9 +95,9 @@ class PromptTest {
 
         assertEquals(1, messages.size());
         assertEquals(MessageRole.SYSTEM, messages.get(0).getRole());
-        assertTrue(messages.get(0).getContent().contains("12345"));
-        assertTrue(messages.get(0).getContent().contains("wireless noise-canceling headphones"));
-        assertTrue(messages.get(0).getContent().contains("The headphones broke after one week"));
+        assertTrue(messages.get(0).getText().contains("12345"));
+        assertTrue(messages.get(0).getText().contains("wireless noise-canceling headphones"));
+        assertTrue(messages.get(0).getText().contains("The headphones broke after one week"));
     }
 
     @Test
@@ -125,12 +125,12 @@ class PromptTest {
         assertEquals(
                 "You are a product review analyzer, please generate a score and the dislike reasons "
                         + "(if any) for the review.",
-                messages.get(0).getContent());
+                messages.get(0).getText());
 
         // Check user message with variable substitution
         assertEquals(MessageRole.USER, messages.get(1).getRole());
-        assertTrue(messages.get(1).getContent().contains("12345"));
-        assertTrue(messages.get(1).getContent().contains("wireless noise-canceling headphones"));
+        assertTrue(messages.get(1).getText().contains("12345"));
+        assertTrue(messages.get(1).getText().contains("wireless noise-canceling headphones"));
     }
 
     @Test
@@ -177,7 +177,7 @@ class PromptTest {
 
         List<ChatMessage> messages = emptyPrompt.formatMessages(MessageRole.USER, new HashMap<>());
         assertEquals(1, messages.size());
-        assertEquals("", messages.get(0).getContent());
+        assertEquals("", messages.get(0).getText());
     }
 
     @Test
@@ -233,9 +233,9 @@ class PromptTest {
                 conversationPrompt.formatMessages(MessageRole.SYSTEM, conversationVars);
 
         assertEquals(4, messages.size());
-        assertTrue(messages.get(0).getContent().contains("an AI assistant"));
-        assertTrue(messages.get(0).getContent().contains("software development"));
-        assertTrue(messages.get(3).getContent().contains("NullPointerException"));
+        assertTrue(messages.get(0).getText().contains("an AI assistant"));
+        assertTrue(messages.get(0).getText().contains("software development"));
+        assertTrue(messages.get(3).getText().contains("NullPointerException"));
     }
 
     @Test
@@ -289,8 +289,8 @@ class PromptTest {
         List<ChatMessage> messages = prompt.formatMessages(MessageRole.SYSTEM, vars);
 
         assertEquals(2, messages.size());
-        assertEquals("p@ssw0rd", messages.get(0).getContent());
-        assertEquals("give me {secret}", messages.get(1).getContent());
+        assertEquals("p@ssw0rd", messages.get(0).getText());
+        assertEquals("give me {secret}", messages.get(1).getText());
     }
 
     @Test

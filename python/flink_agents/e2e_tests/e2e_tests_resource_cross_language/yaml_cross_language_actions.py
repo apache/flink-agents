@@ -41,7 +41,7 @@ def process_input(event: Event, ctx: RunnerContext) -> None:
     ctx.send_event(
         ChatRequestEvent(
             model=model_name,
-            messages=[ChatMessage(role=MessageRole.USER, content=text)],
+            messages=[ChatMessage.of(MessageRole.USER, text)],
         )
     )
 
@@ -50,8 +50,8 @@ def process_chat_response(event: Event, ctx: RunnerContext) -> None:
     """Emit the model's textual response."""
     chat_response = ChatResponseEvent.from_event(event)
     response = chat_response.response
-    if response and response.content:
-        ctx.send_event(OutputEvent(output=response.content))
+    if response and response.text:
+        ctx.send_event(OutputEvent(output=response.text))
 
 
 def calculate_bmi(weight_kg: float, height_m: float) -> float:

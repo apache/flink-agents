@@ -59,7 +59,7 @@ def test_openai_chat_model() -> None:
     chat_model = OpenAIChatModelSetup(
         model=test_model, connection="openai", resource_context=mock_ctx
     )
-    response = chat_model.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+    response = chat_model.chat([ChatMessage.of(MessageRole.USER, "Hello!")])
     assert response is not None
     assert str(response).strip() != ""
 
@@ -102,7 +102,7 @@ def test_openai_chat_with_tools() -> None:
         resource_context=mock_ctx,
     )
     response = chat_model.chat(
-        [ChatMessage(role=MessageRole.USER, content="What is 377 + 688?")]
+        [ChatMessage.of(MessageRole.USER, "What is 377 + 688?")]
     )
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1

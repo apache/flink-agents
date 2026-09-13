@@ -50,9 +50,7 @@ def test_mcp() -> None:
     assert prompt.name == "ask_sum"
     message = prompt.format_messages(role=MessageRole.SYSTEM, a="1", b="2")
     assert [
-        ChatMessage(
-            role=MessageRole.USER,
-            content="Can you please calculate the sum of 1 and 2?",
+        ChatMessage.of(MessageRole.USER, "Can you please calculate the sum of 1 and 2?",
         )
     ] == message
     tools = mcp_server.list_tools()

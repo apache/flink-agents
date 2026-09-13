@@ -273,8 +273,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             final ChatMessage chatMessage =
                     parseResponse(MAPPER.readTree(response.body()), modelName);
             if (extractReasoning) {
-                final String[] parts = extractReasoning(chatMessage.getContent());
-                chatMessage.setContent(parts[0]);
+                final String[] parts = extractReasoning(chatMessage.getText());
+                chatMessage.setText(parts[0]);
                 if (parts[1] != null) {
                     chatMessage.getExtraArgs().put("reasoning", parts[1]);
                 }
@@ -469,12 +469,12 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 case SYSTEM:
                 case USER:
                     node.put("role", role.name().toLowerCase());
-                    node.put("content", message.getContent());
+                    node.put("content", message.getText());
                     break;
                 case ASSISTANT:
                     node.put("role", "assistant");
-                    if (message.getContent() != null && !message.getContent().isEmpty()) {
-                        node.put("content", message.getContent());
+                    if (message.getText() != null && !message.getText().isEmpty()) {
+                        node.put("content", message.getText());
                     }
                     final List<Map<String, Object>> toolCalls = message.getToolCalls();
                     if (toolCalls != null && !toolCalls.isEmpty()) {
@@ -488,7 +488,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                                 "Tool message must have 'externalId' in extra args.");
                     }
                     node.put("role", "tool");
-                    node.put("content", message.getContent());
+                    node.put("content", message.getText());
                     node.put("tool_call_id", externalId.toString());
                     break;
                 default:

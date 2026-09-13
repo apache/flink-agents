@@ -177,7 +177,7 @@ class ConditionEvaluatorTest {
         List<String> sources =
                 List.of(
                         "request_id == '550e8400-e29b-41d4-a716-446655440000'",
-                        "response.content == 'hello'",
+                        "response.blocks[0].text == 'hello'",
                         "response.role == 'assistant'");
         EvaluatorHarness testEvaluator =
                 new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);

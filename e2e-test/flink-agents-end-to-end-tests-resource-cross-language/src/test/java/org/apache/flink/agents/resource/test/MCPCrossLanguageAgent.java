@@ -66,8 +66,7 @@ public class MCPCrossLanguageAgent extends Agent {
                     askSum.formatMessages(MessageRole.USER, Map.of("a", "1", "b", "2"));
             Assertions.assertEquals(1, chatMessages.size());
             Assertions.assertEquals(
-                    "Can you please calculate the sum of 1 and 2?",
-                    chatMessages.get(0).getContent());
+                    "Can you please calculate the sum of 1 and 2?", chatMessages.get(0).getText());
             Assertions.assertEquals(MessageRole.USER, chatMessages.get(0).getRole());
 
             String content = askSum.formatString(Map.of("a", "3", "b", "4"));

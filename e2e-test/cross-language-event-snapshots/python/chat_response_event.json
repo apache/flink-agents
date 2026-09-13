@@ -5,7 +5,12 @@
     "request_id": "00000000-0000-0000-0000-000000000002",
     "response": {
       "role": "assistant",
-      "content": "hi there",
+      "blocks": [
+        {
+          "type": "text",
+          "text": "hi there"
+        }
+      ],
       "tool_calls": [],
       "extra_args": {}
     },

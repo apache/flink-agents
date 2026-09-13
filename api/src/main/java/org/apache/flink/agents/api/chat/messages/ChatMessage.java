@@ -20,21 +20,36 @@ package org.apache.flink.agents.api.chat.messages;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * Chat message class that represents all message types (user, system, assistant, tool) with
- * different roles
+ * different roles.
+ *
+ * <p>Message content is an ordered list of typed {@link ContentBlock}s ({@link TextBlock} plus the
+ * media blocks); a text-only message simply carries one {@link TextBlock}. The string convenience
+ * constructors and factories preserve the text-message experience, and {@link #getText()} is the
+ * ordered concatenation of the text blocks.
+ *
+ * <p>Blocks are immutable and the message snapshots every block list it is handed, so {@link
+ * #getBlocks()} is an unmodifiable view: the content changes only by replacing it through {@link
+ * #setBlocks(List)} or {@link #setText(String)}.
  */
 public class ChatMessage {
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private MessageRole role;
-    private String content;
+    private List<ContentBlock> blocks;
 
     @JsonProperty("tool_calls")
     private List<Map<String, Object>> toolCalls;
@@ -44,32 +59,59 @@ public class ChatMessage {
 
     /** Default constructor with SYSTEM role */
     public ChatMessage() {
-        this(MessageRole.SYSTEM, null, null, null);
+        this(MessageRole.SYSTEM, (List<ContentBlock>) null, null, null);
     }
 
-    /** Constructor with role and content */
-    public ChatMessage(MessageRole role, String content) {
-        this(role, content, null, null);
+    /** Constructor with role and text content */
+    public ChatMessage(MessageRole role, String text) {
+        this(role, blocksOf(text), null, null);
     }
 
-    public ChatMessage(MessageRole role, String content, Map<String, Object> extraArgs) {
-        this(role, content, null, extraArgs);
+    /** Constructor with role and content blocks */
+    public ChatMessage(MessageRole role, List<ContentBlock> blocks) {
+        this(role, blocks, null, null);
     }
 
-    public ChatMessage(MessageRole role, String content, List<Map<String, Object>> toolCalls) {
-        this(role, content, toolCalls, null);
+    public ChatMessage(MessageRole role, String text, Map<String, Object> extraArgs) {
+        this(role, blocksOf(text), null, extraArgs);
+    }
+
+    public ChatMessage(MessageRole role, String text, List<Map<String, Object>> toolCalls) {
+        this(role, blocksOf(text), toolCalls, null);
+    }
+
+    public ChatMessage(
+            MessageRole role,
+            String text,
+            List<Map<String, Object>> toolCalls,
+            Map<String, Object> extraArgs) {
+        this(role, blocksOf(text), toolCalls, extraArgs);
     }
 
     /** Full constructor */
     public ChatMessage(
             MessageRole role,
-            String content,
+            List<ContentBlock> blocks,
             List<Map<String, Object>> toolCalls,
             Map<String, Object> extraArgs) {
         this.role = role != null ? role : MessageRole.SYSTEM;
-        this.content = content != null ? content : "";
+        this.blocks = snapshotOf(blocks);
         this.toolCalls = toolCalls != null ? toolCalls : new ArrayList<>();
         this.extraArgs = extraArgs != null ? new HashMap<>(extraArgs) : new HashMap<>();
+    }
+
+    /** An empty or null text becomes an empty block list rather than an empty text block. */
+    private static List<ContentBlock> blocksOf(String text) {
+        return text == null || text.isEmpty()
+                ? Collections.emptyList()
+                : Collections.singletonList(new TextBlock(text));
+    }
+
+    /** An unmodifiable copy — since blocks are immutable, this freezes the content. */
+    private static List<ContentBlock> snapshotOf(List<ContentBlock> blocks) {
+        return blocks == null || blocks.isEmpty()
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(blocks));
     }
 
     public MessageRole getRole() {
@@ -80,12 +122,19 @@ public class ChatMessage {
         this.role = role;
     }
 
-    public String getContent() {
-        return content;
+    /** The content as an unmodifiable list of immutable blocks. */
+    public List<ContentBlock> getBlocks() {
+        return blocks;
     }
 
-    public void setContent(String content) {
-        this.content = content;
+    public void setBlocks(List<ContentBlock> blocks) {
+        this.blocks = snapshotOf(blocks);
+    }
+
+    /** Replaces the content with a single text block (empty text clears the content). */
+    @JsonIgnore
+    public void setText(String text) {
+        this.blocks = blocksOf(text);
     }
 
     @JsonProperty("tool_calls")
@@ -108,9 +157,40 @@ public class ChatMessage {
         this.extraArgs = extraArgs != null ? extraArgs : new HashMap<>();
     }
 
+    /**
+     * The content blocks as plain maps in the serialized (snake_case, discriminated) shape — the
+     * same representation {@code tool_calls} uses. This is how blocks cross the Python bridge,
+     * which exchanges JSON-friendly lists and maps rather than typed Java objects.
+     */
+    @JsonIgnore
+    public List<Map<String, Object>> getBlocksAsMaps() {
+        return blocks.stream()
+                .map(
+                        block ->
+                                MAPPER.<Map<String, Object>>convertValue(
+                                        block, new TypeReference<Map<String, Object>>() {}))
+                .collect(Collectors.toList());
+    }
+
+    /** Replaces the content with blocks given as plain maps — see {@link #getBlocksAsMaps()}. */
+    @JsonIgnore
+    public void setBlocksFromMaps(List<Map<String, Object>> blockMaps) {
+        this.blocks =
+                blockMaps == null
+                        ? Collections.emptyList()
+                        : Collections.unmodifiableList(
+                                blockMaps.stream()
+                                        .map(map -> MAPPER.convertValue(map, ContentBlock.class))
+                                        .collect(Collectors.toList()));
+    }
+
+    /** The text projection: the ordered concatenation of this message's {@link TextBlock}s. */
     @JsonIgnore
     public String getText() {
-        return this.content;
+        return blocks.stream()
+                .filter(block -> block instanceof TextBlock)
+                .map(block -> ((TextBlock) block).getText())
+                .collect(Collectors.joining());
     }
 
     @JsonIgnore
@@ -124,24 +204,32 @@ public class ChatMessage {
     }
 
     // Static factory methods for convenience
-    public static ChatMessage user(String content) {
-        return new ChatMessage(MessageRole.USER, content);
+    public static ChatMessage user(String text) {
+        return new ChatMessage(MessageRole.USER, text);
     }
 
-    public static ChatMessage system(String content) {
-        return new ChatMessage(MessageRole.SYSTEM, content);
+    public static ChatMessage user(List<ContentBlock> blocks) {
+        return new ChatMessage(MessageRole.USER, blocks);
     }
 
-    public static ChatMessage assistant(String content) {
-        return new ChatMessage(MessageRole.ASSISTANT, content);
+    public static ChatMessage system(String text) {
+        return new ChatMessage(MessageRole.SYSTEM, text);
     }
 
-    public static ChatMessage assistant(String content, List<Map<String, Object>> toolCalls) {
-        return new ChatMessage(MessageRole.ASSISTANT, content, toolCalls, new HashMap<>());
+    public static ChatMessage assistant(String text) {
+        return new ChatMessage(MessageRole.ASSISTANT, text);
     }
 
-    public static ChatMessage tool(String content) {
-        return new ChatMessage(MessageRole.TOOL, content);
+    public static ChatMessage assistant(String text, List<Map<String, Object>> toolCalls) {
+        return new ChatMessage(MessageRole.ASSISTANT, text, toolCalls, new HashMap<>());
+    }
+
+    public static ChatMessage tool(String text) {
+        return new ChatMessage(MessageRole.TOOL, text);
+    }
+
+    public static ChatMessage tool(List<ContentBlock> blocks) {
+        return new ChatMessage(MessageRole.TOOL, blocks);
     }
 
     @Override
@@ -150,19 +238,19 @@ public class ChatMessage {
         if (!(o instanceof ChatMessage)) return false;
         ChatMessage that = (ChatMessage) o;
         return Objects.equals(role, that.role)
-                && Objects.equals(content, that.content)
+                && Objects.equals(blocks, that.blocks)
                 && Objects.equals(toolCalls, that.toolCalls)
                 && Objects.equals(extraArgs, that.extraArgs);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(role, content, toolCalls, extraArgs);
+        return Objects.hash(role, blocks, toolCalls, extraArgs);
     }
 
     @Override
     public String toString() {
-        return role.getValue() + ": " + content;
+        return role.getValue() + ": " + getText();
     }
 
     /** Return the index of the first system message in the list, or -1 if none. */

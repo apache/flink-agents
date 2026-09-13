@@ -123,7 +123,7 @@ class MCPPrompt(Prompt):
         Returns a text representation of the prompt.
         """
         text = "\n".join(
-            message.content for message in self.format_messages(**arguments)
+            message.text for message in self.format_messages(**arguments)
         )
         return text
 
@@ -335,7 +335,7 @@ class MCPServer(Resource, ABC):
             for message in prompt.messages:
                 if isinstance(message.content, TextContent):
                     chat_messages.append(
-                        ChatMessage(role=message.role, content=message.content.text)
+                        ChatMessage.of(message.role, message.content.text)
                     )
                 else:
                     err_msg = f"Unsupported content type: {type(message.content)}"

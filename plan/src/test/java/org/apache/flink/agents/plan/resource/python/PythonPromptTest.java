@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.junit.jupiter.api.Test;
 
@@ -50,14 +51,17 @@ public class PythonPromptTest {
 
     @Test
     public void testFromSerializedMapWithMessageListTemplate() {
-        // Create message map
-        Map<String, Object> systemMessage = new HashMap<>();
-        systemMessage.put("role", "system");
-        systemMessage.put("content", "You are a helpful assistant.");
-
-        Map<String, Object> userMessage = new HashMap<>();
-        userMessage.put("role", "user");
-        userMessage.put("content", "Hello!");
+        // The exact shape the Python side produces: LocalPrompt.model_dump() serializes each
+        // template ChatMessage with a `blocks` list (no `content` field) and keeps absent
+        // optional media fields as explicit nulls.
+        Map<String, Object> systemMessage =
+                messageDump("system", List.of(textBlockDump("You are a helpful assistant.")));
+        Map<String, Object> userMessage =
+                messageDump(
+                        "user",
+                        List.of(
+                                textBlockDump("Hello! What's in {subject}?"),
+                                imageBlockDump("image/png", "https://example.org/cat.png")));
 
         List<Map<String, Object>> messageList = new ArrayList<>();
         messageList.add(systemMessage);
@@ -70,14 +74,53 @@ public class PythonPromptTest {
 
         assertThat(prompt).isNotNull();
 
-        // Test that the prompt formats messages correctly
-        List<ChatMessage> formattedMessages =
-                prompt.formatMessages(MessageRole.SYSTEM, new HashMap<>());
+        // The restored prompt formats text blocks and passes media blocks through untouched.
+        Map<String, String> kwargs = new HashMap<>();
+        kwargs.put("subject", "this picture");
+        List<ChatMessage> formattedMessages = prompt.formatMessages(MessageRole.SYSTEM, kwargs);
         assertThat(formattedMessages).hasSize(2);
         assertThat(formattedMessages.get(0).getRole()).isEqualTo(MessageRole.SYSTEM);
-        assertThat(formattedMessages.get(0).getContent()).isEqualTo("You are a helpful assistant.");
+        assertThat(formattedMessages.get(0).getText()).isEqualTo("You are a helpful assistant.");
         assertThat(formattedMessages.get(1).getRole()).isEqualTo(MessageRole.USER);
-        assertThat(formattedMessages.get(1).getContent()).isEqualTo("Hello!");
+        assertThat(formattedMessages.get(1).getText()).isEqualTo("Hello! What's in this picture?");
+        assertThat(formattedMessages.get(1).getBlocks()).hasSize(2);
+        assertThat(formattedMessages.get(1).getBlocks().get(1))
+                .isInstanceOf(ImageBlock.class)
+                .satisfies(
+                        block -> {
+                            ImageBlock image = (ImageBlock) block;
+                            assertThat(image.getMediaType()).isEqualTo("image/png");
+                            assertThat(image.getUrl()).isEqualTo("https://example.org/cat.png");
+                            assertThat(image.getData()).isNull();
+                        });
+    }
+
+    private static Map<String, Object> messageDump(String role, List<Map<String, Object>> blocks) {
+        Map<String, Object> message = new HashMap<>();
+        message.put("role", role);
+        message.put("blocks", blocks);
+        message.put("tool_calls", new ArrayList<>());
+        message.put("extra_args", new HashMap<>());
+        return message;
+    }
+
+    private static Map<String, Object> textBlockDump(String text) {
+        Map<String, Object> block = new HashMap<>();
+        block.put("type", "text");
+        block.put("text", text);
+        return block;
+    }
+
+    private static Map<String, Object> imageBlockDump(String mediaType, String url) {
+        Map<String, Object> block = new HashMap<>();
+        block.put("type", "image");
+        block.put("media_type", mediaType);
+        block.put("data", null);
+        block.put("url", url);
+        block.put("name", null);
+        block.put("size_bytes", null);
+        block.put("sha256", null);
+        return block;
     }
 
     @Test

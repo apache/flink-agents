@@ -56,10 +56,8 @@ def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
     return ChatRequestEvent(
         model="sentiment_model",
         messages=[
-            ChatMessage(role=MessageRole.SYSTEM, content=PARALLEL_SYSTEM_PROMPT),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=f'Judge the "{aspect}" dimension: {text}',
+            ChatMessage.of(MessageRole.SYSTEM, PARALLEL_SYSTEM_PROMPT),
+            ChatMessage.of(MessageRole.USER, f'Judge the "{aspect}" dimension: {text}',
             ),
         ],
         output_schema=OutputSchema(output_schema=AspectResponse),
@@ -76,8 +74,8 @@ def _build_summarize_request(text: str, sentiments: Dict[str, str]) -> ChatReque
     return ChatRequestEvent(
         model="sentiment_model",
         messages=[
-            ChatMessage(role=MessageRole.SYSTEM, content=AGGREGATE_SYSTEM_PROMPT),
-            ChatMessage(role=MessageRole.USER, content=body),
+            ChatMessage.of(MessageRole.SYSTEM, AGGREGATE_SYSTEM_PROMPT),
+            ChatMessage.of(MessageRole.USER, body),
         ],
         output_schema=OutputSchema(output_schema=SummaryResponse),
     )

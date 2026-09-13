@@ -139,7 +139,7 @@ def test_python_can_deserialize_output_event_from_java_snapshot() -> None:
 def _build_chat_request_event() -> ChatRequestEvent:
     event = ChatRequestEvent(
         model="test-model",
-        messages=[ChatMessage(role=MessageRole.USER, content="hello world")],
+        messages=[ChatMessage.of(MessageRole.USER, "hello world")],
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -163,7 +163,7 @@ def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     assert len(typed.messages) == 1
     msg = typed.messages[0]
     assert msg.role == MessageRole.USER, f"Role mismatch: got {msg.role!r}"
-    assert msg.content == "hello world"
+    assert msg.text == "hello world"
 
 
 def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> (
@@ -188,7 +188,7 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
     )
     event = ChatRequestEvent(
         model="test-model",
-        messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        messages=[ChatMessage.of(MessageRole.USER, "hi")],
         output_schema=schema,
     )
     payload = event.model_dump_json()
@@ -204,7 +204,7 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
 def _build_chat_response_event() -> ChatResponseEvent:
     event = ChatResponseEvent(
         request_id=_FIXED_REQUEST_ID,
-        response=ChatMessage(role=MessageRole.ASSISTANT, content="hi there"),
+        response=ChatMessage.of(MessageRole.ASSISTANT, "hi there"),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -235,7 +235,7 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
     assert typed.response.role == MessageRole.ASSISTANT, (
         f"Response role mismatch: got {typed.response.role!r}"
     )
-    assert typed.response.content == "hi there"
+    assert typed.response.text == "hi there"
 
 
 # ── ToolRequestEvent ────────────────────────────────────────────────────

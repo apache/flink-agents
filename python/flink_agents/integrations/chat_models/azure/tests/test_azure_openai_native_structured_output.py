@@ -142,7 +142,7 @@ def _chat_with_caller_response_format(
         else {"response_format": CALLER_RESPONSE_FORMAT}
     )
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment=model_of_azure_deployment,
         output_schema=None if schema is None else OutputSchema(output_schema=schema),
@@ -154,7 +154,7 @@ def test_native_applied_for_capable_deployment_model() -> None:
     """response_format json_schema strict applied for a BaseModel on a capable model."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -175,7 +175,7 @@ def test_capable_native_request_still_targets_the_deployment() -> None:
     """
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -187,7 +187,7 @@ def test_native_not_applied_when_deployment_model_absent() -> None:
     """Native NOT applied when the backing model of the deployment is unknown."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         output_schema=OutputSchema(output_schema=Person),
     )
@@ -198,7 +198,7 @@ def test_native_not_applied_for_unknown_deployment_model() -> None:
     """Native NOT applied for a backing model outside the allowlist."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="some-unknown-model",
         output_schema=OutputSchema(output_schema=Person),
@@ -214,7 +214,7 @@ def test_native_not_applied_for_bare_gpt_4o() -> None:
     """
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o",
         output_schema=OutputSchema(output_schema=Person),
@@ -232,7 +232,7 @@ def test_native_applied_for_ga_date_at_or_above_floor(api_version: str) -> None:
     """
     conn = _connection(api_version=api_version)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -251,7 +251,7 @@ def test_native_not_applied_for_non_date_api_version(api_version: str) -> None:
     """
     conn = _connection(api_version=api_version)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -263,7 +263,7 @@ def test_native_not_applied_when_api_version_below_floor() -> None:
     """Native NOT applied when the configured api-version predates the floor."""
     conn = _connection(api_version=BELOW_FLOOR_API_VERSION)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -279,7 +279,7 @@ def test_native_not_applied_when_api_version_empty() -> None:
     """
     conn = _connection(api_version="")
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=Person),
@@ -291,7 +291,7 @@ def test_native_not_applied_when_schema_none() -> None:
     """Native NOT applied when no output schema is supplied."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=None,
@@ -303,7 +303,7 @@ def test_native_not_applied_for_row_type_info() -> None:
     """Native NOT applied for a RowTypeInfo schema (BaseModel-only scope)."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=ROW_TYPE),
@@ -321,7 +321,7 @@ def test_native_applied_even_when_tools_bound() -> None:
     conn = _connection()
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         tools=[tool],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",

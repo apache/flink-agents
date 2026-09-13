@@ -179,7 +179,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         try {
             final OllamaChatMessageRole ollamaRole =
                     OllamaChatMessageRole.getRole(role.name().toLowerCase());
-            return new OllamaChatMessage(ollamaRole, message.getContent());
+            return new OllamaChatMessage(ollamaRole, message.getText());
         } catch (RoleNotFoundException e) {
             throw new RuntimeException(e);
         }

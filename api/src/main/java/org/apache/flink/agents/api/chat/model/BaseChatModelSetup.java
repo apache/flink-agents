@@ -160,11 +160,10 @@ public abstract class BaseChatModelSetup extends Resource {
                 }
             }
 
-            // append meaningful messages
+            // append meaningful messages; any block counts, so image-only messages survive
             List<ChatMessage> promptMessages = prompt.formatMessages(MessageRole.USER, stringified);
             for (ChatMessage message : messages) {
-                if ((message.getContent() != null && !message.getContent().isEmpty())
-                        || message.getRole() == MessageRole.ASSISTANT) {
+                if (!message.getBlocks().isEmpty() || message.getRole() == MessageRole.ASSISTANT) {
                     promptMessages.add(message);
                 }
             }

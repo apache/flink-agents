@@ -79,7 +79,7 @@ class WatsonxChatModelLiveTest {
                                 Map.of("model", model(), "max_tokens", 100));
 
         assertThat(response.getRole()).isEqualTo(MessageRole.ASSISTANT);
-        assertThat(response.getContent()).isNotBlank();
+        assertThat(response.getText()).isNotBlank();
         assertThat(response.getExtraArgs().get("promptTokens")).isNotNull();
         assertThat(response.getExtraArgs().get("completionTokens")).isNotNull();
     }
