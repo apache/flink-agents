@@ -230,9 +230,11 @@ class TestDownloadToTempfile:
         self, static_server: "tuple[str, type[_StaticHandler]]"
     ) -> None:
         base_url, handler = static_server
-        target = base_url.removeprefix("http://")
+        # A credential on a live host is indistinguishable from a real leak, so
+        # use the reserved example.com (RFC 2606). As with the cross-protocol
+        # case, the target is rejected before the redirect is followed.
         handler.redirect_location = (
-            f"http://user:password@{target}/skills.zip?token=top-secret"
+            "http://user:password@example.com/skills.zip?token=top-secret"
         )
 
         with pytest.raises(ValueError, match="must not include user info") as exc_info:
