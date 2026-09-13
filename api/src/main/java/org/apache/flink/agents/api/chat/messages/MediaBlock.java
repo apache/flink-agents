@@ -23,6 +23,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 import javax.annotation.Nullable;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -36,7 +40,7 @@ import java.util.Objects;
  * reachable by the model provider, and may be invalid after recovery from a checkpoint.
  *
  * <p>The optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Event Log,
- * which records media metadata instead of payload bytes.
+ * which records media metadata instead of payload bytes — see {@link #sanitize()}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public abstract class MediaBlock extends ContentBlock {
@@ -107,6 +111,70 @@ public abstract class MediaBlock extends ContentBlock {
     @Nullable
     public String getSha256() {
         return sha256;
+    }
+
+    /**
+     * The metadata-only Event Log projection: type, media type, and the optional {@code
+     * name}/{@code size_bytes}/{@code sha256}. Inline {@code data} is dropped entirely (with {@code
+     * size_bytes} derived from the base64 length when not stored), and URLs are stripped of
+     * credentials, query, and fragment. Dropping {@code data} rather than masking it means an
+     * attempt to reconstruct a block from logged output fails loudly instead of yielding a block
+     * with a fake payload.
+     */
+    @Override
+    public final Map<String, Object> sanitize() {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        safe.put("type", getType());
+        safe.put("media_type", mediaType);
+        if (name != null) {
+            safe.put("name", name);
+        }
+        Long size = sizeBytes != null ? sizeBytes : decodedSizeOf(data);
+        if (size != null) {
+            safe.put("size_bytes", size);
+        }
+        if (sha256 != null) {
+            safe.put("sha256", sha256);
+        }
+        if (url != null) {
+            safe.put("url", sanitizeUrl(url));
+        }
+        return safe;
+    }
+
+    /** The decoded byte count implied by a base64 payload, or null when there is none. */
+    @Nullable
+    private static Long decodedSizeOf(@Nullable String data) {
+        if (data == null || data.isEmpty()) {
+            return null;
+        }
+        long padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+        return data.length() * 3L / 4 - padding;
+    }
+
+    /**
+     * Reduces a URL to scheme, host, port, and path. Userinfo (credentials), query strings (signed
+     * URLs carry their tokens there), and fragments never reach the log; a URL that cannot be
+     * parsed is replaced entirely rather than logged raw.
+     */
+    private static String sanitizeUrl(String url) {
+        try {
+            URI uri = new URI(url);
+            if (uri.isOpaque()) {
+                return uri.getScheme() + ":<redacted>";
+            }
+            return new URI(
+                            uri.getScheme(),
+                            null,
+                            uri.getHost(),
+                            uri.getPort(),
+                            uri.getPath(),
+                            null,
+                            null)
+                    .toString();
+        } catch (URISyntaxException e) {
+            return "<unparseable-url>";
+        }
     }
 
     @Override

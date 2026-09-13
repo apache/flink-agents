@@ -22,6 +22,8 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
+import java.util.Map;
+
 /**
  * A single, typed part of a {@link ChatMessage}'s content.
  *
@@ -48,4 +50,17 @@ public abstract class ContentBlock {
     /** The wire discriminator of this block: {@code text}, {@code image}, {@code audio}, ... */
     @JsonIgnore
     public abstract String getType();
+
+    /**
+     * The log-safe projection of this block, as a plain map in the wire's snake_case shape. Each
+     * block type defines its own logging policy: text passes through unchanged (the Event Log's
+     * level-dependent truncation still applies downstream), while media blocks whitelist their
+     * metadata, omit inline payload bytes, and sanitize URLs. Normal Jackson serialization — the
+     * Java/Python bridge, event serialization, state recovery — is unaffected and preserves the
+     * complete payload.
+     *
+     * <p>The result is intentionally not a valid wire block (media payloads are gone for good), so
+     * it must never be deserialized back into a {@link ContentBlock}.
+     */
+    public abstract Map<String, Object> sanitize();
 }

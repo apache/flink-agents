@@ -21,6 +21,8 @@ package org.apache.flink.agents.api.chat.messages;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.Objects;
 
 /** A plain-text, immutable part of a {@link ChatMessage}. */
@@ -44,6 +46,14 @@ public final class TextBlock extends ContentBlock {
     @Override
     public String getType() {
         return "text";
+    }
+
+    @Override
+    public Map<String, Object> sanitize() {
+        Map<String, Object> safe = new LinkedHashMap<>();
+        safe.put("type", getType());
+        safe.put("text", text);
+        return safe;
     }
 
     @Override
