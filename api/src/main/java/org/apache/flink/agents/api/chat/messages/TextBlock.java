@@ -18,18 +18,18 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.Objects;
 
-/** A plain-text part of a {@link ChatMessage}. */
+/** A plain-text, immutable part of a {@link ChatMessage}. */
 public final class TextBlock extends ContentBlock {
 
-    private String text;
+    private final String text;
 
-    public TextBlock() {
-        this.text = "";
-    }
-
-    public TextBlock(String text) {
+    @JsonCreator
+    public TextBlock(@JsonProperty("text") String text) {
         this.text = text != null ? text : "";
     }
 
@@ -41,8 +41,9 @@ public final class TextBlock extends ContentBlock {
         return text;
     }
 
-    public void setText(String text) {
-        this.text = text != null ? text : "";
+    @Override
+    public String getType() {
+        return "text";
     }
 
     @Override

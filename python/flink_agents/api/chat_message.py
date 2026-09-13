@@ -45,7 +45,9 @@ class MessageRole(str, Enum):
 
 
 class TextBlock(BaseModel):
-    """A plain-text part of a ChatMessage."""
+    """A plain-text, immutable part of a ChatMessage."""
+
+    model_config = ConfigDict(frozen=True)
 
     type: Literal["text"] = "text"
     text: str = ""
@@ -56,17 +58,21 @@ class TextBlock(BaseModel):
 
 class MediaBlock(BaseModel):
     """Shared shape for binary media blocks: modality is the concrete type,
-    encoding is the MIME type.
+    encoding is the media type (RFC 6838; historically called a MIME type).
 
-    The payload is carried by exactly one of base64 ``data`` or an externally
-    managed ``url``. URL-backed content is externally managed: URLs may expire,
-    may not be reachable by the model provider, and may be invalid after
-    recovery from a checkpoint. The optional ``name``/``size_bytes``/``sha256``
-    metadata also serves the Event Log, which records media metadata instead of
-    payload bytes.
+    Media blocks are immutable, and the payload is carried by exactly one of
+    base64 ``data`` or an externally managed ``url``. URL-backed content is
+    externally managed: URLs may expire, may not be reachable by the model
+    provider, and may be invalid after recovery from a checkpoint. The optional
+    ``name``/``size_bytes``/``sha256`` metadata also serves the Event Log,
+    which records media metadata instead of payload bytes.
     """
 
-    mime_type: str
+    # Frozen keeps sharing a block (e.g. across a routing context copy) safe,
+    # and matches the validated immutable construction on the Java side.
+    model_config = ConfigDict(frozen=True)
+
+    media_type: str
     data: str | None = None  # base64; exactly one of data / url set
     url: str | None = None
     name: str | None = None
@@ -82,7 +88,7 @@ class MediaBlock(BaseModel):
 
     def __str__(self) -> str:
         source = "inline" if self.data is not None else f"url={self.url}"
-        return f"{type(self).__name__}({self.mime_type}, {source})"
+        return f"{type(self).__name__}({self.media_type}, {source})"
 
 
 class ImageBlock(MediaBlock):

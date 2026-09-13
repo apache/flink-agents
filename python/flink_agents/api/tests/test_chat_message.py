@@ -45,11 +45,11 @@ def test_media_block_wire_shape_omits_absent_fields() -> None:
     message = ChatMessage.user(
         [
             TextBlock(text="What's in this picture?"),
-            ImageBlock(mime_type="image/png", data="aGk="),
+            ImageBlock(media_type="image/png", data="aGk="),
         ]
     )
     image = message.model_dump(mode="json", exclude_none=True)["blocks"][1]
-    assert image == {"type": "image", "mime_type": "image/png", "data": "aGk="}
+    assert image == {"type": "image", "media_type": "image/png", "data": "aGk="}
 
 
 def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
@@ -58,12 +58,12 @@ def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
         blocks=[
             TextBlock(text="before"),
             ImageBlock(
-                mime_type="image/jpeg",
+                media_type="image/jpeg",
                 url="https://example.org/cat.jpg",
                 name="cat.jpg",
                 size_bytes=123,
             ),
-            DocumentBlock(mime_type="application/pdf", data="cGRm"),
+            DocumentBlock(media_type="application/pdf", data="cGRm"),
             TextBlock(text="after"),
         ],
     )
@@ -81,8 +81,8 @@ def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
 def test_audio_and_video_round_trip() -> None:
     original = ChatMessage.user(
         [
-            AudioBlock(mime_type="audio/wav", data="d2F2"),
-            VideoBlock(mime_type="video/mp4", url="https://example.org/v.mp4"),
+            AudioBlock(media_type="audio/wav", data="d2F2"),
+            VideoBlock(media_type="video/mp4", url="https://example.org/v.mp4"),
         ]
     )
     restored = ChatMessage.model_validate_json(original.model_dump_json())
@@ -95,7 +95,7 @@ def test_java_wire_shape_deserializes() -> None:
         "role": "user",
         "blocks": [
             {"type": "text", "text": "hi"},
-            {"type": "image", "mime_type": "image/png", "data": "aGk="},
+            {"type": "image", "media_type": "image/png", "data": "aGk="},
         ],
         "tool_calls": [],
         "extra_args": {},
@@ -114,9 +114,23 @@ def test_legacy_content_kwarg_fails_loudly() -> None:
 
 def test_media_requires_exactly_one_source() -> None:
     with pytest.raises(ValidationError):
-        ImageBlock(mime_type="image/png")
+        ImageBlock(media_type="image/png")
     with pytest.raises(ValidationError):
-        ImageBlock(mime_type="image/png", data="aGk=", url="https://example.org/x")
+        ImageBlock(media_type="image/png", data="aGk=", url="https://example.org/x")
+
+
+def test_blocks_are_frozen() -> None:
+    """Blocks are immutable value objects, so sharing them never shares state."""
+    text = TextBlock(text="hi")
+    with pytest.raises(ValidationError):
+        text.text = "mutated"
+    image = ImageBlock(media_type="image/png", data="aGk=")
+    with pytest.raises(ValidationError):
+        image.data = "bXV0YXRlZA=="
+    with pytest.raises(ValidationError):
+        image.url = "https://example.org/x"
+    assert text.text == "hi"
+    assert image.data == "aGk="
 
 
 def test_factories_and_text_projection() -> None:

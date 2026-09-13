@@ -18,15 +18,18 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
 /**
  * A single, typed part of a {@link ChatMessage}'s content.
  *
- * <p>Blocks are ordered within a message. The concrete type answers how providers route the content
- * ({@link TextBlock}, {@link ImageBlock}, {@link AudioBlock}, {@link VideoBlock}, {@link
- * DocumentBlock}), while media encoding is carried by the MIME type on {@link MediaBlock}.
+ * <p>Blocks are ordered within a message and are immutable value objects: every construction path,
+ * including Jackson deserialization, runs the same validation, so sharing a block instance never
+ * shares mutable state. The concrete type answers how providers route the content ({@link
+ * TextBlock}, {@link ImageBlock}, {@link AudioBlock}, {@link VideoBlock}, {@link DocumentBlock}),
+ * while media encoding is carried by the media type on {@link MediaBlock}.
  *
  * <p>The serialized form carries a {@code type} discriminator with fixed values ({@code text},
  * {@code image}, {@code audio}, {@code video}, {@code document}) shared with the Python API, so
@@ -40,4 +43,9 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
     @JsonSubTypes.Type(value = VideoBlock.class, name = "video"),
     @JsonSubTypes.Type(value = DocumentBlock.class, name = "document")
 })
-public abstract class ContentBlock {}
+public abstract class ContentBlock {
+
+    /** The wire discriminator of this block: {@code text}, {@code image}, {@code audio}, ... */
+    @JsonIgnore
+    public abstract String getType();
+}
