@@ -243,7 +243,7 @@ public class ReviewAnalysisAgent extends Agent {
     public static void processChatResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getText());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {
