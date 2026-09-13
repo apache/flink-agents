@@ -87,10 +87,7 @@ class MyAgent(Agent):
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
         # Create a chat request with user message
-        user_message = ChatMessage(
-            role=MessageRole.USER,
-            content=f"input: {input_event.input}"
-        )
+        user_message = ChatMessage.user(f"input: {input_event.input}")
         ctx.send_event(
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
@@ -135,7 +132,7 @@ public class MyAgent extends Agent {
     public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        String response = chatResponse.getResponse().getContent();
+        String response = chatResponse.getResponse().getText();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -1470,10 +1467,7 @@ class MyAgent(Agent):
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
         # Create a chat request with user message
-        user_message = ChatMessage(
-            role=MessageRole.USER,
-            content=f"input: {input_event.input}"
-        )
+        user_message = ChatMessage.user(f"input: {input_event.input}")
         ctx.send_event(
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
@@ -1536,7 +1530,7 @@ public class MyAgent extends Agent {
     public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        String response = chatResponse.getResponse().getContent();
+        String response = chatResponse.getResponse().getText();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }

@@ -82,12 +82,11 @@ class MathAgent(Agent):
         """System prompt instructing the agent to use the skill."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="You are a helpful math assistant. Use the "
+                ChatMessage.system(
+                    "You are a helpful math assistant. Use the "
                     "math-calculator skill when asked to evaluate an expression. "
                     "You must load the skill first and strictly follow its "
-                    "instructions. Reply with only the final numeric result.",
+                    "instructions. Reply with only the final numeric result."
                 )
             ],
         )
@@ -179,7 +178,7 @@ public class MathAgent extends Agent {
     /** Process chat response event and send the answer as output. */
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(event.getResponse().getText()));
     }
 }
 ```

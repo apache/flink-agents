@@ -113,10 +113,7 @@ def _build_aspect_request(text: str, aspect: str) -> ChatRequestEvent:
         model="sentiment_model",
         messages=[
             ChatMessage.system(PARALLEL_SYSTEM_PROMPT),
-            ChatMessage(
-                role=MessageRole.USER,
-                content=f'Judge the "{aspect}" dimension: {text}',
-            ),
+            ChatMessage.user(f'Judge the "{aspect}" dimension: {text}'),
         ],
         output_schema=OutputSchema(output_schema=AspectResponse),
     )
