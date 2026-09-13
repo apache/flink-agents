@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -29,7 +30,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Jackson round-trip tests for {@link ChatMessage} content blocks — the wire contract shared with
- * the Python API (see the cross-language snapshot tests for the full event-level contract).
+ * the Python API (see the cross-language snapshot tests for the full event-level contract) — plus
+ * the block-level immutability contract.
  */
 class ChatMessageSerializationTest {
 
@@ -63,7 +65,7 @@ class ChatMessageSerializationTest {
         JsonNode image = MAPPER.valueToTree(message).get("blocks").get(1);
 
         assertThat(image.get("type").asText()).isEqualTo("image");
-        assertThat(image.get("mime_type").asText()).isEqualTo("image/png");
+        assertThat(image.get("media_type").asText()).isEqualTo("image/png");
         assertThat(image.get("data").asText()).isEqualTo("aGk=");
         // Absent optional fields are omitted, not serialized as nulls.
         assertThat(image.has("url")).isFalse();
@@ -75,9 +77,9 @@ class ChatMessageSerializationTest {
     @Test
     @DisplayName("A mixed-block message round-trips through Jackson preserving order and types")
     void testMixedBlocksRoundTrip() throws Exception {
-        ImageBlock image = ImageBlock.fromUrl("image/jpeg", "https://example.org/cat.jpg");
-        image.setName("cat.jpg");
-        image.setSizeBytes(123L);
+        ImageBlock image =
+                new ImageBlock(
+                        "image/jpeg", null, "https://example.org/cat.jpg", "cat.jpg", 123L, null);
         ChatMessage original =
                 new ChatMessage(
                         MessageRole.TOOL,
@@ -121,5 +123,43 @@ class ChatMessageSerializationTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ImageBlock.fromBase64(null, "aGk="))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("The Jackson path runs the same validation as the factories")
+    void testJacksonPathValidation() {
+        // Both sources present.
+        assertThatThrownBy(
+                        () ->
+                                MAPPER.readValue(
+                                        "{\"type\":\"image\",\"media_type\":\"image/png\","
+                                                + "\"data\":\"aGk=\",\"url\":\"https://example.org/x\"}",
+                                        ContentBlock.class))
+                .isInstanceOf(JsonMappingException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+        // Neither source present.
+        assertThatThrownBy(
+                        () ->
+                                MAPPER.readValue(
+                                        "{\"type\":\"image\",\"media_type\":\"image/png\"}",
+                                        ContentBlock.class))
+                .isInstanceOf(JsonMappingException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+        // Missing media type.
+        assertThatThrownBy(
+                        () ->
+                                MAPPER.readValue(
+                                        "{\"type\":\"image\",\"data\":\"aGk=\"}",
+                                        ContentBlock.class))
+                .isInstanceOf(JsonMappingException.class)
+                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("A message's block list is an unmodifiable snapshot")
+    void testBlockListIsSnapshot() {
+        ChatMessage message = ChatMessage.user("hello");
+        assertThatThrownBy(() -> message.getBlocks().add(TextBlock.of("injected")))
+                .isInstanceOf(UnsupportedOperationException.class);
     }
 }

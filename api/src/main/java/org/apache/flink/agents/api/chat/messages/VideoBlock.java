@@ -18,22 +18,37 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import javax.annotation.Nullable;
+
 /** The video content of a {@link ChatMessage} — see {@link MediaBlock} for the media shape. */
 public final class VideoBlock extends MediaBlock {
 
-    public VideoBlock() {}
-
-    private VideoBlock(String mimeType, String data, String url) {
-        super(mimeType, data, url);
+    @JsonCreator
+    public VideoBlock(
+            @JsonProperty("media_type") String mediaType,
+            @JsonProperty("data") @Nullable String data,
+            @JsonProperty("url") @Nullable String url,
+            @JsonProperty("name") @Nullable String name,
+            @JsonProperty("size_bytes") @Nullable Long sizeBytes,
+            @JsonProperty("sha256") @Nullable String sha256) {
+        super(mediaType, data, url, name, sizeBytes, sha256);
     }
 
     /** Creates a video block carrying an inline base64 payload. */
-    public static VideoBlock fromBase64(String mimeType, String data) {
-        return new VideoBlock(mimeType, data, null);
+    public static VideoBlock fromBase64(String mediaType, String data) {
+        return new VideoBlock(mediaType, data, null, null, null, null);
     }
 
     /** Creates a video block referencing an externally managed URL or provider file URI. */
-    public static VideoBlock fromUrl(String mimeType, String url) {
-        return new VideoBlock(mimeType, null, url);
+    public static VideoBlock fromUrl(String mediaType, String url) {
+        return new VideoBlock(mediaType, null, url, null, null, null);
+    }
+
+    @Override
+    public String getType() {
+        return "video";
     }
 }

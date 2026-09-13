@@ -26,56 +26,61 @@ import javax.annotation.Nullable;
 import java.util.Objects;
 
 /**
- * Shared shape for binary media blocks: modality is the concrete type, encoding is the MIME type.
+ * Shared shape for binary media blocks: modality is the concrete type, encoding is the media type
+ * (RFC 6838; historically called a MIME type).
  *
- * <p>The payload is carried by exactly one of base64 {@code data} or an externally managed {@code
- * url} (enforced by the argument constructor and the per-type factories; the no-arg bean path is
- * lenient for deserialization). URL-backed content is externally managed: URLs may expire, may not
- * be reachable by the model provider, and may be invalid after recovery from a checkpoint. The
- * optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Event Log, which
- * records media metadata instead of payload bytes.
+ * <p>Media blocks are immutable, and every construction path — the {@code fromBase64}/{@code
+ * fromUrl} factories, the full constructors, and Jackson deserialization — runs the same
+ * validation, so a block that exists carries exactly one of base64 {@code data} or an externally
+ * managed {@code url}. URL-backed content is externally managed: URLs may expire, may not be
+ * reachable by the model provider, and may be invalid after recovery from a checkpoint.
+ *
+ * <p>The optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Event Log,
+ * which records media metadata instead of payload bytes.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public abstract class MediaBlock extends ContentBlock {
 
-    @JsonProperty("mime_type")
-    private String mimeType;
+    @JsonProperty("media_type")
+    private final String mediaType;
 
-    @Nullable private String data;
+    @Nullable private final String data;
 
-    @Nullable private String url;
+    @Nullable private final String url;
 
-    @Nullable private String name;
+    @Nullable private final String name;
 
     @JsonProperty("size_bytes")
     @Nullable
-    private Long sizeBytes;
+    private final Long sizeBytes;
 
-    @Nullable private String sha256;
+    @Nullable private final String sha256;
 
-    protected MediaBlock() {}
-
-    protected MediaBlock(String mimeType, @Nullable String data, @Nullable String url) {
-        if (mimeType == null || mimeType.isEmpty()) {
-            throw new IllegalArgumentException("A media block requires a MIME type.");
+    protected MediaBlock(
+            String mediaType,
+            @Nullable String data,
+            @Nullable String url,
+            @Nullable String name,
+            @Nullable Long sizeBytes,
+            @Nullable String sha256) {
+        if (mediaType == null || mediaType.isEmpty()) {
+            throw new IllegalArgumentException("A media block requires a media type.");
         }
         if ((data == null) == (url == null)) {
             throw new IllegalArgumentException(
                     "A media block carries exactly one of base64 data or a URL.");
         }
-        this.mimeType = mimeType;
+        this.mediaType = mediaType;
         this.data = data;
         this.url = url;
+        this.name = name;
+        this.sizeBytes = sizeBytes;
+        this.sha256 = sha256;
     }
 
-    @JsonProperty("mime_type")
-    public String getMimeType() {
-        return mimeType;
-    }
-
-    @JsonProperty("mime_type")
-    public void setMimeType(String mimeType) {
-        this.mimeType = mimeType;
+    @JsonProperty("media_type")
+    public String getMediaType() {
+        return mediaType;
     }
 
     @Nullable
@@ -83,26 +88,14 @@ public abstract class MediaBlock extends ContentBlock {
         return data;
     }
 
-    public void setData(@Nullable String data) {
-        this.data = data;
-    }
-
     @Nullable
     public String getUrl() {
         return url;
     }
 
-    public void setUrl(@Nullable String url) {
-        this.url = url;
-    }
-
     @Nullable
     public String getName() {
         return name;
-    }
-
-    public void setName(@Nullable String name) {
-        this.name = name;
     }
 
     @JsonProperty("size_bytes")
@@ -111,18 +104,9 @@ public abstract class MediaBlock extends ContentBlock {
         return sizeBytes;
     }
 
-    @JsonProperty("size_bytes")
-    public void setSizeBytes(@Nullable Long sizeBytes) {
-        this.sizeBytes = sizeBytes;
-    }
-
     @Nullable
     public String getSha256() {
         return sha256;
-    }
-
-    public void setSha256(@Nullable String sha256) {
-        this.sha256 = sha256;
     }
 
     @Override
@@ -130,7 +114,7 @@ public abstract class MediaBlock extends ContentBlock {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MediaBlock that = (MediaBlock) o;
-        return Objects.equals(mimeType, that.mimeType)
+        return Objects.equals(mediaType, that.mediaType)
                 && Objects.equals(data, that.data)
                 && Objects.equals(url, that.url)
                 && Objects.equals(name, that.name)
@@ -140,14 +124,14 @@ public abstract class MediaBlock extends ContentBlock {
 
     @Override
     public int hashCode() {
-        return Objects.hash(mimeType, data, url, name, sizeBytes, sha256);
+        return Objects.hash(mediaType, data, url, name, sizeBytes, sha256);
     }
 
     @Override
     public String toString() {
         return getClass().getSimpleName()
                 + "("
-                + mimeType
+                + mediaType
                 + ", "
                 + (data != null ? "inline" : "url=" + url)
                 + ")";

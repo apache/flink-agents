@@ -18,22 +18,37 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
+import javax.annotation.Nullable;
+
 /** The image content of a {@link ChatMessage} — see {@link MediaBlock} for the media shape. */
 public final class ImageBlock extends MediaBlock {
 
-    public ImageBlock() {}
-
-    private ImageBlock(String mimeType, String data, String url) {
-        super(mimeType, data, url);
+    @JsonCreator
+    public ImageBlock(
+            @JsonProperty("media_type") String mediaType,
+            @JsonProperty("data") @Nullable String data,
+            @JsonProperty("url") @Nullable String url,
+            @JsonProperty("name") @Nullable String name,
+            @JsonProperty("size_bytes") @Nullable Long sizeBytes,
+            @JsonProperty("sha256") @Nullable String sha256) {
+        super(mediaType, data, url, name, sizeBytes, sha256);
     }
 
     /** Creates an image block carrying an inline base64 payload. */
-    public static ImageBlock fromBase64(String mimeType, String data) {
-        return new ImageBlock(mimeType, data, null);
+    public static ImageBlock fromBase64(String mediaType, String data) {
+        return new ImageBlock(mediaType, data, null, null, null, null);
     }
 
     /** Creates an image block referencing an externally managed URL or provider file URI. */
-    public static ImageBlock fromUrl(String mimeType, String url) {
-        return new ImageBlock(mimeType, null, url);
+    public static ImageBlock fromUrl(String mediaType, String url) {
+        return new ImageBlock(mediaType, null, url, null, null, null);
+    }
+
+    @Override
+    public String getType() {
+        return "image";
     }
 }

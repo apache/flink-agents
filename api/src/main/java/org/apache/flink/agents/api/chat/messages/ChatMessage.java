@@ -39,6 +39,10 @@ import java.util.stream.Collectors;
  * media blocks); a text-only message simply carries one {@link TextBlock}. The string convenience
  * constructors and factories preserve the text-message experience, and {@link #getText()} is the
  * ordered concatenation of the text blocks.
+ *
+ * <p>Blocks are immutable and the message snapshots every block list it is handed, so {@link
+ * #getBlocks()} is an unmodifiable view: the content changes only by replacing it through {@link
+ * #setBlocks(List)} or {@link #setText(String)}.
  */
 public class ChatMessage {
 
@@ -91,7 +95,7 @@ public class ChatMessage {
             List<Map<String, Object>> toolCalls,
             Map<String, Object> extraArgs) {
         this.role = role != null ? role : MessageRole.SYSTEM;
-        this.blocks = blocks != null ? new ArrayList<>(blocks) : new ArrayList<>();
+        this.blocks = snapshotOf(blocks);
         this.toolCalls = toolCalls != null ? toolCalls : new ArrayList<>();
         this.extraArgs = extraArgs != null ? new HashMap<>(extraArgs) : new HashMap<>();
     }
@@ -103,6 +107,13 @@ public class ChatMessage {
                 : Collections.singletonList(new TextBlock(text));
     }
 
+    /** An unmodifiable copy — since blocks are immutable, this freezes the content. */
+    private static List<ContentBlock> snapshotOf(List<ContentBlock> blocks) {
+        return blocks == null || blocks.isEmpty()
+                ? Collections.emptyList()
+                : Collections.unmodifiableList(new ArrayList<>(blocks));
+    }
+
     public MessageRole getRole() {
         return role;
     }
@@ -111,18 +122,19 @@ public class ChatMessage {
         this.role = role;
     }
 
+    /** The content as an unmodifiable list of immutable blocks. */
     public List<ContentBlock> getBlocks() {
         return blocks;
     }
 
     public void setBlocks(List<ContentBlock> blocks) {
-        this.blocks = blocks != null ? blocks : new ArrayList<>();
+        this.blocks = snapshotOf(blocks);
     }
 
     /** Replaces the content with a single text block (empty text clears the content). */
     @JsonIgnore
     public void setText(String text) {
-        this.blocks = new ArrayList<>(blocksOf(text));
+        this.blocks = blocksOf(text);
     }
 
     @JsonProperty("tool_calls")
@@ -165,10 +177,11 @@ public class ChatMessage {
     public void setBlocksFromMaps(List<Map<String, Object>> blockMaps) {
         this.blocks =
                 blockMaps == null
-                        ? new ArrayList<>()
-                        : blockMaps.stream()
-                                .map(map -> MAPPER.convertValue(map, ContentBlock.class))
-                                .collect(Collectors.toCollection(ArrayList::new));
+                        ? Collections.emptyList()
+                        : Collections.unmodifiableList(
+                                blockMaps.stream()
+                                        .map(map -> MAPPER.convertValue(map, ContentBlock.class))
+                                        .collect(Collectors.toList()));
     }
 
     /** The text projection: the ordered concatenation of this message's {@link TextBlock}s. */

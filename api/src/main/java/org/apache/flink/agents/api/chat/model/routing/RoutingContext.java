@@ -38,10 +38,11 @@ import java.util.UUID;
  *
  * <p>The isolation boundary is deliberate and one level deep: the message list, each message's
  * tool-call maps and extra args, and the prompt-args map are defensive copies, but values
- * <em>nested inside</em> those maps are shared with the request that is actually sent. Strategies
- * must treat the context as read-only; the copies exist to make accidental top-level mutation
- * harmless, not to sandbox a hostile strategy (arbitrary-depth copies on every routing decision
- * would tax the common case to guard a case the SPI already forbids).
+ * <em>nested inside</em> those maps are shared with the request that is actually sent. Content
+ * blocks are shared too, which is safe because they are immutable value objects. Strategies must
+ * treat the context as read-only; the copies exist to make accidental top-level mutation harmless,
+ * not to sandbox a hostile strategy (arbitrary-depth copies on every routing decision would tax the
+ * common case to guard a case the SPI already forbids).
  */
 public final class RoutingContext {
 
@@ -59,9 +60,10 @@ public final class RoutingContext {
             List<RoutingCandidate> candidates) {
         this.requestId = requestId;
         this.router = router;
-        // Deep copy: the wrapping list is unmodifiable, but ChatMessage is mutable and the
-        // caller passes the same instances that go to the model — a strategy calling
-        // setText(...) on a shallow copy would silently rewrite the prompt actually sent.
+        // Deep copy: ChatMessage is mutable and the caller passes the same instances that go to
+        // the model — a strategy calling setText(...) on a shallow copy would silently rewrite
+        // the prompt actually sent. Only the mutable message/list structure needs copying;
+        // ContentBlocks are immutable and safe to share.
         this.messages =
                 messages == null
                         ? Collections.emptyList()
@@ -97,8 +99,8 @@ public final class RoutingContext {
                     toolCalls.add(call == null ? null : new HashMap<>(call));
                 }
             }
-            // The full constructor copies the block list; blocks themselves are shared, matching
-            // the copy depth used for extraArgs values.
+            // The full constructor snapshots the block list; block instances are shared, which
+            // is safe because ContentBlocks are immutable.
             copy.add(new ChatMessage(m.getRole(), m.getBlocks(), toolCalls, m.getExtraArgs()));
         }
         return copy;
