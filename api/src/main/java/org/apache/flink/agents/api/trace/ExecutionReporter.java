@@ -26,7 +26,7 @@ import java.util.Map;
  *
  * <p>Implementations decide how reports are consumed or ignored. Callers should provide stable
  * entity type/name pairs and keep metadata small, structured, serializable, and stable for equality
- * matching between the start and terminal reports of the same logical execution.
+ * matching between lifecycle reports of the same logical execution.
  */
 public interface ExecutionReporter {
 
@@ -54,7 +54,9 @@ public interface ExecutionReporter {
      * Reports that a logical execution has been created but has not necessarily started.
      *
      * <p>This is an optional lifecycle phase for executions whose admission and invocation are
-     * observably separate. Implementations that do not consume it may keep the default no-op.
+     * observably separate. Implementations that do not consume it may keep the default no-op. A
+     * later start or terminal report is not guaranteed, so consumers must not infer whether the
+     * underlying invocation ran from the absence of either report.
      *
      * @param entityType stable category of the reported execution, such as LLM, parser, or tool
      * @param entityName stable name of the reported execution, such as model or tool name
@@ -92,7 +94,7 @@ public interface ExecutionReporter {
     }
 
     /**
-     * Reports that a previously started logical execution completed successfully.
+     * Reports that a logical execution completed successfully.
      *
      * <p>The entity type/name/metadata should match the corresponding start report when one was
      * reported.

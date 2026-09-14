@@ -240,7 +240,15 @@ Agent Trace persistence is disabled by default. Set `event-log.trace.enabled: tr
 
 After fine-grained recovery, a cached durable LLM or Tool result is currently recorded as a new successful execution because cache reuse is not exposed to execution reporting. Distinguishing reused child executions is follow-up work.
 
-Each Tool call emits an `_execution_created_event` before a preparation failure is reported or an invocable call is submitted for durable execution. This optional lifecycle phase means that a Tool that never starts, never returns, or is still running when the TaskManager fails can still appear in Agent Trace. A normal Tool call continues with started and terminal Events under the same `executionId`; LLM and Parser executions currently begin directly with a started Event.
+Tool executions use an optional creation phase because the runtime can identify a call before its callable starts. LLM and Parser executions currently begin directly with a started Event. All lifecycle Events for one Tool call use the same `executionId`.
+
+| Event | Occurrence time | Publication time |
+|-------|-----------------|------------------|
+| `_execution_created_event` | After the call identity and metadata are available, before a preparation failure is reported or an invocable call is submitted for durable execution. | Immediately at that boundary. |
+| `_execution_started_event` | When an invocable Tool enters its callable. | After the durable call or parallel batch returns or raises, while retaining the callable-entry timestamp. |
+| Terminal Event: `_execution_finished_event` or `_execution_failed_event` | When the callable exits, or when the Action observes an outcome without observing a completed invocation at that boundary, such as a preparation failure, durable cache hit, or timeout. | Immediately for a preparation failure; otherwise after the durable call or parallel batch returns or raises. |
+
+Because started and terminal Events can be published after their occurrences, a missing Event only means that its report was not published. In particular, a Tool represented only by a created Event may still be queued, or it may have started or completed before the batch blocked or the task exited. Its invocation state cannot be inferred from the created Event alone. Tool latency is recorded only when matching started and terminal Events are both available, and is calculated from their occurrence timestamps rather than publication times.
 
 Example Trace record:
 

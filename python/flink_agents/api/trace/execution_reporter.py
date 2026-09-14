@@ -55,7 +55,11 @@ class ExecutionReporter(ABC):
         entity_name: str,
         entity_metadata: Mapping[str, Any] | None = None,
     ) -> None:
-        """Report that a logical execution exists but has not necessarily started."""
+        """Report that a logical execution exists but has not necessarily started.
+
+        A later start or terminal report is not guaranteed. Their absence does not
+        show whether the underlying invocation ran.
+        """
         return None
 
     @abstractmethod
