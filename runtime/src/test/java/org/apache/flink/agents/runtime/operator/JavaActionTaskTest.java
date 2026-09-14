@@ -42,6 +42,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -102,7 +103,7 @@ public class JavaActionTaskTest {
         MemoryRef reference = runnerContext.getSensoryMemory().set("attachment.payload", payload);
         InputEvent runtimeEvent = new InputEvent(1L);
         runtimeEvent.setAttachment("payload", reference);
-        JavaActionTask task = new JavaActionTask(KEY, runtimeEvent, action);
+        JavaActionTask task = new JavaActionTask(KEY, runtimeEvent, action, 1L);
         task.setRunnerContext(runnerContext);
         task.setEventSerializer(eventSerializer);
         durableExecutionManager.maybeInitActionState(KEY, SEQUENCE_NUMBER, action, runtimeEvent);
@@ -135,9 +136,11 @@ public class JavaActionTaskTest {
                 new RunnerContextImpl.MemoryContext(
                         new CachedMemoryStore(new ForTestMemoryMapState<>()),
                         new CachedMemoryStore(new ForTestMemoryMapState<>())),
+                new ArrayList<>(),
                 KEY,
                 "observation",
-                false);
+                false,
+                null);
         return context;
     }
 

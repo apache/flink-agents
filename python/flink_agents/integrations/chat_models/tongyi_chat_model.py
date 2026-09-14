@@ -22,9 +22,10 @@ import uuid
 from typing import Any, Dict, List, Sequence, cast
 
 from dashscope import Generation
-from pydantic import Field
+from pydantic import BaseModel, Field
+from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -34,6 +35,74 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
+
+# Models with documented json_schema support that are also served on the
+# text-generation interface this connection calls. json_schema support is documented
+# per family, but the interface is documented per model and differs inside a family:
+# the Qwen3.7-Plus, Qwen3.7-Flash, Qwen3.8-Flash and Qwen3.8-Max families and the
+# qwen3.7-max-2026-06-08 snapshot are served on the multimodal interface and answer
+# Generation.call with "url error". Names are therefore matched exactly against the
+# Qwen3.7-Max members served on the text interface.
+# json_schema model list and mode semantics:
+#   https://help.aliyun.com/zh/model-studio/json-mode
+# text- vs multimodal-interface routing:
+#   https://help.aliyun.com/zh/model-studio/text-generation
+#
+# A name outside the set reports not-capable and degrades to the prompt-engineering
+# fallback rather than failing at the provider.
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {
+        "qwen3.7-max",
+        "qwen3.7-max-preview",
+        "qwen3.7-max-2026-05-17",
+        "qwen3.7-max-2026-05-20",
+    }
+)
+
+
+def _native_output_model(
+    output_schema: OutputSchema | None,
+) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
+
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the caller-conflict check needs to know
+    whether a schema will be sent, and under what name, before anything is rendered.
+    """
+    schema = getattr(output_schema, "output_schema", None)
+    if not (isinstance(schema, type) and issubclass(schema, BaseModel)):
+        return None
+    return schema
+
+
+def _native_response_format(
+    output_schema: OutputSchema | None,
+) -> Dict[str, Any] | None:
+    """Build the DashScope ``response_format`` for a native structured-output request.
+
+    Returns ``None`` (leaving behavior unchanged) unless the schema is a ``BaseModel``
+    subclass. A ``RowTypeInfo`` schema is skipped so it keeps the prompt-engineering
+    fallback.
+
+    Raises ``TypeError`` if a ``BaseModel`` schema cannot be rendered, naming the
+    schema class rather than letting Pydantic's own error, which names only its
+    internals, surface from a request the provider never sees. A schema that renders
+    but declares no fields is sent as it is, leaving the provider to accept or refuse
+    the document it receives.
+    """
+    model = _native_output_model(output_schema)
+    if model is None:
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "strict": True,
+            "schema": render_output_schema(model, lambda m: m.model_json_schema()),
+        },
+    }
 
 
 def to_dashscope_tool(
@@ -98,6 +167,23 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether DashScope documents structured output for ``effective_model``.
+
+        See the module-level allowlist for the source of truth and for why names are
+        matched exactly. A name outside it reports ``False`` so it degrades to the
+        prompt-engineering fallback rather than failing at the provider.
+
+        Args:
+            effective_model: The model the request will be issued against, may be
+                ``None``.
+
+        Returns:
+            ``True`` if a schema can be applied natively for ``effective_model``.
+        """
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -107,12 +193,28 @@ class TongyiChatModelConnection(BaseChatModelConnection):
     ) -> ChatMessage:
         """Process a sequence of messages, and return a response.
 
-        A non-``None`` ``output_schema`` is rejected: this connection has no native
-        structured-output translation, so callers stay on the prompt-engineering
-        fallback. Declaring the parameter keeps a caller-supplied schema out of
-        ``**kwargs``, which is forwarded to the provider SDK.
+        Parameters
+        ----------
+        messages : Sequence[ChatMessage]
+            Input message sequence
+        tools : Optional[List]
+            List of tools that can be called by the model
+        output_schema : OutputSchema | None
+            The schema the response should conform to, or ``None`` for an
+            unconstrained response. Native structured output is applied only for a
+            ``BaseModel`` schema on a model the provider documents as capable; a
+            ``RowTypeInfo`` schema or an incapable model keeps the prompt-engineering
+            fallback. A ``response_format`` supplied alongside a schema is refused
+            rather than resolved.
+        **kwargs : Any
+            Additional parameters passed to the model service (e.g., temperature,
+            max_tokens, etc.)
+
+        Returns:
+        -------
+        ChatMessage
+            Model response message.
         """
-        self._reject_unsupported_output_schema(output_schema)
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: List[Dict[str, Any]] | None = (
@@ -124,6 +226,40 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         req_api_key = kwargs.pop("api_key", self.api_key)
 
         model_name = kwargs.pop("model", DEFAULT_MODEL)
+
+        # The predicate reads model_name rather than kwargs.get("model"): the key was
+        # popped on the line above, so a kwargs lookup would yield None on every call
+        # and report every model incapable.
+        #
+        # TODO(#912): the requested strategy is not visible here, so this check
+        # cannot tell an explicit NATIVE request apart from one that merely
+        # resolved to native. A caller asking for NATIVE on a model this predicate
+        # rejects therefore gets an unconstrained response instead of an error.
+        # Once strategy resolution is wired up, NATIVE must either bypass this
+        # capability check or fail explicitly.
+        if output_schema is not None and self.supports_native_structured_output(
+            model_name
+        ):
+            # Resolved before the conflict test, so a payload with no native
+            # translation does not raise over a response_format this branch was
+            # never going to write. Tested before the schema is rendered, because a
+            # caller who supplies both a schema and a response_format has a conflict
+            # to resolve whatever the schema turns out to render to, and reporting a
+            # render failure instead would describe the wrong problem. The name is
+            # read off the model class, so this needs no rendered document.
+            native_model = _native_output_model(output_schema)
+            if native_model is not None and "response_format" in kwargs:
+                msg = (
+                    f"The {native_model.__name__} output schema is sent as "
+                    f"response_format to model '{model_name}', so response_format "
+                    f"must not also be passed as a kwarg. Remove that value, or "
+                    f"omit output_schema to set response_format directly."
+                )
+                raise ValueError(msg)
+            response_format = _native_response_format(output_schema)
+            if response_format is not None:
+                kwargs["response_format"] = response_format
+
         response = Generation.call(
             model=model_name,
             messages=tongyi_messages,

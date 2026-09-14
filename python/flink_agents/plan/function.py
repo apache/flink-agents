@@ -24,10 +24,12 @@ from typing import Any, Callable, Dict, List, Tuple, get_type_hints
 
 from pydantic import BaseModel, PrivateAttr, model_serializer
 
+from flink_agents.api.tools import ToolResponse
 from flink_agents.plan.utils import check_type_match
 
 # Global cache for PythonFunction instances to avoid repeated creation
 _PYTHON_FUNCTION_CACHE: Dict[Tuple[str, str], "PythonFunction"] = {}
+_TOOL_RESULT_MARKER = "__flink_agents_tool_result__"
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -321,11 +323,13 @@ class JavaFunction(Function):
                 self.parameter_types,
                 list(args),
             )
-        return self._j_resource_adapter.invokeJavaTool(
-            self.qualname,
-            self.method_name,
-            self.parameter_types,
-            kwargs,
+        return _decode_java_tool_result(
+            self._j_resource_adapter.invokeJavaTool(
+                self.qualname,
+                self.method_name,
+                self.parameter_types,
+                kwargs,
+            )
         )
 
     def check_signature(self, *args: Tuple[Any, ...]) -> None:
@@ -338,6 +342,22 @@ class JavaFunction(Function):
                 f"expects {len(args)}."
             )
             raise TypeError(msg)
+
+
+def _decode_java_tool_result(value: Any) -> Any:
+    if not isinstance(value, dict) or value.get(_TOOL_RESULT_MARKER) != "response":
+        return value
+    if value.get("success") is True:
+        return ToolResponse.success(
+            value.get("result"),
+            execution_time_ms=value.get("execution_time_ms", 0),
+            tool_name=value.get("tool_name"),
+        )
+    return ToolResponse.error(
+        value.get("error"),
+        execution_time_ms=value.get("execution_time_ms", 0),
+        tool_name=value.get("tool_name"),
+    )
 
 
 def call_python_function(module: str, qualname: str, func_args: Tuple[Any, ...]) -> Any:

@@ -50,4 +50,10 @@ async def add(a: int, b: int) -> int:
     return a + b
 
 
+@mcp.tool()
+async def fail_with_recovery_hint(query: str) -> str:
+    """Return a protocol-level tool error with a model-facing recovery hint."""
+    raise ValueError(f"retry with a narrower query than '{query}'")
+
+
 mcp.run("streamable-http")

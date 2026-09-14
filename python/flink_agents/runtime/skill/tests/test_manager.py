@@ -17,6 +17,7 @@
 ################################################################################
 """Unit tests for SkillManager and skill tools."""
 
+import hashlib
 import importlib
 import shutil
 import sys
@@ -28,6 +29,7 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.skills import Skills, SkillSourceSpec
+from flink_agents.runtime.skill import skill_source_registry
 from flink_agents.runtime.skill.repository.package_repository import (
     PackageSkillRepository,
 )
@@ -202,9 +204,34 @@ def mixed_sources(tmp_path: Path):
 class TestSkillManagerMixedSources:
     def test_url_only_loads_skills(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        digest = hashlib.sha256(_ZipHandler.zip_bytes).hexdigest()
+        config = Skills.from_url_unsafe_with_sha256(url, digest)
         manager = SkillManager(config)
         assert set(manager.get_all_skill_names()) == {"github", "nano-banana-pro"}
+
+    def test_serialized_http_source_is_rejected_by_default(self) -> None:
+        secret = "top-secret"
+        config = Skills(
+            sources=[
+                SkillSourceSpec(
+                    scheme="url",
+                    params={"url": f"http://example.com/skills.zip?token={secret}"},
+                )
+            ]
+        )
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config)
+        assert "url:http://example.com/skills.zip" in str(exc_info.value)
+        assert "disabled by default" in str(exc_info.value.__cause__)
+        assert secret not in str(exc_info.value)
+        assert secret not in str(exc_info.value.__cause__)
+
+    def test_url_origin_description_omits_credentials_and_query(self) -> None:
+        description = skill_source_registry.get("url").describe_location(
+            {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
+        )
+
+        assert description == "https://example.com/x.zip"
 
     def test_package_only_loads_skills(self, mixed_sources) -> None:
         _dir, _url, pkg, resource = mixed_sources
@@ -221,7 +248,10 @@ class TestSkillManagerMixedSources:
         config = Skills(
             sources=[
                 SkillSourceSpec(scheme="local", params={"path": dir_path}),
-                SkillSourceSpec(scheme="url", params={"url": url}),
+                SkillSourceSpec(
+                    scheme="url",
+                    params={"url": url, "allow_insecure_http": "true"},
+                ),
                 SkillSourceSpec(
                     scheme="package",
                     params={"package": pkg, "resource": resource},
@@ -236,7 +266,7 @@ class TestSkillManagerMixedSources:
 
     def test_close_releases_url_repo_temp_dir(self, mixed_sources) -> None:
         _dir, url, _pkg, _resource = mixed_sources
-        config = Skills.from_url(url)
+        config = Skills.from_url_unsafe(url)
         with SkillManager(config) as manager:
             skill_dir = manager.get_skill_dir("github")
             assert skill_dir is not None
@@ -258,6 +288,29 @@ class TestSkillManagerMixedSources:
         # The registered-scheme list comes from the chained ValueError.
         assert "local" in str(exc_info.value.__cause__)
         assert "package" in str(exc_info.value.__cause__)
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"uri": "https://user:password@example.com/x.zip?token=top-secret"},
+            {"url": "https://user:supersecret/x.zip?token=TOPSECRET"},
+        ],
+    )
+    def test_url_source_failures_do_not_leak_params(
+        self, params: dict[str, str]
+    ) -> None:
+        config = Skills(sources=[SkillSourceSpec(scheme="url", params=params)])
+
+        with pytest.raises(RuntimeError) as exc_info:
+            SkillManager(config)
+
+        messages = f"{exc_info.value}\n{exc_info.value.__cause__}"
+        assert "password" not in messages
+        assert "top-secret" not in messages
+        assert "supersecret" not in messages
+        assert "TOPSECRET" not in messages
+        if "url" in params:
+            assert "url:<redacted>" in str(exc_info.value)
 
     def test_close_releases_repo_displaced_by_duplicate_skill_name(self) -> None:
         from typing import Dict, List

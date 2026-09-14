@@ -162,19 +162,19 @@ public class SkillManager implements AutoCloseable {
     private void loadAll() {
         try {
             for (SkillSourceSpec spec : config.getSources()) {
+                SkillOrigin origin = null;
                 try {
+                    origin = originOf(spec);
                     SkillRepository repo =
                             SkillSourceRegistry.get(spec.getScheme())
                                     .open(spec.getParams(), classLoader);
                     openedRepos.add(repo);
-                    registerRepo(repo, originOf(spec));
+                    registerRepo(repo, origin);
                 } catch (IOException | IllegalArgumentException e) {
+                    String sourceIdentity =
+                            origin == null ? spec.getScheme() + " source" : origin.toString();
                     throw new IllegalStateException(
-                            "Failed to load skills from "
-                                    + spec.getScheme()
-                                    + ":"
-                                    + spec.getParams(),
-                            e);
+                            "Failed to load skills from " + sourceIdentity, e);
                 }
             }
         } catch (Throwable t) {

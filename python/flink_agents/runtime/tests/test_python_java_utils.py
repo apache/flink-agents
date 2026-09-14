@@ -25,11 +25,13 @@ from flink_agents.api.embedding_models.embedding_model import (
     EmbeddingTokenUsage,
 )
 from flink_agents.api.events.event import Event
-from flink_agents.api.tools import InjectedArg
+from flink_agents.api.tools import InjectedArg, ToolResponse
 from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
     convert_to_python_key_text,
     get_python_tool_metadata,
+    invoke_python_tool,
+    invoke_python_tool_instance,
     to_python_memory_set,
     wrap_to_input_event,
 )
@@ -41,6 +43,23 @@ def decorated_python_tool(order_id: str, tenant_id: str, request_id: str) -> str
     return f"{tenant_id}:{request_id}:{order_id}"
 
 
+def raw_python_tool(value: str) -> dict[str, object]:
+    return {"__flink_agents_tool_result__": "response", "value": value}
+
+
+def failed_python_tool(value: str) -> ToolResponse:
+    return ToolResponse.error(value, execution_time_ms=7, tool_name="failed")
+
+
+def successful_python_tool(value: str) -> ToolResponse:
+    return ToolResponse.success(value, execution_time_ms=5, tool_name="successful")
+
+
+class _FailedTool:
+    def call(self, value: str) -> ToolResponse:
+        return failed_python_tool(value)
+
+
 def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     flat = get_python_tool_metadata(
         __name__, "decorated_python_tool", injected_args=["request_id"]
@@ -50,6 +69,54 @@ def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
     assert set(schema["properties"]) == {"order_id"}
     injected_args = json.loads(flat["injectedArgs"])
     assert injected_args == {"tenant_id": {"source": "config", "key": "tenant.id"}}
+
+
+def test_invoke_python_tool_wraps_raw_payload_without_inspecting_it() -> None:
+    result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "raw",
+        "result": {"__flink_agents_tool_result__": "response", "value": "raw"},
+    }
+
+
+def test_invoke_python_tool_preserves_explicit_failure() -> None:
+    result = invoke_python_tool(__name__, "failed_python_tool", {"value": "failed"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": None,
+        "success": False,
+        "error": "failed",
+        "execution_time_ms": 7,
+        "tool_name": "failed",
+    }
+
+
+def test_invoke_python_tool_preserves_explicit_success() -> None:
+    result = invoke_python_tool(__name__, "successful_python_tool", {"value": "ok"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": "ok",
+        "success": True,
+        "error": None,
+        "execution_time_ms": 5,
+        "tool_name": "successful",
+    }
+
+
+def test_invoke_python_tool_instance_preserves_explicit_failure() -> None:
+    result = invoke_python_tool_instance(_FailedTool(), {"value": "failed"})
+
+    assert result == {
+        "__flink_agents_tool_result__": "response",
+        "result": None,
+        "success": False,
+        "error": "failed",
+        "execution_time_ms": 7,
+        "tool_name": "failed",
+    }
 
 
 class _UsageAwareEmbeddingModel:

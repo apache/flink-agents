@@ -41,7 +41,7 @@ import java.util.stream.Collectors;
  *
  * <ul>
  *   <li>{@link #fromLocalDir(String...)} for local directories or {@code .zip} files
- *   <li>{@link #fromUrl(String...)} for http(s) URLs pointing to a {@code .zip}
+ *   <li>{@link #fromUrl(String...)} for HTTPS URLs pointing to a {@code .zip}
  *   <li>{@link #fromClasspath(String...)} for resources on the classpath
  * </ul>
  *
@@ -92,15 +92,66 @@ public class Skills extends SerializableResource {
     }
 
     /**
-     * Create a {@link Skills} resource from one or more http(s) URLs.
+     * Create a {@link Skills} resource from one or more HTTPS URLs.
      *
      * <p>Each URL must point to a {@code .zip} whose top level is the baseDir.
      */
     public static Skills fromUrl(String... urls) {
         return new Skills(
                 Arrays.stream(urls)
-                        .map(u -> new SkillSourceSpec("url", Map.of("url", u)))
+                        .map(
+                                u -> {
+                                    SkillUrlUtils.validate(u, false);
+                                    return new SkillSourceSpec("url", Map.of("url", u));
+                                })
                         .collect(Collectors.toList()));
+    }
+
+    /**
+     * Create a {@link Skills} resource from an HTTPS URL pinned to a SHA-256 digest.
+     *
+     * <p>The digest is verified against the downloaded archive before extraction.
+     */
+    public static Skills fromUrlWithSha256(String url, String sha256) {
+        return urlSource(url, sha256, false);
+    }
+
+    /**
+     * Create a {@link Skills} resource that explicitly permits plain HTTP transport.
+     *
+     * <p>This compatibility escape hatch should be used only on trusted networks. Prefer {@link
+     * #fromUrl(String...)} with HTTPS.
+     */
+    public static Skills fromUrlUnsafe(String... urls) {
+        return new Skills(
+                Arrays.stream(urls)
+                        .map(
+                                u -> {
+                                    SkillUrlUtils.validate(u, true);
+                                    return new SkillSourceSpec(
+                                            "url", Map.of("url", u, "allow_insecure_http", "true"));
+                                })
+                        .collect(Collectors.toList()));
+    }
+
+    /**
+     * Create a digest-pinned {@link Skills} resource that explicitly permits plain HTTP transport.
+     */
+    public static Skills fromUrlUnsafeWithSha256(String url, String sha256) {
+        return urlSource(url, sha256, true);
+    }
+
+    private static Skills urlSource(String url, String sha256, boolean allowInsecureHttp) {
+        SkillUrlUtils.validate(url, allowInsecureHttp);
+        if (sha256 == null || !sha256.matches("[0-9a-fA-F]{64}")) {
+            throw new IllegalArgumentException(
+                    "sha256 must contain exactly 64 hexadecimal characters");
+        }
+        Map<String, String> params =
+                allowInsecureHttp
+                        ? Map.of("url", url, "sha256", sha256, "allow_insecure_http", "true")
+                        : Map.of("url", url, "sha256", sha256);
+        return new Skills(List.of(new SkillSourceSpec("url", params)));
     }
 
     /**

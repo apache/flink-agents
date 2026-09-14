@@ -26,6 +26,7 @@ import org.apache.fluss.client.table.writer.AppendWriter;
 import org.apache.fluss.row.InternalRow;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -34,12 +35,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.KEY_SERIALIZER;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.generateKey;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -63,29 +68,49 @@ public class FlussActionStateStoreTest {
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         actionStates = new HashMap<>();
-        store =
-                new FlussActionStateStore(
-                        actionStates,
-                        mock(Connection.class),
-                        mock(Table.class),
-                        mockWriter,
-                        MAX_PARALLELISM);
+        store = createStore(MAX_PARALLELISM);
 
         testAction = new NoOpAction("test-action");
         testEvent = new InputEvent("test data");
         testActionState = new ActionState(testEvent);
     }
 
+    private FlussActionStateStore createStore(int maxParallelism) {
+        return new FlussActionStateStore(
+                actionStates,
+                mock(Connection.class),
+                mock(Table.class),
+                mockWriter,
+                createKeyEncoder(maxParallelism));
+    }
+
     @Test
     void testPutActionState() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
 
-        verify(mockWriter).append(any(InternalRow.class));
+        ArgumentCaptor<InternalRow> rowCaptor = ArgumentCaptor.forClass(InternalRow.class);
+        verify(mockWriter).append(rowCaptor.capture());
 
-        String stateKey =
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
+        String stateKey = generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
         assertThat(actionStates).containsKey(stateKey);
         assertThat(actionStates.get(stateKey)).isEqualTo(testActionState);
+        assertThat(rowCaptor.getValue().getString(2).toString())
+                .isEqualTo(ActionStateUtil.generateBusinessKeyIdentity(TEST_KEY, KEY_SERIALIZER))
+                .isNotEqualTo(TEST_KEY);
+    }
+
+    @Test
+    void testPutUsesDistinctDistributionIdentitiesForTypedKeysWithSameStringForm()
+            throws Exception {
+        store.put(1L, 1L, testAction, testEvent, testActionState);
+        store.put("1", 1L, testAction, testEvent, testActionState);
+
+        ArgumentCaptor<InternalRow> rowCaptor = ArgumentCaptor.forClass(InternalRow.class);
+        verify(mockWriter, times(2)).append(rowCaptor.capture());
+
+        assertThat(rowCaptor.getAllValues())
+                .extracting(row -> row.getString(2).toString())
+                .doesNotHaveDuplicates();
     }
 
     @Test
@@ -99,34 +124,29 @@ public class FlussActionStateStoreTest {
                         mock(Connection.class),
                         mock(Table.class),
                         mockWriter,
-                        MAX_PARALLELISM);
+                        createKeyEncoder(MAX_PARALLELISM));
 
         assertThatThrownBy(
                         () -> failStore.put(TEST_KEY, 1L, testAction, testEvent, testActionState))
                 .isInstanceOf(Exception.class);
 
         // Cache should NOT be updated on write failure
-        String stateKey =
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
+        String stateKey = generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM);
         assertThat(actionStates).doesNotContainKey(stateKey);
     }
 
     @Test
     void testGetTriggersDivergenceCleanup() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM), testActionState);
         // diverge: same key+seqNum, different action
         actionStates.put(
-                ActionStateUtil.generateKey(
-                        TEST_KEY, 2L, new NoOpAction("test-2"), testEvent, MAX_PARALLELISM),
+                generateKey(TEST_KEY, 2L, new NoOpAction("test-2"), testEvent, MAX_PARALLELISM),
                 testActionState);
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         store.get(TEST_KEY, 2L, new NoOpAction("test-1"), testEvent);
 
@@ -143,10 +163,8 @@ public class FlussActionStateStoreTest {
      */
     @Test
     void testPruneStateDoesNotCrossNumericKeyAndSeqNum() throws Exception {
-        String keyOneAtSeqFive =
-                ActionStateUtil.generateKey(1L, 5L, testAction, testEvent, MAX_PARALLELISM);
-        String keyFiveAtSeqThree =
-                ActionStateUtil.generateKey(5L, 3L, testAction, testEvent, MAX_PARALLELISM);
+        String keyOneAtSeqFive = generateKey(1L, 5L, testAction, testEvent, MAX_PARALLELISM);
+        String keyFiveAtSeqThree = generateKey(5L, 3L, testAction, testEvent, MAX_PARALLELISM);
         actionStates.put(keyOneAtSeqFive, testActionState);
         actionStates.put(keyFiveAtSeqThree, testActionState);
 
@@ -165,8 +183,7 @@ public class FlussActionStateStoreTest {
     @Test
     void testGetCleanupIsScopedToRequestedKey() throws Exception {
         String otherKeyNewerState =
-                ActionStateUtil.generateKey(
-                        "other-key", 9L, testAction, testEvent, MAX_PARALLELISM);
+                generateKey("other-key", 9L, testAction, testEvent, MAX_PARALLELISM);
         actionStates.put(otherKeyNewerState, testActionState);
 
         // Cache miss for TEST_KEY at seqNum 1 triggers cleanup of states with seqNum > 1.
@@ -175,13 +192,36 @@ public class FlussActionStateStoreTest {
         assertThat(actionStates).containsKey(otherKeyNewerState);
     }
 
+    @Test
+    void testGetCleanupSeparatesTypedKeysWithSameStringForm() throws Exception {
+        FlussActionStateStore collisionStore = createStore(1);
+        String stringKeyNewerState = generateKey("1", 9L, testAction, testEvent, 1);
+        actionStates.put(stringKeyNewerState, testActionState);
+
+        assertThat(collisionStore.get(1L, 1L, testAction, testEvent)).isNull();
+
+        assertThat(actionStates).containsKey(stringKeyNewerState);
+    }
+
+    @Test
+    void testPruneSeparatesTypedKeysWithSameStringForm() throws Exception {
+        FlussActionStateStore collisionStore = createStore(1);
+        String numericState = generateKey(1L, 1L, testAction, testEvent, 1);
+        String stringState = generateKey("1", 1L, testAction, testEvent, 1);
+        actionStates.put(numericState, testActionState);
+        actionStates.put(stringState, testActionState);
+
+        collisionStore.pruneState(1L, 1L);
+
+        assertThat(actionStates).doesNotContainKey(numericState).containsKey(stringState);
+    }
+
     // ==================== rebuildState tests ====================
 
     @Test
     void testRebuildStateSkipsOnEmptyMarkers() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         store.rebuildState(Collections.emptyList());
 
@@ -192,8 +232,7 @@ public class FlussActionStateStoreTest {
     @Test
     void testRebuildStateSkipsOnNonMapMarker() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         // A non-Map marker is ignored, resulting in empty bucketStartOffsets.
         // Note: rebuildState clears the cache before checking offsets,
@@ -206,8 +245,7 @@ public class FlussActionStateStoreTest {
     @Test
     void testRebuildStateSkipsOnEmptyBucketOffsets() throws Exception {
         actionStates.put(
-                ActionStateUtil.generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM),
-                testActionState);
+                generateKey(TEST_KEY, 1L, testAction, testEvent, MAX_PARALLELISM), testActionState);
 
         // Empty map marker → no valid bucket offsets.
         // Same as above: cache is cleared before the early-return check.
@@ -224,7 +262,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, mockConnection, mockTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        mockConnection,
+                        mockTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         closeableStore.close();
 
@@ -245,7 +287,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, mockConnection, failingTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        mockConnection,
+                        failingTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         assertThat(catchThrowable(closeableStore::close)).isSameAs(tableFailure);
 
@@ -267,7 +313,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, failingConnection, failingTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        failingConnection,
+                        failingTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         Throwable thrown = catchThrowable(closeableStore::close);
 
@@ -288,7 +338,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, failingConnection, mockTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        failingConnection,
+                        mockTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         Throwable thrown = catchThrowable(closeableStore::close);
 
@@ -312,7 +366,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, failingConnection, failingTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        failingConnection,
+                        failingTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         Throwable thrown = catchThrowable(closeableStore::close);
 
@@ -338,7 +396,11 @@ public class FlussActionStateStoreTest {
 
         FlussActionStateStore closeableStore =
                 new FlussActionStateStore(
-                        actionStates, failingConnection, failingTable, mockWriter, MAX_PARALLELISM);
+                        actionStates,
+                        failingConnection,
+                        failingTable,
+                        mockWriter,
+                        createKeyEncoder(MAX_PARALLELISM));
 
         Throwable thrown = catchThrowable(closeableStore::close);
 

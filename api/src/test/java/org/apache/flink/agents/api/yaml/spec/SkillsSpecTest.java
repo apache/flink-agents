@@ -22,6 +22,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import org.junit.jupiter.api.Test;
 
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -41,10 +46,20 @@ class SkillsSpecTest {
     void parsesUrlsAndClasspath() throws Exception {
         SkillsSpec spec =
                 M.readValue(
-                        "name: s\nurls: [https://x/skills.zip]\nclasspath: [com/example/s]\n",
+                        "name: s\n"
+                                + "urls: [https://x/unpinned.zip]\n"
+                                + "url_sources:\n"
+                                + "  - url: https://x/skills.zip\n"
+                                + "    sha256: "
+                                + "a".repeat(64)
+                                + "\n"
+                                + "classpath: [com/example/s]\n",
                         SkillsSpec.class);
         assertThat(spec.getPaths()).isEmpty();
-        assertThat(spec.getUrls()).containsExactly("https://x/skills.zip");
+        assertThat(spec.getUrls()).containsExactly("https://x/unpinned.zip");
+        assertThat(spec.getUrlSources()).hasSize(1);
+        assertThat(spec.getUrlSources().get(0).getUrl()).isEqualTo("https://x/skills.zip");
+        assertThat(spec.getUrlSources().get(0).getSha256()).isEqualTo("a".repeat(64));
         assertThat(spec.getClasspath()).containsExactly("com/example/s");
     }
 
@@ -57,6 +72,40 @@ class SkillsSpecTest {
     @Test
     void rejectsAllEmpty() {
         assertThatThrownBy(() -> M.readValue("name: s\n", SkillsSpec.class))
-                .hasMessageContaining("at least one of paths/urls/classpath");
+                .hasMessageContaining("at least one of paths/urls/url_sources/classpath");
+    }
+
+    @Test
+    void treatsNullSourceListsAsEmpty() throws Exception {
+        Map<String, Function<SkillsSpec, List<?>>> getters = new LinkedHashMap<>();
+        getters.put("paths", SkillsSpec::getPaths);
+        getters.put("urls", SkillsSpec::getUrls);
+        getters.put("url_sources", SkillsSpec::getUrlSources);
+        getters.put("classpath", SkillsSpec::getClasspath);
+        getters.put("package", SkillsSpec::getPackageEntries);
+        for (Map.Entry<String, Function<SkillsSpec, List<?>>> entry : getters.entrySet()) {
+            String otherSource =
+                    entry.getKey().equals("paths")
+                            ? "urls: [https://example.com/skills.zip]\n"
+                            : "paths: [./a]\n";
+            SkillsSpec spec =
+                    M.readValue(
+                            "name: s\n" + otherSource + entry.getKey() + ": null\n",
+                            SkillsSpec.class);
+            assertThat(entry.getValue().apply(spec)).as(entry.getKey()).isEmpty();
+        }
+    }
+
+    @Test
+    void rejectsNonBooleanAllowInsecureHttp() {
+        for (String value : List.of("\"true\"", "\"yes\"", "1", "0")) {
+            String yaml =
+                    "name: s\nurl_sources:\n  - url: https://x/skills.zip\n"
+                            + "    allow_insecure_http: "
+                            + value
+                            + "\n";
+            assertThatThrownBy(() -> M.readValue(yaml, SkillsSpec.class))
+                    .hasMessageContaining("allow_insecure_http");
+        }
     }
 }

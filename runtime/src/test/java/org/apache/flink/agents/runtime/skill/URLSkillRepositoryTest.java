@@ -25,15 +25,21 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -85,7 +91,10 @@ class URLSkillRepositoryTest {
         try {
             int port = server.getAddress().getPort();
             URLSkillRepository repo =
-                    new URLSkillRepository("http://127.0.0.1:" + port + "/skills.zip");
+                    new URLSkillRepository(
+                            "http://127.0.0.1:" + port + "/skills.zip",
+                            sha256(body).toUpperCase(Locale.ROOT),
+                            true);
             assertEquals(
                     List.of("github", "nano-banana-pro"),
                     repo.getSkills().stream()
@@ -98,18 +107,153 @@ class URLSkillRepositoryTest {
     }
 
     @Test
+    void plainHttpRejectedByDefault() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("http://example.com/skills.zip"));
+        assertTrue(ex.getMessage().contains("disabled by default"));
+    }
+
+    @Test
+    void sha256MismatchRejectedBeforeExtraction(@TempDir Path tempDir) throws IOException {
+        Path zip = tempDir.resolve("skills.zip");
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry("../evil.txt"));
+            zos.write("pwn".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+        HttpServer server = startZipServer(Files.readAllBytes(zip), 200);
+        try {
+            int port = server.getAddress().getPort();
+            String url = "http://127.0.0.1:" + port + "/skills.zip?token=top-secret#fragment";
+            IllegalArgumentException ex =
+                    assertThrows(
+                            IllegalArgumentException.class,
+                            () -> new URLSkillRepository(url, "0".repeat(64), true));
+            assertTrue(ex.getMessage().contains("SHA-256 mismatch"));
+            assertTrue(ex.getMessage().contains("http://127.0.0.1:" + port + "/skills.zip"));
+            assertFalse(ex.getMessage().contains("top-secret"));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void invalidHostAndPortAreRejectedBeforeDownload() {
+        IllegalArgumentException malformedPort =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "https://user:supersecret/skills.zip?token=TOPSECRET"));
+        assertNull(malformedPort.getCause());
+        assertTrue(malformedPort.getMessage().endsWith("<redacted>"));
+        assertFalse(malformedPort.getMessage().contains("supersecret"));
+        assertFalse(malformedPort.getMessage().contains("TOPSECRET"));
+
+        for (String url :
+                List.of("https://:443/skills.zip", "https://example.com:65536/skills.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
+        }
+    }
+
+    @Test
+    void invalidHostnameSyntaxIsRejectedBeforeDownload() {
+        for (String url :
+                List.of(
+                        "https://exa_mple.com/skills.zip",
+                        "https://tést.com/skills.zip",
+                        "https://\u212A.com/skills.zip",
+                        "https://%65xample.com/skills.zip",
+                        "https://-example.com/skills.zip",
+                        "https://example-.com/skills.zip",
+                        "https://.example.com/skills.zip",
+                        "https://example..com/skills.zip",
+                        "https://a../skills.zip",
+                        "https://../skills.zip",
+                        "https://999.999.999.999/skills.zip",
+                        "https://127.1/skills.zip",
+                        "https://1.2.3/skills.zip",
+                        "https://foo.123/skills.zip",
+                        "https://foo.1bar/skills.zip",
+                        "https://1.2.3.4.5/skills.zip",
+                        "https://1.2.3./skills.zip",
+                        "https://1.2.3.4./skills.zip",
+                        "https://[v1.foo]/skills.zip")) {
+            assertThrows(IllegalArgumentException.class, () -> new URLSkillRepository(url), url);
+        }
+    }
+
+    @Test
+    void rawPercentEscapeIsRejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https://[fe80::1%eth0]/skills.zip"));
+        assertEquals("Invalid skill URL: https://[fe80::1%eth0]/skills.zip", ex.getMessage());
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    void scopedIpv6IsRejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https://[fe80::1%25lo0]/skills.zip"));
+        assertTrue(ex.getMessage().contains("must not include an IPv6 zone identifier"));
+        assertNull(ex.getCause());
+    }
+
+    @Test
+    void userInfoIsRejectedWithoutLeakingSecrets() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "https://user:password@example.com/skills.zip"
+                                                + "?token=top-secret"));
+        assertTrue(ex.getMessage().contains("must not include user info"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("top-secret"));
+    }
+
+    @Test
+    void opaqueMalformedCredentialsAreRedacted() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> new URLSkillRepository("https:user:password?token=top-secret"));
+        assertTrue(ex.getMessage().endsWith("<redacted>"));
+        assertFalse(ex.getMessage().contains("password"));
+        assertFalse(ex.getMessage().contains("top-secret"));
+    }
+
+    @Test
+    void malformedSha256RejectedBeforeDownload() {
+        IllegalArgumentException ex =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                new URLSkillRepository(
+                                        "http://127.0.0.1:1/skills.zip", "invalid", true));
+        assertTrue(ex.getMessage().contains("64 hexadecimal"));
+    }
+
+    @Test
     void nonHttpUrlRejected() {
         IllegalArgumentException ex1 =
                 assertThrows(
                         IllegalArgumentException.class,
                         () -> new URLSkillRepository("file:///tmp/skills.zip"));
-        assertTrue(ex1.getMessage().contains("Only http"));
+        assertTrue(ex1.getMessage().contains("Only HTTP(S)"));
 
         IllegalArgumentException ex2 =
                 assertThrows(
                         IllegalArgumentException.class,
                         () -> new URLSkillRepository("ftp://example.com/skills.zip"));
-        assertTrue(ex2.getMessage().contains("Only http"));
+        assertTrue(ex2.getMessage().contains("Only HTTP(S)"));
     }
 
     @Test
@@ -117,10 +261,26 @@ class URLSkillRepositoryTest {
         HttpServer server = startZipServer(new byte[0], 404);
         try {
             int port = server.getAddress().getPort();
-            String url = "http://127.0.0.1:" + port + "/missing.zip";
-            assertThrows(IOException.class, () -> new URLSkillRepository(url));
+            String url = "http://127.0.0.1:" + port + "/missing.zip?token=top-secret#fragment";
+            IOException error =
+                    assertThrows(IOException.class, () -> new URLSkillRepository(url, null, true));
+            assertTrue(error.getMessage().contains("Skill URL returned HTTP 404"));
+            assertFalse(error.getMessage().contains("top-secret"));
         } finally {
             server.stop(0);
+        }
+    }
+
+    private static String sha256(byte[] bytes) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
+            StringBuilder hex = new StringBuilder(64);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b & 0xff));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new AssertionError(e);
         }
     }
 }

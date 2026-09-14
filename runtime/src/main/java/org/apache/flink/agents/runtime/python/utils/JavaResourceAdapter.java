@@ -40,6 +40,8 @@ import java.util.Map;
 
 /** Adapter for managing Java resources and facilitating Python-Java interoperability. */
 public class JavaResourceAdapter {
+    private static final String TOOL_RESULT_MARKER = "__flink_agents_tool_result__";
+
     private final ResourceContext resourceContext;
 
     private final transient PythonInterpreter interpreter;
@@ -176,10 +178,11 @@ public class JavaResourceAdapter {
      * org.apache.flink.agents.api.annotation.ToolParam} name override, {@link ToolParameters}
      * numeric coercion (covers the LLM-emitted JSON Number → Java box type mismatch that reflective
      * {@code Method.invoke} otherwise rejects), required-parameter checking, and {@link
-     * ToolResponse} success / error semantics. The success result is unwrapped for the Python
-     * caller; an unsuccessful response is re-thrown as a {@link RuntimeException}.
+     * ToolResponse} success / error semantics. The response is returned in an internal envelope so
+     * the Python caller can distinguish an explicit Tool error from an invocation exception without
+     * inspecting user payloads.
      */
-    public Object invokeJavaTool(
+    public Map<String, Object> invokeJavaTool(
             String className,
             String methodName,
             List<String> parameterTypes,
@@ -189,10 +192,14 @@ public class JavaResourceAdapter {
         FunctionTool tool = FunctionTool.fromStaticMethod(method);
         ToolResponse response =
                 tool.call(new ToolParameters(arguments == null ? new HashMap<>() : arguments));
-        if (!response.isSuccess()) {
-            throw new RuntimeException(response.getError());
-        }
-        return response.getResult();
+        Map<String, Object> result = new HashMap<>();
+        result.put(TOOL_RESULT_MARKER, "response");
+        result.put("result", response.getResult());
+        result.put("success", response.isSuccess());
+        result.put("error", response.getError());
+        result.put("execution_time_ms", response.getExecutionTimeMs());
+        result.put("tool_name", response.getToolName());
+        return result;
     }
 
     /** Invoke a Java static action method with positional arguments from Python. */

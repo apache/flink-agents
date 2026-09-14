@@ -23,6 +23,7 @@ import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
+import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlock;
 import com.anthropic.models.messages.Usage;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
@@ -105,6 +106,10 @@ class AnthropicChatModelConnectionTest {
 
     /** An assistant response carrying a single text block. */
     private static Message textResponse(String text) {
+        return textResponse(text, Optional.empty());
+    }
+
+    private static Message textResponse(String text, Optional<StopReason> stopReason) {
         Usage usage =
                 Usage.builder()
                         .inputTokens(1)
@@ -119,10 +124,41 @@ class AnthropicChatModelConnectionTest {
                 .id("msg_test")
                 .model(Model.of("claude-sonnet-4-20250514"))
                 .addContent(TextBlock.builder().text(text).citations(Optional.empty()).build())
-                .stopReason(Optional.empty())
+                .stopReason(stopReason)
                 .stopSequence(Optional.empty())
                 .usage(usage)
                 .build();
+    }
+
+    @ParameterizedTest
+    @MethodSource("anthropicFinishReasons")
+    @DisplayName("Anthropic response records a finish reason for the shared chat action")
+    void testResponseRecordsFinishReason(StopReason stopReason, String expectedFinishReason) {
+        ChatMessage response =
+                connection()
+                        .convertResponse(
+                                new AnthropicChatModelConnection.BuiltRequest(null, false),
+                                textResponse("partial", Optional.of(stopReason)));
+
+        assertThat(response.getExtraArgs()).containsEntry("finish_reason", expectedFinishReason);
+    }
+
+    private static Stream<Arguments> anthropicFinishReasons() {
+        return Stream.of(
+                Arguments.of(StopReason.MAX_TOKENS, "length"),
+                Arguments.of(StopReason.END_TURN, "end_turn"));
+    }
+
+    @Test
+    @DisplayName("Anthropic response without a stop reason keeps the existing metadata shape")
+    void testResponseOmitsFinishReasonWhenAbsent() {
+        ChatMessage response =
+                connection()
+                        .convertResponse(
+                                new AnthropicChatModelConnection.BuiltRequest(null, false),
+                                textResponse("complete"));
+
+        assertThat(response.getExtraArgs()).doesNotContainKey("finish_reason");
     }
 
     /** True when the built request ends with the prefilled assistant "{" message. */

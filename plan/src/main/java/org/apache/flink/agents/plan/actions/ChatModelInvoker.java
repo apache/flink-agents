@@ -185,6 +185,12 @@ final class ChatModelInvoker {
                 }
                 return new ChatAttemptResult(
                         model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+            } catch (InterruptedException e) {
+                // A cancellation signal, not a model failure: restore the interrupt status and
+                // propagate immediately so task shutdown isn't delayed by retry backoff or an
+                // extra model call, regardless of the configured error-handling strategy.
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
                 if (strategy == Agent.ErrorHandlingStrategy.RETRY && attempt < numRetries) {
                     actualRetryCount = attempt + 1;
@@ -197,7 +203,12 @@ final class ChatModelInvoker {
                             numRetries,
                             currentWaitSec);
                     if (currentWaitSec > 0) {
-                        Thread.sleep(currentWaitSec * 1000L);
+                        try {
+                            Thread.sleep(currentWaitSec * 1000L);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw ie;
+                        }
                         totalWaitTimeSec += currentWaitSec;
                     }
                     continue;

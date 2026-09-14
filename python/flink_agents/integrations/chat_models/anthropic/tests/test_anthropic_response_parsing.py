@@ -134,6 +134,48 @@ def test_plain_text_response_keeps_token_usage() -> None:
     assert response.extra_args["completionTokens"] == 3
 
 
+@pytest.mark.parametrize(
+    ("stop_reason", "finish_reason"),
+    [("max_tokens", "length"), ("end_turn", "end_turn")],
+)
+def test_response_records_finish_reason(stop_reason: str, finish_reason: str) -> None:
+    """The shared action receives the canonical truncation reason from Anthropic."""
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason=stop_reason,
+        content=[TextBlock(type="text", text="Hello!")],
+        usage=_usage(),
+    )
+
+    response = _connection_returning(message).chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")]
+    )
+
+    assert response.extra_args["finish_reason"] == finish_reason
+
+
+def test_response_omits_finish_reason_when_absent() -> None:
+    """A response without a provider stop reason keeps the existing metadata shape."""
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason=None,
+        content=[TextBlock(type="text", text="Hello!")],
+        usage=_usage(),
+    )
+
+    response = _connection_returning(message).chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")]
+    )
+
+    assert "finish_reason" not in response.extra_args
+
+
 def test_tool_use_response_keeps_token_usage() -> None:
     # Regression guard for the tool_use path, which already carried usage.
     message = Message(
