@@ -19,10 +19,13 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import pemja.core.object.PyObject;
 
@@ -33,6 +36,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -74,6 +78,9 @@ class PythonMCPResourceTest {
         tool.close();
         prompt.close();
         server.close();
+        tool.close();
+        prompt.close();
+        server.close();
 
         verify(adapter).callMethod(toolObject, "close", Map.of());
         verify(adapter).callMethod(promptObject, "close", Map.of());
@@ -81,6 +88,28 @@ class PythonMCPResourceTest {
         verify(toolObject).close();
         verify(promptObject).close();
         verify(serverObject).close();
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void closesChildHandleOnceWhenLogicalCloseFails(boolean tool) throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResource = mock(PyObject.class);
+        when(adapter.invoke("python_java_utils.get_java_tool_metadata_from_tool", pythonResource))
+                .thenReturn(
+                        Map.of("name", "tool", "description", "description", "inputSchema", "{}"));
+        Resource child =
+                tool
+                        ? new PythonMCPTool(adapter, pythonResource)
+                        : new PythonMCPPrompt(adapter, pythonResource);
+        RuntimeException failure = new RuntimeException("logical close failed");
+        when(adapter.callMethod(pythonResource, "close", Map.of())).thenThrow(failure);
+
+        assertThatThrownBy(child::close).isSameAs(failure);
+        child.close();
+
+        verify(adapter).callMethod(pythonResource, "close", Map.of());
+        verify(pythonResource).close();
     }
 
     @Test
@@ -111,6 +140,7 @@ class PythonMCPResourceTest {
         PyObject serverObject = mock(PyObject.class);
         PyObject firstToolObject = mock(PyObject.class);
         PyObject secondToolObject = mock(PyObject.class);
+        PyObject thirdToolObject = mock(PyObject.class);
         PythonMCPServer server =
                 new PythonMCPServer(
                         adapter,
@@ -119,7 +149,7 @@ class PythonMCPResourceTest {
                         mock(ResourceContext.class));
 
         when(adapter.callMethod(serverObject, "list_tools", Map.of()))
-                .thenReturn(List.of(firstToolObject, secondToolObject));
+                .thenReturn(List.of(firstToolObject, secondToolObject, thirdToolObject));
         when(adapter.invoke("python_java_utils.get_java_tool_metadata_from_tool", firstToolObject))
                 .thenReturn(
                         Map.of(
@@ -128,11 +158,16 @@ class PythonMCPResourceTest {
                                 "inputSchema", "{}"));
         when(adapter.invoke("python_java_utils.get_java_tool_metadata_from_tool", secondToolObject))
                 .thenThrow(failure);
+        RuntimeException closeFailure = new RuntimeException("native close failed");
+        doThrow(closeFailure).when(thirdToolObject).close();
 
-        assertThatThrownBy(() -> server.listTools("server")).isSameAs(failure);
+        assertThatThrownBy(() -> server.listTools("server"))
+                .isSameAs(failure)
+                .hasSuppressedException(closeFailure);
 
         verify(adapter).callMethod(firstToolObject, "close", Map.of());
-        InOrder closeOrder = inOrder(secondToolObject, firstToolObject);
+        InOrder closeOrder = inOrder(thirdToolObject, secondToolObject, firstToolObject);
+        closeOrder.verify(thirdToolObject).close();
         closeOrder.verify(secondToolObject).close();
         closeOrder.verify(firstToolObject).close();
 

@@ -37,12 +37,12 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
 
     private final PyObject prompt;
     private final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
     private String name;
 
     public PythonMCPPrompt(PythonResourceAdapter adapter, PyObject prompt) {
         this.adapter = adapter;
-        this.prompt = ownedObjects.own(prompt);
+        this.prompt = prompt;
     }
 
     @Override
@@ -96,6 +96,12 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, prompt);
+        if (closed || prompt == null) {
+            return;
+        }
+        closed = true;
+        try (prompt) {
+            adapter.callMethod(prompt, "close", Map.of());
+        }
     }
 }

@@ -30,12 +30,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Owns Pemja references whose lifetime is bounded by a Java-to-Python bridge operation.
+ * Owns temporary Pemja references consumed within a Java-to-Python bridge operation.
  *
  * <p>Callers may register a {@link PyObject} directly or nested in a Java map, list, or object
- * array. Every registered handle must be fully consumed before the scope closes, or transferred to
- * another owner with {@link #release(Object)}. Values returned to callers must not contain handles
- * that are still owned by this scope.
+ * array. Every registered handle must be fully consumed before the scope closes. Values returned to
+ * callers must not contain handles owned by this scope.
  */
 @Internal
 public final class PythonObjectScope implements AutoCloseable {
@@ -47,31 +46,8 @@ public final class PythonObjectScope implements AutoCloseable {
     /** Adds every {@link PyObject} reachable through the supplied bridge result to this scope. */
     public <T> T own(T value) {
         ensureOpen();
-        visit(value, true);
+        visit(value, Collections.newSetFromMap(new IdentityHashMap<>()));
         return value;
-    }
-
-    /** Transfers every {@link PyObject} reachable through the value out of this scope. */
-    public <T> T release(T value) {
-        ensureOpen();
-        visit(value, false);
-        return value;
-    }
-
-    /**
-     * Closes a long-lived Python resource once, including both its Python lifecycle and its Pemja
-     * reference.
-     */
-    public void closeResource(PythonResourceAdapter adapter, PyObject resource) throws Exception {
-        if (resource == null || !ownedObjects.remove(resource)) {
-            return;
-        }
-
-        List<AutoCloseable> closeables =
-                List.of(
-                        () -> adapter.callMethod(resource, "close", Collections.emptyMap()),
-                        resource);
-        LambdaUtil.applyToAllWhileSuppressingExceptions(closeables, AutoCloseable::close);
     }
 
     @Override
@@ -81,39 +57,25 @@ public final class PythonObjectScope implements AutoCloseable {
         }
         closed = true;
 
-        List<PyObject> references = new ArrayList<>();
-        for (int i = acquisitionOrder.size() - 1; i >= 0; i--) {
-            PyObject object = acquisitionOrder.get(i);
-            if (ownedObjects.remove(object)) {
-                references.add(object);
-            }
-        }
-        acquisitionOrder.clear();
-
+        Collections.reverse(acquisitionOrder);
         try {
-            LambdaUtil.applyToAllWhileSuppressingExceptions(references, PyObject::close);
+            LambdaUtil.applyToAllWhileSuppressingExceptions(acquisitionOrder, PyObject::close);
         } catch (Exception e) {
             ExceptionUtils.rethrow(e);
+        } finally {
+            acquisitionOrder.clear();
+            ownedObjects.clear();
         }
     }
 
-    private void visit(Object value, boolean acquire) {
-        Set<Object> visitedContainers = Collections.newSetFromMap(new IdentityHashMap<>());
-        visit(value, acquire, visitedContainers);
-    }
-
-    private void visit(Object value, boolean acquire, Set<Object> visitedContainers) {
+    private void visit(Object value, Set<Object> visitedContainers) {
         if (value == null) {
             return;
         }
         if (value instanceof PyObject) {
             PyObject object = (PyObject) value;
-            if (acquire) {
-                if (ownedObjects.add(object)) {
-                    acquisitionOrder.add(object);
-                }
-            } else {
-                ownedObjects.remove(object);
+            if (ownedObjects.add(object)) {
+                acquisitionOrder.add(object);
             }
             return;
         }
@@ -122,8 +84,8 @@ public final class PythonObjectScope implements AutoCloseable {
                 return;
             }
             for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
-                visit(entry.getKey(), acquire, visitedContainers);
-                visit(entry.getValue(), acquire, visitedContainers);
+                visit(entry.getKey(), visitedContainers);
+                visit(entry.getValue(), visitedContainers);
             }
             return;
         }
@@ -132,7 +94,7 @@ public final class PythonObjectScope implements AutoCloseable {
                 return;
             }
             for (Object element : (List<?>) value) {
-                visit(element, acquire, visitedContainers);
+                visit(element, visitedContainers);
             }
             return;
         }
@@ -141,7 +103,7 @@ public final class PythonObjectScope implements AutoCloseable {
                 return;
             }
             for (Object element : (Object[]) value) {
-                visit(element, acquire, visitedContainers);
+                visit(element, visitedContainers);
             }
         }
     }

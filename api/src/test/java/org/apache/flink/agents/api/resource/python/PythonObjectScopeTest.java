@@ -30,7 +30,6 @@ import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 class PythonObjectScopeTest {
 
@@ -49,38 +48,6 @@ class PythonObjectScopeTest {
         closeOrder.verify(first).close();
         verify(first, times(1)).close();
         verify(second, times(1)).close();
-    }
-
-    @Test
-    void leavesTransferredReferencesOpen() throws Exception {
-        PyObject retained = mock(PyObject.class);
-        PyObject temporary = mock(PyObject.class);
-
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(List.of(retained, temporary));
-            scope.release(retained);
-        }
-
-        verify(temporary).close();
-        verify(retained, times(0)).close();
-    }
-
-    @Test
-    void closesNativeReferenceWhenLogicalResourceCloseFails() throws Exception {
-        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
-        PyObject resource = mock(PyObject.class);
-        RuntimeException failure = new RuntimeException("logical close failed");
-        when(adapter.callMethod(resource, "close", Map.of())).thenThrow(failure);
-
-        PythonObjectScope scope = new PythonObjectScope();
-        scope.own(resource);
-
-        assertThatThrownBy(() -> scope.closeResource(adapter, resource)).isSameAs(failure);
-        verify(resource).close();
-
-        scope.closeResource(adapter, resource);
-        verify(adapter, times(1)).callMethod(resource, "close", Map.of());
-        verify(resource, times(1)).close();
     }
 
     @Test

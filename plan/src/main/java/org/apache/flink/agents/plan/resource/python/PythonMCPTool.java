@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -42,7 +41,7 @@ public class PythonMCPTool extends Tool
             "python_java_utils.get_java_tool_metadata_from_tool";
     private final PyObject tool;
     private final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
     @Nullable private final String mcpServerName;
 
     /**
@@ -66,7 +65,7 @@ public class PythonMCPTool extends Tool
     public PythonMCPTool(
             PythonResourceAdapter adapter, PyObject tool, @Nullable String mcpServerName) {
         super(getToolMetadata(adapter, tool));
-        this.tool = ownedObjects.own(tool);
+        this.tool = tool;
         this.adapter = adapter;
         this.mcpServerName = mcpServerName;
     }
@@ -125,6 +124,12 @@ public class PythonMCPTool extends Tool
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, tool);
+        if (closed || tool == null) {
+            return;
+        }
+        closed = true;
+        try (tool) {
+            adapter.callMethod(tool, "close", Map.of());
+        }
     }
 }

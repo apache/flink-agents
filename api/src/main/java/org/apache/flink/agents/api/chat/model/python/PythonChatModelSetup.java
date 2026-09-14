@@ -47,7 +47,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
     private final PyObject chatModelSetup;
     private final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
 
     public PythonChatModelSetup(
             PythonResourceAdapter adapter,
@@ -55,7 +55,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             ResourceDescriptor descriptor,
             ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.chatModelSetup = ownedObjects.own(chatModelSetup);
+        this.chatModelSetup = chatModelSetup;
         this.adapter = adapter;
     }
 
@@ -113,6 +113,12 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, chatModelSetup);
+        if (closed || chatModelSetup == null) {
+            return;
+        }
+        closed = true;
+        try (chatModelSetup) {
+            adapter.callMethod(chatModelSetup, "close", Map.of());
+        }
     }
 }

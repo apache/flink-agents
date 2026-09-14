@@ -42,7 +42,7 @@ public class PythonChatModelConnection extends BaseChatModelConnection
         implements PythonResourceWrapper {
     private final PyObject chatModel;
     private final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
 
     /**
      * Creates a new PythonChatModelConnection.
@@ -59,7 +59,7 @@ public class PythonChatModelConnection extends BaseChatModelConnection
             ResourceDescriptor descriptor,
             ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.chatModel = ownedObjects.own(chatModel);
+        this.chatModel = chatModel;
         this.adapter = adapter;
     }
 
@@ -104,6 +104,12 @@ public class PythonChatModelConnection extends BaseChatModelConnection
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, chatModel);
+        if (closed || chatModel == null) {
+            return;
+        }
+        closed = true;
+        try (chatModel) {
+            adapter.callMethod(chatModel, "close", Map.of());
+        }
     }
 }

@@ -55,7 +55,7 @@ import java.util.Map;
 public class PythonVectorStore extends BaseVectorStore implements PythonResourceWrapper {
     protected final PyObject vectorStore;
     protected final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
 
     /**
      * Creates a new PythonVectorStore.
@@ -72,7 +72,7 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             ResourceDescriptor descriptor,
             ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.vectorStore = ownedObjects.own(vectorStore);
+        this.vectorStore = vectorStore;
         this.adapter = adapter;
     }
 
@@ -261,6 +261,12 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, vectorStore);
+        if (closed || vectorStore == null) {
+            return;
+        }
+        closed = true;
+        try (vectorStore) {
+            adapter.callMethod(vectorStore, "close", Map.of());
+        }
     }
 }

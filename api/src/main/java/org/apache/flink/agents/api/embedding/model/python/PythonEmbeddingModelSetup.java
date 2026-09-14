@@ -23,7 +23,6 @@ import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
@@ -49,7 +48,7 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
     private final PyObject embeddingModelSetup;
     private final PythonResourceAdapter adapter;
-    private final PythonObjectScope ownedObjects = new PythonObjectScope();
+    private boolean closed;
 
     /**
      * Creates a new PythonEmbeddingModelSetup.
@@ -66,7 +65,7 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
             ResourceDescriptor descriptor,
             ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.embeddingModelSetup = ownedObjects.own(embeddingModelSetup);
+        this.embeddingModelSetup = embeddingModelSetup;
         this.adapter = adapter;
     }
 
@@ -178,6 +177,12 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
     @Override
     public void close() throws Exception {
-        ownedObjects.closeResource(adapter, embeddingModelSetup);
+        if (closed || embeddingModelSetup == null) {
+            return;
+        }
+        closed = true;
+        try (embeddingModelSetup) {
+            adapter.callMethod(embeddingModelSetup, "close", Map.of());
+        }
     }
 }
