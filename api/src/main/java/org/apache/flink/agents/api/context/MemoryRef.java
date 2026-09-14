@@ -35,9 +35,9 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * A serializable, persistent reference to a specific data item in Short-Term Memory. It acts as a
- * lightweight pointer, containing the path of the data, allowing for efficient passing of large
- * objects between Actions.
+ * A serializable, persistent reference to a specific data item in a {@link MemoryObject}. It acts
+ * as a lightweight pointer, containing the path of the data, allowing for efficient passing of
+ * large objects between Actions.
  */
 @JsonSerialize(using = MemoryRef.Serializer.class)
 @JsonDeserialize(using = MemoryRef.Deserializer.class)
@@ -60,7 +60,7 @@ public final class MemoryRef implements Serializable {
     /**
      * Creates a new MemoryRef instance with the given path.
      *
-     * @param path The absolute path of the data in Short-Term Memory.
+     * @param path The absolute path of the data in memory.
      * @return A new MemoryRef instance.
      */
     public static MemoryRef create(MemoryObject.MemoryType type, String path) {
@@ -70,7 +70,7 @@ public final class MemoryRef implements Serializable {
     /**
      * Resolves the reference using the provided RunnerContext to get the actual data.
      *
-     * @param ctx The current execution context, used to access Short-Term Memory.
+     * @param ctx The current execution context, used to access memory.
      * @return The deserialized, original data object.
      * @throws Exception if the memory cannot be accessed or the data cannot be resolved.
      */

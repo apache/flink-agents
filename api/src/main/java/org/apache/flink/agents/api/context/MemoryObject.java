@@ -21,9 +21,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * A representation of an object in the short-term memory. It is responsible for accessing and
- * manipulating (direct or indirect) fields within the memory structure. A direct field is a field
- * which stores primitive data directly, while an indirect filed is a field which represents a
+ * A representation of an object in sensory or short-term memory. It is responsible for accessing
+ * and manipulating (direct or indirect) fields within the memory structure. A direct field is a
+ * field which stores primitive data directly, while an indirect filed is a field which represents a
  * nested object.Fields can be accessed using an absolute or relative path.
  */
 public interface MemoryObject {
@@ -46,7 +46,7 @@ public interface MemoryObject {
     /**
      * Returns a MemoryObject that represents the path of the given reference.
      *
-     * @param ref a reference to a data item in the short-term memory
+     * @param ref a reference to a data item in the memory
      * @return a MemoryObject instance pointing to the referenced field. Returns null if the path of
      *     the reference does not exist.
      * @throws Exception if an error occurs during state access
