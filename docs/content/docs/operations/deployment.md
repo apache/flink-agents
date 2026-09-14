@@ -103,9 +103,11 @@ The same persisted action state is also used by fine-grained durable execution.
 {{< /hint >}}
 
 {{< hint warning >}}
-The action-state key format has changed and existing action-state records are unsupported. When upgrading, use a fresh Kafka topic or Fluss table and start without an older checkpoint or savepoint. Recovery validates the current fields, but cannot reliably distinguish every older record from the current format.
+The action-state key format changed in Flink Agents 0.4 and action-state records written by earlier versions are unsupported. When upgrading, use a fresh Kafka topic or Fluss table and start without an older checkpoint or savepoint. Recovery validates the current fields, but cannot reliably distinguish every older record from the current format.
 
 Action-state keys contain a digest of the serialized key. Changing key types or serializer configuration when recovering existing state is unsupported, even if Flink accepts the change for keyed state: the same key can serialize to different bytes, causing recovery to miss completed actions and repeat their side effects. These changes are not detected by the action-state store. Preserve the original key types and serializer configuration for recovery. Custom key serializers must produce deterministic bytes.
+
+Action-state keys identify an action by its name. Keeping an action's name across a code change lets recovery reuse its completed results; renaming an action makes its recorded results unreachable, so it is executed again on the next recovery.
 
 Dedicate each Kafka topic or Fluss table to one logical Flink Agents operator, shared by that operator's subtasks. Action-state keys do not contain a job or operator namespace, so sharing a backend between logical operators can allow otherwise identical records to collide.
 {{< /hint >}}
