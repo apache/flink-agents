@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.chatmodels.gemini;
 
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
+import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -27,6 +28,11 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -65,6 +71,31 @@ class GeminiChatModelConnectionTest {
     private static GeminiChatModelConnection connection() {
         return new GeminiChatModelConnection(
                 descriptor("test-key", null, "gemini-3-pro-preview"), NOOP);
+    }
+
+    /**
+     * buildConfig consumes the keys it recognizes via {@code arguments.remove(...)}, so the map
+     * handed to it must be mutable.
+     */
+    private static Map<String, Object> params() {
+        return new HashMap<>();
+    }
+
+    /** Minimal tool carrying only metadata; never invoked in these tests. */
+    private static final class SchemaOnlyTool extends Tool {
+        SchemaOnlyTool() {
+            super(new ToolMetadata("add", "Add two numbers.", "{\"type\":\"object\"}"));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new UnsupportedOperationException("not invoked in this test");
+        }
     }
 
     @Test
@@ -407,5 +438,65 @@ class GeminiChatModelConnectionTest {
         GenerateContentConfig config = builder.build();
         assertThat(config.topK()).isEmpty();
         assertThat(config.stopSequences()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("buildConfig lifts SYSTEM messages into the config's systemInstruction")
+    void buildConfigAppliesSystemInstruction() {
+        List<ChatMessage> messages =
+                List.of(ChatMessage.system("be terse"), ChatMessage.user("hi"));
+
+        GenerateContentConfig config = connection().buildConfig(messages, null, params());
+
+        Content instruction = config.systemInstruction().orElseThrow();
+        // Exactly one part: the USER turn must not be lifted into the system instruction.
+        List<Part> parts = instruction.parts().orElseThrow();
+        assertThat(parts).hasSize(1);
+        assertThat(parts.get(0).text()).hasValue("be terse");
+    }
+
+    @Test
+    @DisplayName("buildConfig routes additional_kwargs through applyAdditionalKwargs")
+    void buildConfigForwardsAdditionalKwargs() {
+        Map<String, Object> arguments = params();
+        arguments.put("additional_kwargs", Map.of("top_k", 40, "top_p", 0.9));
+
+        GenerateContentConfig config =
+                connection().buildConfig(List.of(ChatMessage.user("hi")), null, arguments);
+
+        assertThat(config.topK()).hasValue(40f);
+        assertThat(config.topP()).hasValue(0.9f);
+    }
+
+    @Test
+    @DisplayName("buildConfig sets temperature and max_output_tokens from the arguments map")
+    void buildConfigSetsTemperatureAndMaxOutputTokens() {
+        Map<String, Object> arguments = params();
+        arguments.put("temperature", 0.25);
+        arguments.put("max_output_tokens", 512);
+
+        GenerateContentConfig config =
+                connection().buildConfig(List.of(ChatMessage.user("hi")), null, arguments);
+
+        assertThat(config.temperature()).hasValue(0.25f);
+        assertThat(config.maxOutputTokens()).hasValue(512);
+    }
+
+    @Test
+    @DisplayName("buildConfig wires declared tools into the config")
+    void buildConfigSetsToolsWhenPresent() {
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(
+                                List.of(ChatMessage.user("hi")),
+                                List.of(new SchemaOnlyTool()),
+                                params());
+
+        List<FunctionDeclaration> declarations =
+                config.tools().orElseThrow().get(0).functionDeclarations().orElseThrow();
+        assertThat(declarations).hasSize(1);
+        assertThat(declarations.get(0).name()).hasValue("add");
+        assertThat(declarations.get(0).description()).hasValue("Add two numbers.");
+        assertThat(declarations.get(0).parametersJsonSchema()).hasValue(Map.of("type", "object"));
     }
 }

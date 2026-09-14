@@ -17,12 +17,16 @@
 ################################################################################
 """URL-based :class:`SkillRepository`.
 
-Downloads a zip from an http(s) URL into a temp file, extracts it into a
+Downloads a zip from an HTTPS URL into a temp file, extracts it into a
 process-local temp directory, and reads skills from there.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
+
+from flink_agents.api.skills import redact_skill_url, validate_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
     download_to_tempfile,
     extract_zip_safely,
@@ -35,26 +39,58 @@ _REQUEST_TIMEOUT_SEC = 90
 
 
 class URLSkillRepository(MaterializedSkillRepository):
-    """Skill repository backed by an http(s) URL pointing to a zip.
+    """Skill repository backed by an HTTPS URL pointing to a zip.
 
     The zip is downloaded then extracted into a process-local temp directory
-    (released eagerly via :meth:`close` or at process exit).
+    (released eagerly via :meth:`close` or at process exit). Plain HTTP is
+    rejected unless explicitly enabled, and an optional SHA-256 digest is
+    verified before extraction.
     """
 
-    def __init__(self, url: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        sha256: str | None = None,
+        allow_insecure_http: bool = False,
+    ) -> None:
         """Download and extract the zip at ``url``.
 
         Raises:
-            ValueError: If the URL is not http(s).
+            ValueError: If the URL transport or SHA-256 value is invalid.
             urllib.error.HTTPError / URLError: On transport/HTTP failures.
         """
-        if not url.startswith(("http://", "https://")):
-            msg = f"Only http(s) URLs are supported: {url}"
+        validate_skill_url(url, allow_insecure_http=allow_insecure_http)
+        if sha256 is not None and not isinstance(sha256, str):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
+            raise ValueError(msg)
+        normalized_sha256 = sha256.lower() if sha256 is not None else None
+        if normalized_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", normalized_sha256
+        ):
+            msg = "sha256 must contain exactly 64 hexadecimal characters"
             raise ValueError(msg)
 
         self._url = url
-        tmp_zip = download_to_tempfile(url, timeout=_REQUEST_TIMEOUT_SEC)
+        tmp_zip = download_to_tempfile(
+            url,
+            timeout=_REQUEST_TIMEOUT_SEC,
+            allow_insecure_http=allow_insecure_http,
+        )
         try:
+            if normalized_sha256 is not None:
+                digest = hashlib.sha256()
+                with tmp_zip.open("rb") as archive:
+                    for chunk in iter(lambda: archive.read(8192), b""):
+                        digest.update(chunk)
+                actual = digest.hexdigest()
+                if actual != normalized_sha256:
+                    msg = (
+                        "SHA-256 mismatch for skill archive at "
+                        f"{redact_skill_url(url)}: expected "
+                        f"{normalized_sha256}, got {actual}"
+                    )
+                    raise ValueError(msg)
             materialization = extract_zip_safely(tmp_zip)
         finally:
             tmp_zip.unlink(missing_ok=True)

@@ -140,12 +140,21 @@ Each factory method creates a source with a different scheme:
 | Factory method (Python / Java) | Scheme | Description |
 |--------------------------------|--------|-------------|
 | `Skills.from_local_dir(*paths)` / `Skills.fromLocalDir(String...)` | `local` | One or more local directories, or `.zip` files, holding skill subdirectories. The path must be resolvable on the Flink TaskManager that runs the agent. |
-| `Skills.from_url(*urls)` / `Skills.fromUrl(String...)` | `url` | One or more `http(s)` URLs, each pointing to a `.zip` whose top level holds the skill subdirectories. |
+| `Skills.from_url(*urls)` / `Skills.fromUrl(String...)` | `url` | One or more HTTPS URLs without embedded user information, each pointing to a `.zip` whose top level holds the skill subdirectories. Plain HTTP is rejected by default. |
+| `Skills.from_url_with_sha256(url, digest)` / `Skills.fromUrlWithSha256(url, digest)` | `url` | An HTTPS URL pinned to the expected lowercase or uppercase SHA-256 digest of the downloaded archive. The digest is verified before extraction. |
+| `Skills.from_url_unsafe(*urls)` / `Skills.fromUrlUnsafe(String...)` | `url` | Explicitly permits plain HTTP for compatibility on trusted development networks. |
+| `Skills.from_url_unsafe_with_sha256(url, digest)` / `Skills.fromUrlUnsafeWithSha256(url, digest)` | `url` | Pins an archive digest while explicitly permitting plain HTTP transport. |
 | `Skills.from_package(*pairs)` | `package` | **Python only.** One or more `(package, resource)` tuples locating skills inside an installed Python package. |
 | `Skills.fromClasspath(String...)` | `classpath` | **Java only.** One or more classpath resource paths (e.g. under `src/main/resources/skills`). When packaged into a jar, the resource is materialized to a temp directory at runtime. |
 
 {{< hint info >}}
 The `package` scheme is Python-only and the `classpath` scheme is Java-only. A plan written in one language using the other language's scheme deserializes fine, but fails fast at load time. Use `local` or `url` for cross-language skill sources.
+{{< /hint >}}
+
+URL source hosts must use DNS-compatible ASCII syntax. Hostnames containing underscores, such as `skill_server`, are rejected; use a DNS-compatible name such as `skill-server`. Internationalized hostnames must be supplied in IDNA/Punycode form rather than as raw Unicode, and scoped IPv6 literals with zone identifiers are rejected. Redirect locations must also be valid URLs, so raw spaces must be percent-encoded as `%20`. These checks are stricter than the URL handling in earlier releases.
+
+{{< hint warning >}}
+Remote skill archives are trusted instructions and code: their `SKILL.md` content is consumed by the agent, and their bundled scripts may become executable through the built-in `bash` tool when allowed by the chat model. Use HTTPS and pin the archive with `from_url_with_sha256` / `fromUrlWithSha256` whenever possible. Plain HTTP requires the explicit compatibility methods `from_url_unsafe` / `fromUrlUnsafe` (or their `*_unsafe_with_sha256` variants); these should be limited to trusted development networks. The integrity check protects the archive in transit and at rest at the source, but does not make untrusted skill content safe.
 {{< /hint >}}
 
 ## Enable Skills on a Chat Model

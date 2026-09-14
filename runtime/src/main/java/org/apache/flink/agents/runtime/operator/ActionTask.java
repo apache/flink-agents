@@ -60,46 +60,62 @@ public abstract class ActionTask implements Serializable {
 
     private boolean executionStartedEventEmitted;
     /**
+     * The sequence number of the input record that triggered this task, counted per key by {@link
+     * OperatorStateManager#initOrIncSequenceNumber}. Every task generated while processing one
+     * record inherits the same number, so the number identifies the record rather than the task.
+     */
+    protected final long sequenceNumber;
+
+    /**
      * Since RunnerContextImpl contains references to the Operator and state, it should not be
      * serialized and included in the state with ActionTask. Instead, we should check if a valid
      * RunnerContext exists before each ActionTask invocation and create a new one if necessary.
      */
     protected transient RunnerContextImpl runnerContext;
 
-    public ActionTask(Object key, Event event, Action action) {
+    public ActionTask(Object key, Event event, Action action, long sequenceNumber) {
         this(
                 key,
                 event,
                 action,
+                sequenceNumber,
                 UUID.randomUUID().toString(),
                 ExecutionTraceContext.forExecution(
                         null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
     }
 
-    protected ActionTask(Object key, Event event, Action action, String observationId) {
+    protected ActionTask(
+            Object key, Event event, Action action, long sequenceNumber, String observationId) {
         this(
                 key,
                 event,
                 action,
+                sequenceNumber,
                 observationId,
                 ExecutionTraceContext.forExecution(
                         null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
     }
 
     protected ActionTask(
-            Object key, Event event, Action action, ExecutionTraceContext traceContext) {
-        this(key, event, action, UUID.randomUUID().toString(), traceContext);
+            Object key,
+            Event event,
+            Action action,
+            long sequenceNumber,
+            ExecutionTraceContext traceContext) {
+        this(key, event, action, sequenceNumber, UUID.randomUUID().toString(), traceContext);
     }
 
     protected ActionTask(
             Object key,
             Event event,
             Action action,
+            long sequenceNumber,
             String observationId,
             ExecutionTraceContext traceContext) {
         this.key = key;
         this.event = event;
         this.action = action;
+        this.sequenceNumber = sequenceNumber;
         this.observationId = Objects.requireNonNull(observationId, "observationId");
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
     }
@@ -116,6 +132,18 @@ public abstract class ActionTask implements Serializable {
         return key;
     }
 
+    public Event getEvent() {
+        return event;
+    }
+
+    public Action getAction() {
+        return action;
+    }
+
+    public long getSequenceNumber() {
+        return sequenceNumber;
+    }
+
     public String getObservationId() {
         if (observationId == null) {
             // Tasks restored from state written before observation IDs were introduced have no
@@ -125,7 +153,7 @@ public abstract class ActionTask implements Serializable {
         return observationId;
     }
 
-    ExecutionTraceContext getTraceContext() {
+    public ExecutionTraceContext getTraceContext() {
         return traceContext;
     }
 

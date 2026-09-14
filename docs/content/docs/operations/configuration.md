@@ -179,7 +179,7 @@ Here are the configuration options for Kafka-based Action State Store.
 | Key                                 | Default                  | Type    | Description                                                                 |
 |-------------------------------------|--------------------------|---------|-----------------------------------------------------------------------------|
 | `kafkaBootstrapServers`             | "localhost:9092"         | String  | The config parameter specifies the Kafka bootstrap server.                  |
-| `kafkaActionStateTopic`             | (none)                   | String  | The config parameter specifies the Kafka topic for action state.            |
+| `kafkaActionStateTopic`             | (none)                   | String  | The Kafka topic for action state. Dedicate it to one logical Flink Agents operator, shared by that operator's subtasks. |
 | `kafkaActionStateTopicNumPartitions`| 64                       | Integer | The config parameter specifies the number of partitions for the Kafka action state topic. |
 | `kafkaActionStateTopicReplicationFactor` | 1                     | Integer | The config parameter specifies the replication factor for the Kafka action state topic. |
 | `kafkaActionStateTombstoneEnabled`  | false                    | Boolean | Whether pruning sends tombstone records so log compaction can reclaim pruned keys on a compacted action-state topic. Off by default: pruning does not invalidate older restore points, but the topic continues to grow. When enabled, the checkpoint whose completion triggers pruning remains usable, but restoring an earlier checkpoint or savepoint may replay later tombstones and re-execute already completed actions. Enable only if the job never restores from earlier checkpoints or savepoints, or if re-executing actions is acceptable. |
@@ -192,7 +192,7 @@ Here are the configuration options for Fluss-based Action State Store.
 |------------------------------|------------------|---------|------------------------------------------------------------------------------------------|
 | `flussBootstrapServers`      | "localhost:9123" | String  | The Fluss bootstrap servers address.                                                     |
 | `flussActionStateDatabase`   | "flink_agents"   | String  | The Fluss database name for storing action state.                                        |
-| `flussActionStateTable`      | (none)           | String  | The Fluss table name for storing action state.                                           |
+| `flussActionStateTable`      | (none)           | String  | The Fluss table for action state. Dedicate it to one logical Flink Agents operator, shared by that operator's subtasks. |
 | `flussActionStateTableBuckets` | 64             | Integer | The number of buckets for the Fluss action state table.                                  |
 | `flussSecurityProtocol`      | "PLAINTEXT"      | String  | The authentication protocol for Fluss client. Valid values: `PLAINTEXT` (default, no authentication), `SASL` (SASL/PLAIN authentication). |
 | `flussSaslMechanism`         | "PLAIN"          | String  | The SASL mechanism for Fluss authentication.                                             |

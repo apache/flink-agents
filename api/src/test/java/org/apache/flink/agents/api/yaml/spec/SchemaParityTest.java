@@ -78,6 +78,7 @@ class SchemaParityTest {
         m.put("SkillsSpec", SkillsSpec.class);
         m.put("PackageSkillSpec", PackageSkillSpec.class);
         m.put("ToolSpec", ToolSpec.class);
+        m.put("UrlSkillSpec", UrlSkillSpec.class);
         m.put("InjectedArg", ToolParameterInjection.class);
         SPEC_CLASSES = Map.copyOf(m);
     }

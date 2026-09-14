@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.FlussActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
@@ -34,6 +35,7 @@ import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.runtime.state.KeyedStateBackend;
 import org.apache.flink.runtime.state.OperatorStateBackend;
 import org.apache.flink.runtime.state.VoidNamespace;
@@ -64,14 +66,15 @@ import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.Backe
  * durable execution is enabled.
  *
  * <p>Lifecycle: instantiated in the operator constructor. {@link
- * #maybeInitActionStateStore(AgentConfiguration, int)} runs from BOTH the operator's {@code
- * initializeState()} and {@code open()} — recovery requires the store to be configured before
- * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} reads from it, and the {@code open()}
- * call ensures the store is also available on the normal (non-recovery) path. The method creates a
- * default Kafka-backed store when one was not pre-injected, and is idempotent on the second call.
- * {@link #handleRecovery(OperatorStateBackend, IntPredicate)} runs from the operator's {@code
- * initializeState()} during recovery. {@link #initRecoveryMarkerState(OperatorStateBackend)} runs
- * from the operator's {@code open()}. {@link #close()} closes the underlying store.
+ * #maybeInitActionStateStore(AgentConfiguration, int, TypeSerializer)} runs from BOTH the
+ * operator's {@code initializeState()} and {@code open()} — recovery requires the store to be
+ * configured before {@link #handleRecovery(OperatorStateBackend, IntPredicate)} reads from it, and
+ * the {@code open()} call ensures the store is also available on the normal (non-recovery) path.
+ * The method creates a default Kafka-backed store when one was not pre-injected, and is idempotent
+ * on the second call. {@link #handleRecovery(OperatorStateBackend, IntPredicate)} runs from the
+ * operator's {@code initializeState()} during recovery. {@link
+ * #initRecoveryMarkerState(OperatorStateBackend)} runs from the operator's {@code open()}. {@link
+ * #close()} closes the underlying store.
  *
  * <p>Design constraint: package-private; no manager-to-manager held references. Cross-cutting data
  * flows via method parameters. In particular, {@link
@@ -96,8 +99,8 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     /**
      * @param actionStateStore an optional pre-injected store, primarily for tests. When {@code
-     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration, int)} may create a default
-     *     store based on configuration; otherwise durable execution is disabled.
+     *     null}, {@link #maybeInitActionStateStore(AgentConfiguration, int, TypeSerializer)} may
+     *     create a default store based on configuration; otherwise durable execution is disabled.
      */
     DurableExecutionManager(@Nullable ActionStateStore actionStateStore) {
         this.actionStateStore = actionStateStore;
@@ -110,20 +113,27 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      * pre-injected.
      *
      * <p>Only creates a store when this manager was constructed without one and the configuration
-     * selects a recognized backend (currently Kafka). Otherwise this is a no-op, which leaves
-     * durable execution disabled.
+     * selects a recognized backend. Otherwise this is a no-op, which leaves durable execution
+     * disabled.
      *
      * @param config the agent configuration carrying the backend selection.
+     * @param maxParallelism the operator maximum parallelism used for key-group assignment.
+     * @param keySerializer the operator serializer that defines durable business-key identity.
      */
-    void maybeInitActionStateStore(AgentConfiguration config, int maxParallelism) {
+    void maybeInitActionStateStore(
+            AgentConfiguration config, int maxParallelism, TypeSerializer<?> keySerializer) {
         if (actionStateStore == null) {
             String backend = config.get(ACTION_STATE_STORE_BACKEND);
             if (KAFKA.getType().equalsIgnoreCase(backend)) {
                 LOG.info("Using Kafka as backend of action state store.");
-                actionStateStore = new KafkaActionStateStore(config, maxParallelism);
+                actionStateStore =
+                        new KafkaActionStateStore(
+                                config, new ActionStateKeyEncoder(maxParallelism, keySerializer));
             } else if (FLUSS.getType().equalsIgnoreCase(backend)) {
                 LOG.info("Using Fluss as backend of action state store.");
-                actionStateStore = new FlussActionStateStore(config, maxParallelism);
+                actionStateStore =
+                        new FlussActionStateStore(
+                                config, new ActionStateKeyEncoder(maxParallelism, keySerializer));
             }
         }
     }

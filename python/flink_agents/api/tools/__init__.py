@@ -22,9 +22,11 @@ from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     ToolParameterSource,
 )
+from flink_agents.api.tools.tool_response import ToolResponse
 
 __all__ = [
     "InjectedArg",
     "ToolExecutionMetadataProvider",
     "ToolParameterSource",
+    "ToolResponse",
 ]

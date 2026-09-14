@@ -24,6 +24,8 @@ from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
     _validate_reconciler_callable,
+    get_durable_id,
+    with_durable_id,
 )
 
 
@@ -278,3 +280,22 @@ def test_cloudpickle_none_exception_message() -> None:
     assert isinstance(deserialized, RuntimeError)
     # str() of an exception with None message is "None"
     assert str(deserialized) == "None"
+
+
+def test_with_durable_id_overrides_derived_function_id() -> None:
+    """An explicit durable id wins over the derived module/qualname id."""
+    wrapped = with_durable_id(sample_function, "session-1#call-1")
+
+    assert get_durable_id(wrapped) == "session-1#call-1"
+    assert _compute_function_id(wrapped) == "session-1#call-1"
+    # The wrapper stays invocable and does not mutate the original callable.
+    assert wrapped(1, 2) == 3
+    assert get_durable_id(sample_function) is None
+
+
+def test_get_durable_id_returns_none_for_plain_callables() -> None:
+    """Callables without an explicit id report None and keep derived ids."""
+    assert get_durable_id(sample_function) is None
+    derived = _compute_function_id(sample_function)
+    assert derived == _compute_function_id(sample_function)
+    assert "sample_function" in derived

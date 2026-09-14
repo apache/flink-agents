@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.skill;
 
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
@@ -47,8 +48,13 @@ public final class SkillSourceRegistry {
                 params -> params.getOrDefault("path", ""));
         register(
                 "url",
-                (params, cl) -> new URLSkillRepository(require(params, "url", "url")),
-                params -> params.getOrDefault("url", ""));
+                (params, cl) ->
+                        new URLSkillRepository(
+                                require(params, "url", "url"),
+                                params.get("sha256"),
+                                Boolean.parseBoolean(
+                                        params.getOrDefault("allow_insecure_http", "false"))),
+                params -> SkillUrlUtils.redact(params.get("url")));
         register(
                 "classpath",
                 (params, cl) ->
@@ -119,8 +125,7 @@ public final class SkillSourceRegistry {
                             + key
                             + "' for skill source scheme '"
                             + scheme
-                            + "'. Got: "
-                            + params);
+                            + "'");
         }
         return value;
     }

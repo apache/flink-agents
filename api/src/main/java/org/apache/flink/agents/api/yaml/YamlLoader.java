@@ -40,6 +40,7 @@ import org.apache.flink.agents.api.yaml.spec.PackageSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.PromptSpec;
 import org.apache.flink.agents.api.yaml.spec.SkillsSpec;
 import org.apache.flink.agents.api.yaml.spec.ToolSpec;
+import org.apache.flink.agents.api.yaml.spec.UrlSkillSpec;
 import org.apache.flink.agents.api.yaml.spec.YamlAgentsDocument;
 
 import java.io.IOException;
@@ -173,8 +174,24 @@ public final class YamlLoader {
         for (String p : spec.getPaths()) {
             sources.add(new SkillSourceSpec("local", Map.of("path", p)));
         }
-        for (String u : spec.getUrls()) {
-            sources.add(new SkillSourceSpec("url", Map.of("url", u)));
+        for (String url : spec.getUrls()) {
+            sources.addAll(Skills.fromUrl(url).getSources());
+        }
+        for (UrlSkillSpec urlSpec : spec.getUrlSources()) {
+            Skills urlSkills;
+            if (urlSpec.isAllowInsecureHttp()) {
+                urlSkills =
+                        urlSpec.getSha256() == null
+                                ? Skills.fromUrlUnsafe(urlSpec.getUrl())
+                                : Skills.fromUrlUnsafeWithSha256(
+                                        urlSpec.getUrl(), urlSpec.getSha256());
+            } else {
+                urlSkills =
+                        urlSpec.getSha256() == null
+                                ? Skills.fromUrl(urlSpec.getUrl())
+                                : Skills.fromUrlWithSha256(urlSpec.getUrl(), urlSpec.getSha256());
+            }
+            sources.addAll(urlSkills.getSources());
         }
         for (String r : spec.getClasspath()) {
             sources.add(new SkillSourceSpec("classpath", Map.of("resource", r)));
@@ -275,6 +292,7 @@ public final class YamlLoader {
         addSharedDescriptors(
                 sharedResources, ResourceType.VECTOR_STORE, doc.getVectorStores(), path);
         addSharedDescriptors(sharedResources, ResourceType.MCP_SERVER, doc.getMcpServers(), path);
+        addSharedDescriptors(sharedResources, ResourceType.AGENT, doc.getSubagents(), path);
 
         for (ToolSpec t : doc.getTools()) {
             if (sharedResources.get(ResourceType.TOOL).put(t.getName(), buildTool(t)) != null) {
@@ -394,6 +412,7 @@ public final class YamlLoader {
         addAgentDescriptors(agent, ResourceType.EMBEDDING_MODEL, spec.getEmbeddingModelSetups());
         addAgentDescriptors(agent, ResourceType.VECTOR_STORE, spec.getVectorStores());
         addAgentDescriptors(agent, ResourceType.MCP_SERVER, spec.getMcpServers());
+        addAgentDescriptors(agent, ResourceType.AGENT, spec.getSubagents());
 
         for (ToolSpec t : spec.getTools()) {
             agent.addResource(t.getName(), ResourceType.TOOL, buildTool(t));

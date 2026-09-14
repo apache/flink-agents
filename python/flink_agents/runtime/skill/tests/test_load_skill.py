@@ -24,6 +24,7 @@ import pytest
 
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.skills import Skills
+from flink_agents.api.tools import ToolResponse
 from flink_agents.api.trace import ToolExecutionMetadataKeys
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_tools import LoadSkillTool
@@ -84,8 +85,10 @@ class TestLoadSkillTool:
     def test_load_resource_not_found(self, tool: LoadSkillTool) -> None:
         """Loading a nonexistent resource returns an error with available list."""
         result = tool.call(name="nano-banana-pro", path="nonexistent.txt")
-        assert "not found" in result.lower()
-        assert "scripts/generate_image.py" in result
+        assert isinstance(result, ToolResponse)
+        assert result.is_error()
+        assert "not found" in result.error_message.lower()
+        assert "scripts/generate_image.py" in result.error_message
 
     def test_execution_metadata_describes_requested_resource(
         self, tool: LoadSkillTool
@@ -97,7 +100,9 @@ class TestLoadSkillTool:
         assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
         assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "README.md"
 
-    def test_execution_metadata_normalizes_omitted_path(self, tool: LoadSkillTool) -> None:
+    def test_execution_metadata_normalizes_omitted_path(
+        self, tool: LoadSkillTool
+    ) -> None:
         metadata = tool.get_tool_execution_metadata({"name": "github"})
         assert metadata[ToolExecutionMetadataKeys.SKILL_NAME] == "github"
         assert metadata[ToolExecutionMetadataKeys.SKILL_RESOURCE_PATH] == "SKILL.md"
@@ -114,9 +119,11 @@ class TestLoadSkillTool:
     def test_skill_not_found(self, tool: LoadSkillTool) -> None:
         """A nonexistent skill returns an error listing available skills."""
         result = tool.call(name="nonexistent-skill")
-        assert "not found" in result.lower()
-        assert "github" in result
-        assert "nano-banana-pro" in result
+        assert isinstance(result, ToolResponse)
+        assert result.is_error()
+        assert "not found" in result.error_message.lower()
+        assert "github" in result.error_message
+        assert "nano-banana-pro" in result.error_message
 
     # -- no skill manager ----------------------------------------------------
 
@@ -125,7 +132,9 @@ class TestLoadSkillTool:
         mock_ctx = MagicMock(spec=ResourceContext)
         tool = LoadSkillTool(resource_context=mock_ctx)
         result = tool.call(name="github")
-        assert "not available" in result
+        assert isinstance(result, ToolResponse)
+        assert result.is_error()
+        assert "not available" in result.error_message
 
     # -- positional args -----------------------------------------------------
 

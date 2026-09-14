@@ -36,6 +36,7 @@ import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.Function;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.plan.resource.python.PythonToolResultConverter;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
 
@@ -57,7 +58,6 @@ import java.util.Map;
 public class FunctionTool extends Tool {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-
     private final Function function;
     private Map<String, ToolParameterInjection> injectedArgs;
 
@@ -185,7 +185,7 @@ public class FunctionTool extends Tool {
         }
         Object result =
                 pythonResourceAdapter.invokePythonTool(pf.getModule(), pf.getQualName(), kwargs);
-        return ToolResponse.success(result);
+        return PythonToolResultConverter.fromBridgeResult(result);
     }
 
     public Function getFunction() {

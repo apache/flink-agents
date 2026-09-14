@@ -380,6 +380,64 @@ class WatsonxChatModelConnectionTest {
                 .isEqualTo("ibm/granite-3-3-8b-instruct");
         assertThat(message.getExtraArgs().get("promptTokens")).isEqualTo(100L);
         assertThat(message.getExtraArgs().get("completionTokens")).isEqualTo(50L);
+        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "stop");
+    }
+
+    @Test
+    @DisplayName("A finish reason outside the documented set is stored as received")
+    void testParseResponseCarriesUnknownFinishReasonVerbatim() throws Exception {
+        JsonNode response =
+                MAPPER.readTree(
+                        "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
+                                + " \"content\": \"hi\"}, \"finish_reason\":"
+                                + " \"some_vendor_reason\"}]}");
+
+        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+
+        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+    }
+
+    @Test
+    @DisplayName("A response with no finish_reason member yields no key and no error")
+    void testParseResponseNoFinishReasonKeyWhenMemberAbsent() throws Exception {
+        JsonNode response =
+                MAPPER.readTree(
+                        "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
+                                + " \"content\": \"hi\"}}]}");
+
+        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+
+        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+    }
+
+    @Test
+    @DisplayName("A response whose finish_reason is JSON null yields no key and no error")
+    void testParseResponseNoFinishReasonKeyWhenJsonNull() throws Exception {
+        JsonNode response =
+                MAPPER.readTree(
+                        "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
+                                + " \"content\": \"hi\"}, \"finish_reason\": null}]}");
+
+        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+
+        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+    }
+
+    @Test
+    @DisplayName("The finish reason is captured independently of the token metrics")
+    void testParseResponseCarriesFinishReasonWithoutUsage() throws Exception {
+        // modelName is null here, so the usage-metadata branch cannot run; this proves
+        // finish_reason capture does not depend on it.
+        JsonNode response =
+                MAPPER.readTree(
+                        "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
+                                + " \"content\": \"hi\"}, \"finish_reason\": \"tool_calls\"}]}");
+
+        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+
+        assertThat(message.getExtraArgs())
+                .containsEntry("finish_reason", "tool_calls")
+                .doesNotContainKey("promptTokens");
     }
 
     @Test

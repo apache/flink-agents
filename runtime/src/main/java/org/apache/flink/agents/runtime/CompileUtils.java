@@ -22,15 +22,19 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
+import org.apache.flink.configuration.ExecutionOptions;
+import org.apache.flink.configuration.ReadableConfig;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.KeyedStream;
 import org.apache.flink.streaming.api.typeinfo.python.PickledByteArrayTypeInfo;
 import org.apache.flink.types.Row;
 
 import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkState;
 
 /** A utility class that bridges Flink DataStream/SQL with the Flink Agents agent. */
 public class CompileUtils {
@@ -97,6 +101,7 @@ public class CompileUtils {
             TypeInformation<OUT> outTypeInformation,
             boolean inputIsJava,
             boolean pythonKeyIsPickled) {
+        checkBatchStateBackendCompatibility(keyedInputStream);
         return (DataStream<OUT>)
                 keyedInputStream
                         .transform(
@@ -105,6 +110,42 @@ public class CompileUtils {
                                 new ActionExecutionOperatorFactory(
                                         agentPlan, inputIsJava, pythonKeyIsPickled))
                         .setParallelism(keyedInputStream.getParallelism());
+    }
+
+    /**
+     * Rejects a job configuration known to silently drop records: explicit {@code
+     * RuntimeExecutionMode.BATCH} together with Flink's batch-specific keyed-state backend (enabled
+     * by default in that mode).
+     *
+     * <p>{@link ActionExecutionOperatorFactory}'s operator keeps pending action tasks in keyed
+     * state across mailbox continuations that can span multiple keys of the same subtask. Flink's
+     * batch keyed-state backend assumes a key is fully processed before moving to the next one and
+     * clears keyed state on every key switch, so a continuation for one key can be silently
+     * discarded by the operator moving on to process another key first. The job still reports
+     * {@code FINISHED}; only the affected records go missing. See
+     * https://github.com/apache/flink-agents/issues/939.
+     *
+     * <p>This only catches an explicitly configured {@code BATCH} runtime mode. {@code
+     * RuntimeExecutionMode.AUTOMATIC} (the default) that later resolves to batch execution because
+     * every source happens to be bounded is not detected here, since that resolution has not
+     * happened yet at graph-construction time.
+     */
+    private static void checkBatchStateBackendCompatibility(KeyedStream<?, ?> keyedInputStream) {
+        ReadableConfig configuration =
+                keyedInputStream.getExecutionEnvironment().getConfiguration();
+        boolean isExplicitBatchMode =
+                configuration.get(ExecutionOptions.RUNTIME_MODE) == RuntimeExecutionMode.BATCH;
+        boolean usesBatchStateBackend = configuration.get(ExecutionOptions.USE_BATCH_STATE_BACKEND);
+        checkState(
+                !isExplicitBatchMode || !usesBatchStateBackend,
+                "Flink Agents does not support RuntimeExecutionMode.BATCH with Flink's batch"
+                        + " keyed-state backend (execution.batch-state-backend.enabled, enabled by"
+                        + " default in BATCH mode): pending action-task state can be silently"
+                        + " discarded when the operator processes another key before a key's"
+                        + " workflow finishes, causing records to be dropped without any error."
+                        + " Either run this job with RuntimeExecutionMode.STREAMING, or set"
+                        + " execution.batch-state-backend.enabled to false. See"
+                        + " https://github.com/apache/flink-agents/issues/939 for details.");
     }
 
     /** Returns whether a PyFlink Row field uses its default pickle representation. */

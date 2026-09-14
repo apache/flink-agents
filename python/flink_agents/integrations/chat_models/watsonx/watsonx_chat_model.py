@@ -345,6 +345,10 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         structured-output translation, so callers stay on the prompt-engineering
         fallback. Declaring the parameter keeps a caller-supplied schema out of
         ``**kwargs``, which is forwarded to the provider SDK.
+
+        When the response carries a finish reason, it is available verbatim as
+        ``extra_args["finish_reason"]``; the key is absent when the provider
+        reports none.
         """
         self._reject_unsupported_output_schema(output_schema)
         model_name = kwargs.pop("model", DEFAULT_MODEL)
@@ -401,6 +405,8 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 model_name,
                 finish_reason,
             )
+        if finish_reason is not None:
+            extra_args["finish_reason"] = finish_reason
 
         response_message: Dict[str, Any] = choice["message"]
 

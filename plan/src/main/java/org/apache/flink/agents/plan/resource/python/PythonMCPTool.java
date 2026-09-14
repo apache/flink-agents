@@ -39,6 +39,8 @@ public class PythonMCPTool extends Tool
         implements PythonResourceWrapper, ToolExecutionMetadataProvider {
     private static final String GET_JAVA_TOOL_META =
             "python_java_utils.get_java_tool_metadata_from_tool";
+    private static final String INVOKE_PYTHON_TOOL =
+            "python_java_utils.invoke_python_tool_instance";
     private final PyObject tool;
     private final PythonResourceAdapter adapter;
     @Nullable private final String mcpServerName;
@@ -84,8 +86,8 @@ public class PythonMCPTool extends Tool
             kwargs.put(paramName, parameters.getParameter(paramName));
         }
         try {
-            Object result = adapter.callMethod(tool, "call", kwargs);
-            return ToolResponse.success(result);
+            Object result = adapter.invoke(INVOKE_PYTHON_TOOL, tool, kwargs);
+            return PythonToolResultConverter.fromBridgeResult(result);
         } catch (Exception e) {
             return ToolResponse.error(e);
         }

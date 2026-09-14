@@ -36,6 +36,7 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SASL_PASSWORD;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SASL_USERNAME;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.FLUSS_SECURITY_PROTOCOL;
+import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -65,7 +66,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
     @BeforeEach
     void setUp() throws Exception {
         AgentConfiguration config = createSaslAgentConfiguration();
-        store = new FlussActionStateStore(config, MAX_PARALLELISM);
+        store = new FlussActionStateStore(config, createKeyEncoder(MAX_PARALLELISM));
     }
 
     @AfterEach
@@ -103,7 +104,8 @@ public class FlussActionStateStoreSaslIntegrationTest {
 
         // Recover into a new store instance with SASL
         FlussActionStateStore recoveredStore =
-                new FlussActionStateStore(createSaslAgentConfiguration(), MAX_PARALLELISM);
+                new FlussActionStateStore(
+                        createSaslAgentConfiguration(), createKeyEncoder(MAX_PARALLELISM));
         try {
             recoveredStore.rebuildState(java.util.List.of(marker));
 

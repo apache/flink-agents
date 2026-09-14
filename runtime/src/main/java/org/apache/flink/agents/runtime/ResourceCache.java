@@ -24,12 +24,18 @@ import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.apache.flink.util.ExceptionUtils;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+
+import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * Lazily resolves and caches Resource instances from ResourceProviders.
@@ -47,6 +53,7 @@ public class ResourceCache implements AutoCloseable {
     private final Map<ResourceType, Map<String, ResourceProvider>> resourceProviders;
     private final Map<ResourceType, Map<String, Resource>> cache = new ConcurrentHashMap<>();
     private volatile PythonResourceAdapter pythonResourceAdapter;
+    private volatile PythonActionExecutor pythonActionExecutor;
     private final ResourceContextImpl resourceContext;
 
     /**
@@ -84,6 +91,15 @@ public class ResourceCache implements AutoCloseable {
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {
         this.pythonResourceAdapter = adapter;
+    }
+
+    /**
+     * Wires the executor that reaches the Python runtime, so the cache can ask that runtime to
+     * materialize the resources it owns. The runtime bridge calls this while the operator opens,
+     * before any resource is resolved.
+     */
+    public void setPythonActionExecutor(PythonActionExecutor pythonActionExecutor) {
+        this.pythonActionExecutor = pythonActionExecutor;
     }
 
     public ResourceContextImpl getResourceContext() {
@@ -137,6 +153,12 @@ public class ResourceCache implements AutoCloseable {
 
         Resource resource = provider.provide(resourceContext);
 
+        if (resource instanceof BaseSubagentSetup) {
+            // The framework owns the setup's identity: inject the resource name as its
+            // subagent name.
+            ((BaseSubagentSetup) resource).setSubagentName(name);
+        }
+
         if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
         }
@@ -155,6 +177,52 @@ public class ResourceCache implements AutoCloseable {
      */
     public void put(String name, ResourceType type, Resource resource) {
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
+    }
+
+    /**
+     * Eagerly materializes every resource of the given type, wherever it lives. Java-owned
+     * resources are resolved through their provider exactly like a first {@link #getResource}
+     * access, while Python-owned resources are materialized in the Python runtime and represented
+     * by a handle. Every instance is returned and cached, so a later lookup by name resolves to the
+     * same instance. Providers are resolved in no particular order, and resource construction must
+     * not depend on it.
+     *
+     * @param type the resource type to materialize.
+     * @return the materialized resources, empty when the type has none.
+     * @throws IllegalStateException if the type has Python-owned resources while the Python runtime
+     *     is unavailable, which leaves them unreachable for the whole job.
+     */
+    public synchronized List<Resource> eagerMaterialize(ResourceType type) throws Exception {
+        Map<String, ResourceProvider> providers = resourceProviders.get(type);
+        List<Resource> materialized = new ArrayList<>();
+        if (providers == null) {
+            return materialized;
+        }
+        boolean hasPythonOwned = false;
+        for (Map.Entry<String, ResourceProvider> entry : providers.entrySet()) {
+            ResourceProvider provider = entry.getValue();
+            if (ResourceProvider.isPythonOwned(provider)) {
+                hasPythonOwned = true;
+                continue;
+            }
+            materialized.add(getResource(entry.getKey(), type));
+        }
+        if (!hasPythonOwned) {
+            return materialized;
+        }
+        checkState(
+                pythonActionExecutor != null,
+                "Resources of type %s are declared in Python but no Python runtime was"
+                        + " initialized for this plan, so they cannot be materialized.",
+                type);
+        // The Python runtime owns these resources: it built and opened them, so the handles are
+        // cached as they are instead of being opened again here.
+        for (Map.Entry<String, Resource> handle :
+                pythonActionExecutor.eagerMaterialize(type).entrySet()) {
+            put(handle.getKey(), type, handle.getValue());
+            materialized.add(handle.getValue());
+        }
+        return materialized;
     }
 
     @Override

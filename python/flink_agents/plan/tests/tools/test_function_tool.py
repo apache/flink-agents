@@ -21,7 +21,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from flink_agents.api.tools import InjectedArg
+from flink_agents.api.tools import InjectedArg, ToolResponse
 from flink_agents.plan.function import JavaFunction, PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
@@ -119,6 +119,7 @@ def _java_func() -> JavaFunction:
         method_name="add",
         parameter_types=["int", "int"],
     )
+
 
 _FAKE_JAVA_SCHEMA = json.dumps(
     {
@@ -218,17 +219,54 @@ def test_java_function_tool_metadata_is_none_without_adapter() -> None:
 def test_java_function_tool_call_dispatches_through_adapter() -> None:
     tool = FunctionTool(func=_java_func())
     adapter = _fake_adapter()
+    adapter.invokeJavaTool.return_value = {
+        "__flink_agents_tool_result__": "response",
+        "result": 1065,
+        "success": True,
+        "error": None,
+        "execution_time_ms": 7,
+        "tool_name": "add",
+    }
     tool.set_java_resource_adapter(adapter)
 
     result = tool.call(a=377, b=688)
 
-    assert result == 1065
+    assert result == ToolResponse.success(1065, execution_time_ms=7, tool_name="add")
     adapter.invokeJavaTool.assert_called_once_with(
         "com.example.Tools",
         "add",
         ["int", "int"],
         {"a": 377, "b": 688},
     )
+
+
+def test_java_function_tool_preserves_error_response() -> None:
+    tool = FunctionTool(func=_java_func())
+    adapter = _fake_adapter()
+    adapter.invokeJavaTool.return_value = {
+        "__flink_agents_tool_result__": "response",
+        "result": None,
+        "success": False,
+        "error": "calculation rejected",
+        "execution_time_ms": 9,
+        "tool_name": "add",
+    }
+    tool.set_java_resource_adapter(adapter)
+
+    result = tool.call(a=377, b=688)
+
+    assert result == ToolResponse.error(
+        "calculation rejected", execution_time_ms=9, tool_name="add"
+    )
+
+
+def test_java_function_tool_keeps_legacy_raw_adapter_result() -> None:
+    tool = FunctionTool(func=_java_func())
+    adapter = _fake_adapter()
+    adapter.invokeJavaTool.return_value = 1065
+    tool.set_java_resource_adapter(adapter)
+
+    assert tool.call(a=377, b=688) == 1065
 
 
 def test_java_function_tool_call_without_adapter_raises() -> None:

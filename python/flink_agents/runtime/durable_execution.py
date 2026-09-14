@@ -15,11 +15,39 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import functools
 import hashlib
 import inspect
 from typing import Any, Callable
 
 import cloudpickle
+
+_DURABLE_ID_ATTR = "__flink_agents_durable_id__"
+
+
+def with_durable_id(func: Callable, durable_id: str) -> Callable:
+    """Wrap ``func`` so durable execution keys it by ``durable_id``.
+
+    Callers that own a stable identity for a durable call attach it here
+    instead of relying on the module/qualname of the callable, which is
+    shared by every call issued from the same implementation.
+    """
+
+    @functools.wraps(func)
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    setattr(wrapped, _DURABLE_ID_ATTR, durable_id)
+    return wrapped
+
+
+def get_durable_id(func: Callable) -> str | None:
+    """Return the explicit durable id attached by :func:`with_durable_id`.
+
+    Returns ``None`` when the callable carries no explicit id, in which case
+    callers fall back to deriving the identity from the callable itself.
+    """
+    return getattr(func, _DURABLE_ID_ATTR, None)
 
 
 def durable_identity_for_call(
@@ -33,7 +61,14 @@ def durable_identity_for_call(
 
 
 def _compute_function_id(func: Callable) -> str:
-    """Compute a stable function identifier from a callable."""
+    """Compute a stable function identifier from a callable.
+
+    An explicit id attached by :func:`with_durable_id` wins over the derived
+    module/qualname.
+    """
+    explicit_id = get_durable_id(func)
+    if explicit_id is not None:
+        return explicit_id
     module_obj = inspect.getmodule(func)
     module = (
         module_obj.__name__

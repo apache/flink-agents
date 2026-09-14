@@ -126,6 +126,7 @@ public class ActionStateKeyPartitionerTest {
         // Keys that lack the expected segment count are rejected.
         String invalidKey1 = "onlyonepart";
         String invalidKey2 = "only_twoparts";
+        String invalidKey3 = "5_1_event_action";
 
         IllegalArgumentException exception1 =
                 assertThrows(
@@ -152,10 +153,23 @@ public class ActionStateKeyPartitionerTest {
                                         null,
                                         cluster));
         assertEquals("Key format is invalid", exception2.getMessage());
+
+        IllegalArgumentException exception3 =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                partitioner.partition(
+                                        TEST_TOPIC,
+                                        invalidKey3,
+                                        invalidKey3.getBytes(),
+                                        null,
+                                        null,
+                                        cluster));
+        assertEquals("Key format is invalid", exception3.getMessage());
     }
 
     @Test
-    void testEmptyBusinessKeyPartThrowException() {
+    void testEmptyBusinessKeyIdentityThrowsException() {
         String invalidKey = "5_1_event_action_";
         IllegalArgumentException exception =
                 assertThrows(
@@ -163,14 +177,12 @@ public class ActionStateKeyPartitionerTest {
                         () ->
                                 partitioner.partition(
                                         TEST_TOPIC, invalidKey, null, null, null, cluster));
-        assertEquals("Business key part of the key cannot be empty", exception.getMessage());
+        assertEquals("Business key identity cannot be empty", exception.getMessage());
     }
 
     @Test
-    void testBusinessKeyContainingSeparatorIsValid() {
-        // The business key occupies the trailing segment, so it may contain the separator
-        // (e.g. "tenant_user") without breaking partitioning.
-        String key = "0_1_event_action_tenant_user";
+    void testEncodedIdentityIsValid() {
+        String key = "0_1_event_action_dGVuYW50X3VzZXI=";
 
         int partition = partitioner.partition(TEST_TOPIC, key, key.getBytes(), null, null, cluster);
 
@@ -179,7 +191,7 @@ public class ActionStateKeyPartitionerTest {
 
     @Test
     void testPartitionDistribution() {
-        // Test that different first key parts go to potentially different partitions
+        // Test that different trailing business-key identities are distributed across partitions.
         Map<Integer, Integer> partitionCounts = new HashMap<>();
 
         // Generate keys with different business keys (trailing segment)

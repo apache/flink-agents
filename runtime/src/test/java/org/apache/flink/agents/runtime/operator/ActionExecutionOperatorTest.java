@@ -50,15 +50,19 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
+import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
+import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.runtime.state.KeyGroupRangeAssignment;
@@ -74,6 +78,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.MockedConstruction;
 
 import java.io.IOException;
 import java.io.Serializable;
@@ -89,6 +94,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 
@@ -98,6 +104,7 @@ import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 
 /** Tests for {@link ActionExecutionOperator}. */
 public class ActionExecutionOperatorTest {
@@ -141,6 +148,47 @@ public class ActionExecutionOperatorTest {
             recordOutput = (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(recordOutput.size()).isEqualTo(2);
             assertThat(recordOutput.get(1).getValue()).isEqualTo(4L);
+        }
+    }
+
+    /**
+     * The default store must derive key identity from the serializer of the operator's keyed-state
+     * backend. A generic serializer would give the same key a different identity than keyed state.
+     */
+    @Test
+    void testDefaultStoreUsesKeyedStateBackendSerializer() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.ACTION_STATE_STORE_BACKEND, "kafka");
+        AtomicReference<ActionStateKeyEncoder> capturedEncoder = new AtomicReference<>();
+
+        try (MockedConstruction<KafkaActionStateStore> stores =
+                        mockConstruction(
+                                KafkaActionStateStore.class,
+                                (store, context) ->
+                                        capturedEncoder.set(
+                                                (ActionStateKeyEncoder)
+                                                        context.arguments().get(1)));
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                        new KeyedOneInputStreamOperatorTestHarness<>(
+                                new ActionExecutionOperatorFactory(
+                                        TestAgent.getAgentPlanWithConfig(config), true),
+                                (KeySelector<Long, Long>) value -> value,
+                                TypeInformation.of(Long.class))) {
+            testHarness.open();
+
+            assertThat(stores.constructed()).hasSize(1);
+            String identity = capturedEncoder.get().generateBusinessKeyIdentity(7L);
+            assertThat(identity)
+                    .isEqualTo(
+                            new ActionStateKeyEncoder(1, LongSerializer.INSTANCE)
+                                    .generateBusinessKeyIdentity(7L));
+            assertThat(identity)
+                    .isNotEqualTo(
+                            new ActionStateKeyEncoder(
+                                            1,
+                                            TypeInformation.of(Object.class)
+                                                    .createSerializer(new SerializerConfigImpl()))
+                                    .generateBusinessKeyIdentity(7L));
         }
     }
 
@@ -910,7 +958,7 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
 
             // Verify that action states were created during processing
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).isNotEmpty();
 
@@ -918,7 +966,7 @@ public class ActionExecutionOperatorTest {
             assertThat(actionStates.size()).isEqualTo(1);
 
             // Verify each action state contains expected information
-            for (Map.Entry<String, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
+            for (Map.Entry<Object, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
                 for (Map.Entry<String, ActionState> entry : outerEntry.getValue().entrySet()) {
                     ActionState state = entry.getValue();
                     assertThat(state).isNotNull();
@@ -1527,18 +1575,20 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
 
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).hasSize(1);
 
             // Verify specific action states by examining the keys
-            for (Map.Entry<String, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
+            for (Map.Entry<Object, Map<String, ActionState>> outerEntry : actionStates.entrySet()) {
                 for (Map.Entry<String, ActionState> entry : outerEntry.getValue().entrySet()) {
                     String stateKey = entry.getKey();
                     ActionState state = entry.getValue();
 
-                    // Verify the state key contains the expected key and action information
-                    assertThat(stateKey).contains(inputValue.toString());
+                    // Verify the state key is current-format and belongs to the typed input key.
+                    assertThat(ActionStateUtil.parseKey(stateKey)).hasSize(5);
+                    assertThat(ActionStateUtil.parseKeyGroup(stateKey))
+                            .isEqualTo(KeyGroupRangeAssignment.assignToKeyGroup(inputValue, 128));
 
                     // Verify task event is properly stored
                     Event taskEvent = state.getTaskEvent();
@@ -1630,7 +1680,7 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
 
             // Verify initial state creation
-            Map<String, Map<String, ActionState>> actionStates =
+            Map<Object, Map<String, ActionState>> actionStates =
                     actionStateStore.getKeyedActionStates();
             assertThat(actionStates).isNotEmpty();
             int initialStateCount = actionStates.size();
@@ -1876,8 +1926,7 @@ public class ActionExecutionOperatorTest {
                     (List<StreamRecord<Object>>) testHarness.getRecordOutput();
             assertThat(outputRecords).hasSize(1);
             assertThat(outputRecords.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
-            assertThat(actionStateStore.getKeyedActionStates().get(String.valueOf(inputValue)))
-                    .hasSize(2);
+            assertThat(actionStateStore.getKeyedActionStates().get(inputValue)).hasSize(2);
 
             List<RecordedEvent> replayEvents = RecordingEventLogger.events();
             assertThat(replayEvents)

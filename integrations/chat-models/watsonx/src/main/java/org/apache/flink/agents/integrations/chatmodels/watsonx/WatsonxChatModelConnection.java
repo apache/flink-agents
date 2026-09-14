@@ -553,14 +553,20 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         }
     }
 
+    /**
+     * Parses the watsonx.ai chat response. When the provider reports a finish reason it is carried
+     * verbatim in {@code extraArgs} under {@code finish_reason}, including values outside the
+     * documented set, and the entry is absent when the provider reports none.
+     */
     @VisibleForTesting
     static ChatMessage parseResponse(JsonNode response, String modelName) {
         final JsonNode choice = response.required("choices").get(0);
         final JsonNode responseMessage = choice.required("message");
 
         final JsonNode finishReasonNode = choice.get("finish_reason");
+        String finishReason = null;
         if (finishReasonNode != null && !finishReasonNode.isNull()) {
-            final String finishReason = finishReasonNode.asText();
+            finishReason = finishReasonNode.asText();
             if (!"stop".equals(finishReason) && !"tool_calls".equals(finishReason)) {
                 LOG.warn(
                         "watsonx.ai chat for model {} finished with reason '{}'; the response"
@@ -602,11 +608,18 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         }
 
         final JsonNode usage = response.get("usage");
-        if (modelName != null && !modelName.isBlank() && usage != null && !usage.isNull()) {
+        final boolean hasUsageMetadata =
+                modelName != null && !modelName.isBlank() && usage != null && !usage.isNull();
+        if (hasUsageMetadata || finishReason != null) {
             final Map<String, Object> extraArgs = new HashMap<>(chatMessage.getExtraArgs());
-            extraArgs.put("model_name", modelName);
-            extraArgs.put("promptTokens", usage.path("prompt_tokens").asLong(0));
-            extraArgs.put("completionTokens", usage.path("completion_tokens").asLong(0));
+            if (hasUsageMetadata) {
+                extraArgs.put("model_name", modelName);
+                extraArgs.put("promptTokens", usage.path("prompt_tokens").asLong(0));
+                extraArgs.put("completionTokens", usage.path("completion_tokens").asLong(0));
+            }
+            if (finishReason != null) {
+                extraArgs.put("finish_reason", finishReason);
+            }
             chatMessage.setExtraArgs(extraArgs);
         }
 
