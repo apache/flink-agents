@@ -315,24 +315,56 @@ class BedrockChatModelConnectionTest {
      * Every model id the connection reports capable.
      *
      * <p>The list is the whole allowlist, so an entry dropped or mistyped fails here rather than
-     * narrowing capability silently. The four suffix shapes are part of what is under test: three
-     * entries carry no version suffix at all, and {@code openai.gpt-oss-120b-1:0} carries {@code
-     * -1:0} rather than {@code -v1:0}, so a rule that assumes one shape fails on the others.
+     * narrowing capability silently. The differing suffix shapes are part of what is under test:
+     * {@code mistral.mistral-large-3-675b-instruct} carries no version suffix, {@code
+     * openai.gpt-oss-120b-1:0} carries {@code -1:0}, {@code
+     * anthropic.claude-sonnet-4-5-20250929-v1:0} carries {@code -v1:0}, and {@code
+     * anthropic.claude-opus-4-6-v1} carries {@code -v1} with no {@code :0}, so a rule that assumes
+     * one shape fails on the others.
      */
     private static Stream<String> capableModels() {
         return Stream.of(
                 "anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "anthropic.claude-opus-4-5-20251101-v1:0",
                 "anthropic.claude-haiku-4-5-20251001-v1:0",
+                "anthropic.claude-opus-4-6-v1",
+                "anthropic.claude-sonnet-4-6",
+                "deepseek.v3-v1:0",
+                "deepseek.v3.2",
+                "google.gemma-3-12b-it",
+                "google.gemma-3-27b-it",
+                "minimax.minimax-m2",
+                "minimax.minimax-m2.1",
+                "minimax.minimax-m2.5",
                 "mistral.mistral-large-3-675b-instruct",
+                "mistral.devstral-2-123b",
+                "mistral.magistral-small-2509",
+                "mistral.ministral-3-14b-instruct",
+                "mistral.ministral-3-3b-instruct",
+                "mistral.ministral-3-8b-instruct",
+                "mistral.voxtral-mini-3b-2507",
+                "mistral.voxtral-small-24b-2507",
+                "moonshot.kimi-k2-thinking",
+                "moonshotai.kimi-k2.5",
+                "nvidia.nemotron-nano-12b-v2",
+                "nvidia.nemotron-nano-3-30b",
+                "nvidia.nemotron-nano-9b-v2",
+                "nvidia.nemotron-super-3-120b",
                 "openai.gpt-oss-120b-1:0",
                 "openai.gpt-oss-20b-1:0",
+                "openai.gpt-5.6-luna",
+                "openai.gpt-oss-safeguard-120b",
+                "openai.gpt-oss-safeguard-20b",
                 "qwen.qwen3-235b-a22b-2507-v1:0",
                 "qwen.qwen3-32b-v1:0",
                 "qwen.qwen3-coder-30b-a3b-v1:0",
                 "qwen.qwen3-coder-480b-a35b-v1:0",
                 "qwen.qwen3-coder-next",
-                "qwen.qwen3-next-80b-a3b");
+                "qwen.qwen3-next-80b-a3b",
+                "writer.palmyra-vision-7b",
+                "zai.glm-4.7",
+                "zai.glm-4.7-flash",
+                "zai.glm-5");
     }
 
     private static Map<String, Object> params(String model) {
@@ -367,7 +399,8 @@ class BedrockChatModelConnectionTest {
     void testGeoPrefixResolvesToTheModelItFronts(String prefix) {
         // A cross-Region inference profile id is a model id behind a leading segment, and the model
         // behind it is the one whose capability the request gets.
-        assertThat(connection().supportsNativeStructuredOutput(prefix + CAPABLE_MODEL)).isTrue();
+        String profile = prefix + "anthropic.claude-opus-4-6-v1";
+        assertThat(connection().supportsNativeStructuredOutput(profile)).isTrue();
     }
 
     @Test
@@ -383,8 +416,9 @@ class BedrockChatModelConnectionTest {
     @Test
     @DisplayName("a model documented as unsupported reports not capable")
     void testDocumentedUnsupportedModelReportsNotCapable() {
-        // AWS documents this model as not supporting structured output, and it extends the prefix
-        // shared by four capable entries. Any prefix match claims a capability the provider denies.
+        // AWS documents this model as not supporting structured output, and it extends the
+        // qwen.qwen3- prefix that several capable entries share. Any prefix match claims a
+        // capability the provider denies.
         assertThat(connection().supportsNativeStructuredOutput("qwen.qwen3-vl-235b-a22b"))
                 .isFalse();
     }

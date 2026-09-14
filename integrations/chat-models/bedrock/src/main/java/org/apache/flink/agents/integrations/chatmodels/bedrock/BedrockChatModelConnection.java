@@ -129,23 +129,52 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                     "anthropic.claude-sonnet-4-5-20250929-v1:0",
                     "anthropic.claude-opus-4-5-20251101-v1:0",
                     "anthropic.claude-haiku-4-5-20251001-v1:0",
+                    "anthropic.claude-opus-4-6-v1",
+                    "anthropic.claude-sonnet-4-6",
+                    "deepseek.v3-v1:0",
+                    "deepseek.v3.2",
+                    "google.gemma-3-12b-it",
+                    "google.gemma-3-27b-it",
+                    "minimax.minimax-m2",
+                    "minimax.minimax-m2.1",
+                    "minimax.minimax-m2.5",
                     "mistral.mistral-large-3-675b-instruct",
+                    "mistral.devstral-2-123b",
+                    "mistral.magistral-small-2509",
+                    "mistral.ministral-3-14b-instruct",
+                    "mistral.ministral-3-3b-instruct",
+                    "mistral.ministral-3-8b-instruct",
+                    "mistral.voxtral-mini-3b-2507",
+                    "mistral.voxtral-small-24b-2507",
+                    "moonshot.kimi-k2-thinking",
+                    "moonshotai.kimi-k2.5",
+                    "nvidia.nemotron-nano-12b-v2",
+                    "nvidia.nemotron-nano-3-30b",
+                    "nvidia.nemotron-nano-9b-v2",
+                    "nvidia.nemotron-super-3-120b",
                     "openai.gpt-oss-120b-1:0",
                     "openai.gpt-oss-20b-1:0",
+                    "openai.gpt-5.6-luna",
+                    "openai.gpt-oss-safeguard-120b",
+                    "openai.gpt-oss-safeguard-20b",
                     "qwen.qwen3-235b-a22b-2507-v1:0",
                     "qwen.qwen3-32b-v1:0",
                     "qwen.qwen3-coder-30b-a3b-v1:0",
                     "qwen.qwen3-coder-480b-a35b-v1:0",
                     "qwen.qwen3-coder-next",
-                    "qwen.qwen3-next-80b-a3b");
+                    "qwen.qwen3-next-80b-a3b",
+                    "writer.palmyra-vision-7b",
+                    "zai.glm-4.7",
+                    "zai.glm-4.7-flash",
+                    "zai.glm-5");
 
     // A cross-Region inference profile id is a model id behind a geographic or global prefix, and
     // AWS documents structured output as working through cross-Region inference. The prefix set is
     // open-ended — the documentation names members by example and states that new profiles may
     // be created — so a leading segment is matched by shape rather than against a fixed list,
     // which would already have missed the documented us-gov. profiles. The charset excludes ":"
-    // and "/", so no ARN can be shortened this way, and the strip is attempted only after the id
-    // itself fails to match, so a bare model id is never shortened.
+    // and "/", so no ARN can be shortened this way. The strip is attempted only after the id itself
+    // fails to match, so a listed model id always matches as itself.
     private static final Pattern INFERENCE_PROFILE_PREFIX = Pattern.compile("^[a-z0-9-]+\\.(.+)$");
 
     private final BedrockRuntimeClient client;
