@@ -23,7 +23,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.genai.types.Content;
 import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
@@ -209,6 +211,38 @@ class GeminiChatModelConnectionTest {
         public String reference;
 
         public String other;
+    }
+
+    /**
+     * Output schema fixture whose enums are written under values other than their Java names, one
+     * through per-constant {@code @JsonProperty} and one through a {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+        public Severity severity;
+    }
+
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    public enum Severity {
+        LOW("low"),
+        HIGH("high");
+
+        private final String wire;
+
+        Severity(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
     }
 
     /** Minimal tool carrying only metadata; never invoked in these tests. */
@@ -778,6 +812,31 @@ class GeminiChatModelConnectionTest {
 
         assertThat(fieldNames(nativeSchema(config).path("properties")))
                 .containsExactly("full_name", "age");
+    }
+
+    @Test
+    @DisplayName("The derived schema lists enum constants by the values Jackson deserializes")
+    void derivedSchemaListsEnumsByTheirJacksonWireValues() throws Exception {
+        GenerateContentConfig config =
+                connection()
+                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Ticket.class);
+        JsonNode properties = nativeSchema(config).path("properties");
+        JsonNode statusValues = properties.path("status").path("enum");
+        JsonNode severityValues = properties.path("severity").path("enum");
+
+        assertThat(statusValues.toString()).isEqualTo("[\"in-progress\",\"done\"]");
+        assertThat(severityValues.toString()).isEqualTo("[\"low\",\"high\"]");
+        // A response built from the permitted values must read back with the plain ObjectMapper
+        // the structured-output read-back uses.
+        String response =
+                "{\"status\":"
+                        + statusValues.get(0)
+                        + ",\"severity\":"
+                        + severityValues.get(1)
+                        + "}";
+        Ticket ticket = new ObjectMapper().readValue(response, Ticket.class);
+        assertThat(ticket.status).isEqualTo(Status.IN_PROGRESS);
+        assertThat(ticket.severity).isEqualTo(Severity.HIGH);
     }
 
     @Test

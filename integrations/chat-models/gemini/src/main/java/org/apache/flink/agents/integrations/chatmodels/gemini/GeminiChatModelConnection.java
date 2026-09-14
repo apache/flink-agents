@@ -29,6 +29,7 @@ import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
 import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
+import com.github.victools.jsonschema.module.jackson.JacksonOption;
 import com.google.genai.Client;
 import com.google.genai.types.Candidate;
 import com.google.genai.types.Content;
@@ -428,10 +429,12 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     //   - The Jackson module makes the schema name properties the way Jackson names them. The
     //     response is read back into the same class with an ObjectMapper, so a property that
     //     @JsonProperty renames or @JsonIgnore drops has to be stated in the schema under the name
-    //     the mapper reads, or a response that satisfies the schema still fails to deserialize. It
-    //     is applied with no JacksonOption, so it contributes property naming, visibility and
-    //     descriptions only: the required set and the property order stay the ones configured
-    //     above.
+    //     the mapper reads, or a response that satisfies the schema still fails to deserialize.
+    //     Enum constants carry the same hazard: the FLATTENED_ENUMS options list each constant by
+    //     its @JsonValue method or @JsonProperty value, as the mapper reads it. An enum annotating
+    //     only some constants falls back to Java names for all of them, so its annotated constants
+    //     do not read back. No other JacksonOption is enabled, so the required set and property
+    //     order stay as configured above.
     //
     // DEFINITION_FOR_MAIN_SCHEMA is deliberately absent. Without it a recursive type emits
     // {"$ref": "#"} at the recursion point, which is the form Google's own recursion example uses.
@@ -443,7 +446,10 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                                 SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
                         .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
                         .with(Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
-                        .with(new JacksonModule());
+                        .with(
+                                new JacksonModule(
+                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE,
+                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY));
         configBuilder
                 .forTypesInGeneral()
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
