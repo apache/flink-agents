@@ -25,7 +25,6 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -200,44 +199,23 @@ public class PythonResourceAdapterImplTest {
     }
 
     @Test
-    void testFromPythonDocumentsMaterializesValuesWithoutAttributeLookups() {
-        PyObject pythonDocument = mock(PyObject.class);
-        when(mockInterpreter.invoke(
-                        PythonResourceAdapterImpl.MATERIALIZE_PYTHON_VALUE, pythonDocument))
-                .thenReturn(
-                        Map.of(
-                                "content", "content",
-                                "metadata", Map.of("source", "test"),
-                                "id", "doc-1"));
-
-        List<Document> documents =
-                pythonResourceAdapter.fromPythonDocuments(List.of(pythonDocument));
-
-        assertThat(documents)
-                .containsExactly(new Document("content", Map.of("source", "test"), "doc-1"));
-        verify(pythonDocument, never()).getAttr(anyString());
-    }
-
-    @Test
-    void testFromPythonVectorStoreQueryResultMaterializesNestedDocuments() {
+    void closesRetrievedDocumentsAfterQueryResultConversion() throws Exception {
         PyObject pythonResult = mock(PyObject.class);
-        when(mockInterpreter.invoke(
-                        PythonResourceAdapterImpl.MATERIALIZE_PYTHON_VALUE, pythonResult))
-                .thenReturn(
-                        Map.of(
-                                "documents",
-                                List.of(
-                                        Map.of(
-                                                "content", "content",
-                                                "metadata", Map.of("source", "test"),
-                                                "id", "doc-1"))));
+        PyObject pythonDocument = mock(PyObject.class);
+        PyObject metadataValue = mock(PyObject.class);
+        Map<String, Object> metadata = Map.of("custom", metadataValue);
+        when(pythonResult.getAttr("documents", List.class)).thenReturn(List.of(pythonDocument));
+        when(pythonDocument.getAttr("content")).thenReturn("content");
+        when(pythonDocument.getAttr("metadata", Map.class)).thenReturn(metadata);
+        when(pythonDocument.getAttr("id")).thenReturn("doc-1");
 
         VectorStoreQueryResult result =
                 pythonResourceAdapter.fromPythonVectorStoreQueryResult(pythonResult);
 
-        assertThat(result.getDocuments())
-                .containsExactly(new Document("content", Map.of("source", "test"), "doc-1"));
-        verify(pythonResult, never()).getAttr(anyString());
+        assertThat(result.getDocuments().get(0).getMetadata()).isSameAs(metadata);
+        verify(pythonDocument).close();
+        verify(pythonResult, never()).close();
+        verify(metadataValue, never()).close();
     }
 
     @Test

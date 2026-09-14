@@ -32,6 +32,8 @@ import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
 import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -340,13 +342,17 @@ class PythonActionExecutorTest {
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject pythonAwaitable = mock(PyObject.class);
+        PyObject yieldedValue = mock(PyObject.class);
         String pythonAwaitableRef = "python_awaitable_1";
         when(interpreter.get(pythonAwaitableRef)).thenReturn(pythonAwaitable);
-        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable)).thenReturn(false);
+        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable))
+                .thenReturn(
+                        new Object[] {false, Map.of("items", List.of(yieldedValue, yieldedValue))});
 
         assertThat(executor.callPythonAwaitable(pythonAwaitableRef)).isFalse();
 
         verify(pythonAwaitable).close();
+        verify(yieldedValue).close();
         verify(interpreter, never()).exec(anyString());
     }
 
@@ -355,15 +361,18 @@ class PythonActionExecutorTest {
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         PythonActionExecutor executor = newExecutor(interpreter);
         PyObject pythonAwaitable = mock(PyObject.class);
+        PyObject returnedValue = mock(PyObject.class);
         String pythonAwaitableRef = "python_awaitable_1";
         when(interpreter.get(pythonAwaitableRef)).thenReturn(pythonAwaitable);
-        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable)).thenReturn(true);
+        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable))
+                .thenReturn(new Object[] {true, new Object[] {returnedValue}});
 
         assertThat(executor.callPythonAwaitable(pythonAwaitableRef)).isTrue();
 
-        InOrder closeOrder = inOrder(interpreter, pythonAwaitable);
+        InOrder closeOrder = inOrder(interpreter, returnedValue, pythonAwaitable);
         closeOrder.verify(interpreter).invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
         closeOrder.verify(interpreter).exec("del " + pythonAwaitableRef);
+        closeOrder.verify(returnedValue).close();
         closeOrder.verify(pythonAwaitable).close();
     }
 

@@ -82,9 +82,7 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         // (single Java->Python crossing per op). Without this, add/query would re-embed inside
         // Python and re-enter Java, which deadlocks when run on the async pool thread.
         super.open();
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(adapter.callMethod(vectorStore, "open", Collections.emptyMap()));
-        }
+        adapter.callMethod(vectorStore, "open", Collections.emptyMap());
     }
 
     @Override
@@ -133,9 +131,7 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         if (filters != null) {
             kwargs.put("filters", filters);
         }
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(adapter.callMethod(vectorStore, "delete", kwargs));
-        }
+        adapter.callMethod(vectorStore, "delete", kwargs);
     }
 
     @Override
@@ -185,14 +181,14 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
      * object is forwarded back into {@link #queryNormalized}. See
      * https://github.com/apache/flink-agents/issues/844.
      */
-    public PyObject normalizeEmbedding(float[] embedding) {
+    public Object normalizeEmbedding(float[] embedding) {
         List<Float> embeddingList = new ArrayList<>(embedding.length);
         for (float v : embedding) {
             embeddingList.add(v);
         }
         Map<String, Object> kwargs = new HashMap<>();
         kwargs.put("embeddings", embeddingList);
-        return (PyObject) adapter.callMethod(vectorStore, "_normalize_embeddings", kwargs);
+        return adapter.callMethod(vectorStore, "_normalize_embeddings", kwargs);
     }
 
     /** Query with a pre-normalized embedding; numpy-free, so it stays on the async pool. */
@@ -230,8 +226,7 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             if (collection != null) {
                 kwargs.put("collection_name", collection);
             }
-            return (List<String>)
-                    scope.own(adapter.callMethod(vectorStore, "_add_embedding", kwargs));
+            return (List<String>) adapter.callMethod(vectorStore, "_add_embedding", kwargs);
         }
     }
 
@@ -244,7 +239,7 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             if (collection != null) {
                 kwargs.put("collection_name", collection);
             }
-            scope.own(adapter.callMethod(vectorStore, "_update_embedding", kwargs));
+            adapter.callMethod(vectorStore, "_update_embedding", kwargs);
         }
     }
 

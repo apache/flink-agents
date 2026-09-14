@@ -61,9 +61,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
     @Override
     public void open() {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(this.adapter.callMethod(chatModelSetup, "open", Collections.emptyMap()));
-        }
+        this.adapter.callMethod(chatModelSetup, "open", Collections.emptyMap());
     }
 
     @Override

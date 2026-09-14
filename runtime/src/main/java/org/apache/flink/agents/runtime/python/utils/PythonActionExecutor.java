@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -300,16 +301,19 @@ public class PythonActionExecutor implements AutoCloseable {
      *     interpreter's context
      * @return true if the awaitable has completed; false otherwise
      */
-    public boolean callPythonAwaitable(String pythonAwaitableRef) throws Exception {
-        // Python discards yielded/returned values because Actions communicate through Events.
-        try (PyObject pythonAwaitable = (PyObject) interpreter.get(pythonAwaitableRef)) {
+    public boolean callPythonAwaitable(String pythonAwaitableRef) {
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            PyObject pythonAwaitable = scope.own((PyObject) interpreter.get(pythonAwaitableRef));
             checkState(
                     pythonAwaitable != null,
                     "Python awaitable '%s' not found in interpreter.",
                     pythonAwaitableRef);
-            Object invokeResult = interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
-            checkState(invokeResult instanceof Boolean);
-            boolean finished = (boolean) invokeResult;
+            // Actions communicate through Events, so this caller consumes only the completion flag.
+            Object invokeResult =
+                    scope.own(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable));
+            checkState(invokeResult instanceof Object[] && ((Object[]) invokeResult).length == 2);
+            Object[] result = (Object[]) invokeResult;
+            boolean finished = (boolean) result[0];
             if (finished) {
                 interpreter.exec("del " + pythonAwaitableRef);
             }

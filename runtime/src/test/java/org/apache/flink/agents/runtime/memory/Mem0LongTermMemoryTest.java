@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -132,15 +133,19 @@ public class Mem0LongTermMemoryTest {
     @Test
     void testGetWithIdsAndFiltersConvertsItems() throws Exception {
         MemorySet ms = ltm.getMemorySet("notes");
-        when(mockAdapter.callMethod(eq(mockPyMem0), eq("get"), any())).thenReturn("py_items");
-        when(mockAdapter.invoke(eq("python_java_utils.mem0_items_to_java"), eq("py_items")))
+        PyObject pythonItem = mock(PyObject.class);
+        PyObject metadataValue = mock(PyObject.class);
+        List<PyObject> pythonItems = List.of(pythonItem);
+        Map<String, Object> metadata = Map.of("k", "v", "custom", metadataValue);
+        when(mockAdapter.callMethod(eq(mockPyMem0), eq("get"), any())).thenReturn(pythonItems);
+        when(mockAdapter.invoke(eq("python_java_utils.mem0_items_to_java"), eq(pythonItems)))
                 .thenReturn(
                         List.of(
                                 Map.of(
                                         "memory_set_name", "notes",
                                         "id", "id1",
                                         "value", "hello",
-                                        "additional_metadata", Map.of("k", "v"))));
+                                        "additional_metadata", metadata)));
 
         List<MemorySetItem> items = ltm.get(ms, List.of("id1"), Map.of("user_id", "u1"), 50);
 
@@ -150,6 +155,9 @@ public class Mem0LongTermMemoryTest {
         assertThat(item.getId()).isEqualTo("id1");
         assertThat(item.getValue()).isEqualTo("hello");
         assertThat(item.getAdditionalMetadata()).containsEntry("k", "v");
+        assertThat(item.getAdditionalMetadata()).isSameAs(metadata);
+        verify(pythonItem).close();
+        verify(metadataValue, never()).close();
         assertThat(item.getCreatedAt()).isNull();
 
         assertThat(captureKwargs("get"))

@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.vectorstores.python;
 
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import pemja.core.object.PyObject;
@@ -66,17 +65,11 @@ public class PythonCollectionManageableVectorStore extends PythonVectorStore
             merged.putAll(kwargs);
         }
 
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(
-                    this.adapter.callMethod(
-                            vectorStore, "create_collection_if_not_exists", merged));
-        }
+        this.adapter.callMethod(vectorStore, "create_collection_if_not_exists", merged);
     }
 
     @Override
     public void deleteCollection(String name) throws Exception {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(vectorStore.invokeMethod("delete_collection", name));
-        }
+        this.vectorStore.invokeMethod("delete_collection", name);
     }
 }

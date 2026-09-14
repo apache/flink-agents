@@ -72,9 +72,7 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
     @Override
     public void open() {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(this.adapter.callMethod(embeddingModelSetup, "open", Collections.emptyMap()));
-        }
+        this.adapter.callMethod(embeddingModelSetup, "open", Collections.emptyMap());
     }
 
     @Override
@@ -86,19 +84,17 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", text);
 
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object result = scope.own(adapter.callMethod(embeddingModelSetup, "embed", kwargs));
+        Object result = adapter.callMethod(embeddingModelSetup, "embed", kwargs);
 
-            // Convert to float arrays
-            if (result instanceof List) {
-                List<?> list = (List<?>) result;
-                return EmbeddingModelUtils.toFloatArray(list);
-            }
-
-            throw new IllegalArgumentException(
-                    "Expected List from Python embed method, but got: "
-                            + (result == null ? "null" : result.getClass().getName()));
+        // Convert to float arrays
+        if (result instanceof List) {
+            List<?> list = (List<?>) result;
+            return EmbeddingModelUtils.toFloatArray(list);
         }
+
+        throw new IllegalArgumentException(
+                "Expected List from Python embed method, but got: "
+                        + (result == null ? "null" : result.getClass().getName()));
     }
 
     @Override
@@ -110,30 +106,28 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", texts);
 
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object results = scope.own(adapter.callMethod(embeddingModelSetup, "embed", kwargs));
+        Object results = adapter.callMethod(embeddingModelSetup, "embed", kwargs);
 
-            if (results instanceof List) {
-                List<?> list = (List<?>) results;
-                List<float[]> embeddings = new ArrayList<>();
+        if (results instanceof List) {
+            List<?> list = (List<?>) results;
+            List<float[]> embeddings = new ArrayList<>();
 
-                for (Object element : list) {
-                    if (element instanceof List) {
-                        List<?> listElement = (List<?>) element;
-                        embeddings.add(EmbeddingModelUtils.toFloatArray(listElement));
-                    } else {
-                        throw new IllegalArgumentException(
-                                "Expected List value in embedding results, but got: "
-                                        + element.getClass().getName());
-                    }
+            for (Object element : list) {
+                if (element instanceof List) {
+                    List<?> listElement = (List<?>) element;
+                    embeddings.add(EmbeddingModelUtils.toFloatArray(listElement));
+                } else {
+                    throw new IllegalArgumentException(
+                            "Expected List value in embedding results, but got: "
+                                    + element.getClass().getName());
                 }
-                return embeddings;
             }
-
-            throw new IllegalArgumentException(
-                    "Expected List from Python embed method, but got: "
-                            + (results == null ? "null" : results.getClass().getName()));
+            return embeddings;
         }
+
+        throw new IllegalArgumentException(
+                "Expected List from Python embed method, but got: "
+                        + (results == null ? "null" : results.getClass().getName()));
     }
 
     @Override
@@ -144,11 +138,8 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", text);
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object result =
-                    scope.own(adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs));
-            return EmbeddingModelUtils.toSingleEmbeddingResult(result);
-        }
+        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs);
+        return EmbeddingModelUtils.toSingleEmbeddingResult(result);
     }
 
     @Override
@@ -160,11 +151,8 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", texts);
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object result =
-                    scope.own(adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs));
-            return EmbeddingModelUtils.toBatchEmbeddingResult(result);
-        }
+        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModelSetup, kwargs);
+        return EmbeddingModelUtils.toBatchEmbeddingResult(result);
     }
 
     @Override

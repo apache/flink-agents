@@ -63,9 +63,7 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
 
     public String getName() {
         if (name == null) {
-            try (PythonObjectScope scope = new PythonObjectScope()) {
-                name = scope.own(prompt.getAttr("name")).toString();
-            }
+            name = prompt.getAttr("name").toString();
         }
         return name;
     }
@@ -73,16 +71,14 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
     @Override
     public String formatString(Map<String, String> kwargs) {
         Map<String, Object> parameters = new HashMap<>(kwargs);
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            return scope.own(adapter.callMethod(prompt, "format_string", parameters)).toString();
-        }
+        return adapter.callMethod(prompt, "format_string", parameters).toString();
     }
 
     @Override
     public List<ChatMessage> formatMessages(MessageRole defaultRole, Map<String, String> kwargs) {
         Map<String, Object> parameters = new HashMap<>(kwargs);
         try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object pythonRole = scope.own(adapter.invoke(FROM_JAVA_MESSAGE_ROLE, defaultRole));
+            Object pythonRole = adapter.invoke(FROM_JAVA_MESSAGE_ROLE, defaultRole);
             parameters.put("role", pythonRole);
 
             Object result = scope.own(adapter.callMethod(prompt, "format_messages", parameters));

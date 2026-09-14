@@ -84,35 +84,6 @@ class PythonObjectScopeTest {
     }
 
     @Test
-    void closesLogicalCloseResultBeforeNativeResourceReference() throws Exception {
-        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
-        PyObject resource = mock(PyObject.class);
-        PyObject closeResult = mock(PyObject.class);
-        when(adapter.callMethod(resource, "close", Map.of())).thenReturn(closeResult);
-
-        PythonObjectScope scope = new PythonObjectScope();
-        scope.own(resource);
-        scope.closeResource(adapter, resource);
-
-        InOrder closeOrder = inOrder(closeResult, resource);
-        closeOrder.verify(closeResult).close();
-        closeOrder.verify(resource).close();
-    }
-
-    @Test
-    void doesNotCloseResourceTwiceWhenLogicalCloseReturnsItself() throws Exception {
-        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
-        PyObject resource = mock(PyObject.class);
-        when(adapter.callMethod(resource, "close", Map.of())).thenReturn(resource);
-
-        PythonObjectScope scope = new PythonObjectScope();
-        scope.own(resource);
-        scope.closeResource(adapter, resource);
-
-        verify(resource, times(1)).close();
-    }
-
-    @Test
     void rejectsReferencesAddedAfterClose() {
         PythonObjectScope scope = new PythonObjectScope();
         scope.close();

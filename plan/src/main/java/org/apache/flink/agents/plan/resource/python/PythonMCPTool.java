@@ -73,12 +73,10 @@ public class PythonMCPTool extends Tool
 
     @SuppressWarnings("unchecked")
     private static ToolMetadata getToolMetadata(PythonResourceAdapter adapter, PyObject tool) {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Map<String, String> metadata =
-                    scope.own((Map<String, String>) adapter.invoke(GET_JAVA_TOOL_META, tool));
-            return new ToolMetadata(
-                    metadata.get("name"), metadata.get("description"), metadata.get("inputSchema"));
-        }
+        Map<String, String> metadata =
+                (Map<String, String>) adapter.invoke(GET_JAVA_TOOL_META, tool);
+        return new ToolMetadata(
+                metadata.get("name"), metadata.get("description"), metadata.get("inputSchema"));
     }
 
     @Override
@@ -88,10 +86,8 @@ public class PythonMCPTool extends Tool
             kwargs.put(paramName, parameters.getParameter(paramName));
         }
         try {
-            try (PythonObjectScope scope = new PythonObjectScope()) {
-                Object result = scope.own(adapter.callMethod(tool, "call", kwargs));
-                return ToolResponse.success(scope.own(adapter.materializePythonValue(result)));
-            }
+            Object result = adapter.callMethod(tool, "call", kwargs);
+            return ToolResponse.success(result);
         } catch (Exception e) {
             return ToolResponse.error(e);
         }

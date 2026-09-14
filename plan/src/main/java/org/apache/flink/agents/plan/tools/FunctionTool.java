@@ -26,7 +26,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import org.apache.flink.agents.api.annotation.ToolParam;
-import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -184,14 +183,9 @@ public class FunctionTool extends Tool {
         for (String name : parameters.getParameterNames()) {
             kwargs.put(name, parameters.getParameter(name));
         }
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object result =
-                    scope.own(
-                            pythonResourceAdapter.invokePythonTool(
-                                    pf.getModule(), pf.getQualName(), kwargs));
-            return ToolResponse.success(
-                    scope.own(pythonResourceAdapter.materializePythonValue(result)));
-        }
+        Object result =
+                pythonResourceAdapter.invokePythonTool(pf.getModule(), pf.getQualName(), kwargs);
+        return ToolResponse.success(result);
     }
 
     public Function getFunction() {

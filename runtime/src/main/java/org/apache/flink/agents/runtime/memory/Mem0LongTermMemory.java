@@ -84,11 +84,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         // marshalled back from Python, which repeats them on its own side.
         mailboxThreadChecker.run();
         currentPartitionKey();
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            return (Boolean)
-                    scope.own(
-                            adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name)));
-        }
+        return (Boolean) adapter.callMethod(pyMem0, "delete_memory_set", Map.of("name", name));
     }
 
     @Override
@@ -104,7 +100,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             if (metadatas != null) {
                 kwargs.put("metadatas", metadatas);
             }
-            return (List<String>) scope.own(adapter.callMethod(pyMem0, "add", kwargs));
+            return (List<String>) adapter.callMethod(pyMem0, "add", kwargs);
         }
     }
 
@@ -127,7 +123,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
                 kwargs.put("limit", limit);
             }
             Object pyItems = scope.own(adapter.callMethod(pyMem0, "get", kwargs));
-            return convertItems(scope, pyItems);
+            return convertItems(pyItems);
         }
     }
 
@@ -139,7 +135,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             if (ids != null) {
                 kwargs.put("ids", ids);
             }
-            scope.own(adapter.callMethod(pyMem0, "delete", kwargs));
+            adapter.callMethod(pyMem0, "delete", kwargs);
         }
     }
 
@@ -159,7 +155,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
                 kwargs.put("filters", filters);
             }
             Object pyItems = scope.own(adapter.callMethod(pyMem0, "search", kwargs));
-            return convertItems(scope, pyItems);
+            return convertItems(pyItems);
         }
     }
 
@@ -168,19 +164,16 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             boolean updateObservationEnabled,
             boolean getObservationEnabled,
             boolean searchObservationEnabled) {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(
-                    adapter.callMethod(
-                            pyMem0,
-                            "configure_observation",
-                            Map.of(
-                                    "update_observation_enabled",
-                                    updateObservationEnabled,
-                                    "get_observation_enabled",
-                                    getObservationEnabled,
-                                    "search_observation_enabled",
-                                    searchObservationEnabled)));
-        }
+        adapter.callMethod(
+                pyMem0,
+                "configure_observation",
+                Map.of(
+                        "update_observation_enabled",
+                        updateObservationEnabled,
+                        "get_observation_enabled",
+                        getObservationEnabled,
+                        "search_observation_enabled",
+                        searchObservationEnabled));
     }
 
     @Override
@@ -189,28 +182,22 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         this.partitionKey = partitionKey;
         this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(
-                    adapter.callMethod(
-                            pyMem0,
-                            "switch_context",
-                            Map.of(
-                                    "key", partitionKey,
-                                    "observation_id", observationId,
-                                    "observation_suppressed", observationSuppressed)));
-        }
+        adapter.callMethod(
+                pyMem0,
+                "switch_context",
+                Map.of(
+                        "key", partitionKey,
+                        "observation_id", observationId,
+                        "observation_suppressed", observationSuppressed));
     }
 
     @Override
     public String drainObservationRecordsJson(String partitionKey, String observationId) {
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            return (String)
-                    scope.own(
-                            adapter.callMethod(
-                                    pyMem0,
-                                    "drain_ltm_observation_records",
-                                    Map.of("key", partitionKey, "observation_id", observationId)));
-        }
+        return (String)
+                adapter.callMethod(
+                        pyMem0,
+                        "drain_ltm_observation_records",
+                        Map.of("key", partitionKey, "observation_id", observationId));
     }
 
     @Override
@@ -270,8 +257,8 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
     }
 
     @SuppressWarnings("unchecked")
-    private List<MemorySetItem> convertItems(PythonObjectScope scope, Object pyItems) {
-        Object converted = scope.own(adapter.invoke(MEM0_ITEMS_TO_JAVA, pyItems));
+    private List<MemorySetItem> convertItems(Object pyItems) {
+        Object converted = adapter.invoke(MEM0_ITEMS_TO_JAVA, pyItems);
         List<Map<String, Object>> dicts =
                 converted == null ? List.of() : (List<Map<String, Object>>) converted;
         List<MemorySetItem> items = new ArrayList<>(dicts.size());

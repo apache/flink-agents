@@ -87,25 +87,18 @@ class PythonMCPResourceTest {
     void releasesPromptBridgeValuesAfterConversion() throws Exception {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
         PyObject promptObject = mock(PyObject.class);
-        PyObject nameObject = mock(PyObject.class);
-        PyObject roleObject = mock(PyObject.class);
         PyObject messageObject = mock(PyObject.class);
         ChatMessage message = mock(ChatMessage.class);
         PythonMCPPrompt prompt = new PythonMCPPrompt(adapter, promptObject);
 
-        when(promptObject.getAttr("name")).thenReturn(nameObject);
-        when(nameObject.toString()).thenReturn("prompt");
         when(adapter.invoke("python_java_utils.from_java_message_role", MessageRole.USER))
-                .thenReturn(roleObject);
+                .thenReturn("user");
         when(adapter.callMethod(eq(promptObject), eq("format_messages"), any(Map.class)))
                 .thenReturn(List.of(messageObject));
         when(adapter.fromPythonChatMessage(messageObject)).thenReturn(message);
 
-        assertThat(prompt.getName()).isEqualTo("prompt");
         assertThat(prompt.formatMessages(MessageRole.USER, Map.of())).containsExactly(message);
 
-        verify(nameObject).close();
-        verify(roleObject).close();
         verify(messageObject).close();
 
         prompt.close();

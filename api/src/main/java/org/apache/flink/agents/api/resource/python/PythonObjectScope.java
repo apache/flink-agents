@@ -22,7 +22,6 @@ import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.LambdaUtil;
 import pemja.core.object.PyObject;
 
-import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
@@ -31,12 +30,12 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Owns the Pemja references produced during one Java-to-Python bridge operation.
+ * Owns Pemja references whose lifetime is bounded by a Java-to-Python bridge operation.
  *
- * <p>Pemja may return a {@link PyObject} directly or nested in a Java map, iterable, or object
- * array. Callers should add the complete bridge result to a short-lived scope and keep the scope
- * open until all Java conversion is complete. {@link #release(Object)} is reserved for explicitly
- * transferring a reference to a longer-lived owner.
+ * <p>Callers may register a {@link PyObject} directly or nested in a Java map, list, or object
+ * array. Every registered handle must be fully consumed before the scope closes, or transferred to
+ * another owner with {@link #release(Object)}. Values returned to callers must not contain handles
+ * that are still owned by this scope.
  */
 @Internal
 public final class PythonObjectScope implements AutoCloseable {
@@ -70,14 +69,7 @@ public final class PythonObjectScope implements AutoCloseable {
 
         List<AutoCloseable> closeables =
                 List.of(
-                        () -> {
-                            try (PythonObjectScope closeResult = new PythonObjectScope()) {
-                                closeResult.own(
-                                        adapter.callMethod(
-                                                resource, "close", Collections.emptyMap()));
-                                closeResult.release(resource);
-                            }
-                        },
+                        () -> adapter.callMethod(resource, "close", Collections.emptyMap()),
                         resource);
         LambdaUtil.applyToAllWhileSuppressingExceptions(closeables, AutoCloseable::close);
     }
@@ -135,21 +127,21 @@ public final class PythonObjectScope implements AutoCloseable {
             }
             return;
         }
-        if (value instanceof Iterable) {
+        if (value instanceof List) {
             if (!visitedContainers.add(value)) {
                 return;
             }
-            for (Object element : (Iterable<?>) value) {
+            for (Object element : (List<?>) value) {
                 visit(element, acquire, visitedContainers);
             }
             return;
         }
-        if (value.getClass().isArray() && !value.getClass().getComponentType().isPrimitive()) {
+        if (value instanceof Object[]) {
             if (!visitedContainers.add(value)) {
                 return;
             }
-            for (int i = 0; i < Array.getLength(value); i++) {
-                visit(Array.get(value, i), acquire, visitedContainers);
+            for (Object element : (Object[]) value) {
+                visit(element, acquire, visitedContainers);
             }
         }
     }
