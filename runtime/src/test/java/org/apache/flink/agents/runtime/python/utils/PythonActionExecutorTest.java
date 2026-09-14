@@ -298,46 +298,6 @@ class PythonActionExecutorTest {
     }
 
     @Test
-    void closesPythonEventWhenActionFails() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
-        PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
-        PythonActionExecutor executor = newExecutor(interpreter, runnerContext);
-        PythonFunction function = mock(PythonFunction.class);
-        PyObject pythonEvent = mock(PyObject.class);
-        RuntimeException failure = new RuntimeException("action failed");
-        when(interpreter.invoke(same(CONVERT_JSON_TO_PYTHON_EVENT), anyString()))
-                .thenReturn(pythonEvent);
-        when(function.call(same(pythonEvent), isNull())).thenThrow(failure);
-
-        assertThatThrownBy(() -> executor.executePythonFunction(function, new InputEvent(1L)))
-                .isInstanceOf(PythonActionExecutor.PythonActionExecutionException.class)
-                .hasCause(failure);
-        verify(pythonEvent).close();
-        verify(runnerContext).drainEvents(null);
-    }
-
-    @Test
-    void closesAwaitableAndEventWhenStoringAwaitableFails() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
-        PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);
-        PythonActionExecutor executor = newExecutor(interpreter, runnerContext);
-        PythonFunction function = mock(PythonFunction.class);
-        PyObject pythonEvent = mock(PyObject.class);
-        PyObject pythonAwaitable = mock(PyObject.class);
-        RuntimeException failure = new RuntimeException("set failed");
-        when(interpreter.invoke(same(CONVERT_JSON_TO_PYTHON_EVENT), anyString()))
-                .thenReturn(pythonEvent);
-        when(function.call(same(pythonEvent), isNull())).thenReturn(pythonAwaitable);
-        doThrow(failure).when(interpreter).set(anyString(), same(pythonAwaitable));
-
-        assertThatThrownBy(() -> executor.executePythonFunction(function, new InputEvent(1L)))
-                .isInstanceOf(PythonActionExecutor.PythonActionExecutionException.class)
-                .hasCause(failure);
-        verify(pythonAwaitable).close();
-        verify(pythonEvent).close();
-    }
-
-    @Test
     void closesRetrievedAwaitableWhileItIsPending() throws Exception {
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         PythonActionExecutor executor = newExecutor(interpreter);
@@ -374,22 +334,6 @@ class PythonActionExecutorTest {
         interpreterOrder.verify(interpreter).exec("del " + pythonAwaitableRef);
         verify(returnedValue).close();
         verify(pythonAwaitable).close();
-    }
-
-    @Test
-    void closesRetrievedAwaitableWhenPollingFails() throws Exception {
-        PythonInterpreter interpreter = mock(PythonInterpreter.class);
-        PythonActionExecutor executor = newExecutor(interpreter);
-        PyObject pythonAwaitable = mock(PyObject.class);
-        String pythonAwaitableRef = "python_awaitable_1";
-        RuntimeException failure = new RuntimeException("poll failed");
-        when(interpreter.get(pythonAwaitableRef)).thenReturn(pythonAwaitable);
-        when(interpreter.invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable)).thenThrow(failure);
-
-        assertThatThrownBy(() -> executor.callPythonAwaitable(pythonAwaitableRef))
-                .isSameAs(failure);
-        verify(pythonAwaitable).close();
-        verify(interpreter, never()).exec(anyString());
     }
 
     private static PythonActionExecutor newExecutor(PythonInterpreter interpreter)

@@ -153,29 +153,17 @@ public class ResourceCache implements AutoCloseable {
 
         Resource resource = provider.provide(resourceContext);
 
-        try {
-            if (resource instanceof BaseSubagentSetup) {
-                // The framework owns the setup's identity: inject the resource name as its
-                // subagent name.
-                ((BaseSubagentSetup) resource).setSubagentName(name);
-            }
-
-            if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
-                ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
-            }
-            resource.open();
-        } catch (Throwable initializationFailure) {
-            try {
-                resource.close();
-            } catch (Throwable closeFailure) {
-                if (closeFailure != initializationFailure) {
-                    initializationFailure.addSuppressed(closeFailure);
-                }
-            }
-            ExceptionUtils.rethrowException(initializationFailure);
-            throw new AssertionError(
-                    "Unreachable after rethrowing resource initialization failure");
+        if (resource instanceof BaseSubagentSetup) {
+            // The framework owns the setup's identity: inject the resource name as its
+            // subagent name.
+            ((BaseSubagentSetup) resource).setSubagentName(name);
         }
+
+        if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
+            ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
+        }
+
+        resource.open();
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
     }

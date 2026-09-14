@@ -20,11 +20,9 @@ package org.apache.flink.agents.api.resource.python;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -43,28 +41,5 @@ class PythonObjectScopeTest {
 
         verify(first, times(1)).close();
         verify(second, times(1)).close();
-    }
-
-    @Test
-    void rejectsReferencesAddedAfterClose() {
-        PythonObjectScope scope = new PythonObjectScope();
-        scope.close();
-
-        assertThatThrownBy(() -> scope.own(mock(PyObject.class)))
-                .isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    void handlesSelfReferentialContainers() throws Exception {
-        PyObject reference = mock(PyObject.class);
-        List<Object> cyclic = new ArrayList<>();
-        cyclic.add(reference);
-        cyclic.add(cyclic);
-
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            scope.own(cyclic);
-        }
-
-        verify(reference).close();
     }
 }

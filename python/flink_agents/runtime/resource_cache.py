@@ -17,7 +17,6 @@
 #################################################################################
 import logging
 from collections.abc import Callable
-from contextlib import ExitStack
 from typing import Any, Dict
 
 from flink_agents.api.resource import Resource, ResourceType
@@ -122,21 +121,16 @@ class ResourceCache:
         resource = resource_provider.provide(
             resource_context=self._resource_context, config=self._config
         )
-        with ExitStack() as rollback:
-            rollback.callback(resource.close)
-            if isinstance(resource, FunctionTool) and isinstance(
-                resource.func, JavaFunction
-            ):
-                resource.set_java_resource_adapter(self._j_resource_adapter)
-            # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
-            from flink_agents.runtime.base_subagent import BaseSubagentSetup
+        if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
+            resource.set_java_resource_adapter(self._j_resource_adapter)
+        # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
+        from flink_agents.runtime.base_subagent import BaseSubagentSetup
 
-            if isinstance(resource, BaseSubagentSetup):
-                # The framework owns the setup's identity: inject the resource name
-                # as its sub-agent name, mirroring the Java ResourceCache.
-                resource.set_subagent_name(name)
-            resource.open()
-            rollback.pop_all()
+        if isinstance(resource, BaseSubagentSetup):
+            # The framework owns the setup's identity: inject the resource name
+            # as its sub-agent name, mirroring the Java ResourceCache.
+            resource.set_subagent_name(name)
+        resource.open()
         self._cache.setdefault(type, {})[name] = resource
         return resource
 

@@ -113,27 +113,16 @@ public class PythonResourceProvider extends ResourceProvider {
             }
         }
 
+        PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
         Constructor<?> constructor =
                 clazz.getConstructor(
                         PythonResourceAdapter.class,
                         PyObject.class,
                         ResourceDescriptor.class,
                         ResourceContext.class);
-        PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
-        try {
-            return (Resource)
-                    constructor.newInstance(
-                            pythonResourceAdapter, pyResource, descriptor, resourceContext);
-        } catch (Exception | Error creationFailure) {
-            if (pyResource != null) {
-                try (pyResource) {
-                    pythonResourceAdapter.callMethod(pyResource, "close", Map.of());
-                } catch (Exception | Error closeFailure) {
-                    creationFailure.addSuppressed(closeFailure);
-                }
-            }
-            throw creationFailure;
-        }
+        return (Resource)
+                constructor.newInstance(
+                        pythonResourceAdapter, pyResource, descriptor, resourceContext);
     }
 
     @Override

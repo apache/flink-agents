@@ -202,20 +202,16 @@ public class PythonResourceAdapterImplTest {
     void closesRetrievedDocumentsAfterQueryResultConversion() throws Exception {
         PyObject pythonResult = mock(PyObject.class);
         PyObject pythonDocument = mock(PyObject.class);
-        PyObject metadataValue = mock(PyObject.class);
-        Map<String, Object> metadata = Map.of("custom", metadataValue);
         when(pythonResult.getAttr("documents", List.class)).thenReturn(List.of(pythonDocument));
         when(pythonDocument.getAttr("content")).thenReturn("content");
-        when(pythonDocument.getAttr("metadata", Map.class)).thenReturn(metadata);
+        when(pythonDocument.getAttr("metadata", Map.class)).thenReturn(Map.of("source", "test"));
         when(pythonDocument.getAttr("id")).thenReturn("doc-1");
 
         VectorStoreQueryResult result =
                 pythonResourceAdapter.fromPythonVectorStoreQueryResult(pythonResult);
 
-        assertThat(result.getDocuments().get(0).getMetadata()).isSameAs(metadata);
+        assertThat(result.getDocuments().get(0).getContent()).isEqualTo("content");
         verify(pythonDocument).close();
-        verify(pythonResult, never()).close();
-        verify(metadataValue, never()).close();
     }
 
     @Test

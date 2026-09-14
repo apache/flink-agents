@@ -24,7 +24,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
-import org.apache.flink.util.LambdaUtil;
 import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
@@ -58,46 +57,36 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
         this.adapter = adapter;
     }
 
+    @SuppressWarnings("unchecked")
     public List<PythonMCPTool> listTools() {
         return listTools(null);
     }
 
+    @SuppressWarnings("unchecked")
     public List<PythonMCPTool> listTools(@Nullable String mcpServerName) {
         Object result = adapter.callMethod(server, "list_tools", Collections.emptyMap());
-        if (!(result instanceof List)) {
-            return Collections.emptyList();
-        }
-
-        List<?> pythonTools = (List<?>) result;
-        List<PythonMCPTool> tools = new ArrayList<>(pythonTools.size());
-        try {
-            for (Object pythonTool : pythonTools) {
-                tools.add(new PythonMCPTool(adapter, (PyObject) pythonTool, mcpServerName));
+        if (result instanceof List) {
+            List<Object> pythonTools = (List<Object>) result;
+            List<PythonMCPTool> tools = new ArrayList<>(pythonTools.size());
+            for (Object pyTool : pythonTools) {
+                tools.add(new PythonMCPTool(adapter, (PyObject) pyTool, mcpServerName));
             }
             return tools;
-        } catch (RuntimeException | Error creationFailure) {
-            closeChildrenAfterFailure(pythonTools, tools, creationFailure);
-            throw creationFailure;
         }
+        return Collections.emptyList();
     }
 
     public List<PythonMCPPrompt> listPrompts() {
         Object result = adapter.callMethod(server, "list_prompts", Collections.emptyMap());
-        if (!(result instanceof List)) {
-            return Collections.emptyList();
-        }
-
-        List<?> pythonPrompts = (List<?>) result;
-        List<PythonMCPPrompt> prompts = new ArrayList<>(pythonPrompts.size());
-        try {
+        if (result instanceof List) {
+            List<Object> pythonPrompts = (List<Object>) result;
+            List<PythonMCPPrompt> prompts = new ArrayList<>(pythonPrompts.size());
             for (Object pythonPrompt : pythonPrompts) {
                 prompts.add(new PythonMCPPrompt(adapter, (PyObject) pythonPrompt));
             }
             return prompts;
-        } catch (RuntimeException | Error creationFailure) {
-            closeChildrenAfterFailure(pythonPrompts, prompts, creationFailure);
-            throw creationFailure;
         }
+        return Collections.emptyList();
     }
 
     @Override
@@ -129,27 +118,6 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
         closed = true;
         try (server) {
             adapter.callMethod(server, "close", Map.of());
-        }
-    }
-
-    private void closeChildrenAfterFailure(
-            List<?> pythonChildren, List<? extends Resource> children, Throwable creationFailure) {
-        List<AutoCloseable> closeables = new ArrayList<>();
-        // Successfully constructed wrappers own the prefix; the remaining handles are ours.
-        for (int i = pythonChildren.size() - 1; i >= children.size(); i--) {
-            Object pythonChild = pythonChildren.get(i);
-            if (pythonChild instanceof PyObject) {
-                closeables.add((PyObject) pythonChild);
-            }
-        }
-        Collections.reverse(children);
-        for (Resource child : children) {
-            closeables.add(child::close);
-        }
-        try {
-            LambdaUtil.applyToAllWhileSuppressingExceptions(closeables, AutoCloseable::close);
-        } catch (Exception closeFailure) {
-            creationFailure.addSuppressed(closeFailure);
         }
     }
 }

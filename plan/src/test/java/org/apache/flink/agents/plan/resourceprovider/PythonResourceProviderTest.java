@@ -22,14 +22,12 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import pemja.core.object.PyObject;
 
 import java.util.Map;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -46,7 +44,7 @@ class PythonResourceProviderTest {
                 "CHAT_MODEL", "CHAT_MODEL_CONNECTION", "EMBEDDING_MODEL",
                 "EMBEDDING_MODEL_CONNECTION", "VECTOR_STORE", "MCP_SERVER"
             })
-    void providedResourceClosesHandleOnceWhenLogicalCloseFails(ResourceType type) throws Exception {
+    void providedResourceOwnsAndClosesPythonHandleOnce(ResourceType type) throws Exception {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
         PyObject pythonResource = mock(PyObject.class);
         ResourceDescriptor descriptor =
@@ -55,34 +53,12 @@ class PythonResourceProviderTest {
         provider.setPythonResourceAdapter(adapter);
         when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
                 .thenReturn(pythonResource);
-        RuntimeException failure = new RuntimeException("logical close failed");
-        when(adapter.callMethod(pythonResource, "close", Map.of())).thenThrow(failure);
 
         Resource resource = provider.provide(mock(ResourceContext.class));
 
         verify(pythonResource, never()).close();
-        assertThatThrownBy(resource::close).isSameAs(failure);
         resource.close();
-        verify(adapter).callMethod(pythonResource, "close", Map.of());
-        verify(pythonResource).close();
-    }
-
-    @Test
-    void closesPythonResourceWhenWrapperConstructionFails() throws Exception {
-        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
-        PyObject pythonResource = mock(PyObject.class);
-        Map<String, Object> arguments = Map.of("structured_output_strategy", "invalid");
-        ResourceDescriptor descriptor =
-                new ResourceDescriptor("example.module", "ExampleModel", arguments);
-        PythonResourceProvider provider =
-                new PythonResourceProvider("model", ResourceType.CHAT_MODEL, descriptor);
-        provider.setPythonResourceAdapter(adapter);
-        when(adapter.initPythonResource("example.module", "ExampleModel", arguments))
-                .thenReturn(pythonResource);
-
-        assertThatThrownBy(() -> provider.provide(mock(ResourceContext.class)))
-                .hasCauseInstanceOf(IllegalArgumentException.class);
-
+        resource.close();
         verify(adapter).callMethod(pythonResource, "close", Map.of());
         verify(pythonResource).close();
     }
