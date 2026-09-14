@@ -47,18 +47,18 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  * unresolvable model resource) surfaces as {@link ChatAttemptFailed} so the caller's fallback loop
  * and error-handling strategy see every attempt uniformly.
  */
-final class ChatModelInvoker {
+public final class ChatModelInvoker {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelInvoker.class);
 
     private ChatModelInvoker() {}
 
-    static final class ChatAttemptResult {
-        final String model;
-        final BaseChatModelSetup chatModel;
-        final ChatMessage response;
-        final int retryCount;
-        final int totalRetryWaitSec;
+    public static final class ChatAttemptResult {
+        public final String model;
+        public final BaseChatModelSetup chatModel;
+        public final ChatMessage response;
+        public final int retryCount;
+        public final int totalRetryWaitSec;
 
         ChatAttemptResult(
                 String model,
@@ -74,12 +74,12 @@ final class ChatModelInvoker {
         }
     }
 
-    static final class ChatAttemptFailed extends Exception {
-        final String model;
-        final BaseChatModelSetup chatModel;
-        final Exception error;
-        final int retryCount;
-        final int totalRetryWaitSec;
+    public static final class ChatAttemptFailed extends Exception {
+        public final String model;
+        public final BaseChatModelSetup chatModel;
+        public final Exception error;
+        public final int retryCount;
+        public final int totalRetryWaitSec;
 
         ChatAttemptFailed(
                 String model,
@@ -97,7 +97,7 @@ final class ChatModelInvoker {
     }
 
     /** The request-level retry budget: honored only under {@code RETRY}. */
-    static int configuredRetries(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
+    public static int configuredRetries(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
         if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
             return 0;
         }
@@ -105,14 +105,15 @@ final class ChatModelInvoker {
     }
 
     /** The request-level retry backoff: honored only under {@code RETRY}. */
-    static int configuredRetryWaitSec(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
+    public static int configuredRetryWaitSec(
+            RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
         if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
             return 0;
         }
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
     }
 
-    static ChatAttemptResult chatWithRetries(
+    public static ChatAttemptResult chatWithRetries(
             UUID initialRequestId,
             String model,
             String durableCallId,

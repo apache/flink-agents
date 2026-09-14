@@ -39,6 +39,8 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
+import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -405,23 +407,23 @@ public class ChatModelAction {
                         result.chatModel,
                         result.retryCount,
                         result.totalRetryWaitSec);
-                if (selection.isRouter) {
-                    if (!result.model.equals(selection.selectedModel)) {
+                if (selection.isRouter()) {
+                    if (!result.model.equals(selection.getSelectedModel())) {
                         // The strategy's pick failed and another candidate answered; record the
                         // outcome in the event log, not just on the response.
                         ctx.sendEvent(
                                 new ModelRoutingEvent(
                                         initialRequestId,
-                                        selection.requestedModel,
-                                        selection.candidates,
+                                        selection.getRequestedModel(),
+                                        selection.getCandidates(),
                                         result.model,
                                         ModelRoutingEvent.SOURCE_FALLBACK,
-                                        selection.fallbackEnabled,
+                                        selection.isFallbackEnabled(),
                                         String.format(
                                                 "fallback after selected model '%s' failed",
-                                                selection.selectedModel),
+                                                selection.getSelectedModel()),
                                         null,
-                                        selection.metadata,
+                                        selection.getMetadata(),
                                         null));
                     }
                 }
@@ -431,7 +433,7 @@ public class ChatModelAction {
                 // in an initial-request-keyed context instead of stamping intermediate messages
                 // and copying it through every tool round.
                 Map<String, Object> routingMetadata =
-                        selection.isRouter
+                        selection.isRouter()
                                 ? selection.buildResponseMetadata(result.model, triedModels)
                                 : null;
                 if (!Objects.requireNonNull(result.response).getToolCalls().isEmpty()) {
@@ -487,12 +489,12 @@ public class ChatModelAction {
             }
         }
 
-        if (selection.isRouter && triedModels.size() > 1) {
+        if (selection.isRouter() && triedModels.size() > 1) {
             LOG.warn(
                     "Chat request {} exhausted all candidates {} of router '{}'; last error: {}.",
                     initialRequestId,
                     triedModels,
-                    selection.requestedModel,
+                    selection.getRequestedModel(),
                     lastError == null ? null : lastError.toString());
         }
         // The reasoning loop is over; a routed loop that dies mid-way must not leak its
@@ -512,7 +514,7 @@ public class ChatModelAction {
      * Totals over a completed request are unchanged; requests that ultimately fail now contribute
      * their retry counts where they previously did not.
      */
-    static void recordAttemptRetryStats(
+    public static void recordAttemptRetryStats(
             RunnerContext ctx,
             UUID initialRequestId,
             BaseChatModelSetup chatModel,

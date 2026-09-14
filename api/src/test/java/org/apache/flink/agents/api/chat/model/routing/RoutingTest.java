@@ -291,6 +291,27 @@ class RoutingTest {
                         .get(RoutingStrategy.ARG_MAX_CONTEXT_CHARS));
     }
 
+    /**
+     * Out-of-int-range caps (a deserialized Long or Double) are rejected, not wrapped/saturated.
+     */
+    @Test
+    void maxContextCharsOutsideIntRangeIsRejected() {
+        for (Object cap : new Object[] {4294967297L, 1e10, -1L}) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () ->
+                            new RoutingStrategy(
+                                    RoutingStrategyType.LLM_JUDGE,
+                                    Map.of(
+                                            RoutingStrategy.ARG_JUDGE_MODEL,
+                                            "judge",
+                                            RoutingStrategy.ARG_MAX_CONTEXT_CHARS,
+                                            cap),
+                                    null),
+                    "cap=" + cap);
+        }
+    }
+
     @Test
     void strategyTypeTagRoundTrips() {
         for (RoutingStrategyType type : RoutingStrategyType.values()) {

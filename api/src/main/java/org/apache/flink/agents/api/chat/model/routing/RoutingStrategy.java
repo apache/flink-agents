@@ -102,11 +102,18 @@ public final class RoutingStrategy implements Serializable {
                                     + "' must be a non-empty String when provided.");
                 }
                 Object cap = arguments.get(ARG_MAX_CONTEXT_CHARS);
-                if (cap != null && (!(cap instanceof Number) || ((Number) cap).intValue() <= 0)) {
+                // Compare as long: intValue() would wrap an out-of-range Long into a tiny (or
+                // negative) cap, and saturate a large Double to Integer.MAX_VALUE ("no cap").
+                if (cap != null
+                        && (!(cap instanceof Number)
+                                || ((Number) cap).longValue() <= 0
+                                || ((Number) cap).longValue() > Integer.MAX_VALUE)) {
                     throw new IllegalArgumentException(
                             "'"
                                     + ARG_MAX_CONTEXT_CHARS
-                                    + "' must be a positive integer when provided.");
+                                    + "' must be a positive integer (at most "
+                                    + Integer.MAX_VALUE
+                                    + ") when provided.");
                 }
                 break;
             case CUSTOM:

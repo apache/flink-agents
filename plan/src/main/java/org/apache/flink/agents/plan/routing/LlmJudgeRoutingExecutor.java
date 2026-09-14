@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan.actions;
+package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
@@ -30,6 +30,8 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.actions.ChatModelAction;
+import org.apache.flink.agents.plan.actions.ChatModelInvoker;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -257,10 +259,10 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
      *
      * <p>The judge routes on what the selected model will actually receive: {@code
      * effectiveMessages} is the complete message list, with the target setup's bound prompt already
-     * rendered when one exists (see {@code ModelRoutingResolver#effectiveJudgeMessages}). With the
-     * opt-in {@code max_context_chars} cap, the newest message and the SYSTEM message are always
-     * kept, remaining messages fill newest-first within the budget, and {@code truncatedOut[0]} is
-     * set so the decision metadata records that the judge saw a trimmed view.
+     * rendered when one exists (see {@link #effectiveJudgeMessages}). With the opt-in {@code
+     * max_context_chars} cap, the newest message and the SYSTEM message are always kept, remaining
+     * messages fill newest-first within the budget, and {@code truncatedOut[0]} is set so the
+     * decision metadata records that the judge saw a trimmed view.
      */
     static List<ChatMessage> buildJudgeMessages(
             RoutingStrategy strategy,

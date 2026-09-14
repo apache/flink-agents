@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan.actions;
+package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 
+import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
 
@@ -90,8 +91,11 @@ final class CustomRoutingExecutorAdapter implements RoutingExecutor {
                             strategy.getExecutorClass(), CustomRoutingExecutor.class.getName()));
         }
         try {
+            // The declaration's map is an unmodifiable view; a constructor that normalizes its
+            // arguments (putIfAbsent, remove) would otherwise throw on every request.
             return (CustomRoutingExecutor)
-                    clazz.getConstructor(Map.class).newInstance(strategy.getArguments());
+                    clazz.getConstructor(Map.class)
+                            .newInstance(new HashMap<>(strategy.getArguments()));
         } catch (NoSuchMethodException noMapCtor) {
             return (CustomRoutingExecutor) clazz.getConstructor().newInstance();
         }

@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan.actions;
+package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
@@ -47,7 +47,7 @@ import java.util.UUID;
  * the durable substrate replays a flat, order-matched call sequence and cannot nest (see the
  * sequencing contract on {@link RoutingExecutor}).
  */
-final class ModelRoutingResolver {
+public final class ModelRoutingResolver {
 
     /** The durable-call id for the persisted routing decision — ONE definition for all paths. */
     private static String routeCallId(String model) {
@@ -68,7 +68,7 @@ final class ModelRoutingResolver {
      * ChatModelAction#handleToolCalls}), so this method is only reached with a router name on the
      * initial request.
      */
-    static ResolvedModelRoute resolve(
+    public static ResolvedModelRoute resolve(
             UUID requestId,
             String model,
             List<ChatMessage> messages,
@@ -227,7 +227,7 @@ final class ModelRoutingResolver {
      * InterruptedIOException("timeout")} for ordinary network timeouts, which must keep following
      * the normal failure policy.
      */
-    static boolean isCancellation(Throwable failure) {
+    public static boolean isCancellation(Throwable failure) {
         if (Thread.currentThread().isInterrupted()) {
             return true;
         }

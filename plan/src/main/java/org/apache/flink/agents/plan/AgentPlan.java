@@ -731,14 +731,25 @@ public class AgentPlan implements Serializable {
         Map<String, ResourceProvider> chatModels =
                 resourceProviders.getOrDefault(ResourceType.CHAT_MODEL, Collections.emptyMap());
         for (ResourceProvider provider : routers.values()) {
-            if (!(provider instanceof JavaResourceProvider)) {
-                continue;
-            }
-            ResourceDescriptor descriptor = ((JavaResourceProvider) provider).getDescriptor();
+            // Java- and Python-provided declarations carry the same keys; a router without an
+            // introspectable descriptor is left to its constructor.
+            ResourceDescriptor descriptor = descriptorOf(provider);
             if (descriptor == null || descriptor.getInitialArguments() == null) {
                 continue;
             }
-            String typeTag = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
+            Object typeTagValue = descriptor.getArgument(ModelRouter.STRATEGY_TYPE_KEY);
+            if (typeTagValue != null && !(typeTagValue instanceof String)) {
+                // A hand-built or deserialized descriptor may carry any JSON type here; name the
+                // router instead of surfacing a raw ClassCastException from the unchecked read.
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Model router '%s' declares '%s' as %s; expected a strategy type"
+                                        + " tag string.",
+                                provider.getName(),
+                                ModelRouter.STRATEGY_TYPE_KEY,
+                                typeTagValue.getClass().getSimpleName()));
+            }
+            String typeTag = (String) typeTagValue;
             if (typeTag == null) {
                 // Fail here, not per record on the TaskManager: ModelRouter's constructor
                 // unconditionally rejects a descriptor without a strategy, and a throwing
@@ -758,6 +769,10 @@ public class AgentPlan implements Serializable {
                             descriptor.getArgument(
                                     ModelRouter.STRATEGY_ARGS_KEY, Collections.emptyMap()),
                             descriptor.getArgument(ModelRouter.STRATEGY_EXECUTOR_CLASS_KEY));
+            // Every strategy reads 'candidates' through ModelRouter's unchecked cast, so the
+            // shape guard applies to all of them — not only where the rule keys are checked.
+            Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
+            validateCandidatesShape(provider.getName(), candidates);
             switch (strategy.getType()) {
                 case LLM_JUDGE:
                     validateJudge(provider.getName(), strategy, chatModels);
@@ -766,10 +781,7 @@ public class AgentPlan implements Serializable {
                     validateCustomExecutor(provider.getName(), strategy);
                     break;
                 case RULE_BASED:
-                    validateRuleKeys(
-                            provider.getName(),
-                            strategy,
-                            descriptor.getArgument(ModelRouter.CANDIDATES_KEY));
+                    validateRuleKeys(provider.getName(), strategy, candidates);
                     break;
                 default:
                     break;
@@ -786,16 +798,13 @@ public class AgentPlan implements Serializable {
      * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
      * the key-vs-candidate check here mirrors build().
      */
-    private static void validateRuleKeys(
-            String routerName, RoutingStrategy strategy, Object candidates) {
-        if (candidates == null) {
-            // A missing 'candidates' argument gets the router constructor's own message
-            // ("requires at least one candidate").
-            return;
-        }
-        if (!(candidates instanceof List)) {
-            // Fail here, not per record: the router constructor's unchecked read would turn a
-            // mis-shaped value into a raw ClassCastException inside the durable call.
+    /**
+     * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
+     * 'candidates' value into a raw ClassCastException inside the durable call. A missing argument
+     * is left to the constructor's own message ("requires at least one candidate").
+     */
+    private static void validateCandidatesShape(String routerName, Object candidates) {
+        if (candidates != null && !(candidates instanceof List)) {
             throw new IllegalArgumentException(
                     String.format(
                             "Model router '%s' declares '%s' as %s; expected a list of model"
@@ -803,6 +812,13 @@ public class AgentPlan implements Serializable {
                             routerName,
                             ModelRouter.CANDIDATES_KEY,
                             candidates.getClass().getSimpleName()));
+        }
+    }
+
+    private static void validateRuleKeys(
+            String routerName, RoutingStrategy strategy, Object candidates) {
+        if (candidates == null) {
+            return;
         }
         Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
         if (!(rules instanceof Map)) {
@@ -832,11 +848,10 @@ public class AgentPlan implements Serializable {
         }
         // The judge must be a plain chat model — nothing may rewrite the judge conversation.
         // Only descriptor-carried bindings are visible here; a setup that is not introspectable
-        // at plan time surfaces its bindings on the judge's normal chat path.
-        if (!(judgeProvider instanceof JavaResourceProvider)) {
-            return;
-        }
-        ResourceDescriptor judgeDescriptor = ((JavaResourceProvider) judgeProvider).getDescriptor();
+        // at plan time surfaces its bindings on the judge's normal chat path. Both Java- and
+        // Python-backed setups (a Java agent declaring the judge with 'pythonClazz') carry the
+        // same 'prompt'/'tools'/'skills' arguments, so both descriptors are checked.
+        ResourceDescriptor judgeDescriptor = descriptorOf(judgeProvider);
         if (judgeDescriptor == null || judgeDescriptor.getInitialArguments() == null) {
             return;
         }
@@ -855,6 +870,17 @@ public class AgentPlan implements Serializable {
                                 judgeModel, routerName, binding, binding));
             }
         }
+    }
+
+    /** The declaration a resource provider was built from, when it carries one. */
+    private static ResourceDescriptor descriptorOf(ResourceProvider provider) {
+        if (provider instanceof JavaResourceProvider) {
+            return ((JavaResourceProvider) provider).getDescriptor();
+        }
+        if (provider instanceof PythonResourceProvider) {
+            return ((PythonResourceProvider) provider).getDescriptor();
+        }
+        return null;
     }
 
     private static void validateCustomExecutor(String routerName, RoutingStrategy strategy) {

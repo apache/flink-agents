@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.plan.actions;
+package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 
@@ -34,7 +34,7 @@ import java.util.Map;
  * feed the {@code model_routing} observability block. A plain (unrouted) request is the degenerate
  * {@link #direct(String)} route.
  */
-final class ResolvedModelRoute {
+public final class ResolvedModelRoute {
     final String requestedModel;
     final String selectedModel;
     final List<String> candidates;
@@ -69,7 +69,37 @@ final class ResolvedModelRoute {
                         : Collections.unmodifiableMap(new HashMap<>(metadata));
     }
 
-    static ResolvedModelRoute direct(String model) {
+    /** The model name the action was asked for: a router name or a plain chat model. */
+    public String getRequestedModel() {
+        return requestedModel;
+    }
+
+    /** The candidate the strategy selected (or the requested model when not routing). */
+    public String getSelectedModel() {
+        return selectedModel;
+    }
+
+    /** The router's declared candidates, in declaration order; a singleton when not routing. */
+    public List<String> getCandidates() {
+        return candidates;
+    }
+
+    /** Whether the requested model was a router. */
+    public boolean isRouter() {
+        return isRouter;
+    }
+
+    /** Whether failed attempts may fall through to the remaining candidates. */
+    public boolean isFallbackEnabled() {
+        return fallbackEnabled;
+    }
+
+    /** Strategy-supplied decision metadata, never null. */
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
+    public static ResolvedModelRoute direct(String model) {
         return new ResolvedModelRoute(
                 model,
                 model,
@@ -83,7 +113,7 @@ final class ResolvedModelRoute {
     }
 
     /** Candidate order: the strategy's pick first, then declaration order if fallback is on. */
-    List<String> attemptOrder() {
+    public List<String> attemptOrder() {
         List<String> order = new ArrayList<>();
         order.add(this.selectedModel);
         if (this.isRouter && this.fallbackEnabled) {
@@ -96,7 +126,7 @@ final class ResolvedModelRoute {
         return order;
     }
 
-    String durableChatCallId(String candidate) {
+    public String durableChatCallId(String candidate) {
         if (!this.isRouter) {
             return "chat";
         }
@@ -104,7 +134,7 @@ final class ResolvedModelRoute {
     }
 
     /** The {@code model_routing} extra-args block stamped on the loop's final response. */
-    Map<String, Object> buildResponseMetadata(String finalModel, List<String> triedModels) {
+    public Map<String, Object> buildResponseMetadata(String finalModel, List<String> triedModels) {
         boolean fallbackAttempted = !finalModel.equals(this.selectedModel);
         List<String> fallbackModelsTried = new ArrayList<>();
         for (int i = 1; i < triedModels.size(); i++) {

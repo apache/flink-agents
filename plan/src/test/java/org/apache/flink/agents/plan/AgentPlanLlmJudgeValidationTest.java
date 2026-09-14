@@ -22,10 +22,12 @@ import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
+import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
 
@@ -135,6 +137,89 @@ public class AgentPlanLlmJudgeValidationTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("plain chat model")
                 .hasMessageContaining("tools");
+    }
+
+    /**
+     * A Java agent may declare the judge as a Python chat model ({@code pythonClazz}); its
+     * descriptor carries the same {@code prompt}/{@code tools}/{@code skills} bindings, so the
+     * plain-chat-model check must read it too — the former runtime backstop that covered this path
+     * is gone.
+     */
+    @Test
+    void pythonBackedJudgeWithBoundToolsFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
+        ResourceDescriptor toolBound =
+                new ResourceDescriptor(
+                        "some.Clazz",
+                        Map.of("pythonClazz", "pkg.PyJudge", "tools", List.of("calculator")));
+        providers
+                .get(ResourceType.CHAT_MODEL)
+                .put(
+                        "judge",
+                        new PythonResourceProvider("judge", ResourceType.CHAT_MODEL, toolBound));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("plain chat model")
+                .hasMessageContaining("tools");
+    }
+
+    /** The 'candidates' shape guard is not specific to rule-based routers. */
+    @Test
+    void misShapedCandidatesFailForLlmJudgeRouterAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put(ModelRouter.CANDIDATES_KEY, "small,big");
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, RoutingStrategyType.LLM_JUDGE.tag());
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_JUDGE_MODEL, "judge"));
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("expected a list of model names");
+    }
+
+    /** A non-String strategy tag names the router instead of escaping as a ClassCastException. */
+    @Test
+    void nonStringStrategyTypeFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, 1);
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("router")
+                .hasMessageContaining("expected a strategy type tag string");
+    }
+
+    /** A router delivered through a PythonResourceProvider is validated like a Java one. */
+    @Test
+    void pythonProvidedRouterIsValidatedAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = new HashMap<>();
+        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", "big"));
+        args.put("pythonClazz", "pkg.PyRouter");
+        providers
+                .get(ResourceType.MODEL_ROUTER)
+                .put(
+                        "router",
+                        new PythonResourceProvider(
+                                "router",
+                                ResourceType.MODEL_ROUTER,
+                                new ResourceDescriptor("pkg.PyRouter", args)));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("declares no routing strategy");
+    }
+
+    @Test
+    void pythonBackedPlainJudgePassesValidation() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(false);
+        ResourceDescriptor plain =
+                new ResourceDescriptor("some.Clazz", Map.of("pythonClazz", "pkg.PyJudge"));
+        providers
+                .get(ResourceType.CHAT_MODEL)
+                .put("judge", new PythonResourceProvider("judge", ResourceType.CHAT_MODEL, plain));
+        assertThatCode(() -> new AgentPlan(Map.of(), providers)).doesNotThrowAnyException();
     }
 
     /** Plan construction must never run custom-executor constructors. */
