@@ -21,6 +21,7 @@ import typing
 from typing import Any, Dict
 
 import cloudpickle
+from pydantic_core import to_jsonable_python
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
@@ -197,6 +198,13 @@ def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> A
 
     descriptor = PythonFunction(module=module, qualname=qual_name)
     return descriptor.as_callable()(**kwargs)
+
+
+def materialize_python_value(value: Any) -> Any:
+    """Convert an arbitrary Python result into values that Pemja can detach from."""
+    if value is None or isinstance(value, str | int | float | bool | bytes):
+        return value
+    return to_jsonable_python(value, fallback=str)
 
 
 def from_java_prompt(j_prompt: Any) -> JavaPrompt:

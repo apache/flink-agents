@@ -18,6 +18,7 @@
 import json
 
 import cloudpickle
+from pydantic import BaseModel
 
 from flink_agents.api.decorators import tool
 from flink_agents.api.embedding_models.embedding_model import (
@@ -30,6 +31,7 @@ from flink_agents.runtime.python_java_utils import (
     call_embedding_with_usage,
     convert_to_python_key_text,
     get_python_tool_metadata,
+    materialize_python_value,
     to_python_memory_set,
     wrap_to_input_event,
 )
@@ -109,3 +111,22 @@ def test_to_python_memory_set_carries_the_action_context() -> None:
     assert memory_set.partition_key == "owner"
     assert memory_set.observation_id == "owner-action"
     assert memory_set.observation_suppressed is True
+
+
+class _ToolResult(BaseModel):
+    answer: str
+    score: int
+
+
+class _StringToolResult:
+    def __str__(self) -> str:
+        return "fallback-result"
+
+
+def test_materialize_python_value_detaches_custom_objects() -> None:
+    assert materialize_python_value(_ToolResult(answer="ok", score=1)) == {
+        "answer": "ok",
+        "score": 1,
+    }
+    assert materialize_python_value([_StringToolResult()]) == ["fallback-result"]
+    assert materialize_python_value(b"raw") == b"raw"

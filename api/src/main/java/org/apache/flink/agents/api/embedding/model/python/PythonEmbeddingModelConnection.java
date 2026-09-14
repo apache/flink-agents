@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
@@ -48,6 +49,7 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
     private final PyObject embeddingModel;
     private final PythonResourceAdapter adapter;
+    private final PythonObjectScope ownedObjects = new PythonObjectScope();
 
     /**
      * Creates a new PythonEmbeddingModelConnection.
@@ -64,7 +66,7 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
             ResourceDescriptor descriptor,
             ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.embeddingModel = embeddingModel;
+        this.embeddingModel = ownedObjects.own(embeddingModel);
         this.adapter = adapter;
     }
 
@@ -77,17 +79,19 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", text);
 
-        Object result = adapter.callMethod(embeddingModel, "embed", kwargs);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object result = scope.own(adapter.callMethod(embeddingModel, "embed", kwargs));
 
-        // Convert to float arrays
-        if (result instanceof List) {
-            List<?> list = (List<?>) result;
-            return EmbeddingModelUtils.toFloatArray(list);
+            // Convert to float arrays
+            if (result instanceof List) {
+                List<?> list = (List<?>) result;
+                return EmbeddingModelUtils.toFloatArray(list);
+            }
+
+            throw new IllegalArgumentException(
+                    "Expected List from Python embed method, but got: "
+                            + (result == null ? "null" : result.getClass().getName()));
         }
-
-        throw new IllegalArgumentException(
-                "Expected List from Python embed method, but got: "
-                        + (result == null ? "null" : result.getClass().getName()));
     }
 
     @Override
@@ -99,28 +103,30 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", texts);
 
-        Object results = adapter.callMethod(embeddingModel, "embed", kwargs);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object results = scope.own(adapter.callMethod(embeddingModel, "embed", kwargs));
 
-        if (results instanceof List) {
-            List<?> list = (List<?>) results;
-            List<float[]> embeddings = new ArrayList<>();
+            if (results instanceof List) {
+                List<?> list = (List<?>) results;
+                List<float[]> embeddings = new ArrayList<>();
 
-            for (Object element : list) {
-                if (element instanceof List) {
-                    List<?> listElement = (List<?>) element;
-                    embeddings.add(EmbeddingModelUtils.toFloatArray(listElement));
-                } else {
-                    throw new IllegalArgumentException(
-                            "Expected List value in embedding results, but got: "
-                                    + element.getClass().getName());
+                for (Object element : list) {
+                    if (element instanceof List) {
+                        List<?> listElement = (List<?>) element;
+                        embeddings.add(EmbeddingModelUtils.toFloatArray(listElement));
+                    } else {
+                        throw new IllegalArgumentException(
+                                "Expected List value in embedding results, but got: "
+                                        + element.getClass().getName());
+                    }
                 }
+                return embeddings;
             }
-            return embeddings;
-        }
 
-        throw new IllegalArgumentException(
-                "Expected List from Python embed method, but got: "
-                        + (results == null ? "null" : results.getClass().getName()));
+            throw new IllegalArgumentException(
+                    "Expected List from Python embed method, but got: "
+                            + (results == null ? "null" : results.getClass().getName()));
+        }
     }
 
     @Override
@@ -131,8 +137,11 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", text);
-        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs);
-        return EmbeddingModelUtils.toSingleEmbeddingResult(result);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object result =
+                    scope.own(adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs));
+            return EmbeddingModelUtils.toSingleEmbeddingResult(result);
+        }
     }
 
     @Override
@@ -144,8 +153,11 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
         Map<String, Object> kwargs = new HashMap<>(parameters);
         kwargs.put("text", texts);
-        Object result = adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs);
-        return EmbeddingModelUtils.toBatchEmbeddingResult(result);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object result =
+                    scope.own(adapter.invoke(CALL_EMBED_WITH_USAGE, embeddingModel, kwargs));
+            return EmbeddingModelUtils.toBatchEmbeddingResult(result);
+        }
     }
 
     @Override
@@ -166,6 +178,6 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
     @Override
     public void close() throws Exception {
-        this.embeddingModel.close();
+        ownedObjects.closeResource(adapter, embeddingModel);
     }
 }

@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime;
 
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonMCPPrompt;
@@ -25,9 +26,16 @@ import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resource.python.PythonMCPTool;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.util.LambdaUtil;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import static java.util.Objects.requireNonNull;
 import static org.apache.flink.agents.api.resource.ResourceType.MCP_SERVER;
 import static org.apache.flink.agents.api.resource.ResourceType.PROMPT;
 import static org.apache.flink.agents.api.resource.ResourceType.TOOL;
@@ -63,21 +71,75 @@ public class PythonMCPResourceDiscovery {
             return;
         }
 
-        for (ResourceProvider rp : servers.values()) {
-            if (!(rp instanceof PythonResourceProvider)) {
-                continue;
-            }
-            PythonResourceProvider provider = (PythonResourceProvider) rp;
-            provider.setPythonResourceAdapter(adapter);
+        List<Resource> discoveredResources = new ArrayList<>();
+        List<ResourceRegistration> registrations = new ArrayList<>();
+        Set<String> toolNames = new HashSet<>();
+        Set<String> promptNames = new HashSet<>();
+        try {
+            for (ResourceProvider rp : servers.values()) {
+                if (!(rp instanceof PythonResourceProvider)) {
+                    continue;
+                }
+                PythonResourceProvider provider = (PythonResourceProvider) rp;
+                provider.setPythonResourceAdapter(adapter);
 
-            PythonMCPServer server = (PythonMCPServer) provider.provide(cache.getResourceContext());
+                PythonMCPServer server =
+                        (PythonMCPServer) provider.provide(cache.getResourceContext());
+                discoveredResources.add(server);
+                registrations.add(new ResourceRegistration(provider.getName(), MCP_SERVER, server));
 
-            for (PythonMCPTool tool : server.listTools(provider.getName())) {
-                cache.put(tool.getName(), TOOL, tool);
+                List<PythonMCPTool> tools = server.listTools(provider.getName());
+                discoveredResources.addAll(tools);
+                for (PythonMCPTool tool : tools) {
+                    String name = requireNonNull(tool.getName(), "MCP tool name");
+                    validateDiscoveredNameUnique(name, TOOL, toolNames);
+                    registrations.add(new ResourceRegistration(name, TOOL, tool));
+                }
+
+                List<PythonMCPPrompt> prompts = server.listPrompts();
+                discoveredResources.addAll(prompts);
+                for (PythonMCPPrompt prompt : prompts) {
+                    String name = requireNonNull(prompt.getName(), "MCP prompt name");
+                    validateDiscoveredNameUnique(name, PROMPT, promptNames);
+                    registrations.add(new ResourceRegistration(name, PROMPT, prompt));
+                }
             }
-            for (PythonMCPPrompt prompt : server.listPrompts()) {
-                cache.put(prompt.getName(), PROMPT, prompt);
+        } catch (Exception discoveryFailure) {
+            Collections.reverse(discoveredResources);
+            try {
+                LambdaUtil.applyToAllWhileSuppressingExceptions(
+                        discoveredResources, Resource::close);
+            } catch (Exception closeFailure) {
+                discoveryFailure.addSuppressed(closeFailure);
             }
+            throw discoveryFailure;
+        }
+
+        for (ResourceRegistration registration : registrations) {
+            cache.put(registration.name, registration.type, registration.resource);
+        }
+    }
+
+    private static void validateDiscoveredNameUnique(
+            String name, ResourceType type, Set<String> discoveredNames) {
+        // Python plan construction registers serialized MCP tool and prompt providers. Runtime
+        // discovery intentionally replaces those snapshots with resources bound to the live MCP
+        // server, so only duplicates within this discovery are ambiguous.
+        if (!discoveredNames.add(name)) {
+            throw new IllegalStateException(
+                    String.format("Duplicate Python MCP %s name: %s", type.getValue(), name));
+        }
+    }
+
+    private static final class ResourceRegistration {
+        private final String name;
+        private final ResourceType type;
+        private final Resource resource;
+
+        private ResourceRegistration(String name, ResourceType type, Resource resource) {
+            this.name = name;
+            this.type = type;
+            this.resource = resource;
         }
     }
 }

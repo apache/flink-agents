@@ -21,14 +21,24 @@ package org.apache.flink.agents.plan.tools;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.PythonFunction;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
+import pemja.core.object.PyObject;
 
 import java.lang.reflect.Method;
 import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class FunctionToolTest {
     @Tool(description = "Performs basic arithmetic operations")
@@ -87,5 +97,32 @@ public class FunctionToolTest {
         Assertions.assertEquals(tool.getMetadata(), deserialize.getMetadata());
         Assertions.assertEquals(tool.getFunction(), deserialize.getFunction());
         Assertions.assertEquals(tool.getInjectedArgs(), deserialize.getInjectedArgs());
+    }
+
+    @Test
+    void materializesPythonResultBeforeReleasingBridgeObject() throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResult = mock(PyObject.class);
+        Map<String, Object> materializedResult = Map.of("answer", 42);
+        FunctionTool tool =
+                new FunctionTool(
+                        new ToolMetadata("lookup", "description", "{}"),
+                        new PythonFunction("example.tools", "lookup"));
+        when(adapter.getPythonToolMetadata("example.tools", "lookup", java.util.List.of()))
+                .thenReturn(
+                        Map.of(
+                                "name", "lookup",
+                                "description", "description",
+                                "inputSchema", "{}"));
+        when(adapter.invokePythonTool("example.tools", "lookup", Map.of("id", "42")))
+                .thenReturn(pythonResult);
+        when(adapter.materializePythonValue(pythonResult)).thenReturn(materializedResult);
+        tool.setPythonResourceAdapter(adapter);
+
+        ToolResponse response = tool.call(new ToolParameters(Map.of("id", "42")));
+
+        assertThat(response.isSuccess()).isTrue();
+        assertThat(response.getResult()).isEqualTo(materializedResult);
+        verify(pythonResult).close();
     }
 }

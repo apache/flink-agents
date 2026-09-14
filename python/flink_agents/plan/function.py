@@ -414,28 +414,21 @@ _ASYNCIO_ERROR_MESSAGE = (
 )
 
 
-def call_python_awaitable(awaitable: Any) -> Tuple[bool, Any]:
-    """Invokes the next step of a Python coroutine or generator and returns whether
-    it is done, along with the yielded or returned value.
+def call_python_awaitable(awaitable: Any) -> bool:
+    """Invoke the next step of a Python coroutine or generator.
 
     Args:
         awaitable: A Python coroutine or generator object that can be driven
         by the send() method.
 
     Returns:
-        Tuple[bool, Any]:
-            - The first element is a boolean flag indicating whether the awaitable
-            has finished:
-                * False: The awaitable has more values to yield.
-                * True: The awaitable has completed.
-            - The second element is either:
-                * The value yielded by the awaitable (when not exhausted), or
-                * The return value of the awaitable (when it has finished).
+        True if the awaitable has completed, otherwise False. Yielded and returned
+        values are discarded because Actions communicate through emitted Events.
     """
     try:
-        result = awaitable.send(None)
-    except StopIteration as e:
-        return True, e.value if hasattr(e, "value") else None
+        awaitable.send(None)
+    except StopIteration:
+        return True
     except RuntimeError as e:
         err_msg = str(e)
         if (
@@ -448,4 +441,4 @@ def call_python_awaitable(awaitable: Any) -> Tuple[bool, Any]:
         logger.exception("Error in awaitable execution")
         raise
     else:
-        return False, result
+        return False

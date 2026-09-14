@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.vectorstores.Document;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +36,7 @@ import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -194,6 +197,47 @@ public class PythonResourceAdapterImplTest {
         assertThat(result).isEqualTo(expectedResult);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.CALL_METHOD, obj, methodName, kwargs);
+    }
+
+    @Test
+    void testFromPythonDocumentsMaterializesValuesWithoutAttributeLookups() {
+        PyObject pythonDocument = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.MATERIALIZE_PYTHON_VALUE, pythonDocument))
+                .thenReturn(
+                        Map.of(
+                                "content", "content",
+                                "metadata", Map.of("source", "test"),
+                                "id", "doc-1"));
+
+        List<Document> documents =
+                pythonResourceAdapter.fromPythonDocuments(List.of(pythonDocument));
+
+        assertThat(documents)
+                .containsExactly(new Document("content", Map.of("source", "test"), "doc-1"));
+        verify(pythonDocument, never()).getAttr(anyString());
+    }
+
+    @Test
+    void testFromPythonVectorStoreQueryResultMaterializesNestedDocuments() {
+        PyObject pythonResult = mock(PyObject.class);
+        when(mockInterpreter.invoke(
+                        PythonResourceAdapterImpl.MATERIALIZE_PYTHON_VALUE, pythonResult))
+                .thenReturn(
+                        Map.of(
+                                "documents",
+                                List.of(
+                                        Map.of(
+                                                "content", "content",
+                                                "metadata", Map.of("source", "test"),
+                                                "id", "doc-1"))));
+
+        VectorStoreQueryResult result =
+                pythonResourceAdapter.fromPythonVectorStoreQueryResult(pythonResult);
+
+        assertThat(result.getDocuments())
+                .containsExactly(new Document("content", Map.of("source", "test"), "doc-1"));
+        verify(pythonResult, never()).getAttr(anyString());
     }
 
     @Test

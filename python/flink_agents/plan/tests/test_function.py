@@ -29,6 +29,7 @@ from flink_agents.plan.function import (
     JavaFunction,
     PythonFunction,
     _is_function_cacheable,
+    call_python_awaitable,
     call_python_function,
     clear_python_function_cache,
     get_python_function_cache_keys,
@@ -224,6 +225,16 @@ def test_call_python_function_basic() -> None:
         "flink_agents.plan.tests.test_function", "function_for_caching", (5,)
     )
     assert result == 10
+
+
+def test_call_python_awaitable_returns_only_completion_state() -> None:
+    def awaitable_with_values() -> Generator[Any, None, Any]:
+        yield object()
+        return object()
+
+    awaitable = awaitable_with_values()
+    assert call_python_awaitable(awaitable) is False
+    assert call_python_awaitable(awaitable) is True
 
 
 def test_call_python_function_caching() -> None:

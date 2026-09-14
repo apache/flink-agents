@@ -39,6 +39,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -172,7 +173,10 @@ public class PythonCollectionManageableVectorStoreTest {
 
         List<String> expectedIds = Arrays.asList("doc1", "doc2");
 
-        when(mockAdapter.toPythonDocuments(documents)).thenReturn(new Object());
+        PyObject firstPythonDocument = mock(PyObject.class);
+        PyObject secondPythonDocument = mock(PyObject.class);
+        when(mockAdapter.toPythonDocuments(documents))
+                .thenReturn(List.of(firstPythonDocument, secondPythonDocument));
         when(mockAdapter.callMethod(eq(mockVectorStore), eq("_add_embedding"), any(Map.class)))
                 .thenReturn(expectedIds);
 
@@ -183,6 +187,8 @@ public class PythonCollectionManageableVectorStoreTest {
         assertThat(result).containsExactly("doc1", "doc2");
 
         verify(mockAdapter).toPythonDocuments(documents);
+        verify(firstPythonDocument).close();
+        verify(secondPythonDocument).close();
         verify(mockAdapter)
                 .callMethod(
                         eq(mockVectorStore),
@@ -246,6 +252,7 @@ public class PythonCollectionManageableVectorStoreTest {
 
         assertThat(result).isNotNull();
         assertThat(result).hasSize(2);
+        verify(mockPythonDocument).close();
 
         verify(mockAdapter)
                 .callMethod(
