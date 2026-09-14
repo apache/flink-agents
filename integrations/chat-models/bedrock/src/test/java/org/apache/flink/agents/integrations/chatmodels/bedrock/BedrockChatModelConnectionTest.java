@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -312,6 +313,40 @@ class BedrockChatModelConnectionTest {
     }
 
     /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+
+        public Phase phase;
+    }
+
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
+    }
+
+    /**
      * Every model id the connection reports capable.
      *
      * <p>The list is the whole allowlist, so an entry dropped or mistyped fails here rather than
@@ -481,6 +516,33 @@ class BedrockChatModelConnectionTest {
         assertThat(nativeSchema(request).path("properties").fieldNames())
                 .toIterable()
                 .containsExactlyInAnyOrder("full_name", "age");
+    }
+
+    @Test
+    @DisplayName("the derived schema lists enum constants the way Jackson deserializes them")
+    void testDerivedSchemaFollowsJacksonEnumValues() throws Exception {
+        ConverseRequest request =
+                connection()
+                        .buildRequest(
+                                List.of(ChatMessage.user("hello")),
+                                null,
+                                params(CAPABLE_MODEL),
+                                Ticket.class);
+        JsonNode properties = nativeSchema(request).path("properties");
+
+        // Every listed value is one the model may emit, so each has to deserialize into the enum.
+        // Listed by constant name instead, the mapper refuses every value the schema allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(SCHEMA_MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(SCHEMA_MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
     }
 
     @Test
