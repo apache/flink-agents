@@ -251,7 +251,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             componentExecutionListeners = new ArrayList<>();
         }
 
-        registerEventLogListeners();
+        registerBuiltInLifecycleListeners();
         registerSubagentSetups();
 
         // init context manager for runner context creation and memory contexts
@@ -798,8 +798,15 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         actionTask.markExecutionStartedEventEmitted();
     }
 
-    private void registerEventLogListeners() {
-        addTaskLifecycleListener(new EventLogTaskLifecycleListener(executionEventLogger));
+    private void registerBuiltInLifecycleListeners() {
+        addTaskLifecycleListener(
+                new EventLogTaskLifecycleListener(
+                        (eventContext, event, traceContext) ->
+                                observeExecutionEvent(
+                                        traceContext.getEntityName(),
+                                        eventContext,
+                                        event,
+                                        traceContext)));
     }
 
     /**
@@ -810,9 +817,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         List<ComponentExecutionListener> listeners = new ArrayList<>();
         listeners.add(
                 new EventLogComponentExecutionListener(
-                        actionTask.getTraceContext(), executionEventLogger));
+                        actionTask.getTraceContext(),
+                        (eventContext, event, traceContext) ->
+                                observeExecutionEvent(
+                                        actionTask.getAction().getName(),
+                                        eventContext,
+                                        event,
+                                        traceContext)));
         listeners.addAll(componentExecutionListeners);
         return listeners;
+    }
+
+    private void observeExecutionEvent(
+            String actionName,
+            EventContext eventContext,
+            Event event,
+            ExecutionTraceContext traceContext) {
+        executionEventLogger.emit(eventContext, event, traceContext);
+        builtInMetrics.markExecutionEvent(actionName, eventContext, event, traceContext);
     }
 
     /**

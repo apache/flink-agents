@@ -1551,6 +1551,23 @@ public class ActionExecutionOperatorTest {
                                             .isEqualTo(
                                                     ExecutionLifecycleEvents
                                                             .EXECUTION_STARTED_EVENT_TYPE));
+
+            Field metricGroupField = ActionExecutionOperator.class.getDeclaredField("metricGroup");
+            metricGroupField.setAccessible(true);
+            FlinkAgentsMetricGroupImpl metricGroup =
+                    (FlinkAgentsMetricGroupImpl) metricGroupField.get(operator);
+            assertThat(
+                            metricGroup
+                                    .getSubGroup("action", "action1")
+                                    .getHistogram("actionExecutionLatencyMs")
+                                    .getCount())
+                    .isEqualTo(1L);
+            assertThat(
+                            metricGroup
+                                    .getSubGroup("action", "action2")
+                                    .getHistogram("actionExecutionLatencyMs")
+                                    .getCount())
+                    .isEqualTo(1L);
         }
 
         assertThat(RecordingEventLogger.closeCount()).isEqualTo(1);
