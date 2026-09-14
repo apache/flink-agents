@@ -690,6 +690,19 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         return FlinkMetricGroup(self._j_runner_context.getActionMetricGroup())
 
     @override
+    def report_execution_created(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._j_runner_context.reportExecutionCreatedJson(
+            entity_type,
+            entity_name,
+            self._entity_metadata_json(entity_metadata),
+        )
+
+    @override
     def report_execution_started(
         self,
         entity_type: str,

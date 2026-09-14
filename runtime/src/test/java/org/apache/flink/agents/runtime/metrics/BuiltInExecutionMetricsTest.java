@@ -258,9 +258,10 @@ class BuiltInExecutionMetricsTest {
     }
 
     @Test
-    void toolFailureWithoutStartCountsFailureWithoutLatency() {
+    void toolFailureAfterCreationWithoutStartCountsFailureWithoutLatency() {
         ExecutionTraceContext traceContext =
                 execution(ExecutionReporter.EntityTypes.TOOL, "search", Map.of());
+        observe(ExecutionLifecycleEvents.executionCreated(), traceContext, 0);
         observe(
                 ExecutionLifecycleEvents.executionFailed(new RuntimeException("timed out")),
                 traceContext,

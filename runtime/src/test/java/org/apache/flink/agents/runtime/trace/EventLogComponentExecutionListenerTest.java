@@ -42,6 +42,69 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EventLogComponentExecutionListenerTest {
 
     @Test
+    void createdStartAndTerminalReportsShareOneChildExecution() {
+        CapturingEventLogger logger = new CapturingEventLogger();
+        EventLogComponentExecutionListener listener =
+                new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
+        Map<String, Object> metadata = Map.of("toolCallId", "call-1");
+
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionCreated());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionStarted());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionFinished());
+
+        assertThat(logger.records)
+                .extracting(record -> record.event.getType())
+                .containsExactly(
+                        ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE);
+        assertThat(logger.records)
+                .extracting(record -> record.traceContext.getExecutionId())
+                .containsOnly(logger.records.get(0).traceContext.getExecutionId());
+    }
+
+    @Test
+    void terminalBeforeStartPairsWithItsCreation() {
+        CapturingEventLogger logger = new CapturingEventLogger();
+        EventLogComponentExecutionListener listener =
+                new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
+        Map<String, Object> metadata = Map.of("toolCallId", "call-1");
+
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionCreated());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionFailed(
+                        new IllegalStateException("failed before invocation")));
+
+        assertThat(logger.records).hasSize(2);
+        assertThat(logger.records.get(1).traceContext.getExecutionId())
+                .isEqualTo(logger.records.get(0).traceContext.getExecutionId());
+    }
+
+    @Test
     void startAndTerminalReportsShareOneChildExecution() {
         CapturingEventLogger logger = new CapturingEventLogger();
         ExecutionTraceContext actionContext = actionTraceContext();
@@ -139,7 +202,7 @@ class EventLogComponentExecutionListenerTest {
     }
 
     @Test
-    void repeatedStartReportReplacesTheActiveReport() {
+    void repeatedStartReportReusesTheActiveExecution() {
         CapturingEventLogger logger = new CapturingEventLogger();
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
@@ -164,10 +227,9 @@ class EventLogComponentExecutionListenerTest {
                 ExecutionLifecycleEvents.executionFinished());
 
         assertThat(logger.records).hasSize(3);
-        // The terminal pairs with the second start; the first start stays unpaired.
-        assertThat(logger.records.get(2).traceContext.getExecutionId())
-                .isEqualTo(logger.records.get(1).traceContext.getExecutionId())
-                .isNotEqualTo(logger.records.get(0).traceContext.getExecutionId());
+        assertThat(logger.records)
+                .extracting(record -> record.traceContext.getExecutionId())
+                .containsOnly(logger.records.get(0).traceContext.getExecutionId());
     }
 
     @Test

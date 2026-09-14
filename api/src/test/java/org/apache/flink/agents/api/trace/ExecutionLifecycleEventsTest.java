@@ -29,6 +29,17 @@ import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 class ExecutionLifecycleEventsTest {
 
     @Test
+    void executionCreatedUsesReservedLifecycleShape() {
+        Event event = ExecutionLifecycleEvents.executionCreated();
+
+        assertThat(event.getType())
+                .isEqualTo(ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE);
+        assertThat(event.getAttr(ExecutionLifecycleEvents.STATUS_ATTRIBUTE))
+                .isEqualTo(ExecutionLifecycleEvents.STATUS_CREATED);
+        assertThat(ExecutionLifecycleEvents.isExecutionLifecycleEvent(event.getType())).isTrue();
+    }
+
+    @Test
     void executionFailedUsesDeepestCause() {
         IllegalArgumentException root = new IllegalArgumentException("root");
         RuntimeException error = new RuntimeException("outer", root);

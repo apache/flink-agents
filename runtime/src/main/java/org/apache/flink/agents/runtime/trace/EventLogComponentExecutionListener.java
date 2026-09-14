@@ -33,8 +33,8 @@ import java.util.Map;
 /**
  * Per-action-execution adapter that turns component execution reports into event log records under
  * the action's trace context. Its bookkeeping never leaks across actions because each execution
- * gets its own instance, and the start/terminal pairing survives continuation task transfers
- * because the adapter is tied to the action execution rather than the individual task.
+ * gets its own instance, and lifecycle pairing survives continuation task transfers because the
+ * adapter is tied to the action execution rather than the individual task.
  */
 @Internal
 public final class EventLogComponentExecutionListener implements ComponentExecutionListener {
@@ -62,22 +62,30 @@ public final class EventLogComponentExecutionListener implements ComponentExecut
             Event event) {
         ReportedExecutionKey key = new ReportedExecutionKey(entityType, entityName, entityMetadata);
         ExecutionTraceContext reportTraceContext;
-        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+        if (ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE.equals(event.getType())) {
             reportTraceContext =
                     actionTraceContext.childExecution(
                             entityType, entityName, key.getEntityMetadata());
             ExecutionTraceContext previous = activeReportedExecutions.put(key, reportTraceContext);
             if (previous != null) {
                 LOG.debug(
-                        "Execution start report for {}:{} replaced an active report with the same metadata.",
+                        "Execution creation report for {}:{} replaced an active report with the same metadata.",
                         entityType,
                         entityName);
+            }
+        } else if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+            reportTraceContext = activeReportedExecutions.get(key);
+            if (reportTraceContext == null) {
+                reportTraceContext =
+                        actionTraceContext.childExecution(
+                                entityType, entityName, key.getEntityMetadata());
+                activeReportedExecutions.put(key, reportTraceContext);
             }
         } else {
             reportTraceContext = activeReportedExecutions.remove(key);
             if (reportTraceContext == null) {
                 LOG.debug(
-                        "Execution terminal report for {}:{} has no matching start report; emitting it with a new execution id.",
+                        "Execution terminal report for {}:{} has no matching creation or start report; emitting it with a new execution id.",
                         entityType,
                         entityName);
                 reportTraceContext =

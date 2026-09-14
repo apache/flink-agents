@@ -51,6 +51,20 @@ public interface ExecutionReporter {
     }
 
     /**
+     * Reports that a logical execution has been created but has not necessarily started.
+     *
+     * <p>This is an optional lifecycle phase for executions whose admission and invocation are
+     * observably separate. Implementations that do not consume it may keep the default no-op.
+     *
+     * @param entityType stable category of the reported execution, such as LLM, parser, or tool
+     * @param entityName stable name of the reported execution, such as model or tool name
+     * @param entityMetadata small structured metadata used to match subsequent lifecycle reports
+     */
+    default void reportExecutionCreated(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {}
+
+    /**
      * Reports that a logical execution started within the current action.
      *
      * @param entityType stable category of the reported execution, such as LLM, parser, or tool

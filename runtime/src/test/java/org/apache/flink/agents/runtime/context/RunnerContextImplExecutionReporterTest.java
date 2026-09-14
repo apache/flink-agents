@@ -46,6 +46,8 @@ class RunnerContextImplExecutionReporterTest {
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
         switchToChatModelAction(runnerContext, List.of(listener));
 
+        runnerContext.reportExecutionCreated(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
         runnerContext.reportExecutionStartedAt(
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
@@ -57,6 +59,10 @@ class RunnerContextImplExecutionReporterTest {
                 Map.of("temperature", 0.7),
                 "2026-01-01T00:00:00.025Z");
 
+        assertThat(listener.created).hasSize(1);
+        assertThat(listener.created.get(0).identity)
+                .containsExactly(
+                        ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
         assertThat(listener.started).hasSize(1);
         assertThat(listener.started.get(0).identity)
                 .containsExactly(
@@ -160,6 +166,8 @@ class RunnerContextImplExecutionReporterTest {
                 List.of(listener));
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
+        runnerContext.reportExecutionCreatedJson(
+                ExecutionReporter.EntityTypes.TOOL, "search", metadata);
         runnerContext.reportExecutionStartedAtJson(
                 ExecutionReporter.EntityTypes.TOOL, "search", metadata, "2026-01-01T00:00:01.001Z");
         runnerContext.reportExecutionFailedAtJson(
@@ -171,6 +179,11 @@ class RunnerContextImplExecutionReporterTest {
                 ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
                 "2026-01-01T00:00:01.125Z");
 
+        assertThat(listener.created).hasSize(1);
+        assertThat(listener.created.get(0).identity.get(2))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
+                .containsEntry("toolCallId", "call-1")
+                .containsEntry("toolType", "function");
         assertThat(listener.started).hasSize(1);
         assertThat(listener.started.get(0).identity.get(2))
                 .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
@@ -207,6 +220,7 @@ class RunnerContextImplExecutionReporterTest {
 
     /** Records the raw arguments of every component report it receives. */
     private static final class RecordingComponentListener implements ComponentExecutionListener {
+        private final List<RecordedComponentReport> created = new ArrayList<>();
         private final List<RecordedComponentReport> started = new ArrayList<>();
         private final List<RecordedComponentReport> succeeded = new ArrayList<>();
         private final List<RecordedFailure> failed = new ArrayList<>();
@@ -219,6 +233,11 @@ class RunnerContextImplExecutionReporterTest {
                 EventContext eventContext,
                 Event event) {
             switch (event.getType()) {
+                case ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE:
+                    created.add(
+                            new RecordedComponentReport(
+                                    entityType, entityName, entityMetadata, eventContext));
+                    break;
                 case ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE:
                     started.add(
                             new RecordedComponentReport(
@@ -232,11 +251,7 @@ class RunnerContextImplExecutionReporterTest {
                 case ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE:
                     failed.add(
                             new RecordedFailure(
-                                    entityType,
-                                    entityName,
-                                    entityMetadata,
-                                    eventContext,
-                                    event));
+                                    entityType, entityName, entityMetadata, eventContext, event));
                     break;
                 default:
                     throw new AssertionError("Unexpected event type " + event.getType());

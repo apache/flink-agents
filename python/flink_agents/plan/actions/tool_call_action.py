@@ -187,6 +187,12 @@ def _build_tool_call_executions(
         entity_metadata = _tool_entity_metadata(
             event.id, call_id, external_id, name, tool, call_kwargs
         )
+        ExecutionReporters.created(
+            ctx,
+            ExecutionEntityTypes.TOOL,
+            name,
+            entity_metadata,
+        )
         if not tool or preparation_error is not None:
             failure = preparation_error or RuntimeError(
                 f"Tool `{name}` does not exist."

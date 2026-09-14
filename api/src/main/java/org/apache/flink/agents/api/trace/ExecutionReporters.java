@@ -41,6 +41,21 @@ public final class ExecutionReporters {
 
     private ExecutionReporters() {}
 
+    public static void created(RunnerContext ctx, String entityType, String entityName) {
+        created(ctx, entityType, entityName, EMPTY_METADATA);
+    }
+
+    public static void created(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata) {
+        report(
+                ctx,
+                reporter -> reporter.reportExecutionCreated(entityType, entityName, entityMetadata),
+                null);
+    }
+
     public static void started(RunnerContext ctx, String entityType, String entityName) {
         started(ctx, entityType, entityName, EMPTY_METADATA);
     }

@@ -72,6 +72,11 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
         sendEvent(event);
     }
 
+    public void reportExecutionCreatedJson(
+            String entityType, String entityName, String entityMetadataJson) throws Exception {
+        reportExecutionCreated(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+    }
+
     public void reportExecutionStartedJson(
             String entityType, String entityName, String entityMetadataJson) throws Exception {
         reportExecutionStarted(entityType, entityName, parseEntityMetadata(entityMetadataJson));

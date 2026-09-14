@@ -35,6 +35,11 @@ def test_timestamped_execution_reports_forward_to_java_context() -> None:
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = java_context
 
+    ctx.report_execution_created(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        {"toolCallId": "call-1"},
+    )
     ctx.report_execution_started_at(
         ExecutionEntityTypes.TOOL,
         "search",
@@ -48,6 +53,11 @@ def test_timestamped_execution_reports_forward_to_java_context() -> None:
         "2026-01-01T00:00:00.025Z",
     )
 
+    java_context.reportExecutionCreatedJson.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        '{"toolCallId": "call-1"}',
+    )
     java_context.reportExecutionStartedAtJson.assert_called_once_with(
         ExecutionEntityTypes.TOOL,
         "search",

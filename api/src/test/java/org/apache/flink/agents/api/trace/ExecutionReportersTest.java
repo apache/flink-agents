@@ -36,11 +36,16 @@ import static org.mockito.Mockito.withSettings;
 class ExecutionReportersTest {
 
     @Test
-    void startedAndSucceededIgnoreReporterFailures() throws Exception {
+    void createdStartedAndSucceededIgnoreReporterFailures() throws Exception {
         RunnerContext ctx = mockReportingContext();
         ExecutionReporter reporter = (ExecutionReporter) ctx;
+        Exception createdError = new Exception("created failed");
         Exception startedError = new Exception("started failed");
         Exception succeededError = new Exception("succeeded failed");
+        doThrow(createdError)
+                .when(reporter)
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.LLM), eq("model-a"), anyMap());
         doThrow(startedError)
                 .when(reporter)
                 .reportExecutionStarted(
@@ -52,6 +57,11 @@ class ExecutionReportersTest {
 
         assertThatCode(
                         () ->
+                                ExecutionReporters.created(
+                                        ctx, ExecutionReporter.EntityTypes.LLM, "model-a"))
+                .doesNotThrowAnyException();
+        assertThatCode(
+                        () ->
                                 ExecutionReporters.started(
                                         ctx, ExecutionReporter.EntityTypes.LLM, "model-a"))
                 .doesNotThrowAnyException();
@@ -61,6 +71,9 @@ class ExecutionReportersTest {
                                         ctx, ExecutionReporter.EntityTypes.LLM, "model-a"))
                 .doesNotThrowAnyException();
 
+        verify(reporter)
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.LLM), eq("model-a"), anyMap());
         verify(reporter)
                 .reportExecutionStarted(
                         eq(ExecutionReporter.EntityTypes.LLM), eq("model-a"), anyMap());
@@ -103,6 +116,11 @@ class ExecutionReportersTest {
         RunnerContext ctx = mock(RunnerContext.class);
         RuntimeException businessError = new RuntimeException("business failed");
 
+        assertThatCode(
+                        () ->
+                                ExecutionReporters.created(
+                                        ctx, ExecutionReporter.EntityTypes.LLM, "model-a"))
+                .doesNotThrowAnyException();
         assertThatCode(
                         () ->
                                 ExecutionReporters.started(

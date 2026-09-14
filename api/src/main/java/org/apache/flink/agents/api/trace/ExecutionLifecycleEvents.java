@@ -31,11 +31,13 @@ import java.util.Set;
 /** Event factory for execution lifecycle reports in the trace model. */
 public final class ExecutionLifecycleEvents {
 
+    public static final String EXECUTION_CREATED_EVENT_TYPE = "_execution_created_event";
     public static final String EXECUTION_STARTED_EVENT_TYPE = "_execution_started_event";
     public static final String EXECUTION_FINISHED_EVENT_TYPE = "_execution_finished_event";
     public static final String EXECUTION_FAILED_EVENT_TYPE = "_execution_failed_event";
     public static final String EXECUTION_REUSED_EVENT_TYPE = "_execution_reused_event";
 
+    public static final String STATUS_CREATED = "created";
     public static final String STATUS_STARTED = "started";
     public static final String STATUS_SUCCESS = "success";
     public static final String STATUS_FAILED = "failed";
@@ -44,6 +46,10 @@ public final class ExecutionLifecycleEvents {
     public static final String PROBLEM_CATEGORY_ATTRIBUTE = "problemCategory";
 
     private ExecutionLifecycleEvents() {}
+
+    public static Event executionCreated() {
+        return eventWithStatus(EXECUTION_CREATED_EVENT_TYPE, STATUS_CREATED);
+    }
 
     public static Event executionStarted() {
         return eventWithStatus(EXECUTION_STARTED_EVENT_TYPE, STATUS_STARTED);
@@ -59,7 +65,8 @@ public final class ExecutionLifecycleEvents {
 
     /** Returns whether the given type identifies an execution lifecycle event. */
     public static boolean isExecutionLifecycleEvent(String eventType) {
-        return EXECUTION_STARTED_EVENT_TYPE.equals(eventType)
+        return EXECUTION_CREATED_EVENT_TYPE.equals(eventType)
+                || EXECUTION_STARTED_EVENT_TYPE.equals(eventType)
                 || EXECUTION_FINISHED_EVENT_TYPE.equals(eventType)
                 || EXECUTION_FAILED_EVENT_TYPE.equals(eventType)
                 || EXECUTION_REUSED_EVENT_TYPE.equals(eventType);

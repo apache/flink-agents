@@ -49,6 +49,15 @@ class ExecutionProblemCategories:
 class ExecutionReporter(ABC):
     """Optional capability for reporting executions nested inside an action."""
 
+    def report_execution_created(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report that a logical execution exists but has not necessarily started."""
+        return None
+
     @abstractmethod
     def report_execution_started(
         self,
@@ -119,6 +128,21 @@ class ExecutionReporter(ABC):
 
 class ExecutionReporters:
     """Best-effort helpers for contexts that implement ExecutionReporter."""
+
+    @staticmethod
+    def created(
+        ctx: "RunnerContext",
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Report creation of a nested execution if the context supports it."""
+        ExecutionReporters._report(
+            ctx,
+            lambda reporter: reporter.report_execution_created(
+                entity_type, entity_name, entity_metadata or _EMPTY_METADATA
+            ),
+        )
 
     @staticmethod
     def started(

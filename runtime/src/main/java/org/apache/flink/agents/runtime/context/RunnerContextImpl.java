@@ -346,6 +346,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public void reportExecutionCreated(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionCreated());
+    }
+
+    @Override
     public void reportExecutionStarted(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
@@ -462,7 +473,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         listener.getClass().getSimpleName(),
                         actionName,
                         e.getClass().getSimpleName());
-                }
+            }
         }
     }
 

@@ -48,6 +48,24 @@ def test_failed_reporter_uses_metadata_before_error() -> None:
     )
 
 
+def test_created_reporter_forwards_identity() -> None:
+    ctx = MagicMock(spec=ExecutionReporter)
+    metadata = {"toolCallId": "call-1"}
+
+    ExecutionReporters.created(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+    )
+
+    ctx.report_execution_created.assert_called_once_with(
+        ExecutionEntityTypes.TOOL,
+        "search",
+        metadata,
+    )
+
+
 def test_timestamped_reporters_forward_occurrence_timestamps() -> None:
     ctx = MagicMock(spec=ExecutionReporter)
     metadata = {"toolCallId": "call-1"}
@@ -102,6 +120,7 @@ def test_timestamped_reporters_forward_occurrence_timestamps() -> None:
 def test_reporters_ignore_context_without_execution_reporter() -> None:
     ctx = MagicMock()
 
+    ExecutionReporters.created(ctx, ExecutionEntityTypes.LLM, "model")
     ExecutionReporters.started(ctx, ExecutionEntityTypes.LLM, "model")
     ExecutionReporters.succeeded(ctx, ExecutionEntityTypes.LLM, "model")
     ExecutionReporters.failed(
@@ -113,6 +132,7 @@ def test_reporters_ignore_context_without_execution_reporter() -> None:
         ExecutionProblemCategories.MODEL_CALL_FAILED,
     )
 
+    ctx.report_execution_created.assert_not_called()
     ctx.report_execution_started.assert_not_called()
     ctx.report_execution_succeeded.assert_not_called()
     ctx.report_execution_failed.assert_not_called()

@@ -42,8 +42,10 @@ import org.mockito.MockedStatic;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -58,6 +60,7 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -103,6 +106,8 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, ToolType.MCP.getValue());
         metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, "search-server");
         ExecutionReporter reporter = (ExecutionReporter) ctx;
+        verify(reporter)
+                .reportExecutionCreated(ExecutionReporter.EntityTypes.TOOL, "search", metadata);
         ArgumentCaptor<String> startedAt = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
         verify(reporter)
@@ -168,6 +173,41 @@ class ToolCallActionReportTest {
     }
 
     @Test
+    void missingToolReportsCreationAndFailureWithoutStart() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        when(ctx.getResource("missing", ResourceType.TOOL))
+                .thenThrow(new IllegalArgumentException("Tool does not exist."));
+        when(ctx.getConfig()).thenReturn(toolCallConfig());
+        Map<String, Object> function = new LinkedHashMap<>();
+        function.put("name", "missing");
+        function.put("arguments", Map.of());
+        Map<String, Object> toolCall = new LinkedHashMap<>();
+        toolCall.put("id", "call-1");
+        toolCall.put("function", function);
+
+        ToolCallAction.processToolRequest(
+                new ToolRequestEvent("test-model", List.of(toolCall)), ctx);
+
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        ArgumentCaptor<Map<String, Object>> createdMetadata = ArgumentCaptor.forClass(Map.class);
+        verify(reporter)
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("missing"),
+                        createdMetadata.capture());
+        verify(reporter)
+                .reportExecutionFailed(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("missing"),
+                        eq(createdMetadata.getValue()),
+                        any(Throwable.class),
+                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED));
+        verify(reporter, never())
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+    }
+
+    @Test
     void parallelToolCallsReportIndependentOutcomes() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
@@ -215,6 +255,9 @@ class ToolCallActionReportTest {
 
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter, times(3))
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+        verify(reporter, times(3))
                 .reportExecutionStartedAt(
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
@@ -243,6 +286,68 @@ class ToolCallActionReportTest {
         assertThat(response.getError())
                 .containsEntry("call-2", "call-2 failed")
                 .containsEntry("call-3", "call-3 rejected");
+    }
+
+    @Test
+    void parallelToolCallsReportTheirOwnCompletionTimestamps() throws Exception {
+        Instant base = Instant.parse("2026-01-01T00:00:00Z");
+        Instant firstFinishedAt = base.plusMillis(20);
+        Instant secondFinishedAt = base.plusMillis(150);
+        AtomicReference<Instant> now = new AtomicReference<>(base);
+        Tool tool = mock(Tool.class);
+        when(tool.call(any()))
+                .thenAnswer(
+                        invocation -> {
+                            String callId =
+                                    invocation
+                                            .<ToolParameters>getArgument(0)
+                                            .getParameter("query", String.class);
+                            now.set("call-1".equals(callId) ? firstFinishedAt : secondFinishedAt);
+                            return ToolResponse.success("ok");
+                        });
+        RunnerContext ctx = parallelContext(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
+        doAnswer(
+                        invocation -> {
+                            List<DurableCallable<ToolResponse>> callables =
+                                    invocation.getArgument(0);
+                            now.set(base);
+                            ToolResponse first = callables.get(0).call();
+                            now.set(base.plusMillis(100));
+                            ToolResponse second = callables.get(1).call();
+                            return List.of(Outcome.success(first), Outcome.success(second));
+                        })
+                .when(ctx)
+                .durableExecuteAllAsync(any());
+
+        try (MockedStatic<Instant> clock = mockStatic(Instant.class)) {
+            clock.when(Instant::now).thenAnswer(invocation -> now.get());
+            ToolCallAction.processToolRequest(
+                    new ToolRequestEvent(
+                            "test-model", List.of(toolCall("call-1"), toolCall("call-2"))),
+                    ctx);
+        }
+
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        ArgumentCaptor<String> timestamp = ArgumentCaptor.forClass(String.class);
+        verify((ExecutionReporter) ctx, times(2))
+                .reportExecutionSucceededAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        metadata.capture(),
+                        timestamp.capture());
+        Map<String, String> terminalTimestamps = new LinkedHashMap<>();
+        for (int i = 0; i < metadata.getAllValues().size(); i++) {
+            terminalTimestamps.put(
+                    String.valueOf(
+                            metadata.getAllValues()
+                                    .get(i)
+                                    .get(ToolExecutionMetadataKeys.TOOL_CALL_ID)),
+                    timestamp.getAllValues().get(i));
+        }
+        assertThat(terminalTimestamps)
+                .containsEntry("call-1", firstFinishedAt.toString())
+                .containsEntry("call-2", secondFinishedAt.toString());
     }
 
     @Test
@@ -341,6 +446,38 @@ class ToolCallActionReportTest {
                 .containsEntry("call-1", true)
                 .containsEntry("call-2", false)
                 .containsEntry("call-3", true);
+    }
+
+    @Test
+    void parallelBatchFailureBeforeInvocationRetainsCreatedExecutions() throws Exception {
+        Tool tool = mock(Tool.class);
+        RunnerContext ctx = parallelContext(tool);
+        doThrow(new IllegalStateException("batch failed before invocation"))
+                .when(ctx)
+                .durableExecuteAllAsync(any());
+
+        ToolCallAction.processToolRequest(parallelRequest(), ctx);
+
+        ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
+        verify((ExecutionReporter) ctx, times(3))
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), metadata.capture());
+        assertThat(metadata.getAllValues())
+                .extracting(value -> value.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
+                .containsExactlyInAnyOrder("call-1", "call-2", "call-3");
+        verify((ExecutionReporter) ctx, never())
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+        verify((ExecutionReporter) ctx, never())
+                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
+        verify((ExecutionReporter) ctx, never())
+                .reportExecutionFailedAt(
+                        anyString(),
+                        anyString(),
+                        anyMap(),
+                        any(Throwable.class),
+                        anyString(),
+                        anyString());
+        verify(tool, never()).call(any());
     }
 
     @Test
@@ -593,9 +730,16 @@ class ToolCallActionReportTest {
             RunnerContext ctx, List<String> started, List<String> succeeded, List<String> failed)
             throws Exception {
         ExecutionReporter reporter = (ExecutionReporter) ctx;
+        Set<String> expectedCreated = new LinkedHashSet<>();
+        expectedCreated.addAll(started);
+        expectedCreated.addAll(succeeded);
+        expectedCreated.addAll(failed);
+        ArgumentCaptor<Map> creations = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map> starts = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map> successes = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map> failures = ArgumentCaptor.forClass(Map.class);
+        verify(reporter, times(expectedCreated.size()))
+                .reportExecutionCreated(anyString(), anyString(), creations.capture());
         verify(reporter, times(started.size()))
                 .reportExecutionStartedAt(anyString(), anyString(), starts.capture(), anyString());
         verify(reporter, times(succeeded.size()))
@@ -609,6 +753,9 @@ class ToolCallActionReportTest {
                         any(Throwable.class),
                         anyString(),
                         anyString());
+        assertThat(creations.getAllValues())
+                .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
+                .containsExactlyInAnyOrderElementsOf(expectedCreated);
         assertThat(starts.getAllValues())
                 .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
                 .containsExactlyInAnyOrderElementsOf(started);

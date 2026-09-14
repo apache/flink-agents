@@ -139,6 +139,8 @@ public class ToolCallAction {
                             name,
                             tool,
                             metadataParameters);
+            ExecutionReporters.created(
+                    ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
             if (tool == null || preparationError != null) {
                 Exception failure =
                         preparationError != null

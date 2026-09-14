@@ -620,7 +620,9 @@ public class ActionExecutionOperatorTest {
                                         .getExecutionId()
                                         .equals(record.traceContext().getExecutionId()))
                 .extracting(record -> record.event.getType())
-                .containsExactly(ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE);
+                .containsExactly(
+                        ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE);
     }
 
     @Test
