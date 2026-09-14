@@ -369,11 +369,11 @@ class PythonActionExecutorTest {
 
         assertThat(executor.callPythonAwaitable(pythonAwaitableRef)).isTrue();
 
-        InOrder closeOrder = inOrder(interpreter, returnedValue, pythonAwaitable);
-        closeOrder.verify(interpreter).invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
-        closeOrder.verify(interpreter).exec("del " + pythonAwaitableRef);
-        closeOrder.verify(returnedValue).close();
-        closeOrder.verify(pythonAwaitable).close();
+        InOrder interpreterOrder = inOrder(interpreter);
+        interpreterOrder.verify(interpreter).invoke(CALL_PYTHON_AWAITABLE, pythonAwaitable);
+        interpreterOrder.verify(interpreter).exec("del " + pythonAwaitableRef);
+        verify(returnedValue).close();
+        verify(pythonAwaitable).close();
     }
 
     @Test

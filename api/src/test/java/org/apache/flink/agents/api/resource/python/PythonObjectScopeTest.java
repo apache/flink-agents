@@ -18,7 +18,6 @@
 package org.apache.flink.agents.api.resource.python;
 
 import org.junit.jupiter.api.Test;
-import org.mockito.InOrder;
 import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
@@ -26,7 +25,6 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -34,7 +32,7 @@ import static org.mockito.Mockito.verify;
 class PythonObjectScopeTest {
 
     @Test
-    void closesNestedReferencesOnceInReverseAcquisitionOrder() throws Exception {
+    void closesNestedReferencesOnce() throws Exception {
         PyObject first = mock(PyObject.class);
         PyObject second = mock(PyObject.class);
 
@@ -43,9 +41,6 @@ class PythonObjectScopeTest {
         scope.close();
         scope.close();
 
-        InOrder closeOrder = inOrder(first, second);
-        closeOrder.verify(second).close();
-        closeOrder.verify(first).close();
         verify(first, times(1)).close();
         verify(second, times(1)).close();
     }

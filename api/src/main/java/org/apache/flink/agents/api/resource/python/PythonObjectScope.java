@@ -22,7 +22,6 @@ import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.LambdaUtil;
 import pemja.core.object.PyObject;
 
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -39,7 +38,6 @@ import java.util.Set;
 @Internal
 public final class PythonObjectScope implements AutoCloseable {
 
-    private final List<PyObject> acquisitionOrder = new ArrayList<>();
     private final Set<PyObject> ownedObjects = Collections.newSetFromMap(new IdentityHashMap<>());
     private boolean closed;
 
@@ -57,13 +55,11 @@ public final class PythonObjectScope implements AutoCloseable {
         }
         closed = true;
 
-        Collections.reverse(acquisitionOrder);
         try {
-            LambdaUtil.applyToAllWhileSuppressingExceptions(acquisitionOrder, PyObject::close);
+            LambdaUtil.applyToAllWhileSuppressingExceptions(ownedObjects, PyObject::close);
         } catch (Exception e) {
             ExceptionUtils.rethrow(e);
         } finally {
-            acquisitionOrder.clear();
             ownedObjects.clear();
         }
     }
@@ -73,10 +69,7 @@ public final class PythonObjectScope implements AutoCloseable {
             return;
         }
         if (value instanceof PyObject) {
-            PyObject object = (PyObject) value;
-            if (ownedObjects.add(object)) {
-                acquisitionOrder.add(object);
-            }
+            ownedObjects.add((PyObject) value);
             return;
         }
         if (value instanceof Map) {

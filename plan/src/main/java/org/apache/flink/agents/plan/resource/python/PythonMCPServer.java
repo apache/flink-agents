@@ -33,7 +33,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.function.Function;
 
 public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     private final PyObject server;
@@ -65,12 +64,40 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
 
     public List<PythonMCPTool> listTools(@Nullable String mcpServerName) {
         Object result = adapter.callMethod(server, "list_tools", Collections.emptyMap());
-        return createChildren(result, pyTool -> new PythonMCPTool(adapter, pyTool, mcpServerName));
+        if (!(result instanceof List)) {
+            return Collections.emptyList();
+        }
+
+        List<?> pythonTools = (List<?>) result;
+        List<PythonMCPTool> tools = new ArrayList<>(pythonTools.size());
+        try {
+            for (Object pythonTool : pythonTools) {
+                tools.add(new PythonMCPTool(adapter, (PyObject) pythonTool, mcpServerName));
+            }
+            return tools;
+        } catch (RuntimeException | Error creationFailure) {
+            closeChildrenAfterFailure(pythonTools, tools, creationFailure);
+            throw creationFailure;
+        }
     }
 
     public List<PythonMCPPrompt> listPrompts() {
         Object result = adapter.callMethod(server, "list_prompts", Collections.emptyMap());
-        return createChildren(result, pyPrompt -> new PythonMCPPrompt(adapter, pyPrompt));
+        if (!(result instanceof List)) {
+            return Collections.emptyList();
+        }
+
+        List<?> pythonPrompts = (List<?>) result;
+        List<PythonMCPPrompt> prompts = new ArrayList<>(pythonPrompts.size());
+        try {
+            for (Object pythonPrompt : pythonPrompts) {
+                prompts.add(new PythonMCPPrompt(adapter, (PyObject) pythonPrompt));
+            }
+            return prompts;
+        } catch (RuntimeException | Error creationFailure) {
+            closeChildrenAfterFailure(pythonPrompts, prompts, creationFailure);
+            throw creationFailure;
+        }
     }
 
     @Override
@@ -105,38 +132,24 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
         }
     }
 
-    private <T extends Resource> List<T> createChildren(
-            Object result, Function<PyObject, T> wrapperFactory) {
-        if (!(result instanceof List)) {
-            return Collections.emptyList();
+    private void closeChildrenAfterFailure(
+            List<?> pythonChildren, List<? extends Resource> children, Throwable creationFailure) {
+        List<AutoCloseable> closeables = new ArrayList<>();
+        // Successfully constructed wrappers own the prefix; the remaining handles are ours.
+        for (int i = pythonChildren.size() - 1; i >= children.size(); i--) {
+            Object pythonChild = pythonChildren.get(i);
+            if (pythonChild instanceof PyObject) {
+                closeables.add((PyObject) pythonChild);
+            }
         }
-
-        List<?> pythonChildren = (List<?>) result;
-        List<T> children = new ArrayList<>(pythonChildren.size());
+        Collections.reverse(children);
+        for (Resource child : children) {
+            closeables.add(child::close);
+        }
         try {
-            for (Object pythonChild : pythonChildren) {
-                children.add(wrapperFactory.apply((PyObject) pythonChild));
-            }
-            return children;
-        } catch (RuntimeException | Error creationFailure) {
-            List<AutoCloseable> closeables = new ArrayList<>();
-            // Successfully constructed wrappers own the prefix; the remaining handles are ours.
-            for (int i = pythonChildren.size() - 1; i >= children.size(); i--) {
-                Object pythonChild = pythonChildren.get(i);
-                if (pythonChild instanceof PyObject) {
-                    closeables.add((PyObject) pythonChild);
-                }
-            }
-            Collections.reverse(children);
-            for (T child : children) {
-                closeables.add(child::close);
-            }
-            try {
-                LambdaUtil.applyToAllWhileSuppressingExceptions(closeables, AutoCloseable::close);
-            } catch (Exception closeFailure) {
-                creationFailure.addSuppressed(closeFailure);
-            }
-            throw creationFailure;
+            LambdaUtil.applyToAllWhileSuppressingExceptions(closeables, AutoCloseable::close);
+        } catch (Exception closeFailure) {
+            creationFailure.addSuppressed(closeFailure);
         }
     }
 }
