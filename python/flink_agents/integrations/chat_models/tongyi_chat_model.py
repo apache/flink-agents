@@ -37,26 +37,27 @@ DEFAULT_REQUEST_TIMEOUT = 60.0
 DEFAULT_MODEL = "qwen-plus"
 
 # Models with documented json_schema support that are also served on the
-# text-generation endpoint this connection calls. That intersection is the
-# Qwen3.7-Max family: the other four json_schema families (Qwen3.7-Plus,
-# Qwen3.7-Flash, Qwen3.8-Flash, Qwen3.8-Max) route to the multimodal endpoint and
-# answer Generation.call with "url error".
+# text-generation interface this connection calls. json_schema support is documented
+# per family, but the interface is documented per model and differs inside a family:
+# the Qwen3.7-Plus, Qwen3.7-Flash, Qwen3.8-Flash and Qwen3.8-Max families and the
+# qwen3.7-max-2026-06-08 snapshot are served on the multimodal interface and answer
+# Generation.call with "url error". Names are therefore matched exactly against the
+# Qwen3.7-Max members served on the text interface.
 # json_schema model list and mode semantics:
 #   https://help.aliyun.com/zh/model-studio/json-mode
 # text- vs multimodal-interface routing:
 #   https://help.aliyun.com/zh/model-studio/text-generation
 #
-# Capability is documented per family, meaning the base name plus the dated
-# snapshots behind it, so a name matches the prefix itself or a name continuing it
-# after a "-" separator. That expresses the documented unit instead of a snapshot
-# census that goes stale, and it keeps out a different family that merely extends
-# the prefix, such as qwen3.7-maximum. The one snapshot the rule admits without
-# json_schema reaching it, qwen3.7-max-2026-06-08, is multimodal-routed and answers
-# this connection with "url error" whether or not a response_format rides along.
-#
-# A name outside the rule reports not-capable and degrades to the prompt-engineering
+# A name outside the set reports not-capable and degrades to the prompt-engineering
 # fallback rather than failing at the provider.
-_NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES = ("qwen3.7-max",)
+_NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
+    {
+        "qwen3.7-max",
+        "qwen3.7-max-preview",
+        "qwen3.7-max-2026-05-17",
+        "qwen3.7-max-2026-05-20",
+    }
+)
 
 
 def _native_output_model(
@@ -170,10 +171,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
     def supports_native_structured_output(self, effective_model: str | None) -> bool:
         """Whether DashScope documents structured output for ``effective_model``.
 
-        See the module-level allowlist for the source of truth and for why capability
-        is matched by family prefix. A name outside it reports ``False`` so it
-        degrades to the prompt-engineering fallback rather than failing at the
-        provider.
+        See the module-level allowlist for the source of truth and for why names are
+        matched exactly. A name outside it reports ``False`` so it degrades to the
+        prompt-engineering fallback rather than failing at the provider.
 
         Args:
             effective_model: The model the request will be issued against, may be
@@ -182,12 +182,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         Returns:
             ``True`` if a schema can be applied natively for ``effective_model``.
         """
-        if not effective_model:
-            return False
-        return any(
-            effective_model == prefix or effective_model.startswith(prefix + "-")
-            for prefix in _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES
-        )
+        return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
 
     def chat(
         self,

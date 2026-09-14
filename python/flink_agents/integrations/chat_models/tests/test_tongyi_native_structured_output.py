@@ -29,21 +29,27 @@ from flink_agents.integrations.chat_models.tongyi_chat_model import (
     TongyiChatModelConnection,
 )
 
-# The model family DashScope documents native structured output for on the
+# The models DashScope documents native structured output for on the
 # text-generation endpoint this connection calls. The names are written out here
 # rather than read from the connection, so that a name mistyped there is a
 # disagreement between two lists rather than a value both sides share.
 _CAPABLE_MODEL = "qwen3.7-max"
-_CAPABLE_MODELS = ["qwen3.7-max", "qwen3.7-max-2026-05-20"]
+_CAPABLE_MODELS = [
+    "qwen3.7-max",
+    "qwen3.7-max-preview",
+    "qwen3.7-max-2026-05-17",
+    "qwen3.7-max-2026-05-20",
+]
 
 # Names that must not be treated as capable. qwen-plus is the connection's default
-# model, qwen3.7-maximum is the near miss a bare prefix test would admit, and
-# qwen3.8-max is a family reachable only through a different endpoint.
+# model, qwen3.7-max-2026-06-08 is the member of the capable family served only on
+# the multimodal interface, and qwen3.8-max is a schema-capable family reachable
+# only through that interface.
 _INCAPABLE_MODELS = [
     "qwen-plus",
     "qwen-turbo",
     "qwen3.8-max",
-    "qwen3.7-maximum",
+    "qwen3.7-max-2026-06-08",
     "",
     None,
 ]
@@ -190,13 +196,13 @@ def test_unrenderable_schema_raises_naming_the_model(monkeypatch) -> None:
 
 @pytest.mark.parametrize("model", _CAPABLE_MODELS)
 def test_capability_predicate_accepts_capable_models(model: str) -> None:
-    """The family alias and a dated snapshot below it are both capable."""
+    """Every model documented as schema-capable on the text interface is capable."""
     assert _connection().supports_native_structured_output(model) is True
 
 
 @pytest.mark.parametrize("model", _INCAPABLE_MODELS)
 def test_capability_predicate_rejects_incapable_models(model: str | None) -> None:
-    """Other families, a near-miss name, and an absent model name are not capable."""
+    """Other families, a multimodal-only snapshot, and no model are not capable."""
     assert _connection().supports_native_structured_output(model) is False
 
 

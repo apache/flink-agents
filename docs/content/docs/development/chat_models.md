@@ -1078,7 +1078,7 @@ Tongyi is only supported in Python currently. To use Tongyi from Java agents, se
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
-| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on the Qwen3.7-Max family, the schema-capable family DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
+| `model` | str | `"qwen-plus"` | Name of the chat model to use (an `output_schema` is enforced natively only on `qwen3.7-max`, `qwen3.7-max-preview`, `qwen3.7-max-2026-05-17` and `qwen3.7-max-2026-05-20`, the schema-capable models DashScope serves on the text-generation interface this connection calls; every other model, the `qwen-plus` default included, falls back to prompting) |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | `0.7` | Sampling temperature (0.0 to 2.0) |
