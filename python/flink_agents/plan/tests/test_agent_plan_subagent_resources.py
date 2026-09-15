@@ -24,6 +24,7 @@ from flink_agents.api.subagent import SubagentSetup
 from flink_agents.api.tests.subagent_test_utils import TestSubagentSetup
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.plan.resource_provider import PythonResourceProvider
 
 
 def test_subagent_setup_compiles_into_agent_provider() -> None:
@@ -70,3 +71,35 @@ def test_non_setup_agent_resource_is_rejected() -> None:
 
     with pytest.raises(TypeError, match="must be a SubagentSetup"):
         AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_live_external_subagent_is_rebuilt_after_plan_json_round_trip() -> None:
+    """A live setup crosses the plan JSON boundary as its descriptor and is
+    rebuilt with its configuration on the other side.
+    """
+    agent = Agent()
+    agent.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        TestSubagentSetup(
+            endpoint_url="http://review.internal:8080", fail_on_call=True
+        ),
+    )
+
+    plan = AgentPlan.from_agent(agent, AgentConfiguration())
+
+    # The transfer that carries a compiled plan between processes: the live
+    # setup does not travel with it and must be rebuilt from what does.
+    restored = AgentPlan.model_validate_json(
+        plan.model_dump_json(serialize_as_any=True)
+    )
+
+    provider = restored.resource_providers[ResourceType.AGENT]["reviewer"]
+    assert isinstance(provider, PythonResourceProvider)
+    assert provider.descriptor.clazz is TestSubagentSetup
+
+    resolved = provider.provide(resource_context=None, config=AgentConfiguration())
+    assert isinstance(resolved, TestSubagentSetup)
+    assert resolved.endpoint_url == "http://review.internal:8080"
+    assert resolved.fail_on_call is True
+    assert resolved.resource_type() == ResourceType.AGENT

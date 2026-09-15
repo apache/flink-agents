@@ -20,14 +20,45 @@ package org.apache.flink.agents.api.subagent;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+
+import java.util.Objects;
 
 /**
  * Caller-facing definition of a sub-agent, registered in the agent plan as an {@code AGENT}
  * resource.
  */
 public abstract class SubagentSetup extends SerializableResource {
+
+    /**
+     * The descriptor capturing this setup's construction configuration. A compiled plan carries
+     * this descriptor across the JobManager to TaskManager transfer, and a remote task rebuilds an
+     * equivalent setup from it through the {@code (ResourceDescriptor, ResourceContext)}
+     * constructor. Every setup carries one, so a registered sub-agent is always rebuildable.
+     */
+    private final ResourceDescriptor descriptor;
+
+    /**
+     * Constructs the setup from the descriptor carrying its configuration. This is the only
+     * construction path: concrete subclasses expose a public form of it so the framework can
+     * rebuild them from a descriptor on a remote task.
+     */
+    protected SubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        this.descriptor =
+                Objects.requireNonNull(
+                        descriptor,
+                        "A SubagentSetup must carry a ResourceDescriptor so it can be rebuilt on a"
+                                + " remote task.");
+    }
+
+    /** The descriptor this setup is rebuilt from on a remote task. */
+    @JsonIgnore
+    public ResourceDescriptor getDescriptor() {
+        return descriptor;
+    }
 
     @Override
     @JsonIgnore

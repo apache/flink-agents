@@ -43,8 +43,6 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
      */
     protected long statusPollIntervalMillis = 500;
 
-    protected BaseAsyncSubagentSetup() {}
-
     /**
      * Descriptor-based construction, as used by YAML-declared {@code subagents:} entries: reads the
      * optional {@code status_poll_interval_millis} argument, falling back to the default of {@code
@@ -52,6 +50,7 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
      */
     protected BaseAsyncSubagentSetup(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         Number statusPollInterval = descriptor.getArgument("status_poll_interval_millis");
         if (statusPollInterval != null) {
             this.statusPollIntervalMillis = statusPollInterval.longValue();

@@ -591,9 +591,14 @@ public class AgentPlan implements Serializable {
                     String name = kv.getKey();
                     Object value = kv.getValue();
                     if (value instanceof SubagentSetup) {
+                        // A live setup registered programmatically travels as its descriptor, so a
+                        // remote task rebuilds it through the (ResourceDescriptor, ResourceContext)
+                        // constructor.
                         addResourceProvider(
-                                JavaSerializableResourceProvider.createResourceProvider(
-                                        name, ResourceType.AGENT, (SubagentSetup) value));
+                                createDescriptorResourceProvider(
+                                        name,
+                                        ResourceType.AGENT,
+                                        ((SubagentSetup) value).getDescriptor()));
                     } else if (value instanceof ResourceDescriptor) {
                         // Declared via YAML: the descriptor names a SubagentSetup subclass that is
                         // instantiated when the resource is first resolved.
