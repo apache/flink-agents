@@ -25,19 +25,13 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
-import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
-import com.github.victools.jsonschema.module.jackson.JacksonOption;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -54,7 +48,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -547,32 +540,17 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return payload;
     }
 
-    // Derives the response_format value watsonx.ai expects from a POJO class. Every setting below
-    // addresses a concrete way the generated schema otherwise misstates the contract:
+    // Derives the response_format value watsonx.ai expects from a POJO class. The schema inside it
+    // comes from the shared generator with one option added:
     //
-    //   - DRAFT_2020_12 is the draft pydantic generates on the Python side, so a schema derived
-    //     from a Java class states the same contract in the same dialect.
-    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
-    //     properties of their own, named after the accessor call, e.g. "getDerived()".
     //   - MAP_VALUES_AS_ADDITIONAL_PROPERTIES gives a Map its value schema. Without it the map
     //     admits any value, and a response that satisfies the schema can still fail to deserialize
     //     into the declared value type at the caller.
-    //   - Sorting fields before methods and applying no further comparison leaves properties in
-    //     declaration order, which is the order pydantic emits, so the documents the two languages
-    //     derive from the same shape stay aligned.
-    //   - The required check marks every field required except an Optional one. The default marks
-    //     nothing required, which lets a model omit fields at will, while marking everything
-    //     required would force the fields a caller declared omissible.
-    //   - The Jackson module makes the schema name properties the way Jackson names them, and list
-    //     enum constants mapped by @JsonProperty or by a @JsonValue method under the values Jackson
-    //     reads, because a caller deserializing the response into this class honors @JsonProperty,
-    //     skips @JsonIgnore, and reads a mapped enum constant only from its mapped value. This
-    //     connection returns the content as a string and never deserializes into the schema class,
-    //     so a property or enum constant stated under the wrong name produces a response that
-    //     satisfies the schema and still fails to read back, at the caller rather than here. An
-    //     enum annotating only some constants falls back to Java names for all of them, so its
-    //     annotated constants do not read back. The two enum options change only the listed
-    //     values: the required set and the property order stay the ones configured below.
+    //
+    // This connection returns the content as a string and never deserializes into the schema
+    // class, so a property or enum constant the schema states under a name Jackson does not read
+    // produces a response that satisfies the schema and still fails to read back, at the caller
+    // rather than here.
     //
     // Two settings are deliberately absent:
     //
@@ -588,27 +566,14 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     //     recursive POJO reaches the provider unguarded either way, and this setting cannot
     //     change that.
     private static ObjectNode toNativeResponseFormat(Class<?> schemaClass) {
-        SchemaGeneratorConfigBuilder configBuilder =
-                new SchemaGeneratorConfigBuilder(
-                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
-                        .with(
-                                new JacksonModule(
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY,
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE));
-        configBuilder
-                .forTypesInGeneral()
-                .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
-        configBuilder
-                .forFields()
-                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
-
         final ObjectNode responseFormat = MAPPER.createObjectNode();
         responseFormat.put("type", "json_schema");
         final ObjectNode jsonSchema = responseFormat.putObject("json_schema");
         jsonSchema.put("name", schemaClass.getSimpleName());
         jsonSchema.set(
-                "schema", new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass));
+                "schema",
+                PojoJsonSchemaGenerator.generate(
+                        schemaClass, Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES));
         jsonSchema.put("strict", true);
         return responseFormat;
     }

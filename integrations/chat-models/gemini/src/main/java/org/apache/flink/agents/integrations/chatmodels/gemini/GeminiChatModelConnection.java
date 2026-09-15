@@ -23,13 +23,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
-import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
-import com.github.victools.jsonschema.module.jackson.JacksonOption;
 import com.google.genai.Client;
 import com.google.genai.types.Candidate;
 import com.google.genai.types.Content;
@@ -47,6 +40,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -401,17 +395,16 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
     // Derives the JSON Schema Gemini's responseJsonSchema field expects from a POJO class. Gemini
     // supports a subset of JSON Schema and ignores the keywords outside that subset server-side
-    // without reporting which, so every setting below is chosen against that published subset:
+    // without reporting which, so the shared schema and the options added to it are checked
+    // against that published subset:
     //
-    //   - DRAFT_2020_12 is the draft whose keywords Gemini's supported list names: $defs and
-    //     prefixItems are listed, while the older drafts' definitions and tuple-form items are not.
-    //   - The PLAIN_JSON preset keeps generation to fields. A preset is mandatory, and the
-    //     generator's default one, FULL_DOCUMENTATION, surfaces getters as properties of their
-    //     own, named after the accessor call, e.g. "getSummary()".
+    //   - The shared schema is DRAFT_2020_12, the draft whose keywords Gemini's supported list
+    //     names: $defs and prefixItems are listed, while the older drafts' definitions and
+    //     tuple-form items are not.
     //   - MAP_VALUES_AS_ADDITIONAL_PROPERTIES gives a Map its value schema, as an
-    //     additionalProperties keyword carrying the declared value type. Dropped from this recipe,
-    //     the map instead takes the additionalProperties:false of the option below and admits no
-    //     entries at all.
+    //     additionalProperties keyword carrying the declared value type. Without it, the map
+    //     instead takes the additionalProperties:false of the option below and admits no entries
+    //     at all.
     //   - FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT closes every object. No Gemini document states
     //     that a schema omitting the keyword is closed, and under ordinary JSON Schema semantics it
     //     is not, so without it a response may carry an undeclared key that the ObjectMapper
@@ -419,44 +412,20 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     //     does not, the keyword is ignored like any other unsupported one, which is where omitting
     //     it would have left us. It applies to the enclosing object and leaves a Map's declared
     //     value schema alone.
-    //   - Sorting fields before methods and applying no further comparison leaves properties in
-    //     declaration order, which keeps the emitted document stable rather than alphabetized. It
-    //     is not an ordering guarantee: Gemini's ordering knob is the non-standard propertyOrdering
-    //     keyword, which this generator never emits.
-    //   - The required check marks every field required except an Optional one. Gemini treats a
-    //     field the schema does not list as required as optional and lets the model skip it, while
-    //     marking everything required would force the fields a caller declared omissible.
-    //   - The Jackson module makes the schema name properties the way Jackson names them. The
-    //     response is read back into the same class with an ObjectMapper, so a property that
-    //     @JsonProperty renames or @JsonIgnore drops has to be stated in the schema under the name
-    //     the mapper reads, or a response that satisfies the schema still fails to deserialize.
-    //     Enum constants carry the same hazard: the FLATTENED_ENUMS options list each constant by
-    //     its @JsonValue method or @JsonProperty value, as the mapper reads it. An enum annotating
-    //     only some constants falls back to Java names for all of them, so its annotated constants
-    //     do not read back. No other JacksonOption is enabled, so the required set and property
-    //     order stay as configured above.
+    //   - Properties follow declaration order, which keeps the emitted document stable rather than
+    //     alphabetized. It is not an ordering guarantee: Gemini's ordering knob is the non-standard
+    //     propertyOrdering keyword, which the generator never emits.
     //
     // DEFINITION_FOR_MAIN_SCHEMA is deliberately absent. Without it a recursive type emits
     // {"$ref": "#"} at the recursion point, which is the form Google's own recursion example uses.
     // Enabling it instead produces a $defs entry referencing another $defs entry, a shape no
     // published Gemini example demonstrates.
     private static ObjectNode toNativeJsonSchema(Class<?> schemaClass) {
-        SchemaGeneratorConfigBuilder configBuilder =
-                new SchemaGeneratorConfigBuilder(
-                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
-                        .with(Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
-                        .with(
-                                new JacksonModule(
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE,
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY));
-        configBuilder
-                .forTypesInGeneral()
-                .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
-        configBuilder
-                .forFields()
-                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
-        ObjectNode schema = new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass);
+        ObjectNode schema =
+                PojoJsonSchemaGenerator.generate(
+                        schemaClass,
+                        Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES,
+                        Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);
         stripRefSiblings(schema);
         return schema;
     }

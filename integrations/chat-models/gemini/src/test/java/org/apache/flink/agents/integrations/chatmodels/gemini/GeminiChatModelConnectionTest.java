@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.integrations.chatmodels.gemini;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonPropertyDescription;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
@@ -113,29 +112,13 @@ class GeminiChatModelConnectionTest {
 
     /**
      * Output schema fixture shaped to expose the derivation settings: fields are declared out of
-     * alphabetical order, {@code counts} is a map whose values carry a type, and {@code note} is
-     * the only optional field.
+     * alphabetical order, and {@code counts} is a map whose values carry a type.
      */
     public static class Report {
         public String summary;
         public Map<String, Integer> counts;
         public Optional<String> note;
         public int total;
-    }
-
-    /**
-     * Output schema fixture shaped to expose Jackson's property model.
-     *
-     * <p>{@code name} is deserialized from {@code full_name} rather than from the Java field name,
-     * and {@code secret} is not deserialized at all.
-     */
-    public static class Profile {
-        @JsonProperty("full_name")
-        public String name;
-
-        @JsonIgnore public String secret;
-
-        public int age;
     }
 
     /** Nested type reused by two described fields of {@link Addresses}. */
@@ -801,20 +784,6 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The derived schema names properties the way Jackson deserializes them")
-    void derivedSchemaHonorsJacksonAnnotations() {
-        // The response is read back with an ObjectMapper, which accepts the renamed property and
-        // rejects the Java field name, and which discards an ignored property the schema would
-        // otherwise force the model to fabricate.
-        GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Profile.class);
-
-        assertThat(fieldNames(nativeSchema(config).path("properties")))
-                .containsExactly("full_name", "age");
-    }
-
-    @Test
     @DisplayName("The derived schema lists enum constants by the values Jackson deserializes")
     void derivedSchemaListsEnumsByTheirJacksonWireValues() throws Exception {
         GenerateContentConfig config =
@@ -859,20 +828,6 @@ class GeminiChatModelConnectionTest {
                                 .path("type")
                                 .asText())
                 .isEqualTo("integer");
-    }
-
-    @Test
-    @DisplayName("The derived schema requires every field the caller did not declare omissible")
-    void derivedSchemaMarksNonOptionalFieldsRequired() {
-        // Gemini treats a field the schema does not list as required as one the model may skip,
-        // so leaving `required` unset would let a response omit fields at will.
-        GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
-
-        List<String> required = new ArrayList<>();
-        nativeSchema(config).path("required").forEach(entry -> required.add(entry.asText()));
-        assertThat(required).containsExactlyInAnyOrder("summary", "counts", "total");
     }
 
     @Test
