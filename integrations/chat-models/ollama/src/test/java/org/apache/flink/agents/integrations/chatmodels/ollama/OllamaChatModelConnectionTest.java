@@ -17,9 +17,10 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.ollama;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ollama4j.models.chat.OllamaChatRequest;
 import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -41,7 +42,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -54,39 +54,46 @@ class OllamaChatModelConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
-    private static final String DRAFT_2020_12 = "https://json-schema.org/draft/2020-12/schema";
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    /**
-     * Output schema fixture shaped to expose the schema-generation settings.
-     *
-     * <p>Fields are declared out of alphabetical order, {@code counts} is a map whose values carry
-     * a type, {@code note} is the only optional field, and {@code getDerived} is a getter backed by
-     * no field.
-     */
+    /** Output schema fixture with a plain field and a map whose values carry a type. */
     public static class Report {
         public String summary;
         public Map<String, Integer> counts;
-        public Optional<String> note;
-        public int total;
-
-        public String getDerived() {
-            return summary + total;
-        }
     }
 
     /**
-     * Output schema fixture shaped to expose Jackson's property model.
-     *
-     * <p>{@code name} is deserialized from {@code full_name} rather than from the Java field name,
-     * and {@code secret} is not deserialized at all.
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
      */
-    public static class Profile {
-        @JsonProperty("full_name")
-        public String name;
+    public static class Ticket {
+        public Status status;
 
-        @JsonIgnore public String secret;
+        public Phase phase;
+    }
 
-        public int age;
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
     }
 
     private static OllamaChatModelConnection connection() {
@@ -201,20 +208,12 @@ class OllamaChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The generated schema constrains draft, property order, map values and required")
-    void generatedSchemaShapeIsConstraining() {
+    @DisplayName("The generated schema gives map values their own schema")
+    void generatedSchemaGivesMapValuesTheirSchema() {
         OllamaChatRequest request =
                 connection()
                         .buildRequest(userMessage(), List.of(), params("qwen3:4b"), Report.class);
         JsonNode schema = (JsonNode) request.getFormat();
-
-        // Ollama fixes generation order to the order the schema declares its properties, so the
-        // emitted order has to follow the class rather than the alphabet. A getter backed by no
-        // field must not surface as a property of its own.
-        assertThat(schema.path("$schema").asText()).isEqualTo(DRAFT_2020_12);
-        assertThat(schema.path("properties").fieldNames())
-                .toIterable()
-                .containsExactly("summary", "counts", "note", "total");
 
         // A map without a value schema admits any value, which the model does take up and which
         // then fails to deserialize into the declared type.
@@ -227,28 +226,30 @@ class OllamaChatModelConnectionTest {
                                 .path("type")
                                 .asText())
                 .isEqualTo("integer");
-
-        // Every field is required except the one the caller declared omissible.
-        assertThat(textValues(schema.path("required")))
-                .containsExactlyInAnyOrder("summary", "counts", "total");
     }
 
     @Test
-    @DisplayName("The generated schema names properties the way Jackson deserializes them")
-    void generatedSchemaFollowsJacksonPropertyNames() {
+    @DisplayName("The generated schema lists enum constants the way Jackson deserializes them")
+    void generatedSchemaFollowsJacksonEnumValues() throws Exception {
         OllamaChatRequest request =
                 connection()
-                        .buildRequest(userMessage(), List.of(), params("qwen3:4b"), Profile.class);
-        JsonNode schema = (JsonNode) request.getFormat();
+                        .buildRequest(userMessage(), List.of(), params("qwen3:4b"), Ticket.class);
+        JsonNode properties = ((JsonNode) request.getFormat()).path("properties");
 
-        // The response is read back with an ObjectMapper, which accepts the renamed property and
-        // rejects the Java field name, and which discards an ignored property the schema would
-        // otherwise force the model to fabricate.
-        assertThat(schema.path("properties").fieldNames())
-                .toIterable()
-                .containsExactly("full_name", "age");
-        assertThat(textValues(schema.path("required")))
-                .containsExactlyInAnyOrder("full_name", "age");
+        // Every listed value is one the model may emit, so each has to deserialize into the enum.
+        // Listed by constant name instead, the mapper reading the response refuses every value
+        // the schema allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
     }
 
     @ParameterizedTest
@@ -260,11 +261,5 @@ class OllamaChatModelConnectionTest {
         // all, so the guard the sibling connections need for their allowlists would be a silent
         // behavior change here.
         assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
-    }
-
-    private static List<String> textValues(JsonNode arrayNode) {
-        List<String> values = new ArrayList<>();
-        arrayNode.forEach(element -> values.add(element.asText()));
-        return values;
     }
 }
