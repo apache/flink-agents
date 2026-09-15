@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.annotation.Internal;
@@ -48,7 +49,9 @@ public final class KafkaActionStateCleanupPlan implements Serializable {
     private static final long serialVersionUID = 1L;
     private static final int CURRENT_SCHEMA_VERSION = 1;
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+            new ObjectMapper()
+                    .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                    .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     private static final Set<String> JSON_FIELDS =
             Set.of("schemaVersion", "planId", "sourceRecoveryPoint", "topic", "topicId", "offsets");
 

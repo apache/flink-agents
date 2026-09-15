@@ -122,8 +122,6 @@ public final class KafkaActionStateCleanupTool {
         configuration.set(KAFKA_ACTION_STATE_TOPIC, plan.getTopic());
         if (options.containsKey("replication-factor")) {
             int replicationFactor = Integer.parseInt(options.get("replication-factor"));
-            Preconditions.checkArgument(
-                    replicationFactor > 0, "Replication factor must be positive");
             configuration.set(KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR, replicationFactor);
         }
 

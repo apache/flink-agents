@@ -19,6 +19,8 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.kafka.common.Uuid;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.util.List;
@@ -52,6 +54,18 @@ class KafkaActionStateCleanupPlanTest {
         KafkaActionStateCleanupPlan restored = KafkaActionStateCleanupPlan.fromJson(plan.toJson());
 
         assertThat(restored).isEqualTo(plan);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "null", "garbage"})
+    void testRejectsTrailingPlanContent(String trailingContent) {
+        KafkaActionStateCleanupPlan plan =
+                KafkaActionStateCleanupPlan.fromRecoveryMarkers(
+                        "checkpoint-42", List.of(marker(Map.of(0, 10L, 1, 20L))));
+
+        assertThatThrownBy(
+                        () -> KafkaActionStateCleanupPlan.fromJson(plan.toJson() + trailingContent))
+                .isInstanceOf(IOException.class);
     }
 
     @Test

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -124,11 +125,19 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
         Preconditions.checkArgument(
                 !configuration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED),
                 "Per-key Kafka tombstones cannot be enabled with checkpoint-aligned cleanup");
+        int replicationFactor = configuration.get(KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR);
+        if (createControlTopic) {
+            Preconditions.checkArgument(
+                    replicationFactor > 0 && replicationFactor <= Short.MAX_VALUE,
+                    "Kafka cleanup control topic replication factor must be between 1 and %s, but was %s",
+                    Short.MAX_VALUE,
+                    replicationFactor);
+        }
         return new KafkaActionStateCleanupCoordinator(
                 new KafkaTransport(
                         configuration.get(KAFKA_BOOTSTRAP_SERVERS),
                         controlTopic,
-                        configuration.get(KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR),
+                        replicationFactor,
                         createControlTopic),
                 committedBoundaryRequired,
                 dataTopic);
@@ -388,7 +397,9 @@ public final class KafkaActionStateCleanupCoordinator implements AutoCloseable {
     static final class Operation {
         private static final int CURRENT_SCHEMA_VERSION = 1;
         private static final ObjectMapper MAPPER =
-                new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
+                new ObjectMapper()
+                        .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                        .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
         private static final Set<String> JSON_FIELDS = Set.of("schemaVersion", "status", "plan");
 
         private final KafkaActionStateCleanupPlan plan;

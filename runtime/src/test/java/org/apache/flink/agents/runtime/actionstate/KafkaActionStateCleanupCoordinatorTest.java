@@ -20,7 +20,10 @@ package org.apache.flink.agents.runtime.actionstate;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -31,6 +34,8 @@ import java.util.Set;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOMBSTONE_ENABLED;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -369,6 +374,47 @@ class KafkaActionStateCleanupCoordinatorTest {
                 .hasMessageContaining("regressed applied plan");
         assertThat(operations.get(plan.getPlanId()).getStatus())
                 .isEqualTo(KafkaActionStateCleanupCoordinator.Status.APPLIED);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "null", "garbage"})
+    void testRejectsTrailingControlRecordContent(String trailingContent) throws Exception {
+        KafkaActionStateCleanupCoordinator.Operation operation =
+                KafkaActionStateCleanupCoordinator.Operation.committed(
+                        plan("checkpoint-42", 10L, 20L));
+        ConsumerRecord<String, String> record =
+                new ConsumerRecord<>(
+                        "action-state-control",
+                        0,
+                        0L,
+                        operation.getPlan().getPlanId(),
+                        operation.toJson() + trailingContent);
+        Map<String, KafkaActionStateCleanupCoordinator.Operation> operations =
+                new LinkedHashMap<>();
+
+        assertThatThrownBy(
+                        () ->
+                                KafkaActionStateCleanupCoordinator.applyControlRecord(
+                                        operations, record))
+                .isInstanceOf(IOException.class);
+        assertThat(operations).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {-1, 0, 32768, 65537})
+    void testRejectsInvalidReplicationFactorBeforeCreatingKafkaClients(int replicationFactor) {
+        AgentConfiguration configuration = new AgentConfiguration();
+        configuration.set(KAFKA_ACTION_STATE_TOPIC, "action-state");
+        configuration.set(KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC, "action-state-control");
+        configuration.set(KAFKA_ACTION_STATE_TOPIC_REPLICATION_FACTOR, replicationFactor);
+        // Fail immediately if validation reaches client setup instead of rejecting the factor.
+        configuration.set(KAFKA_BOOTSTRAP_SERVERS, "");
+
+        assertThatThrownBy(() -> KafkaActionStateCleanupCoordinator.create(configuration))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("replication factor")
+                .hasMessageContaining("32767")
+                .hasMessageContaining(Integer.toString(replicationFactor));
     }
 
     @Test
