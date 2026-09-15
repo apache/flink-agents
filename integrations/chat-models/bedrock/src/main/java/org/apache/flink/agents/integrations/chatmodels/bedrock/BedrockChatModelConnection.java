@@ -22,12 +22,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
-import com.github.victools.jsonschema.module.jackson.JacksonOption;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -36,6 +30,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
 import software.amazon.awssdk.core.SdkNumber;
 import software.amazon.awssdk.core.document.Document;
@@ -66,7 +61,6 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -388,24 +382,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                 .build();
     }
 
-    // Derives the JSON schema from a POJO class. Every setting below addresses a concrete way the
-    // generated schema otherwise fails to constrain generation:
-    //
-    //   - DRAFT_2020_12 is the dialect Bedrock validates a schema against, so the schema
-    //     declares it rather than the generator's older default.
-    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
-    //     properties of their own, named after the accessor call, e.g. "getSummary()".
-    //   - The required check marks every field required except an Optional one. The default marks
-    //     nothing required, which lets a model omit fields at will, while marking everything
-    //     required would force the fields a caller declared omissible.
-    //   - The Jackson module makes the schema name properties the way Jackson names them, and
-    //     list enum constants mapped by @JsonProperty or by a @JsonValue method under the values
-    //     Jackson reads. The response is read back into the same class with an ObjectMapper, so a
-    //     property that @JsonProperty renames or @JsonIgnore drops, and a mapped enum constant,
-    //     have to appear in the schema as the mapper reads them, or a response that satisfies the
-    //     schema still fails to deserialize. An enum annotating only some constants falls back to
-    //     Java names for all of them, so its annotated constants do not read back. The two enum
-    //     options change only the listed values: the required set stays the one configured above.
+    // Derives the JSON schema from a POJO class with the shared generator, adding no option. The
+    // shared schema declares draft 2020-12, the dialect Bedrock validates a schema against.
     //
     // A Map's value schema is deliberately left underived. Bedrock accepts additionalProperties
     // only as false, and rejects a schema that carries it as a subschema, so typing map values
@@ -413,21 +391,11 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     // bare object.
     //
     // A self-referencing class derives its own field as a reference back to the schema root,
-    // whatever the required check says. Bedrock does not accept a recursive schema and rejects the
-    // request before the model runs, so declaring the field Optional does not rescue it; only
-    // flattening the recursion does.
+    // whatever the shared generator's required check says. Bedrock does not accept a recursive
+    // schema and rejects the request before the model runs, so declaring the field Optional does
+    // not rescue it; only flattening the recursion does.
     private static JsonNode toNativeSchema(Class<?> schemaClass) {
-        SchemaGeneratorConfigBuilder configBuilder =
-                new SchemaGeneratorConfigBuilder(
-                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                        .with(
-                                new JacksonModule(
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY,
-                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE));
-        configBuilder
-                .forFields()
-                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
-        return new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass);
+        return PojoJsonSchemaGenerator.generate(schemaClass);
     }
 
     private static boolean isRetryable(Exception e) {

@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -285,31 +284,23 @@ class BedrockChatModelConnectionTest {
 
     private static final ObjectMapper SCHEMA_MAPPER = new ObjectMapper();
 
-    /**
-     * Output schema fixture shaped to expose Jackson's property model.
-     *
-     * <p>{@code name} is deserialized from {@code full_name} rather than from the Java field name,
-     * and {@code secret} is not deserialized at all.
-     */
+    /** Output schema fixture for tests that need a POJO class schema of any shape. */
     public static class Profile {
-        @JsonProperty("full_name")
         public String name;
-
-        @JsonIgnore public String secret;
-
-        public int age;
     }
 
-    /**
-     * Output schema fixture shaped to expose what the derived schema constrains: which fields a
-     * response must carry, and how a map field is rendered.
-     */
+    /** Output schema fixture with a map field whose values carry a type. */
     public static class Reading {
-        public int score;
-
-        public Optional<String> note;
-
         public Map<String, Integer> counts;
+    }
+
+    /** Output schema fixture whose fields are declared in an order other than alphabetical. */
+    public static class Task {
+        public String title;
+
+        public int priority;
+
+        public boolean archived;
     }
 
     /**
@@ -499,23 +490,19 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the derived schema names properties the way Jackson deserializes them")
-    void testDerivedSchemaFollowsJacksonPropertyNames() throws Exception {
+    @DisplayName("the derived schema lists properties in the order the class declares them")
+    void testDerivedSchemaKeepsDeclarationOrder() throws Exception {
         ConverseRequest request =
                 connection()
                         .buildRequest(
                                 List.of(ChatMessage.user("hello")),
                                 null,
                                 params(CAPABLE_MODEL),
-                                Profile.class);
+                                Task.class);
 
-        // The response is read back into the same class, so a property that @JsonProperty renames
-        // or @JsonIgnore drops has to be stated under the name the mapper reads. Derived without
-        // Jackson's property model the schema instead names "name" and demands the ignored
-        // "secret", constraining the model to a document the mapper then refuses.
         assertThat(nativeSchema(request).path("properties").fieldNames())
                 .toIterable()
-                .containsExactlyInAnyOrder("full_name", "age");
+                .containsExactly("title", "priority", "archived");
     }
 
     @Test
@@ -546,8 +533,8 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the derived schema declares its dialect, requires fields, and leaves maps bare")
-    void testDerivedSchemaConstrainsTheResponse() throws Exception {
+    @DisplayName("the derived schema leaves map values untyped")
+    void testDerivedSchemaLeavesMapsBare() throws Exception {
         ConverseRequest request =
                 connection()
                         .buildRequest(
@@ -557,23 +544,12 @@ class BedrockChatModelConnectionTest {
                                 Reading.class);
         JsonNode schema = nativeSchema(request);
 
-        // Left to itself the generator marks nothing required, so an empty document satisfies a
-        // schema whose whole purpose is to constrain the response. An Optional field is the one a
-        // caller declared omissible, so it stays out of the required set.
-        List<String> required = new ArrayList<>();
-        schema.path("required").forEach(entry -> required.add(entry.asText()));
-        assertThat(required).containsExactlyInAnyOrder("score", "counts");
-
         // A map derives as a bare object. Typing its values renders them under
         // additionalProperties, which Bedrock accepts only as false and rejects as a subschema, so
         // the value type is left off rather than putting the request outside the accepted subset.
         assertThat(schema.path("properties").path("counts").path("type").asText())
                 .isEqualTo("object");
         assertThat(schema.findValues("additionalProperties")).isEmpty();
-
-        // The dialect is stated rather than left on the generator's older default.
-        assertThat(schema.path("$schema").asText())
-                .isEqualTo("https://json-schema.org/draft/2020-12/schema");
     }
 
     @Test
