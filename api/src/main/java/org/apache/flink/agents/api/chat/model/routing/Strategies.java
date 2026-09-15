@@ -20,12 +20,14 @@ package org.apache.flink.agents.api.chat.model.routing;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Factories for built-in routing strategies. Each returns a {@link RoutingStrategyDescriptor}
- * (class name + args) rather than a live instance, so the strategy is plan-serializable. There is
- * no magic-string strategy dispatch — the factory supplies the class name.
+ * Factories for routing-strategy declarations. Each returns a {@link RoutingStrategy} — a
+ * serializable declaration (type + arguments), not executable logic — so the strategy travels in
+ * the agent plan as a language-neutral tag. There is no magic-string strategy dispatch — the
+ * factory supplies the type.
  */
 public final class Strategies {
 
@@ -40,23 +42,73 @@ public final class Strategies {
      * patterns matters, pass a {@link java.util.LinkedHashMap} — {@code Map.of(...)} iteration
      * order is unspecified.
      */
-    public static RoutingStrategyDescriptor rules(Map<String, String> rules) {
+    public static RoutingStrategy rules(Map<String, String> rules) {
         Map<String, Object> args = new HashMap<>();
-        args.put("rules", rules == null ? Collections.emptyMap() : rules);
-        return new RoutingStrategyDescriptor(RuleBasedRoutingStrategy.class.getName(), args);
+        // Defensive copy: validation (declaration construction) and compilation (first routed
+        // request, plan side) are separated in time, so a caller mutating its map after this call
+        // must not bypass the validated shape.
+        args.put(
+                RoutingStrategy.ARG_RULES,
+                rules == null ? Collections.emptyMap() : new LinkedHashMap<>(rules));
+        return new RoutingStrategy(RoutingStrategyType.RULE_BASED, args, null);
     }
 
     /**
-     * A custom strategy referenced by class. The class must be a {@link RoutingStrategy} with
-     * either a {@code (Map<String,Object>)} constructor or a no-arg constructor. This is the
-     * deployable shape for custom routing.
+     * LLM-as-judge routing (framework-managed): a judge chat model — registered like any other
+     * {@code CHAT_MODEL} resource — reads the request and picks one candidate. The engine executes
+     * the judge call on its durable, metered, observable chat path; the verdict is constrained to
+     * candidate names. An unparseable or non-candidate verdict abstains to the router's default
+     * model; a judge call that exhausts its retries honors the request's error-handling strategy
+     * ({@code FAIL} surfaces it, {@code IGNORE} abstains with the cause recorded). Candidate {@code
+     * describe(...)} descriptions become the judge's decision criteria.
+     *
+     * <p><b>Judge model contract:</b> the judge must be a plain chat model — no prompt, tools, or
+     * skills. Descriptor-declared bindings are rejected at plan construction. A {@code
+     * ChatModelSetup} implementation that adds them dynamically without declaring them in its
+     * descriptor is an invalid judge: its replies stop parsing as verdicts and every request
+     * abstains to the router's default model (visible in the routing events as abstains).
+     *
+     * <p>The judge receives the complete message list (and the rendered request when the target
+     * setup binds a prompt); use {@link RoutingStrategy#withMaxContextChars(int)} to cap the
+     * context for cost.
      */
-    public static RoutingStrategyDescriptor of(Class<? extends RoutingStrategy> clazz) {
-        return new RoutingStrategyDescriptor(clazz.getName(), Collections.emptyMap());
+    public static RoutingStrategy llm(String judgeModel) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(RoutingStrategy.ARG_JUDGE_MODEL, judgeModel);
+        return new RoutingStrategy(RoutingStrategyType.LLM_JUDGE, args, null);
     }
 
-    /** A custom strategy referenced by class name plus construction arguments. */
-    public static RoutingStrategyDescriptor of(String clazz, Map<String, Object> args) {
-        return new RoutingStrategyDescriptor(clazz, args);
+    /**
+     * Like {@link #llm(String)}, with a custom judge system prompt. The template may contain a
+     * {@code {candidates}} placeholder, replaced with the candidate list (names + descriptions).
+     * The template owns the verdict contract: the judge must still reply {@code {"model":
+     * "<candidate name>"}} (or exactly a candidate name) to be parsed.
+     */
+    public static RoutingStrategy llm(String judgeModel, String promptTemplate) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(RoutingStrategy.ARG_JUDGE_MODEL, judgeModel);
+        args.put(RoutingStrategy.ARG_PROMPT_TEMPLATE, promptTemplate);
+        return new RoutingStrategy(RoutingStrategyType.LLM_JUDGE, args, null);
+    }
+
+    /**
+     * A custom executor referenced by class. The class must implement {@link CustomRoutingExecutor}
+     * with either a {@code (Map<String,Object>)} constructor or a no-arg constructor. This is the
+     * deployable shape for custom routing.
+     */
+    public static RoutingStrategy custom(Class<? extends CustomRoutingExecutor> executorClass) {
+        return new RoutingStrategy(
+                RoutingStrategyType.CUSTOM, Collections.emptyMap(), executorClass.getName());
+    }
+
+    /** A custom executor referenced by class, with construction arguments. */
+    public static RoutingStrategy custom(
+            Class<? extends CustomRoutingExecutor> executorClass, Map<String, Object> args) {
+        return new RoutingStrategy(RoutingStrategyType.CUSTOM, args, executorClass.getName());
+    }
+
+    /** A custom executor referenced by class name plus construction arguments. */
+    public static RoutingStrategy custom(String executorClass, Map<String, Object> args) {
+        return new RoutingStrategy(RoutingStrategyType.CUSTOM, args, executorClass);
     }
 }

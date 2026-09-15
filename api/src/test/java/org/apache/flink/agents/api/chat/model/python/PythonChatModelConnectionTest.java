@@ -83,7 +83,7 @@ public class PythonChatModelConnectionTest {
     }
 
     @Test
-    void testChat() {
+    void testChat() throws Exception {
         ChatMessage inputMessage = mock(ChatMessage.class);
         ChatMessage outputMessage = mock(ChatMessage.class);
         Tool mockTool = mock(Tool.class);
@@ -93,9 +93,9 @@ public class PythonChatModelConnectionTest {
         modelParams.put("temperature", 0.7);
         modelParams.put("max_tokens", 100);
 
-        Object pythonInputMessage = new Object();
-        Object pythonOutputMessage = new Object();
-        Object pythonTool = new Object();
+        PyObject pythonInputMessage = mock(PyObject.class);
+        PyObject pythonOutputMessage = mock(PyObject.class);
+        PyObject pythonTool = mock(PyObject.class);
 
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
         when(mockAdapter.convertToPythonTool(mockTool)).thenReturn(pythonTool);
@@ -133,6 +133,9 @@ public class PythonChatModelConnectionTest {
                                     return true;
                                 }));
         verify(mockAdapter).fromPythonChatMessage(pythonOutputMessage);
+        verify(pythonInputMessage).close();
+        verify(pythonTool).close();
+        verify(pythonOutputMessage).close();
     }
 
     @Test

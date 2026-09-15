@@ -33,6 +33,7 @@ under the License.
     <modules>
         <module>anthropic</module>
         <module>bedrock</module>
+        <module>common</module>
         <module>gemini</module>
         <module>ollama</module>
         <module>openai</module>

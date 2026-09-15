@@ -26,15 +26,16 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Read-only view a {@link RoutingStrategy} sees when deciding which model to route to.
+ * Read-only view a routing executor sees when deciding which model to route to.
  *
- * <p>v1 exposes the request id, the request messages, prompt args, and the router's candidates
- * (name + description). It intentionally does <b>not</b> expose a chat-invocation API, so a
- * strategy cannot make a hidden synchronous model call; observable LLM-as-router is a
- * framework-managed follow-up.
+ * <p>It exposes the request id, the request messages, prompt args, and the router's candidates
+ * (name + description). It intentionally does <b>not</b> expose a chat-invocation API, so a {@link
+ * CustomRoutingExecutor} cannot make a hidden synchronous model call; observable LLM-as-router is
+ * provided by the framework-managed {@code Strategies.llm(...)} strategy instead.
  *
  * <p>The isolation boundary is deliberate and one level deep: the message list, each message's
  * tool-call maps and extra args, and the prompt-args map are defensive copies, but values
@@ -50,6 +51,7 @@ public final class RoutingContext {
     private final List<ChatMessage> messages;
     private final Map<String, Object> promptArgs;
     private final List<RoutingCandidate> candidates;
+    private final String defaultModel;
 
     public RoutingContext(
             UUID requestId,
@@ -57,6 +59,16 @@ public final class RoutingContext {
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             List<RoutingCandidate> candidates) {
+        this(requestId, router, messages, promptArgs, candidates, null);
+    }
+
+    public RoutingContext(
+            UUID requestId,
+            String router,
+            List<ChatMessage> messages,
+            Map<String, Object> promptArgs,
+            List<RoutingCandidate> candidates,
+            String defaultModel) {
         this.requestId = requestId;
         this.router = router;
         // Deep copy: the wrapping list is unmodifiable, but ChatMessage is mutable and the
@@ -74,6 +86,7 @@ public final class RoutingContext {
                 candidates == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(new ArrayList<>(candidates));
+        this.defaultModel = defaultModel;
     }
 
     private static List<ChatMessage> deepCopy(List<ChatMessage> messages) {
@@ -114,6 +127,11 @@ public final class RoutingContext {
     /** Name of the router resource handling this request. */
     public String getRouter() {
         return router;
+    }
+
+    /** The router's declared default model — where abstains resolve — if one is configured. */
+    public Optional<String> getDefaultModel() {
+        return Optional.ofNullable(defaultModel);
     }
 
     public List<ChatMessage> getMessages() {

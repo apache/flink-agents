@@ -24,13 +24,13 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
-import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
@@ -39,8 +39,6 @@ import java.util.List;
 import java.util.Map;
 
 public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoCloseable {
-
-    static final String PYTHON_IMPORTS = "from flink_agents.runtime import python_java_utils";
 
     static final String JAVA_RESOURCE = "j_resource";
 
@@ -81,22 +79,21 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     static final String INVOKE_PYTHON_TOOL = PYTHON_MODULE_PREFIX + "invoke_python_tool";
 
     private final ResourceContext resourceContext;
-    private final PythonInterpreter interpreter;
+    private final PythonInterpreterManager interpreterManager;
     private final JavaResourceAdapter javaResourceAdapter;
     private PyObject pythonResourceContext;
 
     public PythonResourceAdapterImpl(
             ResourceContext resourceContext,
-            PythonInterpreter interpreter,
+            PythonInterpreterManager interpreterManager,
             JavaResourceAdapter javaResourceAdapter) {
         this.resourceContext = resourceContext;
-        this.interpreter = interpreter;
+        this.interpreterManager = interpreterManager;
         this.javaResourceAdapter = javaResourceAdapter;
     }
 
     public void open() {
-        interpreter.exec(PYTHON_IMPORTS);
-        pythonResourceContext = (PyObject) interpreter.invoke(GET_RESOURCE_CONTEXT, this);
+        pythonResourceContext = (PyObject) interpreterManager.invoke(GET_RESOURCE_CONTEXT, this);
     }
 
     @Override
@@ -138,18 +135,18 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         kwargs.put(JAVA_RESOURCE, resource);
         kwargs.put(JAVA_RESOURCE_ADAPTER, javaResourceAdapter);
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
-        return interpreter.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
+        return interpreterManager.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
-        return (PyObject) interpreter.invoke(CREATE_RESOURCE, module, clazz, kwargs);
+        return (PyObject) interpreterManager.invoke(CREATE_RESOURCE, module, clazz, kwargs);
     }
 
     @Override
     public Object toPythonChatMessage(ChatMessage message) {
-        return interpreter.invoke(FROM_JAVA_CHAT_MESSAGE, message);
+        return interpreterManager.invoke(FROM_JAVA_CHAT_MESSAGE, message);
     }
 
     @Override
@@ -158,7 +155,9 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         ChatMessage chatMessage = new ChatMessage();
 
         String roleValue =
-                (String) interpreter.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
+                (String)
+                        interpreterManager.invoke(
+                                TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
         chatMessage.setRole(MessageRole.fromValue(roleValue));
         return chatMessage;
     }
@@ -167,7 +166,7 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     public Object toPythonDocuments(List<Document> documents) {
         List<Object> pythonDocuments = new ArrayList<>();
         for (Document document : documents) {
-            pythonDocuments.add(interpreter.invoke(FROM_JAVA_DOCUMENT, document));
+            pythonDocuments.add(interpreterManager.invoke(FROM_JAVA_DOCUMENT, document));
         }
         return pythonDocuments;
     }
@@ -188,39 +187,43 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
 
     @Override
     public Object toPythonVectorStoreQuery(VectorStoreQuery query) {
-        return interpreter.invoke(FROM_JAVA_VECTOR_STORE_QUERY, query);
+        return interpreterManager.invoke(FROM_JAVA_VECTOR_STORE_QUERY, query);
     }
 
     @Override
     public VectorStoreQueryResult fromPythonVectorStoreQueryResult(
             PyObject pythonVectorStoreQueryResult) {
-        List<PyObject> pythonDocuments =
-                (List<PyObject>) pythonVectorStoreQueryResult.getAttr("documents", List.class);
-        return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            List<PyObject> pythonDocuments =
+                    scope.own(
+                            (List<PyObject>)
+                                    pythonVectorStoreQueryResult.getAttr("documents", List.class));
+            return new VectorStoreQueryResult(fromPythonDocuments(pythonDocuments));
+        }
     }
 
     @Override
     public Object convertToPythonTool(Tool tool) {
-        return interpreter.invoke(FROM_JAVA_TOOL, tool);
+        return interpreterManager.invoke(FROM_JAVA_TOOL, tool);
     }
 
     private Object convertToPythonPrompt(Prompt prompt) {
-        return interpreter.invoke(FROM_JAVA_PROMPT, prompt);
+        return interpreterManager.invoke(FROM_JAVA_PROMPT, prompt);
     }
 
     @Override
     public Object callMethod(Object obj, String methodName, Map<String, Object> kwargs) {
-        return interpreter.invoke(CALL_METHOD, obj, methodName, kwargs);
+        return interpreterManager.invoke(CALL_METHOD, obj, methodName, kwargs);
     }
 
     @Override
     public void setMetricGroup(Object pythonResource, FlinkAgentsMetricGroup metricGroup) {
-        interpreter.invoke(SET_METRIC_GROUP, pythonResource, metricGroup);
+        interpreterManager.invoke(SET_METRIC_GROUP, pythonResource, metricGroup);
     }
 
     @Override
     public Object invoke(String name, Object... args) {
-        return interpreter.invoke(name, args);
+        return interpreterManager.invoke(name, args);
     }
 
     @Override
@@ -234,7 +237,7 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         @SuppressWarnings("unchecked")
         Map<String, String> result =
                 (Map<String, String>)
-                        interpreter.invoke(
+                        interpreterManager.invoke(
                                 GET_PYTHON_TOOL_METADATA, module, qualName, injectedArgs);
         if (result == null) {
             throw new IllegalStateException(
@@ -245,6 +248,6 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
 
     @Override
     public Object invokePythonTool(String module, String qualName, Map<String, Object> kwargs) {
-        return interpreter.invoke(INVOKE_PYTHON_TOOL, module, qualName, kwargs);
+        return interpreterManager.invoke(INVOKE_PYTHON_TOOL, module, qualName, kwargs);
     }
 }

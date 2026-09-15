@@ -43,6 +43,7 @@ public class PythonMCPTool extends Tool
             "python_java_utils.invoke_python_tool_instance";
     private final PyObject tool;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
     @Nullable private final String mcpServerName;
 
     /**
@@ -121,5 +122,16 @@ public class PythonMCPTool extends Tool
             metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, mcpServerName);
         }
         return metadata;
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || tool == null) {
+            return;
+        }
+        closed = true;
+        try (tool) {
+            adapter.callMethod(tool, "close", Map.of());
+        }
     }
 }

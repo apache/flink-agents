@@ -70,6 +70,8 @@ public class PythonCollectionManageableVectorStore extends PythonVectorStore
 
     @Override
     public void deleteCollection(String name) throws Exception {
-        this.vectorStore.invokeMethod("delete_collection", name);
+        Map<String, Object> kwargs = new HashMap<>();
+        kwargs.put("name", name);
+        this.adapter.callMethod(vectorStore, "delete_collection", kwargs);
     }
 }

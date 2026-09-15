@@ -48,6 +48,7 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
     private final PyObject embeddingModel;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
 
     /**
      * Creates a new PythonEmbeddingModelConnection.
@@ -166,6 +167,12 @@ public class PythonEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
     @Override
     public void close() throws Exception {
-        this.embeddingModel.close();
+        if (closed || embeddingModel == null) {
+            return;
+        }
+        closed = true;
+        try (embeddingModel) {
+            adapter.callMethod(embeddingModel, "close", Map.of());
+        }
     }
 }

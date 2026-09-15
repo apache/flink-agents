@@ -43,6 +43,18 @@ under the License.
             <artifactId>google-genai</artifactId>
             <version>${google.genai.version}</version>
         </dependency>
+
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-chat-models-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Versions managed by the victools BOM imported in the root pom. -->
+        <dependency>
+            <groupId>com.github.victools</groupId>
+            <artifactId>jsonschema-generator</artifactId>
+        </dependency>
     </dependencies>
 
 </project>

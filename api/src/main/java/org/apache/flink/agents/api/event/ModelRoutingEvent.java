@@ -48,6 +48,12 @@ public class ModelRoutingEvent extends Event {
     /** Where the final selected model came from. */
     public static final String SOURCE_STRATEGY = "strategy";
 
+    /** The decision came from a framework-managed LLM judge verdict. */
+    public static final String SOURCE_LLM_JUDGE = "llm_judge";
+
+    /** Attribute/metadata key carrying the decision source (events, payloads, durable records). */
+    public static final String DECISION_SOURCE_KEY = "decision_source";
+
     public static final String SOURCE_DEFAULT = "default";
     public static final String SOURCE_FALLBACK = "fallback";
 
@@ -67,7 +73,7 @@ public class ModelRoutingEvent extends Event {
         setAttr("router", router);
         setAttr("candidates", new ArrayList<>(candidates));
         setAttr("selected_model", selectedModel);
-        setAttr("decision_source", decisionSource);
+        setAttr(DECISION_SOURCE_KEY, decisionSource);
         setAttr("fallback_enabled", fallbackEnabled);
         if (reason != null) {
             setAttr("reason", reason);
@@ -144,7 +150,7 @@ public class ModelRoutingEvent extends Event {
 
     @JsonIgnore
     public String getDecisionSource() {
-        return (String) getAttr("decision_source");
+        return (String) getAttr(DECISION_SOURCE_KEY);
     }
 
     /** Whether the router was configured with fallback (not whether fallback happened). */

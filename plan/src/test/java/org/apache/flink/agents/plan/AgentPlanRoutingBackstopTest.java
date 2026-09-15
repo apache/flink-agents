@@ -38,7 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentPlanRoutingBackstopTest {
 
     private static ResourceDescriptor descriptor(String clazz) {
-        return new ResourceDescriptor(clazz, Map.of());
+        // Router descriptors must declare a strategy (validated at plan construction), so the
+        // hand-built minimal descriptor carries an empty rules strategy.
+        return new ResourceDescriptor(
+                clazz, Map.of("strategy_type", "rule_based", "strategy_args", Map.of()));
     }
 
     @Test

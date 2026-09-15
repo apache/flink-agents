@@ -77,8 +77,13 @@ class ActionTaskContextManager implements AutoCloseable {
     private ContinuationActionExecutor continuationActionExecutor;
 
     ActionTaskContextManager(int numAsyncThreads) {
+        this(numAsyncThreads, () -> {});
+    }
+
+    ActionTaskContextManager(int numAsyncThreads, Runnable asyncThreadCleanup) {
         this.actionTaskContexts = new HashMap<>();
-        this.continuationActionExecutor = new ContinuationActionExecutor(numAsyncThreads);
+        this.continuationActionExecutor =
+                new ContinuationActionExecutor(numAsyncThreads, asyncThreadCleanup);
     }
 
     /**

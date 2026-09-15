@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import pemja.core.object.PyObject;
 
@@ -92,13 +93,15 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             MemorySet memorySet,
             List<String> memoryItems,
             @Nullable List<Map<String, Object>> metadatas) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        kwargs.put("memory_items", memoryItems);
-        if (metadatas != null) {
-            kwargs.put("metadatas", metadatas);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            kwargs.put("memory_items", memoryItems);
+            if (metadatas != null) {
+                kwargs.put("metadatas", metadatas);
+            }
+            return (List<String>) adapter.callMethod(pyMem0, "add", kwargs);
         }
-        return (List<String>) adapter.callMethod(pyMem0, "add", kwargs);
     }
 
     @Override
@@ -107,29 +110,33 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             @Nullable List<String> ids,
             @Nullable Map<String, Object> filters,
             @Nullable Integer limit) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        if (ids != null) {
-            kwargs.put("ids", ids);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            if (ids != null) {
+                kwargs.put("ids", ids);
+            }
+            if (filters != null) {
+                kwargs.put("filters", filters);
+            }
+            if (limit != null) {
+                kwargs.put("limit", limit);
+            }
+            Object pyItems = scope.own(adapter.callMethod(pyMem0, "get", kwargs));
+            return convertItems(pyItems);
         }
-        if (filters != null) {
-            kwargs.put("filters", filters);
-        }
-        if (limit != null) {
-            kwargs.put("limit", limit);
-        }
-        Object pyItems = adapter.callMethod(pyMem0, "get", kwargs);
-        return convertItems(pyItems);
     }
 
     @Override
     public void delete(MemorySet memorySet, @Nullable List<String> ids) {
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        if (ids != null) {
-            kwargs.put("ids", ids);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>();
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            if (ids != null) {
+                kwargs.put("ids", ids);
+            }
+            adapter.callMethod(pyMem0, "delete", kwargs);
         }
-        adapter.callMethod(pyMem0, "delete", kwargs);
     }
 
     @Override
@@ -139,15 +146,17 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
             int limit,
             @Nullable Map<String, Object> filters,
             Map<String, Object> extraArgs) {
-        Map<String, Object> kwargs = new HashMap<>(extraArgs);
-        kwargs.put("memory_set", buildPyMemorySet(memorySet));
-        kwargs.put("query", query);
-        kwargs.put("limit", limit);
-        if (filters != null) {
-            kwargs.put("filters", filters);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>(extraArgs);
+            kwargs.put("memory_set", buildPyMemorySet(scope, memorySet));
+            kwargs.put("query", query);
+            kwargs.put("limit", limit);
+            if (filters != null) {
+                kwargs.put("filters", filters);
+            }
+            Object pyItems = scope.own(adapter.callMethod(pyMem0, "search", kwargs));
+            return convertItems(pyItems);
         }
-        Object pyItems = adapter.callMethod(pyMem0, "search", kwargs);
-        return convertItems(pyItems);
     }
 
     @Override
@@ -203,7 +212,7 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
         }
     }
 
-    private Object buildPyMemorySet(MemorySet memorySet) {
+    private Object buildPyMemorySet(PythonObjectScope scope, MemorySet memorySet) {
         // Mem0 ignores a falsy agent_id rather than matching on it, so forwarding an
         // unbound or empty-keyed set would widen the operation to every key sharing the job
         // id and set name, which for a delete means deleting another key's items.
@@ -216,12 +225,13 @@ public class Mem0LongTermMemory implements InteranlBaseLongTermMemory {
                             memorySet.getName()));
         }
         requireNonEmptyPartitionKey(memorySet.getPartitionKey());
-        return adapter.invoke(
-                TO_PYTHON_MEMORY_SET,
-                memorySet.getName(),
-                memorySet.getPartitionKey(),
-                memorySet.getObservationId(),
-                memorySet.isObservationSuppressed());
+        return scope.own(
+                adapter.invoke(
+                        TO_PYTHON_MEMORY_SET,
+                        memorySet.getName(),
+                        memorySet.getPartitionKey(),
+                        memorySet.getObservationId(),
+                        memorySet.isObservationSuppressed()));
     }
 
     /** Returns the partition key in scope, refusing what Mem0 cannot scope an operation to. */

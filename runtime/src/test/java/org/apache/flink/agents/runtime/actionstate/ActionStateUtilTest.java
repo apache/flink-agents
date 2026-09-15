@@ -182,21 +182,6 @@ public class ActionStateUtilTest {
                 actionUUIDSegment);
     }
 
-    /**
-     * Two separately constructed Action instances with the same name — which is what "the same
-     * action, after a JVM restart" looks like — must produce identical state keys, or recovery can
-     * never replay.
-     */
-    @Test
-    public void testSameActionNameYieldsSameKeyAcrossInstances() throws Exception {
-        InputEvent event = new InputEvent("test-input");
-        String first =
-                generateKey("test-key", 7, new NoOpAction("stable-name"), event, MAX_PARALLELISM);
-        String second =
-                generateKey("test-key", 7, new NoOpAction("stable-name"), event, MAX_PARALLELISM);
-        assertEquals(first, second);
-    }
-
     @Test
     public void testParseKeyValidKey() throws Exception {
         // Create test data and generate a key

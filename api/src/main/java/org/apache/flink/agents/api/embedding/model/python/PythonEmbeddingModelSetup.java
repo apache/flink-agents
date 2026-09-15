@@ -48,6 +48,7 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
 
     private final PyObject embeddingModelSetup;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
 
     /**
      * Creates a new PythonEmbeddingModelSetup.
@@ -172,5 +173,16 @@ public class PythonEmbeddingModelSetup extends BaseEmbeddingModelSetup
     public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
         super.setMetricGroup(metricGroup);
         setPythonResourceMetricGroup(metricGroup);
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || embeddingModelSetup == null) {
+            return;
+        }
+        closed = true;
+        try (embeddingModelSetup) {
+            adapter.callMethod(embeddingModelSetup, "close", Map.of());
+        }
     }
 }

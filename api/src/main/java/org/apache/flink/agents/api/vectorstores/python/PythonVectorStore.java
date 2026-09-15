@@ -21,6 +21,7 @@ package org.apache.flink.agents.api.vectorstores.python;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
@@ -54,6 +55,7 @@ import java.util.Map;
 public class PythonVectorStore extends BaseVectorStore implements PythonResourceWrapper {
     protected final PyObject vectorStore;
     protected final PythonResourceAdapter adapter;
+    private boolean closed;
 
     /**
      * Creates a new PythonVectorStore.
@@ -106,9 +108,10 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
             kwargs.put("limit", limit);
         }
 
-        Object pythonDocuments = adapter.callMethod(vectorStore, "get", kwargs);
-
-        return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object pythonDocuments = scope.own(adapter.callMethod(vectorStore, "get", kwargs));
+            return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        }
     }
 
     @Override
@@ -158,8 +161,11 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         if (filters != null) {
             kwargs.put("filters", filters);
         }
-        Object pythonDocuments = adapter.callMethod(vectorStore, "_query_embedding", kwargs);
-        return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object pythonDocuments =
+                    scope.own(adapter.callMethod(vectorStore, "_query_embedding", kwargs));
+            return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        }
     }
 
     /** Embed query text via the configured model (no numpy, so it stays on the async pool). */
@@ -202,8 +208,11 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         if (filters != null) {
             kwargs.put("filters", filters);
         }
-        Object pythonDocuments = adapter.callMethod(vectorStore, "_query_embedding", kwargs);
-        return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object pythonDocuments =
+                    scope.own(adapter.callMethod(vectorStore, "_query_embedding", kwargs));
+            return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
+        }
     }
 
     @Override
@@ -211,23 +220,27 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     public List<String> addEmbedding(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs)
             throws IOException {
-        Map<String, Object> kwargs = new HashMap<>(extraArgs);
-        kwargs.put("documents", adapter.toPythonDocuments(documents));
-        if (collection != null) {
-            kwargs.put("collection_name", collection);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>(extraArgs);
+            kwargs.put("documents", scope.own(adapter.toPythonDocuments(documents)));
+            if (collection != null) {
+                kwargs.put("collection_name", collection);
+            }
+            return (List<String>) adapter.callMethod(vectorStore, "_add_embedding", kwargs);
         }
-        return (List<String>) adapter.callMethod(vectorStore, "_add_embedding", kwargs);
     }
 
     @Override
     public void updateEmbedding(
             List<Document> documents, @Nullable String collection, Map<String, Object> extraArgs) {
-        Map<String, Object> kwargs = new HashMap<>(extraArgs);
-        kwargs.put("documents", adapter.toPythonDocuments(documents));
-        if (collection != null) {
-            kwargs.put("collection_name", collection);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Map<String, Object> kwargs = new HashMap<>(extraArgs);
+            kwargs.put("documents", scope.own(adapter.toPythonDocuments(documents)));
+            if (collection != null) {
+                kwargs.put("collection_name", collection);
+            }
+            adapter.callMethod(vectorStore, "_update_embedding", kwargs);
         }
-        adapter.callMethod(vectorStore, "_update_embedding", kwargs);
     }
 
     @Override
@@ -244,5 +257,16 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
     public void setMetricGroup(FlinkAgentsMetricGroup metricGroup) {
         super.setMetricGroup(metricGroup);
         setPythonResourceMetricGroup(metricGroup);
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || vectorStore == null) {
+            return;
+        }
+        closed = true;
+        try (vectorStore) {
+            adapter.callMethod(vectorStore, "close", Map.of());
+        }
     }
 }

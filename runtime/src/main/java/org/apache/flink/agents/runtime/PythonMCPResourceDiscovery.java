@@ -71,6 +71,7 @@ public class PythonMCPResourceDiscovery {
             provider.setPythonResourceAdapter(adapter);
 
             PythonMCPServer server = (PythonMCPServer) provider.provide(cache.getResourceContext());
+            cache.put(provider.getName(), MCP_SERVER, server);
 
             for (PythonMCPTool tool : server.listTools(provider.getName())) {
                 cache.put(tool.getName(), TOOL, tool);

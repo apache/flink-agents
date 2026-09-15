@@ -31,10 +31,12 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     private final PyObject server;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
 
     /**
      * Creates a new PythonMCPServer.
@@ -106,5 +108,16 @@ public class PythonMCPServer extends Resource implements PythonResourceWrapper {
     @Override
     public ResourceType getResourceType() {
         return ResourceType.MCP_SERVER;
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || server == null) {
+            return;
+        }
+        closed = true;
+        try (server) {
+            adapter.callMethod(server, "close", Map.of());
+        }
     }
 }

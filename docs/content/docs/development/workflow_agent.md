@@ -657,6 +657,20 @@ To use async execution on JDK 21+, user should append jvm option `--add-exports=
 {{< /tab >}}
 {{< /tabs >}}
 
+{{< hint warning >}}
+Async actions in either language may call cross-language resources. Within one async execution,
+keep the cross-language call chain to one reverse callback. Only the following call shapes are
+supported:
+
+- Python action → Java resource → Python callback
+- Java action → Python resource → Java callback
+
+For example, a Python action may use a Java `ChatModelSetup` backed by a Python
+`ChatModelConnection`. Multiple or deeper cross-language callbacks, such as
+Python→Java→Python→Java or Java→Python→Java→Python, are not recommended and may deadlock
+when an outer call occupies an async or interpreter worker while waiting for another worker.
+{{< /hint >}}
+
 ### Cross-language Actions
 
 An action declared in one language can dispatch its body to the other language by setting a `target` on the decorator/annotation. The decorated function or annotated method then acts as a stub — it should raise so direct calls outside the framework fail loud.

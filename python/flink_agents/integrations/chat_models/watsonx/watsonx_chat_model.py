@@ -28,10 +28,10 @@ import httpx
 from ibm_watsonx_ai import APIClient, Credentials
 from ibm_watsonx_ai.foundation_models import ModelInference
 from ibm_watsonx_ai.wml_client_error import ApiRequestFailure
-from pydantic import Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -157,6 +157,49 @@ def _convert_to_watsonx_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
             "arguments": json.dumps(arguments)
             if isinstance(arguments, dict)
             else arguments,
+        },
+    }
+
+
+def _native_output_model(
+    output_schema: OutputSchema | None,
+) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
+
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation here and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the caller-conflict check needs to know
+    whether a schema will be sent, and under what name, before anything is rendered.
+    """
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
+
+
+def _native_response_format(
+    output_schema: OutputSchema | None,
+) -> Dict[str, Any] | None:
+    """Build the ``response_format`` for a native structured-output request.
+
+    Returns ``None``, leaving the request unchanged, unless the schema is a
+    ``BaseModel`` subclass.
+
+    Rendering goes through the shared helper, which raises ``TypeError`` naming the
+    schema class and the remedy when the model has no JSON Schema.
+    """
+    model = _native_output_model(output_schema)
+    if model is None:
+        return None
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": model.__name__,
+            "schema": render_output_schema(model, lambda m: m.model_json_schema()),
+            "strict": True,
         },
     }
 
@@ -332,6 +375,35 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 time.sleep(delay)
                 attempt += 1
 
+    @override
+    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+        """Whether watsonx.ai can constrain generation to a schema for the given model.
+
+        Always ``True``, and deliberately independent of the argument. The constraint
+        is applied by the serving runtime, through vLLM guided decoding, rather than by
+        a per-model capability. IBM states that chat API support requires the vLLM
+        runtime, on its pages about inferencing *custom* foundation models; it does not
+        state in so many words that its own provided models are served the same way.
+        That last step rests instead on the chat request body exposing vLLM's
+        guided-decoding parameters verbatim.
+
+        There is no allowlist because IBM publishes no per-model structured-output
+        signal to key on: the foundation-model comparison table has columns for chat
+        and tool interaction and none for structured output, and the model-specs API
+        exposes no such flag. A list written here would encode a gate nobody documents
+        and would report not-capable for models that do work.
+
+        This diverges from the base contract, which describes capability as
+        model-dependent and requires an unrecognized model to report ``False``. That
+        rule guards against failing at the provider for a model whose capability is
+        unknown; here capability is a property of the endpoint rather than of the
+        model, so there is no unknown to guard against.
+
+        Reads no instance state, so capability stays answerable independently of how
+        the connection was configured.
+        """
+        return True
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -341,16 +413,18 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
     ) -> ChatMessage:
         """Process a sequence of messages, and return a response.
 
-        A non-``None`` ``output_schema`` is rejected: this connection has no native
-        structured-output translation, so callers stay on the prompt-engineering
-        fallback. Declaring the parameter keeps a caller-supplied schema out of
-        ``**kwargs``, which is forwarded to the provider SDK.
+        A ``BaseModel`` ``output_schema`` is sent as the ``response_format`` request
+        parameter. Any other schema form, notably a ``RowTypeInfo``, has no native
+        translation here and keeps the prompt-engineering fallback. Where the schema
+        is sent natively, a caller-supplied ``response_format`` carrying a value
+        conflicts with it and raises ``ValueError``. Declaring the parameter keeps a
+        caller-supplied schema out of ``**kwargs``, which is forwarded to the
+        provider SDK.
 
         When the response carries a finish reason, it is available verbatim as
         ``extra_args["finish_reason"]``; the key is absent when the provider
         reports none.
         """
-        self._reject_unsupported_output_schema(output_schema)
         model_name = kwargs.pop("model", DEFAULT_MODEL)
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
         tool_choice = kwargs.pop("tool_choice", None)
@@ -372,6 +446,47 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 f"{sorted(collisions)}."
             )
             raise ValueError(msg)
+
+        # Native structured output applies only for a BaseModel schema; any other
+        # schema form, such as a RowTypeInfo wrapped in OutputSchema, keeps the
+        # prompt-engineering fallback.
+        #
+        # TODO(#912): the requested strategy is not visible here, so a request that
+        # explicitly asked for NATIVE cannot be told apart from one that merely
+        # resolved to it. Capability is unconditional on this connection, so the schema
+        # form is the only way through to an unconstrained response: a caller who asked
+        # for NATIVE and passed a schema this branch cannot translate gets one
+        # silently. Once strategy resolution is wired up, NATIVE must either bypass
+        # this re-check or fail explicitly.
+        if output_schema is not None and self.supports_native_structured_output(
+            model_name
+        ):
+            native_model = _native_output_model(output_schema)
+            # A caller reaches the same request field through either channel, and both
+            # have already merged into request_params. Only the branch that sends a
+            # derived schema may reject the caller's value; every path that skips it
+            # leaves that value untouched. A None is not a conflict, because the
+            # assignment below replaces it before the request is built. Tested before
+            # the schema is rendered, so a caller who supplied both is told about the
+            # conflict rather than about a render failure; the name is read off the
+            # model class and needs no rendered document.
+            if (
+                native_model is not None
+                and request_params.get("response_format") is not None
+            ):
+                msg = (
+                    f"The {native_model.__name__} output schema is sent as"
+                    " response_format, so response_format must not also be passed as"
+                    " a kwarg or in additional_kwargs. Remove that value, or omit"
+                    " output_schema to set response_format directly."
+                )
+                raise ValueError(msg)
+            response_format = _native_response_format(output_schema)
+            if response_format is not None:
+                # The SDK merges params into the request body at its root, so the
+                # derived schema travels as the request field it is rather than as a
+                # sampling option.
+                request_params["response_format"] = response_format
 
         tool_specs: List[Dict[str, Any]] | None = (
             [to_openai_tool(metadata=tool.metadata) for tool in tools]

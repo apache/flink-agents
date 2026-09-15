@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
@@ -36,6 +37,7 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
 
     private final PyObject prompt;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
     private String name;
 
     public PythonMCPPrompt(PythonResourceAdapter adapter, PyObject prompt) {
@@ -75,18 +77,31 @@ public class PythonMCPPrompt extends Prompt implements PythonResourceWrapper {
     @Override
     public List<ChatMessage> formatMessages(MessageRole defaultRole, Map<String, String> kwargs) {
         Map<String, Object> parameters = new HashMap<>(kwargs);
-        Object pythonRole = adapter.invoke(FROM_JAVA_MESSAGE_ROLE, defaultRole);
-        parameters.put("role", pythonRole);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            Object pythonRole = adapter.invoke(FROM_JAVA_MESSAGE_ROLE, defaultRole);
+            parameters.put("role", pythonRole);
 
-        Object result = adapter.callMethod(prompt, "format_messages", parameters);
-        if (result instanceof List) {
-            List<Object> pythonMessages = (List<Object>) result;
-            List<ChatMessage> messages = new ArrayList<>(pythonMessages.size());
-            for (Object pythonMessage : pythonMessages) {
-                messages.add(adapter.fromPythonChatMessage(pythonMessage));
+            Object result = scope.own(adapter.callMethod(prompt, "format_messages", parameters));
+            if (result instanceof List) {
+                List<Object> pythonMessages = (List<Object>) result;
+                List<ChatMessage> messages = new ArrayList<>(pythonMessages.size());
+                for (Object pythonMessage : pythonMessages) {
+                    messages.add(adapter.fromPythonChatMessage(pythonMessage));
+                }
+                return messages;
             }
-            return messages;
+            return Collections.emptyList();
         }
-        return Collections.emptyList();
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || prompt == null) {
+            return;
+        }
+        closed = true;
+        try (prompt) {
+            adapter.callMethod(prompt, "close", Map.of());
+        }
     }
 }

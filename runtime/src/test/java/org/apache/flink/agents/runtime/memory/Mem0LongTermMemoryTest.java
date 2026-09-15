@@ -37,6 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -102,7 +103,7 @@ public class Mem0LongTermMemoryTest {
     }
 
     @Test
-    void testAddForwardsKwargsAndReturnsIds() throws Exception {
+    void testAddForwardsKwargsAndReleasesTemporaryMemorySet() throws Exception {
         MemorySet ms = ltm.getMemorySet("notes");
         when(mockAdapter.callMethod(eq(mockPyMem0), eq("add"), any()))
                 .thenReturn(List.of("a", "b"));
@@ -114,6 +115,7 @@ public class Mem0LongTermMemoryTest {
         assertThat(captureKwargs("add"))
                 .containsKeys("memory_set", "memory_items", "metadatas")
                 .containsEntry("memory_set", mockPyMemorySet);
+        verify(mockPyMemorySet).close();
     }
 
     @Test
@@ -131,8 +133,10 @@ public class Mem0LongTermMemoryTest {
     @Test
     void testGetWithIdsAndFiltersConvertsItems() throws Exception {
         MemorySet ms = ltm.getMemorySet("notes");
-        when(mockAdapter.callMethod(eq(mockPyMem0), eq("get"), any())).thenReturn("py_items");
-        when(mockAdapter.invoke(eq("python_java_utils.mem0_items_to_java"), eq("py_items")))
+        PyObject pythonItem = mock(PyObject.class);
+        List<PyObject> pythonItems = List.of(pythonItem);
+        when(mockAdapter.callMethod(eq(mockPyMem0), eq("get"), any())).thenReturn(pythonItems);
+        when(mockAdapter.invoke(eq("python_java_utils.mem0_items_to_java"), eq(pythonItems)))
                 .thenReturn(
                         List.of(
                                 Map.of(
@@ -149,6 +153,7 @@ public class Mem0LongTermMemoryTest {
         assertThat(item.getId()).isEqualTo("id1");
         assertThat(item.getValue()).isEqualTo("hello");
         assertThat(item.getAdditionalMetadata()).containsEntry("k", "v");
+        verify(pythonItem).close();
         assertThat(item.getCreatedAt()).isNull();
 
         assertThat(captureKwargs("get"))

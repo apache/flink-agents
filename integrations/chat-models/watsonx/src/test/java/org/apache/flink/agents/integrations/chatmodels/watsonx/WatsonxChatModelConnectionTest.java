@@ -17,6 +17,8 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.watsonx;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -33,14 +35,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import java.util.stream.Stream;
 
@@ -59,6 +65,59 @@ class WatsonxChatModelConnectionTest {
     private static final String CHAT_RESPONSE =
             "{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
                     + "\"content\":\"Hello!\"},\"finish_reason\":\"stop\"}]}";
+    private static final String MODEL = "ibm/granite-3-3-8b-instruct";
+    private static final Map<String, Object> CALLER_FORMAT = Map.of("type", "json_object");
+
+    /**
+     * Output schema fixture shaped to expose the schema-generation settings.
+     *
+     * <p>{@code counts} is a map whose values carry a type, and {@code getDerived} is a getter
+     * backed by no field.
+     */
+    public static class Report {
+        public String summary;
+        public Map<String, Integer> counts;
+        public Optional<String> note;
+        public int total;
+
+        public String getDerived() {
+            return summary + total;
+        }
+    }
+
+    /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+
+        public Phase phase;
+    }
+
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
+    }
 
     private static ResourceDescriptor descriptor(String url, String apiKey, String projectId) {
         ResourceDescriptor.Builder b =
@@ -115,7 +174,38 @@ class WatsonxChatModelConnectionTest {
         return connection.chat(
                 List.of(new ChatMessage(MessageRole.USER, "Hello!")),
                 List.of(),
-                Map.of("model", "ibm/granite-3-3-8b-instruct"));
+                Map.of("model", MODEL));
+    }
+
+    /** A connection that is never sent a request, for the payload-building tests. */
+    private static WatsonxChatModelConnection connection() {
+        return new WatsonxChatModelConnection(
+                descriptor("https://us-south.ml.cloud.ibm.com", "test-key", "test-project"),
+                NOOP,
+                NO_ENVIRONMENT);
+    }
+
+    private static ObjectNode payloadFor(Object outputSchema) {
+        return payloadFor(Map.of("model", MODEL), outputSchema);
+    }
+
+    private static ObjectNode payloadFor(Map<String, Object> modelParams, Object outputSchema) {
+        return connection()
+                .buildPayload(
+                        List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                        List.of(),
+                        modelParams,
+                        outputSchema);
+    }
+
+    private static JsonNode derivedSchema(Object outputSchema) {
+        return payloadFor(outputSchema).path("response_format").path("json_schema").path("schema");
+    }
+
+    private static List<String> fieldNames(JsonNode objectNode) {
+        List<String> names = new ArrayList<>();
+        objectNode.fieldNames().forEachRemaining(names::add);
+        return names;
     }
 
     @ParameterizedTest(name = "{0}")
@@ -303,12 +393,10 @@ class WatsonxChatModelConnectionTest {
     @DisplayName("Model params are copied top-level into the payload")
     void testBuildPayload() {
         ObjectNode payload =
-                WatsonxChatModelConnection.buildPayload(
-                        List.of(new ChatMessage(MessageRole.USER, "Hello!")),
-                        List.of(),
+                payloadFor(
                         Map.of(
                                 "model",
-                                "ibm/granite-3-3-8b-instruct",
+                                MODEL,
                                 "temperature",
                                 0.5,
                                 "max_tokens",
@@ -318,9 +406,10 @@ class WatsonxChatModelConnectionTest {
                                 "extract_reasoning",
                                 true,
                                 "additional_kwargs",
-                                Map.of("top_p", 0.9)));
+                                Map.of("top_p", 0.9)),
+                        null);
 
-        assertThat(payload.get("model_id").asText()).isEqualTo("ibm/granite-3-3-8b-instruct");
+        assertThat(payload.get("model_id").asText()).isEqualTo(MODEL);
         assertThat(payload.get("temperature").asDouble()).isEqualTo(0.5);
         assertThat(payload.get("max_tokens").asInt()).isEqualTo(256);
         assertThat(payload.get("top_p").asDouble()).isEqualTo(0.5);
@@ -332,14 +421,13 @@ class WatsonxChatModelConnectionTest {
 
         assertThatThrownBy(
                         () ->
-                                WatsonxChatModelConnection.buildPayload(
-                                        List.of(new ChatMessage(MessageRole.USER, "Hello!")),
-                                        List.of(),
+                                payloadFor(
                                         Map.of(
                                                 "model",
-                                                "ibm/granite-3-3-8b-instruct",
+                                                MODEL,
                                                 "additional_kwargs",
-                                                Map.of("temperature", 5.0))))
+                                                Map.of("temperature", 5.0)),
+                                        null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("additional_kwargs")
                 .hasMessageContaining("temperature");
@@ -348,14 +436,9 @@ class WatsonxChatModelConnectionTest {
                 List.of("model_id", "messages", "tools", "project_id", "space_id")) {
             assertThatThrownBy(
                             () ->
-                                    WatsonxChatModelConnection.buildPayload(
-                                            List.of(new ChatMessage(MessageRole.USER, "Hello!")),
-                                            List.of(),
-                                            Map.of(
-                                                    "model",
-                                                    "ibm/granite-3-3-8b-instruct",
-                                                    requestOwnedField,
-                                                    "override")))
+                                    payloadFor(
+                                            Map.of("model", MODEL, requestOwnedField, "override"),
+                                            null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining(requestOwnedField);
         }
@@ -671,5 +754,203 @@ class WatsonxChatModelConnectionTest {
         Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
         assertThat(function.get("name")).isEqualTo("add");
         assertThat(function.get("arguments")).isEqualTo(Map.of("a", 1, "b", 2));
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(
+            strings = {
+                "ibm/granite-3-3-8b-instruct",
+                "meta-llama/llama-3-3-70b-instruct",
+                "mistralai/mistral-large",
+                " "
+            })
+    @DisplayName("Capability is reported for any model, since the endpoint provides it")
+    void supportsNativeStructuredOutputIsUnconditional(String model) {
+        // Capability comes from the serving runtime the chat API requires rather than from the
+        // model, so a model allowlist here would silently drop back to the prompt fallback for
+        // anything the list had not caught up with. Null and blank are included because the
+        // answer does not depend on the argument at all.
+        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    }
+
+    @Test
+    @DisplayName("A POJO output schema is sent as a native json_schema response format")
+    void buildPayloadWritesResponseFormatForPojoSchema() {
+        ObjectNode payload = payloadFor(Report.class);
+
+        JsonNode responseFormat = payload.path("response_format");
+        assertThat(responseFormat.path("type").asText()).isEqualTo("json_schema");
+        JsonNode jsonSchema = responseFormat.path("json_schema");
+        assertThat(jsonSchema.path("name").asText()).isEqualTo("Report");
+        assertThat(jsonSchema.path("strict").booleanValue()).isTrue();
+        assertThat(fieldNames(jsonSchema.path("schema").path("properties")))
+                .containsExactlyInAnyOrder("summary", "counts", "note", "total");
+    }
+
+    @Test
+    @DisplayName("No output schema leaves the payload without a response format")
+    void buildPayloadOmitsResponseFormatWithoutSchema() {
+        ObjectNode payload = payloadFor(null);
+
+        // A null is still a present response_format field in the serialized body, so the key has
+        // to be absent rather than written as null.
+        assertThat(payload.has("response_format")).isFalse();
+    }
+
+    @Test
+    @DisplayName("A RowTypeInfo-shaped schema stays on the prompt fallback")
+    void buildPayloadOmitsResponseFormatForRowTypeInfo() {
+        // A RowTypeInfo schema arrives wrapped rather than as a bare POJO Class, so it must not
+        // activate native structured output. The wrapper cannot be built here because RowTypeInfo
+        // is not on this module's classpath; any non-Class schema object exercises the same gate.
+        // Deriving a schema from it must degrade to the fallback instead of failing the request.
+        Object nonClassSchema = "row<name STRING>";
+
+        ObjectNode payload = payloadFor(nonClassSchema);
+
+        assertThat(payload.has("response_format")).isFalse();
+    }
+
+    @Test
+    @DisplayName("The derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode properties = derivedSchema(Ticket.class).path("properties");
+
+        // Every listed value is one the model may emit, so each has to deserialize into the enum.
+        // Listed by constant name instead, the caller's mapper refuses every value the schema
+        // allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
+    }
+
+    @Test
+    @DisplayName("The derived schema gives map values their own schema")
+    void derivedSchemaGivesMapValuesTheirSchema() {
+        JsonNode counts = derivedSchema(Report.class).path("properties").path("counts");
+
+        // A map without a value schema admits any value, so a response can satisfy the schema and
+        // still fail to deserialize into the declared value type at the caller.
+        assertThat(counts.path("additionalProperties").isObject()).isTrue();
+        assertThat(counts.path("additionalProperties").path("type").asText()).isEqualTo("integer");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("callerSuppliedResponseFormats")
+    @DisplayName("A caller response format alongside an output schema is rejected")
+    void chatWithSchemaAndCallerResponseFormatRaises(
+            String ignoredCaseName, Map<String, Object> modelParams) throws Exception {
+        HttpServer server = startServer();
+        server.createContext(
+                "/ml/v1/text/chat", exchange -> sendJson(exchange, 200, CHAT_RESPONSE));
+
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), false, 0), NOOP, NO_ENVIRONMENT);
+
+            // Both channels land in the same payload field as the derived schema, so letting
+            // either side win silently sends a format the caller never asked for, or drops the
+            // schema the agent depends on to parse the reply. The stub answers the request, so a
+            // guard that stops rejecting the combination fails here rather than hanging on a call
+            // to the real endpoint.
+            assertThatThrownBy(
+                            () ->
+                                    connection.chat(
+                                            List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                                            List.of(),
+                                            modelParams,
+                                            Report.class))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("response_format");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static Stream<Arguments> callerSuppliedResponseFormats() {
+        return Stream.of(
+                Arguments.of("model params", callerFormatInModelParams()),
+                Arguments.of("additional_kwargs", callerFormatInAdditionalKwargs()));
+    }
+
+    private static Map<String, Object> callerFormatInModelParams() {
+        return Map.of("model", MODEL, "response_format", CALLER_FORMAT);
+    }
+
+    private static Map<String, Object> callerFormatInAdditionalKwargs() {
+        return Map.of(
+                "model", MODEL, "additional_kwargs", Map.of("response_format", CALLER_FORMAT));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("skippedNativePathsWithCallerResponseFormat")
+    @DisplayName("A caller response format is forwarded when no schema is translated")
+    void callerResponseFormatSurvivesWhenNoSchemaIsSent(
+            String ignoredCaseName, Map<String, Object> modelParams, Object outputSchema) {
+        // response_format is on none of the reserved sets, so callers set it directly today. The
+        // rejection belongs to the branch that actually derives a schema: applied any wider it
+        // turns every one of those existing calls into an error.
+        ObjectNode payload = payloadFor(modelParams, outputSchema);
+
+        assertThat(payload.path("response_format")).isEqualTo(MAPPER.valueToTree(CALLER_FORMAT));
+    }
+
+    private static Stream<Arguments> skippedNativePathsWithCallerResponseFormat() {
+        return Stream.of(
+                Arguments.of("no schema, model params", callerFormatInModelParams(), null),
+                Arguments.of(
+                        "no schema, additional_kwargs", callerFormatInAdditionalKwargs(), null),
+                // A schema the branch cannot translate skips it for the other reason, so the
+                // caller's value has to survive that arm too.
+                Arguments.of(
+                        "untranslatable schema, model params",
+                        callerFormatInModelParams(),
+                        "row<name STRING>"));
+    }
+
+    @Test
+    @DisplayName("The serialized request body carries response_format at the document root")
+    void serializedRequestBodyCarriesResponseFormatAtRoot() throws Exception {
+        HttpServer server = startServer();
+        AtomicReference<JsonNode> captured = new AtomicReference<>();
+        server.createContext(
+                "/ml/v1/text/chat",
+                exchange -> {
+                    captured.set(MAPPER.readTree(exchange.getRequestBody()));
+                    sendJson(exchange, 200, CHAT_RESPONSE);
+                });
+
+        try {
+            WatsonxChatModelConnection connection =
+                    new WatsonxChatModelConnection(
+                            stubDescriptor(baseUrl(server), false, 0), NOOP, NO_ENVIRONMENT);
+
+            connection.chat(
+                    List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                    List.of(),
+                    Map.of("model", MODEL),
+                    Report.class);
+
+            // The scope id is injected after the payload is built, so only the wire body proves
+            // that a schema handed to chat reaches the request at all, and that it sits at the
+            // root beside the other request fields rather than nested inside one of them.
+            JsonNode body = captured.get();
+            assertThat(body).isNotNull();
+            assertThat(body.has("response_format")).isTrue();
+            assertThat(body.path("response_format").path("json_schema").path("name").asText())
+                    .isEqualTo("Report");
+        } finally {
+            server.stop(0);
+        }
     }
 }

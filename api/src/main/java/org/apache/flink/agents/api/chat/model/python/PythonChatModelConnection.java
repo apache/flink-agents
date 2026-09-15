@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
@@ -41,6 +42,7 @@ public class PythonChatModelConnection extends BaseChatModelConnection
         implements PythonResourceWrapper {
     private final PyObject chatModel;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
 
     /**
      * Creates a new PythonChatModelConnection.
@@ -82,24 +84,32 @@ public class PythonChatModelConnection extends BaseChatModelConnection
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         Map<String, Object> kwargs = new HashMap<>(modelParams);
 
-        List<Object> pythonMessages = new ArrayList<>();
-        for (ChatMessage message : messages) {
-            pythonMessages.add(adapter.toPythonChatMessage(message));
-        }
-        kwargs.put("messages", pythonMessages);
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            List<Object> pythonMessages = new ArrayList<>();
+            for (ChatMessage message : messages) {
+                pythonMessages.add(scope.own(adapter.toPythonChatMessage(message)));
+            }
+            kwargs.put("messages", pythonMessages);
 
-        List<Object> pythonTools = new ArrayList<>();
-        for (Tool tool : tools) {
-            pythonTools.add(adapter.convertToPythonTool(tool));
-        }
-        kwargs.put("tools", pythonTools);
+            List<Object> pythonTools = new ArrayList<>();
+            for (Tool tool : tools) {
+                pythonTools.add(scope.own(adapter.convertToPythonTool(tool)));
+            }
+            kwargs.put("tools", pythonTools);
 
-        Object pythonMessageResponse = adapter.callMethod(chatModel, "chat", kwargs);
-        return adapter.fromPythonChatMessage(pythonMessageResponse);
+            Object pythonMessageResponse = scope.own(adapter.callMethod(chatModel, "chat", kwargs));
+            return adapter.fromPythonChatMessage(pythonMessageResponse);
+        }
     }
 
     @Override
     public void close() throws Exception {
-        this.chatModel.close();
+        if (closed || chatModel == null) {
+            return;
+        }
+        closed = true;
+        try (chatModel) {
+            adapter.callMethod(chatModel, "close", Map.of());
+        }
     }
 }

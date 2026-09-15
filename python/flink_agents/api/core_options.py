@@ -140,6 +140,12 @@ class AgentConfigOptions:
         default=1,
     )
 
+    KAFKA_ACTION_STATE_TOMBSTONE_ENABLED = ConfigOption(
+        key="kafkaActionStateTombstoneEnabled",
+        config_type=bool,
+        default=False,
+    )
+
     FLUSS_BOOTSTRAP_SERVERS = ConfigOption(
         key="flussBootstrapServers",
         config_type=str,

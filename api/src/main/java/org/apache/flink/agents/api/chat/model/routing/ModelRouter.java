@@ -23,7 +23,6 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 
-import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -33,23 +32,36 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 /**
  * A framework resource that <b>selects</b> a concrete chat model for a request. It does not call
- * the backend itself — {@code ChatModelAction} resolves the router, runs its {@link
- * RoutingStrategy} to get a {@link RoutingDecision}, and then runs the normal chat path against the
- * chosen model.
+ * the backend itself, nor does it execute routing logic: it carries the candidates plus a {@link
+ * RoutingStrategy} <i>declaration</i>, and the engine's plan layer resolves an executor for the
+ * declared type ({@code ChatModelAction} runs it, then runs the normal chat path against the chosen
+ * model).
  *
  * <p>Built with the fluent {@link #of(String...)} builder, which produces a {@link
- * ResourceDescriptor} the framework instantiates reflectively. The strategy is carried by class
- * name + args (see {@link RoutingStrategyDescriptor}) so it is plan-serializable.
+ * ResourceDescriptor} the framework instantiates reflectively. The router carries declaration data
+ * only — candidates plus the strategy as a language-neutral type tag + arguments — so it is
+ * plan-serializable across runtimes; compilation, caching and execution of strategies live in the
+ * engine's plan layer (the {@code RoutingExecutor} implementations).
  *
  * <p>Abstain ({@link RoutingDecision#abstain()}) → {@link #getDefaultModel()}. A returned name that
  * is not a candidate is an invalid decision and is failed clearly by the caller.
  */
 public class ModelRouter extends Resource {
+
+    /** Descriptor key carrying the candidate model names. */
+    public static final String CANDIDATES_KEY = "candidates";
+
+    /** Descriptor key carrying the strategy type tag ({@link RoutingStrategyType#tag()}). */
+    public static final String STRATEGY_TYPE_KEY = "strategy_type";
+
+    /** Descriptor key carrying the strategy arguments. */
+    public static final String STRATEGY_ARGS_KEY = "strategy_args";
+
+    /** Descriptor key carrying the custom executor class name ({@code CUSTOM} only). */
+    public static final String STRATEGY_EXECUTOR_CLASS_KEY = "strategy_executor_class";
 
     private final List<RoutingCandidate> candidates;
     private final String defaultModel;
@@ -59,7 +71,7 @@ public class ModelRouter extends Resource {
     public ModelRouter(ResourceDescriptor descriptor, ResourceContext resourceContext)
             throws Exception {
         super(descriptor, resourceContext);
-        List<String> names = descriptor.getArgument("candidates");
+        List<String> names = descriptor.getArgument(CANDIDATES_KEY);
         if (names == null || names.isEmpty()) {
             throw new IllegalArgumentException("ModelRouter requires at least one candidate.");
         }
@@ -84,30 +96,23 @@ public class ModelRouter extends Resource {
         }
         this.fallbackEnabled =
                 Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
-        String strategyClazz = descriptor.getArgument("strategy_clazz");
-        Map<String, Object> strategyArgs =
-                descriptor.getArgument("strategy_args", Collections.emptyMap());
-        this.strategy = instantiateStrategy(strategyClazz, strategyArgs);
-    }
-
-    @SuppressWarnings("unchecked")
-    private static RoutingStrategy instantiateStrategy(String clazz, Map<String, Object> args)
-            throws Exception {
-        if (clazz == null || clazz.isEmpty()) {
+        String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);
+        if (typeTag == null || typeTag.isEmpty()) {
             throw new IllegalArgumentException("ModelRouter requires a routing strategy.");
         }
-        Class<?> c = Class.forName(clazz, true, Thread.currentThread().getContextClassLoader());
-        try {
-            Constructor<?> ctor = c.getConstructor(Map.class);
-            return (RoutingStrategy) ctor.newInstance(args);
-        } catch (NoSuchMethodException noMapCtor) {
-            return (RoutingStrategy) c.getConstructor().newInstance();
-        }
+        Map<String, Object> strategyArgs =
+                descriptor.getArgument(STRATEGY_ARGS_KEY, Collections.emptyMap());
+        String executorClass = descriptor.getArgument(STRATEGY_EXECUTOR_CLASS_KEY);
+        // The declaration constructor owns the per-type argument rules, so a structurally invalid
+        // configuration fails here (resource construction) with the same message as at build().
+        this.strategy =
+                new RoutingStrategy(
+                        RoutingStrategyType.fromTag(typeTag), strategyArgs, executorClass);
     }
 
-    /** Run the strategy for the given context. */
-    public RoutingDecision route(RoutingContext context) throws Exception {
-        return strategy.route(context);
+    /** The configured strategy declaration (type + arguments). */
+    public RoutingStrategy getStrategy() {
+        return strategy;
     }
 
     public List<RoutingCandidate> getCandidates() {
@@ -156,7 +161,7 @@ public class ModelRouter extends Resource {
     public static final class Builder {
         private final List<String> candidates;
         private final Map<String, String> descriptions = new HashMap<>();
-        private RoutingStrategyDescriptor strategy;
+        private RoutingStrategy strategy;
         private String defaultModel;
         private boolean fallback = false;
 
@@ -164,15 +169,15 @@ public class ModelRouter extends Resource {
             this.candidates = candidates;
         }
 
-        public Builder strategy(RoutingStrategyDescriptor strategy) {
+        public Builder strategy(RoutingStrategy strategy) {
             this.strategy = strategy;
             return this;
         }
 
         /**
          * Attach a human-readable description to a candidate, surfaced to strategies via {@link
-         * RoutingCandidate#getDescription()}. Descriptions are how semantic strategies — and future
-         * framework-managed LLM routing — learn what each candidate is for, so declare them here
+         * RoutingCandidate#getDescription()}. Descriptions are how semantic strategies — including
+         * the framework-managed LLM judge — learn what each candidate is for, so declare them here
          * (once, on the router) rather than in per-strategy arguments.
          */
         public Builder describe(String candidate, String description) {
@@ -207,43 +212,27 @@ public class ModelRouter extends Resource {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
-            // Rule keys are candidate names and rule values are regex patterns; validate both
-            // here, where the full map is in hand, so a typo fails at the registration call site
-            // instead of throwing per record at runtime (an invalid pattern is never cached by
-            // the resource cache, so it would otherwise re-throw on every routed request).
-            if (RuleBasedRoutingStrategy.class.getName().equals(strategy.getClazz())) {
-                Object rules = strategy.getArguments().get("rules");
+            // Rule shape/pattern validation ran in the RoutingStrategy constructor (the single
+            // declaration-validation path). build() additionally checks rule keys against the
+            // candidate set so a typo fails at the registration call site; descriptors that skip
+            // the builder get the same check at plan construction (AgentPlan#validateRuleKeys,
+            // with a router-scoped message).
+            if (strategy.getType() == RoutingStrategyType.RULE_BASED) {
+                Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
                 if (rules instanceof Map) {
-                    for (Map.Entry<?, ?> rule : ((Map<?, ?>) rules).entrySet()) {
-                        if (!candidates.contains(String.valueOf(rule.getKey()))) {
+                    for (Object ruleKey : ((Map<?, ?>) rules).keySet()) {
+                        if (!candidates.contains(ruleKey)) {
                             throw new IllegalArgumentException(
                                     String.format(
-                                            "Routing rule key '%s' is not one of the candidates %s.",
-                                            rule.getKey(), candidates));
-                        }
-                        if (!(rule.getValue() instanceof String)) {
-                            throw new IllegalArgumentException(
-                                    String.format(
-                                            "Routing rule pattern for candidate '%s' must be a non-null String, got %s.",
-                                            rule.getKey(),
-                                            rule.getValue() == null
-                                                    ? "null"
-                                                    : rule.getValue().getClass().getSimpleName()));
-                        }
-                        try {
-                            Pattern.compile((String) rule.getValue());
-                        } catch (PatternSyntaxException e) {
-                            throw new IllegalArgumentException(
-                                    String.format(
-                                            "Routing rule pattern '%s' for candidate '%s' is not a valid regex.",
-                                            rule.getValue(), rule.getKey()),
-                                    e);
+                                            "Routing rule key '%s' is not one of the candidates"
+                                                    + " %s.",
+                                            ruleKey, candidates));
                         }
                     }
                 }
             }
             Map<String, Object> args = new HashMap<>();
-            args.put("candidates", new ArrayList<>(candidates));
+            args.put(CANDIDATES_KEY, new ArrayList<>(candidates));
             if (!descriptions.isEmpty()) {
                 args.put("candidate_descriptions", new HashMap<>(descriptions));
             }
@@ -251,8 +240,11 @@ public class ModelRouter extends Resource {
                 args.put("default_model", defaultModel);
             }
             args.put("fallback", fallback);
-            args.put("strategy_clazz", strategy.getClazz());
-            args.put("strategy_args", strategy.getArguments());
+            args.put(STRATEGY_TYPE_KEY, strategy.getType().tag());
+            args.put(STRATEGY_ARGS_KEY, strategy.getArguments());
+            if (strategy.getExecutorClass() != null) {
+                args.put(STRATEGY_EXECUTOR_CLASS_KEY, strategy.getExecutorClass());
+            }
             return new ResourceDescriptor(ModelRouter.class.getName(), args);
         }
     }

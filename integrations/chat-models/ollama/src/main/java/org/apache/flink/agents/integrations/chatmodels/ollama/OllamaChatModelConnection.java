@@ -22,12 +22,6 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
-import com.github.victools.jsonschema.generator.OptionPreset;
-import com.github.victools.jsonschema.generator.SchemaGenerator;
-import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
-import com.github.victools.jsonschema.generator.SchemaVersion;
-import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
-import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
@@ -39,6 +33,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -329,29 +324,18 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         return chatRequest;
     }
 
-    // Derives the JSON schema Ollama's format field expects from a POJO class. Every setting below
-    // addresses a concrete way the generated schema otherwise fails to constrain generation:
+    // Derives the JSON schema Ollama's format field expects from a POJO class. The schema comes
+    // from the shared generator with one option added:
     //
-    //   - DRAFT_2020_12 is the draft pydantic generates on the Python side, so a schema derived
-    //     from a Java class states the same contract in the same dialect.
-    //   - The PLAIN_JSON preset keeps generation to fields. Without a preset, getters surface as
-    //     properties of their own, named after the accessor call, e.g. "getSummary()".
     //   - MAP_VALUES_AS_ADDITIONAL_PROPERTIES gives a Map its value schema. Without it the map
     //     admits any value, and a model does emit values that the declared value type then fails
     //     to deserialize.
-    //   - Sorting fields before methods and applying no further comparison leaves properties in
-    //     declaration order. Ollama's grammar fixes generation order to the order the schema
-    //     declares its properties, so the default alphabetical order would condition generation on
-    //     an order the class does not read in.
-    //   - The required check marks every field required except an Optional one. The default marks
-    //     nothing required, which lets a model omit fields at will, while marking everything
-    //     required would force the fields a caller declared omissible.
-    //   - The Jackson module makes the schema name properties the way Jackson names them. The
-    //     response is read back into the same class with an ObjectMapper, so a property that
-    //     @JsonProperty renames or @JsonIgnore drops has to be stated in the schema under the name
-    //     the mapper reads, or a response that satisfies the schema still fails to deserialize.
-    //     It is applied with no JacksonOption, so it contributes property naming and visibility
-    //     only: the required set and the property order stay the ones configured below.
+    //
+    // When Ollama runs a model on llama.cpp, the grammar built from the schema generates the
+    // required properties in the order the schema declares them, followed by the optional ones,
+    // so the declaration order the shared schema keeps is the order the model fills in a class's
+    // required fields. An alphabetical order would condition generation on an order the class
+    // does not declare.
     //
     // Two settings are deliberately absent:
     //
@@ -364,18 +348,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     //     $defs, so enabling it would silently unconstrain a common shape to rescue a rare one. A
     //     recursive type instead fails loudly, with HTTP 400 from the server.
     private static ObjectNode toNativeFormat(Class<?> schemaClass) {
-        SchemaGeneratorConfigBuilder configBuilder =
-                new SchemaGeneratorConfigBuilder(
-                                SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
-                        .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
-                        .with(new JacksonModule());
-        configBuilder
-                .forTypesInGeneral()
-                .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
-        configBuilder
-                .forFields()
-                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
-        return new SchemaGenerator(configBuilder.build()).generateSchema(schemaClass);
+        return PojoJsonSchemaGenerator.generate(
+                schemaClass, Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES);
     }
 
     /**

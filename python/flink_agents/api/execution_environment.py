@@ -33,6 +33,7 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
     SerializableResource,
+    check_registrable_from_python,
 )
 from flink_agents.api.version_compatibility import flink_version_manager
 
@@ -237,6 +238,7 @@ class AgentsExecutionEnvironment(ABC):
         AgentsExecutionEnvironment
             The environment to register the resource.
         """
+        check_registrable_from_python(resource_type)
         if name in self._resources[resource_type]:
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)

@@ -411,6 +411,30 @@ def test_python_preserves_conf_data_types_and_event_ordering() -> None:
     assert list(restored.actions) == ["first", "second"]
 
 
+def test_python_can_deserialize_java_plan_with_judge_router() -> None:
+    """A JAVA-produced plan (committed snapshot) carrying the v2 LLM-judge router
+    must deserialize on the Python side even though Python cannot register routers.
+
+    Unlike a Python-out/Python-in roundtrip, this actually proves the cross-language
+    claim: the snapshot is emitted by AgentPlanCrossLanguageTest on the Java side
+    (regenerate with -Dregenerate.snapshots=true) and read here verbatim. The
+    strategy travels as a language-neutral type tag, not a Java class name.
+    """
+    snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_judge_router.json"
+    assert snapshot.exists(), (
+        f"Java judge-router plan snapshot missing from {snapshot}; regenerate on the"
+        " Java side with -Dregenerate.snapshots=true and commit it."
+    )
+    restored = AgentPlan.model_validate_json(snapshot.read_text())
+    assert ResourceType.MODEL_ROUTER in restored.resource_providers
+    args = restored.resource_providers[ResourceType.MODEL_ROUTER][
+        "router"
+    ].descriptor.arguments
+    assert args["strategy_type"] == "llm_judge"
+    assert args["strategy_args"]["judge_model"] == "judge"
+    assert "strategy_clazz" not in args  # identity is the tag, not a Java class
+
+
 def test_python_can_deserialize_plan_with_java_model_router() -> None:
     """A Java agent may declare a MODEL_ROUTER resource (Java-side in-chat routing).
 

@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -45,18 +47,27 @@ public class PythonResourceAdapterImplTest {
     @Mock private ResourceContext resourceContext;
 
     private PythonResourceAdapterImpl pythonResourceAdapter;
+    private PythonInterpreterManager interpreterManager;
     private AutoCloseable mocks;
 
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
+        interpreterManager =
+                new PythonInterpreterManager(
+                        mockInterpreter,
+                        () -> {
+                            throw new AssertionError("unexpected worker interpreter");
+                        },
+                        ignored -> {});
         pythonResourceAdapter =
-                new PythonResourceAdapterImpl(resourceContext, mockInterpreter, null);
+                new PythonResourceAdapterImpl(resourceContext, interpreterManager, null);
     }
 
     @AfterEach
     void tearDown() throws Exception {
         if (mocks != null) {
+            interpreterManager.close();
             mocks.close();
         }
     }
@@ -87,7 +98,6 @@ public class PythonResourceAdapterImplTest {
 
         pythonResourceAdapter.open();
 
-        verify(mockInterpreter).exec(PythonResourceAdapterImpl.PYTHON_IMPORTS);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.GET_RESOURCE_CONTEXT, pythonResourceAdapter);
     }
@@ -194,6 +204,22 @@ public class PythonResourceAdapterImplTest {
         assertThat(result).isEqualTo(expectedResult);
         verify(mockInterpreter)
                 .invoke(PythonResourceAdapterImpl.CALL_METHOD, obj, methodName, kwargs);
+    }
+
+    @Test
+    void closesRetrievedDocumentsAfterQueryResultConversion() throws Exception {
+        PyObject pythonResult = mock(PyObject.class);
+        PyObject pythonDocument = mock(PyObject.class);
+        when(pythonResult.getAttr("documents", List.class)).thenReturn(List.of(pythonDocument));
+        when(pythonDocument.getAttr("content")).thenReturn("content");
+        when(pythonDocument.getAttr("metadata", Map.class)).thenReturn(Map.of("source", "test"));
+        when(pythonDocument.getAttr("id")).thenReturn("doc-1");
+
+        VectorStoreQueryResult result =
+                pythonResourceAdapter.fromPythonVectorStoreQueryResult(pythonResult);
+
+        assertThat(result.getDocuments().get(0).getContent()).isEqualTo("content");
+        verify(pythonDocument).close();
     }
 
     @Test

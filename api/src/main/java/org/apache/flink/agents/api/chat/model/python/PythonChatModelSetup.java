@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.python.PythonObjectScope;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
@@ -46,6 +47,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
     private final PyObject chatModelSetup;
     private final PythonResourceAdapter adapter;
+    private boolean closed;
 
     public PythonChatModelSetup(
             PythonResourceAdapter adapter,
@@ -73,16 +75,19 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
         Map<String, Object> kwargs = new HashMap<>(modelParams);
 
-        List<Object> pythonMessages = new ArrayList<>();
-        for (ChatMessage message : messages) {
-            pythonMessages.add(adapter.toPythonChatMessage(message));
+        try (PythonObjectScope scope = new PythonObjectScope()) {
+            List<Object> pythonMessages = new ArrayList<>();
+            for (ChatMessage message : messages) {
+                pythonMessages.add(scope.own(adapter.toPythonChatMessage(message)));
+            }
+
+            kwargs.put("messages", pythonMessages);
+            kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
+
+            Object pythonMessageResponse =
+                    scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
+            return adapter.fromPythonChatMessage(pythonMessageResponse);
         }
-
-        kwargs.put("messages", pythonMessages);
-        kwargs.put("prompt_args", promptArgs != null ? promptArgs : Collections.emptyMap());
-
-        Object pythonMessageResponse = adapter.callMethod(chatModelSetup, "chat", kwargs);
-        return adapter.fromPythonChatMessage(pythonMessageResponse);
     }
 
     @Override
@@ -104,5 +109,16 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     @Override
     public Map<String, Object> getParameters() {
         return Map.of();
+    }
+
+    @Override
+    public void close() throws Exception {
+        if (closed || chatModelSetup == null) {
+            return;
+        }
+        closed = true;
+        try (chatModelSetup) {
+            adapter.callMethod(chatModelSetup, "close", Map.of());
+        }
     }
 }

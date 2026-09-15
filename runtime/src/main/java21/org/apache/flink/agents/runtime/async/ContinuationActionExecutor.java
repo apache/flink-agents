@@ -49,11 +49,17 @@ public class ContinuationActionExecutor {
     private static final ContinuationScope SCOPE = new ContinuationScope("FlinkAgentsAction");
 
     private final ExecutorService asyncExecutor;
+    private final AsyncExecutorThreadFactory asyncThreadFactory;
 
     public ContinuationActionExecutor(int numAsyncThreads) {
+        this(numAsyncThreads, () -> {});
+    }
+
+    public ContinuationActionExecutor(int numAsyncThreads, Runnable threadCleanup) {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
+        this.asyncThreadFactory = new AsyncExecutorThreadFactory(threadCleanup);
         this.asyncExecutor =
-                Executors.newFixedThreadPool(numAsyncThreads, new AsyncExecutorThreadFactory());
+                Executors.newFixedThreadPool(numAsyncThreads, asyncThreadFactory);
     }
 
     /**
@@ -339,6 +345,21 @@ public class ContinuationActionExecutor {
 
     public void close() {
         asyncExecutor.shutdownNow();
+        boolean interrupted = false;
+        try {
+            while (!asyncExecutor.isTerminated()) {
+                try {
+                    asyncExecutor.awaitTermination(1, java.util.concurrent.TimeUnit.DAYS);
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        asyncThreadFactory.awaitThreadExit();
     }
 
     /**

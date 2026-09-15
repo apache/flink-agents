@@ -23,12 +23,37 @@ import org.junit.jupiter.api.Test;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Tests for {@link AsyncExecutorThreadFactory} thread naming. */
 class AsyncExecutorThreadFactoryTest {
+
+    @Test
+    void marksManagedWorkersAndRunsCleanupBeforeRemovingTheMarker() throws Exception {
+        AtomicBoolean workerMarked = new AtomicBoolean();
+        AtomicBoolean cleanupMarked = new AtomicBoolean();
+        AsyncExecutorThreadFactory threadFactory =
+                new AsyncExecutorThreadFactory(
+                        () ->
+                                cleanupMarked.set(
+                                        AsyncExecutorThreadFactory.isAsyncExecutorThread()));
+        ExecutorService executor = Executors.newSingleThreadExecutor(threadFactory);
+        try {
+            workerMarked.set(
+                    executor.submit(AsyncExecutorThreadFactory::isAsyncExecutorThread).get());
+        } finally {
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            threadFactory.awaitThreadExit();
+        }
+
+        assertThat(workerMarked.get()).isTrue();
+        assertThat(cleanupMarked.get()).isTrue();
+        assertThat(AsyncExecutorThreadFactory.isAsyncExecutorThread()).isFalse();
+    }
 
     @Test
     @DisplayName("Threads carry the descriptive flink-agents-java-async name")

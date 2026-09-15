@@ -30,6 +30,21 @@ from flink_agents.api.tools.tool import Tool
 from flink_agents.runtime.java.java_resource_wrapper import (
     set_java_resource_metric_group,
 )
+from flink_agents.runtime.python_java_utils import (
+    from_java_chat_message,
+    normalize_tool_call_id,
+)
+
+
+def _to_java_chat_message(j_resource_adapter: Any, message: ChatMessage) -> Any:
+    """Build a Java message from fields extracted on the Python calling thread."""
+    tool_calls = [normalize_tool_call_id(call) for call in message.tool_calls]
+    return j_resource_adapter.fromPythonChatMessage(
+        message.role.value,
+        message.content,
+        tool_calls,
+        message.extra_args,
+    )
 
 
 class JavaChatModelConnectionImpl(JavaChatModelConnection):
@@ -82,7 +97,7 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         """
         self._reject_unsupported_output_schema(output_schema)
         java_messages = [
-            self._j_resource_adapter.fromPythonChatMessage(message)
+            _to_java_chat_message(self._j_resource_adapter, message)
             for message in messages
         ]
         java_tools = [
@@ -90,11 +105,6 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
             for tool in tools
         ]
         j_response_message = self._j_resource.chat(java_messages, java_tools, kwargs)
-
-        # Convert Java response back to Python format
-        from flink_agents.runtime.python_java_utils import (
-            from_java_chat_message,
-        )
 
         return from_java_chat_message(j_response_message)
 
@@ -180,16 +190,11 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         """
         # Convert Python messages to Java format
         java_messages = [
-            self._j_resource_adapter.fromPythonChatMessage(message)
+            _to_java_chat_message(self._j_resource_adapter, message)
             for message in messages
         ]
         j_response_message = self._j_resource.chat(
             java_messages, prompt_args or {}, kwargs
-        )
-
-        # Convert Java response back to Python format
-        from flink_agents.runtime.python_java_utils import (
-            from_java_chat_message,
         )
 
         return from_java_chat_message(j_response_message)

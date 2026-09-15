@@ -1,0 +1,64 @@
+{
+  "agent_name" : null,
+  "actions" : { },
+  "resource_providers" : {
+    "model_router" : {
+      "router" : {
+        "name" : "router",
+        "type" : "model_router",
+        "descriptor" : {
+          "target_module" : "",
+          "target_clazz" : "org.apache.flink.agents.api.chat.model.routing.ModelRouter",
+          "arguments" : {
+            "candidates" : [ "small", "big" ],
+            "candidate_descriptions" : {
+              "big" : "code and sql"
+            },
+            "strategy_type" : "llm_judge",
+            "default_model" : "small",
+            "fallback" : true,
+            "strategy_args" : {
+              "judge_model" : "judge"
+            }
+          }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    },
+    "chat_model" : {
+      "small" : {
+        "name" : "small",
+        "type" : "chat_model",
+        "descriptor" : {
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      },
+      "big" : {
+        "name" : "big",
+        "type" : "chat_model",
+        "descriptor" : {
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      },
+      "judge" : {
+        "name" : "judge",
+        "type" : "chat_model",
+        "descriptor" : {
+          "target_module" : "",
+          "target_clazz" : "some.Clazz",
+          "arguments" : { }
+        },
+        "__resource_provider_type__" : "JavaResourceProvider"
+      }
+    }
+  },
+  "config" : {
+    "conf_data" : { }
+  }
+}
