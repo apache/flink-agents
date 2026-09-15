@@ -49,6 +49,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
@@ -215,6 +216,7 @@ public class ToolCallAction {
         }
         List<Outcome<ToolResponse>> outcomes = List.of();
         Instant resultObservedAt = null;
+        Error fatalError = null;
         try {
             outcomes = ctx.durableExecuteAllAsync(callables);
             resultObservedAt = Instant.now();
@@ -231,15 +233,26 @@ public class ToolCallAction {
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
             }
+            if (e instanceof CompletionException && e.getCause() instanceof Error) {
+                fatalError = (Error) e.getCause();
+                throw fatalError;
+            }
             for (ToolCallExecution execution : executions) {
                 recordExecutionException(execution, e, success, error, responses);
             }
+        } catch (Error e) {
+            if (resultObservedAt == null) {
+                resultObservedAt = Instant.now();
+            }
+            fatalError = e;
+            throw e;
         } finally {
             for (int i = 0; i < executions.size(); i++) {
                 reportExecution(
                         executions.get(i),
                         ctx,
                         i < outcomes.size() ? outcomes.get(i) : null,
+                        fatalError,
                         resultObservedAt);
             }
         }
@@ -256,6 +269,7 @@ public class ToolCallAction {
         for (ToolCallExecution execution : executions) {
             Outcome<ToolResponse> outcome = null;
             Instant resultObservedAt = null;
+            Error fatalError = null;
             try {
                 ToolResponse response =
                         toolCallAsync
@@ -276,8 +290,14 @@ public class ToolCallAction {
                 }
                 outcome = Outcome.failure(e);
                 recordExecutionException(execution, e, success, error, responses);
+            } catch (Error e) {
+                if (resultObservedAt == null) {
+                    resultObservedAt = Instant.now();
+                }
+                fatalError = e;
+                throw e;
             } finally {
-                reportExecution(execution, ctx, outcome, resultObservedAt);
+                reportExecution(execution, ctx, outcome, fatalError, resultObservedAt);
             }
         }
     }
@@ -299,6 +319,7 @@ public class ToolCallAction {
             ToolCallExecution execution,
             RunnerContext ctx,
             Outcome<ToolResponse> outcome,
+            Error fatalError,
             Instant resultObservedAt) {
         Instant finishedAt = execution.occurrence.finishedAt;
         Instant startedAt = execution.occurrence.startedAt;
@@ -310,7 +331,7 @@ public class ToolCallAction {
                     execution.entityMetadata,
                     startedAt.toString());
         }
-        if (outcome == null) {
+        if (outcome == null && fatalError == null) {
             return;
         }
         // A timed-out callable may finish after the Action already received its failure.
@@ -318,7 +339,11 @@ public class ToolCallAction {
             finishedAt = resultObservedAt;
         }
         Throwable failure =
-                outcome.isFailure() ? outcome.getError() : toolResponseFailure(outcome.getValue());
+                outcome == null
+                        ? fatalError
+                        : outcome.isFailure()
+                                ? outcome.getError()
+                                : toolResponseFailure(outcome.getValue());
 
         if (failure == null) {
             ExecutionReporters.succeededAt(

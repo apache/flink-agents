@@ -46,6 +46,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -55,6 +56,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -170,6 +172,82 @@ class ToolCallActionReportTest {
         ToolResponseEvent responseEvent = (ToolResponseEvent) sentEvents.get(0);
         assertThat(responseEvent.getSuccess()).containsEntry("call-1", false);
         assertThat(responseEvent.getError()).containsEntry("call-1", "tool rejected request");
+    }
+
+    @Test
+    void sequentialToolErrorReportsFailureAndRethrows() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        Tool tool = mock(Tool.class);
+        AssertionError failure = new AssertionError("tool died");
+        when(tool.call(any())).thenThrow(failure);
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig());
+        when(ctx.<ToolResponse>durableExecute(any()))
+                .thenAnswer(inv -> inv.<DurableCallable<ToolResponse>>getArgument(0).call());
+
+        assertThatThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        new ToolRequestEvent(
+                                                "test-model", List.of(toolCall("call-1"))),
+                                        ctx))
+                .isSameAs(failure);
+
+        assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1"));
+        verify((ExecutionReporter) ctx)
+                .reportExecutionFailedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        eq(failure),
+                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED),
+                        anyString());
+        verify(ctx, never()).sendEvent(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void parallelToolErrorReportsUnresolvedCallsAndRethrows(boolean wrappedByFuture)
+            throws Exception {
+        Tool tool = mock(Tool.class);
+        AssertionError failure = new AssertionError("tool died");
+        when(tool.call(any())).thenThrow(failure);
+        RunnerContext ctx = parallelContext(tool);
+        if (wrappedByFuture) {
+            doAnswer(
+                            invocation -> {
+                                List<DurableCallable<ToolResponse>> callables =
+                                        invocation.getArgument(0);
+                                CompletableFuture<Outcome<ToolResponse>> first =
+                                        CompletableFuture.supplyAsync(
+                                                () -> {
+                                                    try {
+                                                        return Outcome.success(
+                                                                callables.get(0).call());
+                                                    } catch (Exception e) {
+                                                        return Outcome.failure(e);
+                                                    }
+                                                });
+                                return List.of(first.join());
+                            })
+                    .when(ctx)
+                    .durableExecuteAllAsync(any());
+        }
+
+        assertThatThrownBy(() -> ToolCallAction.processToolRequest(parallelRequest(), ctx))
+                .isSameAs(failure);
+
+        assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1", "call-2", "call-3"));
+        verify((ExecutionReporter) ctx, times(3))
+                .reportExecutionFailedAt(
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap(),
+                        eq(failure),
+                        eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED),
+                        anyString());
+        verify(ctx, never()).sendEvent(any());
     }
 
     @Test

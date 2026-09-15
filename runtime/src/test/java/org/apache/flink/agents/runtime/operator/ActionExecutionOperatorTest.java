@@ -571,7 +571,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testToolLinkageErrorPropagatesWithoutInferringToolOutcome() throws Exception {
+    void testToolLinkageErrorReportsFailedExecutionAndPropagates() throws Exception {
         AgentPlan basePlan = TestAgent.getLinkageErrorToolAgentPlan();
         AgentPlan agentPlan =
                 new AgentPlan(
@@ -602,16 +602,25 @@ public class ActionExecutionOperatorTest {
                         ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
                         "linkageErrorTool",
                         ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent failed =
+        RecordedEvent toolFailed =
+                findRecordedLifecycleEvent(
+                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
+                        "linkageErrorTool",
+                        ExecutionLifecycleEvents.STATUS_FAILED);
+        RecordedEvent actionFailed =
                 findRecordedLifecycleEvent(
                         ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
                         "tool_call_action",
                         ExecutionLifecycleEvents.STATUS_FAILED);
         assertThat(started.traceContext().getEntityType())
                 .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
-        assertThat(failed.traceContext().getExecutionId())
+        assertThat(toolFailed.traceContext().getExecutionId())
+                .isEqualTo(started.traceContext().getExecutionId());
+        assertThat(actionFailed.traceContext().getExecutionId())
                 .isEqualTo(started.traceContext().getParentExecutionId());
-        assertThat(failed.event.getAttr("errorType"))
+        assertThat(toolFailed.event.getAttr("errorType"))
+                .isEqualTo(NoClassDefFoundError.class.getName());
+        assertThat(actionFailed.event.getAttr("errorType"))
                 .isEqualTo(NoClassDefFoundError.class.getName());
         assertThat(RecordingEventLogger.events())
                 .filteredOn(
@@ -622,7 +631,8 @@ public class ActionExecutionOperatorTest {
                 .extracting(record -> record.event.getType())
                 .containsExactly(
                         ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE);
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE);
     }
 
     @Test
