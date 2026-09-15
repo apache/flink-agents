@@ -382,11 +382,13 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
     tool = MagicMock()
     tool.tool_type.return_value = ToolType.FUNCTION
 
-    def call_tool(**kwargs: Any) -> str:
+    def call_tool(**kwargs: Any) -> str | ToolResponse:
         query = kwargs["query"]
-        if query != "call-1":
-            message = f"{query} failed"
+        if query == "call-2":
+            message = "call-2 failed"
             raise RuntimeError(message)
+        if query == "call-3":
+            return ToolResponse.error("call-3 rejected")
         return "ok"
 
     tool.call = MagicMock(side_effect=call_tool)
@@ -450,7 +452,7 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
     }
     assert response.error == {
         "call-2": "call-2 failed",
-        "call-3": "call-3 failed",
+        "call-3": "call-3 rejected",
     }
 
 
