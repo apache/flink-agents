@@ -528,6 +528,52 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAllAsyncInterruptionLeavesRemainingSlotsPendingAndPropagates()
+            throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-1", String.class, () -> "one");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>(
+                        "batch-2",
+                        String.class,
+                        () -> {
+                            throw new InterruptedException("cancelled");
+                        });
+        TestDurableCallable<String> third =
+                new TestDurableCallable<>("batch-3", String.class, () -> "three");
+        Thread.interrupted(); // clear any stray interrupt flag left over from another test
+
+        InterruptedException thrown =
+                assertThrows(
+                        InterruptedException.class,
+                        () -> context.durableExecuteAllAsync(List.of(first, second, third)));
+
+        assertEquals("cancelled", thrown.getMessage());
+        assertTrue(
+                Thread.interrupted(),
+                "the calling thread's interrupt flag must be restored, not swallowed");
+        List<CallResult> persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults();
+        assertEquals("batch-1", persisted.get(0).getFunctionId());
+        assertTrue(
+                persisted.get(0).isSuccess(),
+                "the slot finalized before the interruption was observed must keep its outcome");
+        assertTrue(
+                persisted.get(1).isPending(),
+                "the interrupted slot must not be persisted as a durable tool failure");
+        assertTrue(
+                persisted.get(2).isPending(),
+                "slots after the interrupted one must stay pending, not be finalized");
+        assertEquals(
+                0,
+                context.getDurableExecutionContext().getCurrentCallIndex(),
+                "the call index must not advance past an interrupted batch, so recovery re-reads"
+                        + " the pending slots instead of skipping them");
+    }
+
+    @Test
     void testDurableExecuteAllAsyncFinalizeFailureReturnsOutcomeAndKeepsSlotPending()
             throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();

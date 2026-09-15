@@ -192,6 +192,15 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                 plan.outcomes.set(callIndex, outcome);
                 continue;
             }
+            if (outcome.isFailure() && outcome.getError() instanceof InterruptedException) {
+                // A cancellation signal a batch executor caught and folded into a failed
+                // Outcome, not a genuine tool failure: leave this slot and every slot after it
+                // in the batch unfinalized (pending), so recovery re-executes them, and
+                // propagate immediately instead of persisting it as a durable failure. Slots
+                // finalized earlier in this loop keep their persisted outcome.
+                Thread.currentThread().interrupt();
+                throw (InterruptedException) outcome.getError();
+            }
             try {
                 finalizeCallAt(
                         base + callIndex,
