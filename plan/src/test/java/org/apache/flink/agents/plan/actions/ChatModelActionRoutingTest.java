@@ -526,6 +526,15 @@ public class ChatModelActionRoutingTest {
     void llmJudgeUsesTheRetryBudget() throws Exception {
         // v1 review lesson: every routing test ran with numRetries == 0, so the retry path was
         // never exercised. Judge fails once, retries, then delivers a verdict.
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup judgeMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter retryCount = mock(Counter.class);
+        Counter retryWaitSec = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getSubGroup("model_resource", "judge")).thenReturn(judgeMetricGroup);
+        when(judgeMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
+        when(judgeMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -537,6 +546,7 @@ public class ChatModelActionRoutingTest {
                 new FakeRunnerContext(router)
                         .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
                         .withRetryBudget(1, 0)
+                        .withActionMetricGroup(actionMetricGroup)
                         .register(
                                 "judge",
                                 new FakeChatModel(
@@ -552,6 +562,9 @@ public class ChatModelActionRoutingTest {
         ModelRoutingEvent event = ctx.routingEvent();
         assertThat(event.getSelectedModel()).isEqualTo("big");
         assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_LLM_JUDGE);
+        verify(actionMetricGroup).getSubGroup("model_resource", "judge");
+        verify(retryCount).inc(1);
+        verify(retryWaitSec).inc(0);
     }
 
     @Test

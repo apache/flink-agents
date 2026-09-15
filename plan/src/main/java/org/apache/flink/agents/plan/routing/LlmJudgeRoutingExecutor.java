@@ -127,7 +127,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             ChatModelAction.recordAttemptRetryStats(
                     ctx,
                     context.getRequestId(),
-                    judgeResult.chatModel,
+                    judgeResult.model,
                     judgeResult.retryCount,
                     judgeResult.totalRetryWaitSec);
             ChatMessage reply = judgeResult.response;
@@ -150,7 +150,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             ChatModelAction.recordAttemptRetryStats(
                     ctx,
                     context.getRequestId(),
-                    failure.chatModel,
+                    failure.model,
                     failure.retryCount,
                     failure.totalRetryWaitSec);
             // Cancellation surfacing from inside the judge attempt (the invoker wraps every
