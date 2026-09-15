@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.watsonx;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -100,6 +101,40 @@ class WatsonxChatModelConnectionTest {
         @JsonIgnore public String secret;
 
         public int age;
+    }
+
+    /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+
+        public Phase phase;
+    }
+
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
     }
 
     private static ResourceDescriptor descriptor(String url, String apiKey, String projectId) {
@@ -816,6 +851,27 @@ class WatsonxChatModelConnectionTest {
                 .containsExactlyInAnyOrder("full_name", "age");
         assertThat(textValues(schema.path("required")))
                 .containsExactlyInAnyOrder("full_name", "age");
+    }
+
+    @Test
+    @DisplayName("The derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode properties = derivedSchema(Ticket.class).path("properties");
+
+        // Every listed value is one the model may emit, so each has to deserialize into the enum.
+        // Listed by constant name instead, the caller's mapper refuses every value the schema
+        // allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
     }
 
     @Test

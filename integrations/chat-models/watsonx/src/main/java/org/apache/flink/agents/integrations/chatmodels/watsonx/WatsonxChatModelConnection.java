@@ -31,6 +31,7 @@ import com.github.victools.jsonschema.generator.SchemaGeneratorConfigBuilder;
 import com.github.victools.jsonschema.generator.SchemaVersion;
 import com.github.victools.jsonschema.generator.impl.PropertySortUtils;
 import com.github.victools.jsonschema.module.jackson.JacksonModule;
+import com.github.victools.jsonschema.module.jackson.JacksonOption;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -562,13 +563,16 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     //   - The required check marks every field required except an Optional one. The default marks
     //     nothing required, which lets a model omit fields at will, while marking everything
     //     required would force the fields a caller declared omissible.
-    //   - The Jackson module makes the schema name properties the way Jackson names them, because
-    //     a caller deserializing the response into this class honors @JsonProperty and skips
-    //     @JsonIgnore. This connection returns the content as a string and never deserializes into
-    //     the schema class, so a property stated under the wrong name produces a response that
-    //     satisfies the schema and still fails to read back, at the caller rather than here. It is
-    //     applied with no JacksonOption, so it contributes property naming and visibility only:
-    //     the required set and the property order stay the ones configured below.
+    //   - The Jackson module makes the schema name properties the way Jackson names them, and list
+    //     enum constants mapped by @JsonProperty or by a @JsonValue method under the values Jackson
+    //     reads, because a caller deserializing the response into this class honors @JsonProperty,
+    //     skips @JsonIgnore, and reads a mapped enum constant only from its mapped value. This
+    //     connection returns the content as a string and never deserializes into the schema class,
+    //     so a property or enum constant stated under the wrong name produces a response that
+    //     satisfies the schema and still fails to read back, at the caller rather than here. An
+    //     enum annotating only some constants falls back to Java names for all of them, so its
+    //     annotated constants do not read back. The two enum options change only the listed
+    //     values: the required set and the property order stay the ones configured below.
     //
     // Two settings are deliberately absent:
     //
@@ -588,7 +592,10 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                 new SchemaGeneratorConfigBuilder(
                                 SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON)
                         .with(Option.MAP_VALUES_AS_ADDITIONAL_PROPERTIES)
-                        .with(new JacksonModule());
+                        .with(
+                                new JacksonModule(
+                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONPROPERTY,
+                                        JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE));
         configBuilder
                 .forTypesInGeneral()
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
