@@ -22,6 +22,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nullable;
@@ -33,7 +35,11 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Pins the routing metadata {@link SubagentSetup} carries for a caller. */
+/**
+ * Pins the routing metadata {@link SubagentSetup} carries for a caller and the descriptor a remote
+ * task rebuilds it from. The metadata travels as descriptor arguments, the single wire both a
+ * remote task and the Python side read, so it is pinned there rather than on a serialized object.
+ */
 public class SubagentSetupTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -44,15 +50,35 @@ public class SubagentSetupTest {
         private static final long serialVersionUID = 1L;
 
         MetadataOnlySetup() {
-            super();
+            this("");
         }
 
         MetadataOnlySetup(String description) {
-            super(description);
+            this(description, null);
         }
 
         MetadataOnlySetup(String description, @Nullable String inputSchema) {
-            super(description, inputSchema);
+            this(metadataDescriptor(MetadataOnlySetup.class, description, inputSchema), null);
+        }
+
+        /** Descriptor-based construction, the path a remote task rebuilds the setup through. */
+        MetadataOnlySetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        /**
+         * Builds the metadata-only descriptor naming {@code concreteClass}, so a subclass that adds
+         * no configuration of its own still carries a descriptor naming its own concrete type.
+         */
+        static ResourceDescriptor metadataDescriptor(
+                Class<?> concreteClass, String description, @Nullable String inputSchema) {
+            ResourceDescriptor.Builder builder =
+                    ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                            .addInitialArgument(FIELD_DESCRIPTION, description);
+            if (inputSchema != null) {
+                builder.addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema);
+            }
+            return builder.build();
         }
 
         @Override
@@ -81,7 +107,7 @@ public class SubagentSetupTest {
         private final Class<?> resultType;
 
         TypedSetup(Class<?> inputType, Class<?> resultType) {
-            super("Reviews a file.");
+            super(metadataDescriptor(TypedSetup.class, "Reviews a file.", null), null);
             this.inputType = inputType;
             this.resultType = resultType;
         }
@@ -310,32 +336,43 @@ public class SubagentSetupTest {
                 .hasMessageContaining("is self-referential");
     }
 
-    /** The declared types drive behavior, so they must not leak into the cross-language plan. */
+    /**
+     * The declared types drive behavior, so they are not descriptor state: they never travel to a
+     * remote task or across to Python, which reads only the descriptor's arguments.
+     */
     @Test
-    void theDeclaredTypesStayOutOfThePlanJson() throws Exception {
-        String json = MAPPER.writeValueAsString(new TypedSetup(Review.class, Review.class));
+    void theDeclaredTypesStayOutOfTheDescriptor() {
+        Map<String, Object> arguments =
+                new TypedSetup(Review.class, Review.class).getDescriptor().getInitialArguments();
 
-        assertThat(json).doesNotContain("inputType").doesNotContain("resultType");
+        assertThat(arguments).doesNotContainKeys("inputType", "resultType");
     }
 
     /**
-     * The plan JSON is a cross-language contract: these two keys are what the Python side reads, so
-     * they are pinned literally rather than through the getters.
+     * The descriptor's arguments are the cross-language wire the Python side reads, so the metadata
+     * keys are pinned literally there rather than through the getters, and the descriptor names the
+     * concrete type a remote task reflects over to rebuild the setup.
      */
     @Test
-    void theMetadataSerializesUnderTheCrossLanguageKeys() throws Exception {
+    void theMetadataTravelsUnderTheCrossLanguageDescriptorKeys() {
         String customSchema =
                 "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}";
 
-        String json =
-                MAPPER.writeValueAsString(new MetadataOnlySetup("Reviews a file.", customSchema));
+        MetadataOnlySetup setup = new MetadataOnlySetup("Reviews a file.", customSchema);
+        Map<String, Object> arguments = setup.getDescriptor().getInitialArguments();
 
-        assertThat(json)
-                .contains("\"description\":\"Reviews a file.\"")
-                .contains("\"input_schema\"");
-        assertThat(json).doesNotContain("inputSchema");
-        Map<String, Object> parsed = MAPPER.readValue(json, Map.class);
-        assertThat(parsed).containsEntry("input_schema", customSchema);
+        assertThat(arguments).containsEntry("description", "Reviews a file.");
+        assertThat(arguments).containsEntry("input_schema", customSchema);
+        assertThat(setup.getDescriptor().getClazz()).isEqualTo(MetadataOnlySetup.class.getName());
+    }
+
+    @Test
+    void nullDescriptorIsRejectedAtConstruction() {
+        // The descriptor is what a remote task rebuilds the setup from, so construction requires
+        // one and reports a missing descriptor at the point of the mistake.
+        assertThatThrownBy(() -> new TestSubagentSetup((ResourceDescriptor) null, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("must carry a ResourceDescriptor");
     }
 
     private static List<String> textValues(JsonNode array) {

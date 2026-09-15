@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
@@ -67,6 +69,18 @@ public class BaseSubagentSetupTest {
 
     /** Captures every assigned {@code (sessionId, callId)} pair like a collecting setup. */
     public static class AllocatingCaptureSetup extends BaseSubagentSetup {
+
+        public AllocatingCaptureSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(AllocatingCaptureSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
+        public AllocatingCaptureSetup(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
 
         private static final List<String[]> CAPTURES =
                 Collections.synchronizedList(new ArrayList<>());
