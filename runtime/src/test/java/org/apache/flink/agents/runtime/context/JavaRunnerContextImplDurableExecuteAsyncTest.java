@@ -574,6 +574,41 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAllAsyncWithoutDurableStateInterruptionPropagates() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context =
+                new JavaRunnerContextImpl(
+                        metricGroup,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "test-job",
+                        executor);
+        context.setContinuationContext(new ContinuationContext());
+        TestDurableCallable<String> first =
+                new TestDurableCallable<>("batch-1", String.class, () -> "one");
+        TestDurableCallable<String> second =
+                new TestDurableCallable<>(
+                        "batch-2",
+                        String.class,
+                        () -> {
+                            throw new InterruptedException("cancelled");
+                        });
+        Thread.interrupted(); // clear any stray interrupt flag left over from another test
+
+        InterruptedException thrown =
+                assertThrows(
+                        InterruptedException.class,
+                        () -> context.durableExecuteAllAsync(List.of(first, second)));
+
+        assertEquals("cancelled", thrown.getMessage());
+        assertTrue(
+                Thread.interrupted(),
+                "the calling thread's interrupt flag must be restored, not swallowed, even"
+                        + " without a durable store to persist pending slots into");
+    }
+
+    @Test
     void testDurableExecuteAllAsyncFinalizeFailureReturnsOutcomeAndKeepsSlotPending()
             throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
