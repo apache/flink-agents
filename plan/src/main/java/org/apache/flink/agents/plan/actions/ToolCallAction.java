@@ -432,12 +432,19 @@ public class ToolCallAction {
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws InterruptedException {
         try {
             // submit() and await() already run through durable execution inside the setup, so
             // wrapping the call again here would nest durable cursors.
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
             recordAgentResult(execution, result, ctx, success, error, responses);
+        } catch (InterruptedException e) {
+            // A cancellation, not a sub-agent failure: propagate it exactly like the tool paths do
+            // (#1111) so the caller skips sendEvent instead of folding the cancellation into a
+            // tool-error response and driving a further chat call off it.
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             recordAgentFailure(execution, e, ctx, success, error, responses);
         }
@@ -450,13 +457,19 @@ public class ToolCallAction {
      * tool-call order, so the setup's id allocator hands out the same ids on every replay and the
      * durable keys stay stable. The per-call try/catch keeps the isolation the serial path had: one
      * sub-agent failing, at submit or at await, is recorded and reported without stopping the rest.
+     *
+     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111), an
+     * {@link InterruptedException} propagates so the caller skips sendEvent, and every handle
+     * submitted but no longer going to be awaited is cancelled first, so the concurrent dispatch
+     * leaves no in-flight remote run dangling on the way out.
      */
     private static void dispatchAgentExecutions(
             List<ToolCallExecution> agentExecutions,
             RunnerContext ctx,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws InterruptedException {
         // submit() runs through durable execution inside the setup, so it is not wrapped here.
         List<ToolCallExecution> submitted = new ArrayList<>(agentExecutions.size());
         List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
@@ -464,6 +477,12 @@ public class ToolCallAction {
             try {
                 futures.add(execution.agent.submit(ctx, execution.agentArguments));
                 submitted.add(execution);
+            } catch (InterruptedException e) {
+                // Cancelled mid-submit: everything submitted so far is now never going to be
+                // awaited, so cancel it before propagating like the tool paths (#1111).
+                cancelFrom(futures, 0);
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             }
@@ -473,9 +492,24 @@ public class ToolCallAction {
             try {
                 SubagentResult result = futures.get(i).await();
                 recordAgentResult(execution, result, ctx, success, error, responses);
+            } catch (InterruptedException e) {
+                // Cancelled mid-await: this handle and every later one were submitted but will not
+                // be awaited, so cancel them before propagating like the tool paths (#1111).
+                cancelFrom(futures, i);
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             }
+        }
+    }
+
+    /**
+     * Requests cancellation of every handle from {@code from} onward, e.g. on a mid-batch cancel.
+     */
+    private static void cancelFrom(List<SubagentFuture> futures, int from) {
+        for (int i = from; i < futures.size(); i++) {
+            futures.get(i).cancel();
         }
     }
 

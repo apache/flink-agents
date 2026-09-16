@@ -48,6 +48,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 
 /** Tests for dispatching a tool call to an {@code AGENT} resource. */
 class ToolCallActionSubagentTest {
@@ -229,6 +230,54 @@ class ToolCallActionSubagentTest {
                 .containsEntry("call-2", true);
         assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("a done");
         assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("b done");
+    }
+
+    /**
+     * A cancelled sub-agent call must propagate like a cancelled tool call (#1111), not be folded
+     * into a tool-error response: no ToolResponseEvent goes out, so no further chat call is driven
+     * off a cancelled delegation and the action is not persisted as completed on the back of it.
+     */
+    @Test
+    void propagatesInterruptionFromASubagentCallInsteadOfRecordingAFailure() throws Exception {
+        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("unreachable"));
+        agent.submitFailure = new InterruptedException("cancelled");
+        FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
+
+        Thread.interrupted();
+
+        assertThatExceptionOfType(InterruptedException.class)
+                .isThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        toolRequest("_subagent_reviewer"), ctx));
+
+        assertThat(Thread.interrupted()).as("interrupt status should be restored").isTrue();
+        assertThat(ctx.sentEvents).isEmpty();
+    }
+
+    /**
+     * Under the batched path, a cancellation while awaiting one sub-agent must propagate (#1111)
+     * and must not leave the other already-submitted handles dangling: the interrupted handle and
+     * every later one, submitted but now never awaited, are cancelled on the way out.
+     */
+    @Test
+    void propagatesInterruptionUnderParallelDispatchAndCancelsSubmittedHandles() throws Exception {
+        List<String> ops = new ArrayList<>();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext()
+                        .withParallelToolCalls()
+                        .withAgent("a", new InterruptingSubagentSetup("a", ops))
+                        .withAgent("b", new OrderRecordingSubagentSetup("b", ops));
+
+        Thread.interrupted();
+
+        assertThatExceptionOfType(InterruptedException.class)
+                .isThrownBy(
+                        () -> ToolCallAction.processToolRequest(twoSubagentRequest("a", "b"), ctx));
+
+        assertThat(Thread.interrupted()).as("interrupt status should be restored").isTrue();
+        assertThat(ctx.sentEvents).isEmpty();
+        assertThat(ops).containsExactly("submit:a", "submit:b", "await:a", "cancel:a", "cancel:b");
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
@@ -425,6 +474,73 @@ class ToolCallActionSubagentTest {
         public SubagentResult await() {
             ops.add("await:" + label);
             return SubagentResult.ok(label + " done");
+        }
+
+        @Override
+        public void cancel() {
+            ops.add("cancel:" + label);
+        }
+
+        @Override
+        public SubagentFutures combine(SubagentFuture... others) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** Its await reports a cancellation, to drive the interruption path under parallel dispatch. */
+    private static class InterruptingSubagentSetup extends SubagentSetup {
+        private final String label;
+        private final List<String> ops;
+
+        InterruptingSubagentSetup(String label, List<String> ops) {
+            super("Interrupts on await.");
+            this.label = label;
+            this.ops = ops;
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt) {
+            ops.add("submit:" + label);
+            return new InterruptingFuture(label, ops);
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId) {
+            return submit(ctx, prompt);
+        }
+
+        @Override
+        public SubagentFuture submit(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            return submit(ctx, prompt);
+        }
+    }
+
+    /** Records its await into the shared log, then reports a cancellation instead of resolving. */
+    private static class InterruptingFuture extends SubagentFuture {
+        private final String label;
+        private final List<String> ops;
+
+        InterruptingFuture(String label, List<String> ops) {
+            super("session-" + label, "call-" + label);
+            this.label = label;
+            this.ops = ops;
+        }
+
+        @Override
+        public boolean isDone() {
+            return false;
+        }
+
+        @Override
+        public SubagentResult await() throws InterruptedException {
+            ops.add("await:" + label);
+            throw new InterruptedException("cancelled");
+        }
+
+        @Override
+        public void cancel() {
+            ops.add("cancel:" + label);
         }
 
         @Override
