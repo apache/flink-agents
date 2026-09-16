@@ -24,8 +24,13 @@ from typing_extensions import override
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.resource import ResourceType
-from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.subagent import SubagentFuture, SubagentResult, SubagentSetup
+from flink_agents.api.runner_context import Outcome, RunnerContext
+from flink_agents.api.subagent import (
+    CALLABLE_NAME_PREFIX,
+    SubagentFuture,
+    SubagentResult,
+    SubagentSetup,
+)
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
@@ -112,6 +117,56 @@ class _TypedRecordingSubagentSetup(_RecordingSubagentSetup):
         return _Verdict
 
 
+class _OrderRecordingFuture(SubagentFuture):
+    """Records its await into a shared log, then resolves to a fixed success."""
+
+    def __init__(self, label: str, ops: list[str]) -> None:
+        super().__init__(f"session-{label}", f"call-{label}")
+        self._label = label
+        self._ops = ops
+
+    @override
+    def done(self) -> bool:
+        return True
+
+    @override
+    def combine(self, *others: SubagentFuture) -> Any:
+        raise NotImplementedError
+
+    @override
+    def __await__(self) -> Any:
+        async def resolve() -> SubagentResult:
+            self._ops.append(f"await:{self._label}")
+            return SubagentResult.ok(f"{self._label} done")
+
+        return resolve().__await__()
+
+
+class _OrderRecordingSubagentSetup(SubagentSetup):
+    """Records submit order into a log shared across sub-agents."""
+
+    _label: str = PrivateAttr(default="")
+    _ops: list[str] = PrivateAttr(default_factory=list)
+
+    @classmethod
+    def of(cls, label: str, ops: list[str]) -> "_OrderRecordingSubagentSetup":
+        setup = cls(description="Orders a diff.")
+        setup._label = label
+        setup._ops = ops
+        return setup
+
+    @override
+    async def submit(
+        self,
+        ctx: RunnerContext,
+        prompt: Any,
+        session_id: str | None = None,
+        call_id: str | None = None,
+    ) -> SubagentFuture:
+        self._ops.append(f"submit:{self._label}")
+        return _OrderRecordingFuture(self._label, self._ops)
+
+
 class _Context:
     def __init__(self) -> None:
         self.config = AgentConfiguration({})
@@ -131,6 +186,12 @@ class _Context:
         self.agents[name] = agent
         return self
 
+    def with_parallel_tool_calls(self) -> "_Context":
+        """Turn on the batched path: async calls with room for more than one."""
+        self.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
+        self.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2)
+        return self
+
     def get_resource(self, name: str, type: ResourceType) -> Any:
         registry = self.agents if type == ResourceType.AGENT else self.tools
         if name not in registry:
@@ -145,6 +206,15 @@ class _Context:
     async def durable_execute_async(self, func: Any, **kwargs: Any) -> Any:
         self.durable_executions += 1
         return func(**kwargs)
+
+    async def durable_execute_all_async(self, calls: list[Any]) -> list[Outcome]:
+        outcomes = []
+        for call in calls:
+            self.durable_executions += 1
+            outcomes.append(
+                Outcome.success(call.func(*call.args, **(call.kwargs or {})))
+            )
+        return outcomes
 
     def send_event(self, event: Any) -> None:
         self.sent_events.append(event)
@@ -166,6 +236,33 @@ def tool_request(callable_name: str) -> ToolRequestEvent:
     )
 
 
+def two_subagent_request(first: str, second: str) -> ToolRequestEvent:
+    """One request carrying two sub-agent calls, so the batched path has more
+    than one to run.
+    """
+    return ToolRequestEvent(
+        model="model",
+        tool_calls=[
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {
+                    "name": CALLABLE_NAME_PREFIX + first,
+                    "arguments": {"prompt": "review the diff"},
+                },
+            },
+            {
+                "id": "call-2",
+                "type": "function",
+                "function": {
+                    "name": CALLABLE_NAME_PREFIX + second,
+                    "arguments": {"prompt": "review the diff"},
+                },
+            },
+        ],
+    )
+
+
 def order_tool() -> FunctionTool:
     return FunctionTool(func=PythonFunction.from_callable(query_order))
 
@@ -176,7 +273,7 @@ def test_delegates_to_the_subagent_and_reports_its_normalized_result() -> None:
     )
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
@@ -188,7 +285,7 @@ def test_hands_the_model_arguments_to_the_subagent_as_the_prompt() -> None:
     agent = _RecordingSubagentSetup.of(SubagentResult.ok("done"))
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     assert agent.prompts == [{"prompt": "review the diff"}]
     # A sub-agent call resolves through the setup, which owns its own durable
@@ -200,12 +297,12 @@ def test_reports_a_failed_subagent_result_with_the_detail_exposed() -> None:
     agent = _RecordingSubagentSetup.of(SubagentResult.error("upstream refused"))
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
     assert response.responses["call-1"] == (
-        "Sub-agent `subagent_reviewer` execute failed: upstream refused"
+        "Sub-agent `_subagent_reviewer` execute failed: upstream refused"
     )
     assert response.error["call-1"] == "upstream refused"
 
@@ -216,12 +313,12 @@ def test_reports_a_failure_raised_while_submitting() -> None:
     )
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
     assert response.responses["call-1"] == (
-        "Sub-agent `subagent_reviewer` execute failed: mailbox is full"
+        "Sub-agent `_subagent_reviewer` execute failed: mailbox is full"
     )
     assert response.error["call-1"] == "mailbox is full"
 
@@ -230,12 +327,12 @@ def test_rejects_a_result_json_cannot_express() -> None:
     agent = _RecordingSubagentSetup.of(SubagentResult.ok({"handle": object()}))
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
     assert response.responses["call-1"].startswith(
-        "Sub-agent `subagent_reviewer` execute failed"
+        "Sub-agent `_subagent_reviewer` execute failed"
     )
     assert "result.handle" in response.responses["call-1"]
     assert "result.handle" in response.error["call-1"]
@@ -250,7 +347,7 @@ def test_reads_a_result_through_the_type_the_subagent_declares() -> None:
     )
     ctx = _Context().with_agent("reviewer", agent)
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
@@ -267,7 +364,7 @@ def test_routes_a_tool_and_a_subagent_sharing_a_name_to_their_own_namespace() ->
         .with_tool("reviewer", order_tool())
     )
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
     delegated = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert delegated.success["call-1"] is True
     assert delegated.responses["call-1"] == "done"
@@ -295,12 +392,12 @@ def test_routes_a_tool_and_a_subagent_sharing_a_name_to_their_own_namespace() ->
 def test_refuses_an_agent_resource_that_carries_no_callable_setup() -> None:
     ctx = _Context().with_agent("reviewer", order_tool())
 
-    asyncio.run(process_tool_request(tool_request("subagent_reviewer"), ctx))
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
     assert response.responses["call-1"] == (
-        "Sub-agent `subagent_reviewer` execute failed: Sub-agent reviewer must"
+        "Sub-agent `_subagent_reviewer` execute failed: Sub-agent reviewer must"
         " resolve to a SubagentSetup, but was FunctionTool."
     )
     assert response.error["call-1"] == (
@@ -334,3 +431,27 @@ def test_still_dispatches_a_tool_when_both_kinds_are_registered() -> None:
     assert response.success["call-1"] is True
     assert response.responses["call-1"] == "queried order-1"
     assert ctx.durable_executions == 1
+
+
+def test_submits_every_subagent_call_before_awaiting_any_in_parallel() -> None:
+    """The batched path runs sub-agent calls concurrently: every call is
+    submitted before any is awaited, so the async setups' remote runs overlap
+    instead of blocking one behind the next. The serial path interleaves submit
+    and await per call, which this order assertion rejects.
+    """
+    ops: list[str] = []
+    ctx = (
+        _Context()
+        .with_parallel_tool_calls()
+        .with_agent("a", _OrderRecordingSubagentSetup.of("a", ops))
+        .with_agent("b", _OrderRecordingSubagentSetup.of("b", ops))
+    )
+
+    asyncio.run(process_tool_request(two_subagent_request("a", "b"), ctx))
+
+    assert ops == ["submit:a", "submit:b", "await:a", "await:b"]
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.success["call-1"] is True
+    assert response.success["call-2"] is True
+    assert response.responses["call-1"] == "a done"
+    assert response.responses["call-2"] == "b done"

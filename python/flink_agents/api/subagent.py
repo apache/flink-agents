@@ -34,7 +34,7 @@ _LOG = logging.getLogger(__name__)
 # Tools are forbidden to register under this prefix, so a prefixed callable
 # name unambiguously addresses a sub-agent and the executing side routes it to
 # the AGENT namespace.
-CALLABLE_NAME_PREFIX = "subagent_"
+CALLABLE_NAME_PREFIX = "_subagent_"
 
 
 def _input_schema_from(input_type: type) -> str | None:
@@ -213,7 +213,9 @@ class SubagentSetup(SerializableResource):
     input_schema : str | None
         JSON Schema of the arguments this sub-agent accepts, as declared
         explicitly. Derived from :meth:`input_type` when it is not, and left
-        ``None`` when neither says anything a model could build a call from.
+        ``None`` when neither says anything a model could build a call from; a
+        chat model rejects such a sub-agent at setup time rather than calling
+        it with no arguments.
     """
 
     description: str = ""

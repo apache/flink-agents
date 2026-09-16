@@ -296,7 +296,7 @@ def _to_plan_function(func: ApiFunction) -> PythonFunction | JavaFunction:
 def _check_tool_name_not_reserved(name: str) -> None:
     """Reject a tool name carrying the reserved sub-agent callable prefix.
 
-    Sub-agent callables are exposed to the model under the ``subagent_`` prefix,
+    Sub-agent callables are exposed to the model under the ``_subagent_`` prefix,
     and dispatch routes any prefixed call to the AGENT namespace, so a tool
     registered under the prefix could never be called. Fail clearly at
     plan-construction time rather than at call time.

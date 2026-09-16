@@ -276,12 +276,20 @@ async def _execute_parallel(
     success: dict,
     error: dict,
 ) -> None:
+    # Sub-agent calls run through durable execution inside the setup, so they
+    # cannot join the tool batch below; they are dispatched concurrently on
+    # their own (submit every call, then await each) so that, like the batched
+    # tool calls, they overlap instead of running one by one. The agent phase
+    # completes before the tool batch, so a sub-agent handle is never left
+    # submitted-but-unawaited if the batch below raises.
+    agent_executions = []
     tool_executions = []
     for execution in executions:
         if execution.agent is not None:
-            await _dispatch_agent_execution(execution, ctx, responses, success, error)
+            agent_executions.append(execution)
         else:
             tool_executions.append(execution)
+    await _dispatch_agent_executions(agent_executions, ctx, responses, success, error)
     outcomes: list[Outcome] = []
     result_observed_at = None
     try:
@@ -396,15 +404,62 @@ async def _dispatch_agent_execution(
         result = await future
         _record_agent_result(execution, result, ctx, responses, success, error)
     except Exception as e:
-        _record_execution_exception(execution, e, responses, success, error)
-        ExecutionReporters.failed(
-            ctx,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
-            execution.entity_metadata,
-            e,
-            ExecutionProblemCategories.TOOL_CALL_FAILED,
-        )
+        _record_agent_failure(execution, e, ctx, responses, success, error)
+
+
+async def _dispatch_agent_executions(
+    agent_executions: list[_ToolCallExecution],
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    """Run the sub-agent calls concurrently rather than one by one.
+
+    Every ``submit`` is awaited first, so the async setups start their remote
+    runs together, and each future is then awaited. Submitting and awaiting both
+    follow ``agent_executions`` order, which is the deterministic tool-call
+    order, so the setup's id allocator -- which assigns ids as each ``submit``
+    is awaited -- hands out the same ids on every replay and the durable keys
+    stay stable. The per-call try/except keeps the isolation the serial path
+    had: one sub-agent failing, at submit or at await, is recorded and reported
+    without stopping the rest.
+    """
+    # submit() runs through durable execution inside the setup, so it is not
+    # wrapped here.
+    submitted = []
+    futures = []
+    for execution in agent_executions:
+        try:
+            futures.append(await execution.agent.submit(ctx, execution.agent_kwargs))
+            submitted.append(execution)
+        except Exception as e:  # noqa: PERF203
+            _record_agent_failure(execution, e, ctx, responses, success, error)
+    for execution, future in zip(submitted, futures, strict=True):
+        try:
+            result = await future
+            _record_agent_result(execution, result, ctx, responses, success, error)
+        except Exception as e:  # noqa: PERF203
+            _record_agent_failure(execution, e, ctx, responses, success, error)
+
+
+def _record_agent_failure(
+    execution: _ToolCallExecution,
+    exception: BaseException,
+    ctx: RunnerContext,
+    responses: dict,
+    success: dict,
+    error: dict,
+) -> None:
+    _record_execution_exception(execution, exception, responses, success, error)
+    ExecutionReporters.failed(
+        ctx,
+        ExecutionEntityTypes.TOOL,
+        execution.name,
+        execution.entity_metadata,
+        exception,
+        ExecutionProblemCategories.TOOL_CALL_FAILED,
+    )
 
 
 def _record_agent_result(

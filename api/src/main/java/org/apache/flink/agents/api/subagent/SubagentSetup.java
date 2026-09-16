@@ -37,7 +37,7 @@ public abstract class SubagentSetup extends SerializableResource {
      * to register under this prefix, so a prefixed callable name unambiguously addresses a
      * sub-agent and the executing side routes it to the {@code AGENT} namespace.
      */
-    public static final String CALLABLE_NAME_PREFIX = "subagent_";
+    public static final String CALLABLE_NAME_PREFIX = "_subagent_";
 
     /**
      * Tells a caller what this sub-agent is for, so that it can decide whether to delegate to it.
@@ -110,7 +110,8 @@ public abstract class SubagentSetup extends SerializableResource {
      * one derived from {@link #getInputType()}.
      *
      * @return the schema, or {@code null} when neither says anything a model could build a call
-     *     from, in which case this sub-agent is not declared to a chat model at all.
+     *     from; a chat model rejects such a sub-agent at setup time rather than calling it with no
+     *     arguments.
      */
     @Nullable
     public String getInputSchema() {

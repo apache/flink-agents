@@ -31,8 +31,6 @@ import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.Preconditions;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
@@ -45,8 +43,6 @@ import java.util.Map;
 import java.util.Set;
 
 public abstract class BaseChatModelSetup extends Resource {
-
-    private static final Logger LOG = LoggerFactory.getLogger(BaseChatModelSetup.class);
 
     protected final String connectionName;
     protected String model;
@@ -146,17 +142,15 @@ public abstract class BaseChatModelSetup extends Resource {
                     resource.getClass().getName());
             SubagentSetup setup = (SubagentSetup) resource;
             String inputSchema = setup.getInputSchema();
-            if (inputSchema == null) {
-                // Unlike a bridge handle this is a sub-agent the caller could have described, so
-                // it is dropped with a warning rather than failing the job: the rest of the
-                // callables stay usable.
-                LOG.warn(
-                        "Sub-agent {} declares neither an input schema nor an input type, so there"
-                                + " are no arguments for the model to build a call from and it is"
-                                + " not offered as a callable.",
-                        name);
-                continue;
-            }
+            // A sub-agent that declares neither an input schema nor an input type gives the model
+            // no arguments to build a call from, so the declaration is a mistake rather than
+            // something to skip: fail the job at setup time, consistent with the duplicate-name and
+            // bridge-handle checks above.
+            Preconditions.checkState(
+                    inputSchema != null,
+                    "Sub-agent %s declares neither an input schema nor an input type, so there are"
+                            + " no arguments for the model to build a call from.",
+                    name);
             this.tools.add(new SubagentTool(name, setup.getDescription(), inputSchema));
         }
     }

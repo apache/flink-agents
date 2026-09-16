@@ -698,7 +698,7 @@ public class AgentPlan implements Serializable {
     }
 
     /**
-     * A tool name must not carry the reserved {@code subagent_} prefix: sub-agent callables are
+     * A tool name must not carry the reserved {@code _subagent_} prefix: sub-agent callables are
      * exposed to the model under that prefix, and dispatch routes any prefixed call to the {@code
      * AGENT} namespace, so a tool registered under the prefix could never be called. Fail clearly
      * at plan-construction time rather than at call time.

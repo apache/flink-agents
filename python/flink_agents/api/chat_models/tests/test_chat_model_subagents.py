@@ -184,7 +184,7 @@ def test_declared_subagents_reach_the_model_as_callables_after_the_tools() -> No
 
     assert [tool.metadata.name for tool in connection.captured_tools] == [
         "lookup",
-        "subagent_reviewer",
+        "_subagent_reviewer",
     ]
     delegated = connection.captured_tools[1]
     assert isinstance(delegated, SubagentTool)
@@ -204,7 +204,7 @@ def test_an_undescribed_subagent_is_still_delegable() -> None:
     setup.open()
 
     tool = setup.tools[0]
-    assert tool.metadata.name == "subagent_reviewer"
+    assert tool.metadata.name == "_subagent_reviewer"
     assert tool.metadata.description == (
         "Delegate a standalone task to sub-agent reviewer This is subagent."
     )
@@ -228,23 +228,26 @@ def test_a_typed_subagent_is_declared_with_the_derived_schema() -> None:
     }
 
 
-def test_a_subagent_that_states_no_input_shape_is_not_offered_to_the_model() -> None:
+def test_a_subagent_that_states_no_input_shape_is_rejected_at_setup() -> None:
     """A sub-agent that states no shape leaves the model nothing to build a call
-    from, so it is dropped rather than declared as a callable it could only
-    misuse.
+    from, so it is rejected at setup time rather than declared as a callable it
+    could only misuse.
     """
     store: Dict[str, Resource] = {
         "reviewer": _StubSubagentSetup(description="Reviews a file.")
     }
     setup, _ = _build(store, subagents=["reviewer"])
 
-    setup.open()
+    with pytest.raises(
+        ValueError, match="declares neither an input schema nor an input type"
+    ):
+        setup.open()
 
-    assert setup.tools == []
 
-
-def test_a_subagent_without_an_input_shape_does_not_stop_the_others() -> None:
-    """Dropping one is not dropping the rest: the other callables stay usable."""
+def test_a_subagent_without_an_input_shape_fails_the_whole_setup() -> None:
+    """A shapeless sub-agent fails the whole setup: a usable sibling does not
+    excuse it.
+    """
     store: Dict[str, Resource] = {
         "opaque": _StubSubagentSetup(description="Reviews a file."),
         "coder": _StubSubagentSetup(
@@ -253,9 +256,8 @@ def test_a_subagent_without_an_input_shape_does_not_stop_the_others() -> None:
     }
     setup, _ = _build(store, subagents=["opaque", "coder"])
 
-    setup.open()
-
-    assert [tool.metadata.name for tool in setup.tools] == ["subagent_coder"]
+    with pytest.raises(ValueError, match="Sub-agent opaque"):
+        setup.open()
 
 
 def test_a_tool_and_a_subagent_may_share_a_name() -> None:
@@ -274,7 +276,7 @@ def test_a_tool_and_a_subagent_may_share_a_name() -> None:
 
     assert [tool.metadata.name for tool in setup.tools] == [
         "reviewer",
-        "subagent_reviewer",
+        "_subagent_reviewer",
     ]
 
 
@@ -296,7 +298,7 @@ def test_a_repeated_subagent_name_is_rejected() -> None:
     }
     setup, _ = _build(store, subagents=["reviewer", "reviewer"])
 
-    with pytest.raises(ValueError, match="Duplicate callable name: subagent_reviewer"):
+    with pytest.raises(ValueError, match="Duplicate callable name: _subagent_reviewer"):
         setup.open()
 
 

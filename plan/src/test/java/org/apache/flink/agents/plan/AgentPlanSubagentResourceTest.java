@@ -87,14 +87,14 @@ public class AgentPlanSubagentResourceTest {
     }
 
     /**
-     * Sub-agent callables reach the model under the reserved {@code subagent_} prefix, so a tool
+     * Sub-agent callables reach the model under the reserved {@code _subagent_} prefix, so a tool
      * registered under that prefix could never be called and is rejected at plan-construction time.
      */
     @Test
     void toolNameWithTheReservedSubagentPrefixIsRejected() {
         Agent agent = new Agent();
         agent.addResource(
-                "subagent_helper",
+                "_subagent_helper",
                 ResourceType.TOOL,
                 new BashTool(
                         ResourceDescriptor.Builder.newBuilder(BashTool.class.getName()).build(),
@@ -102,6 +102,6 @@ public class AgentPlanSubagentResourceTest {
 
         assertThatThrownBy(() -> new AgentPlan(agent))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must not start with the reserved prefix 'subagent_'");
+                .hasMessageContaining("must not start with the reserved prefix '_subagent_'");
     }
 }
