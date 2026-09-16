@@ -753,3 +753,59 @@ def test_sampling_and_prefill_boundaries_differ() -> None:
     assert _supports_json_prefill("claude-sonnet-4-6") is False
     assert _supports_sampling_params("claude-sonnet-4-6") is True
     assert _sent_sampling("claude-sonnet-4-6", temperature=0.1)["temperature"] == 0.1
+
+
+def _judging_connection() -> tuple[AnthropicChatModelConnection, list]:
+    """A connection recording every model its request path judges for capability.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list = []
+
+    class _JudgingConnection(AnthropicChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    connection = _JudgingConnection(api_key="dummy")
+    client = MagicMock()
+    client.messages.create.return_value = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text="ok")],
+        usage=_usage(),
+    )
+    connection._client = client
+    return connection, judged
+
+
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": _CAPABLE_MODEL}, {"model": _INCAPABLE_MODEL}, {"model": ""}, {}],
+    ids=["capable", "incapable", "blank", "absent"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    model_kwargs: Dict[str, Any],
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    This connection reads the parameter without a fallback, so the inherited hook is
+    already the right answer. Pinning it against what the builder judges is what would
+    catch a fallback being added here without a matching override.
+    """
+    connection, judged = _judging_connection()
+
+    named = connection.effective_model_for(model_kwargs)
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        output_schema=OutputSchema(output_schema=_Answer),
+        **model_kwargs,
+    )
+
+    assert judged == [named]

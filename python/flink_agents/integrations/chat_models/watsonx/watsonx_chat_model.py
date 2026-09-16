@@ -22,7 +22,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import httpx
 from ibm_watsonx_ai import APIClient, Credentials
@@ -403,6 +403,22 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         the connection was configured.
         """
         return True
+
+    @override
+    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+        """The ``model`` parameter, falling back to ``DEFAULT_MODEL`` when absent.
+
+        ``chat`` resolves the model it calls the same way, so reading the parameter
+        alone would answer ``None`` where the request in fact goes to the default
+        model.
+
+        The fallback stands in for an absent parameter only, matching the request: a
+        parameter that is present but empty is passed through, so the hook and the
+        request agree on that input too.
+        """
+        if model_kwargs is None:
+            return DEFAULT_MODEL
+        return model_kwargs.get("model", DEFAULT_MODEL)
 
     def chat(
         self,

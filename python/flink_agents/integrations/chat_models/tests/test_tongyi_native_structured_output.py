@@ -260,3 +260,92 @@ def test_row_type_info_leaves_a_caller_response_format_alone(monkeypatch) -> Non
     )
     assert response.content == "ok"
     assert kwargs["response_format"] == caller_format
+
+
+# The connection's default model, written out here rather than imported for the same
+# reason as the lists above: a changed default is then a disagreement between two
+# values rather than one value both sides read.
+_DEFAULT_MODEL = "qwen-plus"
+
+
+def _judging_connection() -> tuple[TongyiChatModelConnection, list[str | None]]:
+    """A connection recording every model its request path judges for capability.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list[str | None] = []
+
+    class _JudgingConnection(TongyiChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    return _JudgingConnection(api_key="fake-key"), judged
+
+
+def test_effective_model_for_applies_the_default_model() -> None:
+    """A call naming no model resolves to the model the request would be issued to.
+
+    Reading the parameter alone answers ``None`` for every such call and reports the
+    default model incapable without ever asking about it, which is the failure the
+    comment beside the request builder's own lookup warns about.
+    """
+    assert _connection().effective_model_for({}) == _DEFAULT_MODEL
+    assert _connection().effective_model_for(None) == _DEFAULT_MODEL
+
+
+def test_effective_model_for_reads_an_explicit_model() -> None:
+    """A named model is answered as given, not replaced by the default."""
+    assert (
+        _connection().effective_model_for({"model": _CAPABLE_MODEL}) == _CAPABLE_MODEL
+    )
+
+
+def test_effective_model_for_keeps_a_present_but_empty_model() -> None:
+    """The default stands in for an absent model only, matching the request builder.
+
+    The builder's fallback is a ``pop`` default, which applies when the key is missing
+    and not when it is present and empty. Substituting the default for an empty value
+    would make the hook and the request disagree on exactly that input.
+    """
+    assert _connection().effective_model_for({"model": ""}) == ""
+
+
+def test_effective_model_for_does_not_consume_the_model() -> None:
+    """The hook reads the key that ``chat`` pops, and has to leave it in place."""
+    model_kwargs = {"model": _CAPABLE_MODEL}
+
+    _connection().effective_model_for(model_kwargs)
+
+    assert model_kwargs == {"model": _CAPABLE_MODEL}
+
+
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": _CAPABLE_MODEL}, {"model": "qwen-turbo"}, {"model": ""}, {}],
+    ids=["capable", "incapable", "blank", "absent"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    monkeypatch, model_kwargs: dict[str, Any]
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    The hook duplicates the builder's resolution rather than centralizing it, so only
+    capturing what the request feeds the predicate keeps the two from drifting apart.
+    A fresh connection per case is what makes the single-element comparison also an
+    assertion that the predicate was reached at all.
+    """
+    conn, judged = _judging_connection()
+    _patched_call(monkeypatch)
+
+    named = conn.effective_model_for(model_kwargs)
+    conn.chat(
+        _messages(),
+        output_schema=OutputSchema(output_schema=Person),
+        **model_kwargs,
+    )
+
+    assert judged == [named]

@@ -512,3 +512,108 @@ def test_map_member_schema_is_accepted_and_sent_whole() -> None:
     _chat_with_schema(conn, Labelled)
     response_format = _create_call_kwargs(conn)["response_format"]
     assert response_format["json_schema"]["schema"] == to_strict_json_schema(Labelled)
+
+
+def _model_kwargs(backing_model: str | None = None) -> dict[str, Any]:
+    """The parameter map a setup hands the connection for one request.
+
+    ``model`` is the deployment, matching every other call in this module; the backing
+    model travels under its own key and is omitted entirely when unset.
+    """
+    params: dict[str, Any] = {"model": DEPLOYMENT}
+    if backing_model is not None:
+        params["model_of_azure_deployment"] = backing_model
+    return params
+
+
+def _judging_connection() -> tuple[AzureOpenAIChatModelConnection, list[str | None]]:
+    """A connection recording every model its request path judges for capability.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list[str | None] = []
+
+    class _JudgingConnection(AzureOpenAIChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    conn = _JudgingConnection(
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version=CAPABLE_API_VERSION,
+    )
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    conn._client = mock_client
+    return conn, judged
+
+
+def test_effective_model_for_returns_backing_model() -> None:
+    """Capability is asked about the model behind the deployment, not the deployment."""
+    assert (
+        _connection().effective_model_for(_model_kwargs("gpt-4o-mini")) == "gpt-4o-mini"
+    )
+
+
+def test_effective_model_for_returns_none_when_backing_model_unset() -> None:
+    """An unset backing model resolves to nothing rather than to the deployment.
+
+    Falling back to the deployment would classify a user-chosen name on nothing but
+    its spelling, and that name stops tracking the model behind it the moment the
+    deployment is repointed.
+    """
+    assert _connection().effective_model_for(_model_kwargs()) is None
+
+
+def test_effective_model_for_does_not_consume_the_backing_model() -> None:
+    """The hook reads the key that ``chat`` pops, and has to leave it in place.
+
+    An override copying the builder's ``pop`` idiom would hand the builder a map with
+    no backing model, and the native branch would silently disappear.
+    """
+    model_kwargs = _model_kwargs("gpt-4o-mini")
+
+    _connection().effective_model_for(model_kwargs)
+
+    assert model_kwargs["model_of_azure_deployment"] == "gpt-4o-mini"
+
+
+@pytest.mark.parametrize(
+    "backing_model",
+    ["gpt-4o-mini", "some-unknown-model", None],
+    ids=["capable", "unknown", "unset"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    backing_model: str | None,
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    The hook duplicates the builder's resolution rather than centralizing it, so only
+    capturing what the request feeds the predicate keeps the two from drifting apart;
+    comparing each against a literal would let them drift in step. A fresh connection
+    per case is what makes the single-element comparison also an assertion that the
+    predicate was reached at all.
+    """
+    conn, judged = _judging_connection()
+    model_kwargs = _model_kwargs(backing_model)
+
+    named = conn.effective_model_for(model_kwargs)
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        output_schema=OutputSchema(output_schema=Person),
+        **model_kwargs,
+    )
+
+    assert judged == [named]
+    assert judged[0] != DEPLOYMENT

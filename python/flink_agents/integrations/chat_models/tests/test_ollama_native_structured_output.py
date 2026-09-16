@@ -149,3 +149,67 @@ def test_schema_accepted_not_rejected() -> None:
         _messages(), model="qwen3", output_schema=OutputSchema(output_schema=row_type)
     )
     assert response.content == "ok"
+
+
+def _judging_connection() -> tuple[OllamaChatModelConnection, list]:
+    """A connection recording every model its request path judges for capability.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list = []
+
+    class _JudgingConnection(OllamaChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    conn = _JudgingConnection()
+    response = MagicMock()
+    response.message.role = "assistant"
+    response.message.content = "ok"
+    response.message.tool_calls = None
+    response.prompt_eval_count = 1
+    response.eval_count = 2
+    mock_client = MagicMock()
+    mock_client.chat.return_value = response
+    conn._OllamaChatModelConnection__client = mock_client
+    return conn, judged
+
+
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": "qwen3"}, {"model": ""}],
+    ids=["named", "blank"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    model_kwargs: Dict[str, Any],
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    Only parameter maps that name a model are exercised: this builder pops ``model``
+    with no fallback, so an absent one is a request that cannot be built rather than a
+    disagreement about which model to judge. The hook still answers ``None`` there,
+    since it resolves rather than validates.
+    """
+    conn, judged = _judging_connection()
+
+    named = conn.effective_model_for(model_kwargs)
+    conn.chat(
+        _messages(),
+        output_schema=OutputSchema(output_schema=Person),
+        **model_kwargs,
+    )
+
+    assert judged == [named]
+
+
+def test_effective_model_for_resolves_nothing_without_a_model_param() -> None:
+    """A parameter map naming no model resolves to nothing rather than raising.
+
+    The request builder refuses that map, but the hook answers for whatever it is
+    given, and the capability predicate accepts ``None`` without raising.
+    """
+    assert _connection().effective_model_for({}) is None

@@ -19,7 +19,7 @@ import contextlib
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Sequence, cast
+from typing import Any, Dict, List, Mapping, Sequence, cast
 
 from dashscope import Generation
 from pydantic import BaseModel, Field
@@ -183,6 +183,22 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             ``True`` if a schema can be applied natively for ``effective_model``.
         """
         return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+
+    @override
+    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+        """The ``model`` parameter, falling back to ``DEFAULT_MODEL`` when absent.
+
+        ``chat`` resolves the model it calls the same way, so reading the parameter
+        alone would answer ``None`` for every call that names no model, and report the
+        default model incapable without ever asking about it.
+
+        The fallback stands in for an absent parameter only, matching the request: a
+        parameter that is present but empty is passed through, so the hook and the
+        request agree on that input too.
+        """
+        if model_kwargs is None:
+            return DEFAULT_MODEL
+        return model_kwargs.get("model", DEFAULT_MODEL)
 
     def chat(
         self,

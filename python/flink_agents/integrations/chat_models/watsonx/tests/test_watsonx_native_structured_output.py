@@ -356,3 +356,98 @@ def test_chat_with_output_schema() -> None:
     parsed = json.loads(response.content)
     assert set(parsed) == {"verdict", "score"}
     assert Answer(**parsed).verdict is not None
+
+
+def _judging_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Tuple[WatsonxChatModelConnection, list]:
+    """A mocked connection recording every model its request path judges.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list = []
+
+    class _JudgingConnection(WatsonxChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    provider_model = MagicMock()
+    provider_model.chat.return_value = CHAT_RESPONSE
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.ModelInference",
+        MagicMock(return_value=provider_model),
+    )
+    connection = _JudgingConnection(
+        url="https://us-south.ml.cloud.ibm.com",
+        api_key="fake-key",
+        project_id="fake-project",
+    )
+    connection._client = MagicMock()
+    return connection, judged
+
+
+def test_effective_model_for_applies_the_default_model() -> None:
+    """A call naming no model resolves to the model the request would be issued to.
+
+    Reading the parameter alone would answer ``None`` where the request in fact goes
+    to the default model, so the hook and the request would disagree on every call
+    that names no model.
+    """
+    assert _connection().effective_model_for({}) == DEFAULT_MODEL
+    assert _connection().effective_model_for(None) == DEFAULT_MODEL
+
+
+def test_effective_model_for_reads_an_explicit_model() -> None:
+    """A named model is answered as given, not replaced by the default."""
+    assert _connection().effective_model_for({"model": "no-such-model"}) == (
+        "no-such-model"
+    )
+
+
+def test_effective_model_for_keeps_a_present_but_empty_model() -> None:
+    """The default stands in for an absent model only, matching the request builder.
+
+    The builder's fallback is a ``pop`` default, which applies when the key is missing
+    and not when it is present and empty.
+    """
+    assert _connection().effective_model_for({"model": ""}) == ""
+
+
+def test_effective_model_for_does_not_consume_the_model() -> None:
+    """The hook reads the key that ``chat`` pops, and has to leave it in place."""
+    model_kwargs = {"model": "no-such-model"}
+
+    _connection().effective_model_for(model_kwargs)
+
+    assert model_kwargs == {"model": "no-such-model"}
+
+
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": "no-such-model"}, {"model": ""}, {}],
+    ids=["named", "blank", "absent"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    monkeypatch: pytest.MonkeyPatch, model_kwargs: Dict[str, Any]
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    Capability here is unconditional, so the predicate's answer cannot reveal a
+    disagreement; only the argument it was handed can. A fresh connection per case is
+    what makes the single-element comparison also an assertion that the predicate was
+    reached at all.
+    """
+    connection, judged = _judging_connection(monkeypatch)
+
+    named = connection.effective_model_for(model_kwargs)
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="Hello!")],
+        output_schema=OutputSchema(output_schema=Answer),
+        **model_kwargs,
+    )
+
+    assert judged == [named]

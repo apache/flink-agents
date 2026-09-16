@@ -268,3 +268,59 @@ def test_map_member_schema_is_accepted_and_sent_whole() -> None:
     _chat_with_schema(conn, Labelled)
     response_format = _create_call_kwargs(conn)["response_format"]
     assert response_format["json_schema"]["schema"] == to_strict_json_schema(Labelled)
+
+
+def _judging_connection() -> tuple[OpenAIChatModelConnection, list[str | None]]:
+    """A connection recording every model its request path judges for capability.
+
+    Subclassing keeps the predicate itself under test rather than standing a stub in
+    for it: the override notes what it was asked about and delegates to the real one.
+    """
+    judged: list[str | None] = []
+
+    class _JudgingConnection(OpenAIChatModelConnection):
+        def supports_native_structured_output(
+            self, effective_model: str | None
+        ) -> bool:
+            judged.append(effective_model)
+            return super().supports_native_structured_output(effective_model)
+
+    conn = _JudgingConnection(api_key="test-key", api_base_url="http://localhost")
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_message.refusal = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    conn._client = mock_client
+    return conn, judged
+
+
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": "gpt-4o-mini"}, {"model": "an-unknown-model"}, {"model": ""}, {}],
+    ids=["capable", "unknown", "blank", "absent"],
+)
+def test_effective_model_for_names_the_model_the_request_judges(
+    model_kwargs: dict[str, Any],
+) -> None:
+    """The hook names exactly the model the request path asks the predicate about.
+
+    This connection reads the parameter without a fallback, so the inherited hook is
+    already the right answer. Pinning it against what the builder judges is what would
+    catch a fallback being added here without a matching override.
+    """
+    conn, judged = _judging_connection()
+
+    named = conn.effective_model_for(model_kwargs)
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        output_schema=OutputSchema(output_schema=Person),
+        **model_kwargs,
+    )
+
+    assert judged == [named]

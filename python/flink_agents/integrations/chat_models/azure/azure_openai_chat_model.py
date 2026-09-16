@@ -17,7 +17,7 @@
 #################################################################################
 import logging
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from openai import NOT_GIVEN, AzureOpenAI
 
@@ -230,6 +230,21 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         if not effective_model:
             return False
         return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
+
+    @override
+    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+        """The model backing the deployment, read from ``model_of_azure_deployment``.
+
+        The ``model`` parameter carries the deployment name the request is issued
+        against. That name is chosen by the user, and although it commonly echoes the
+        model behind it, nothing keeps the two in step once the deployment is
+        repointed, so it is never the answer here. Leaving the backing model unset
+        keeps even a capable deployment on the prompt-engineering fallback rather than
+        classifying a deployment name on its spelling.
+        """
+        if model_kwargs is None:
+            return None
+        return model_kwargs.get("model_of_azure_deployment")
 
     def _api_version_supports_structured_output(self) -> bool:
         """Whether the configured api-version reaches the structured-output floor.

@@ -135,19 +135,25 @@ class BaseChatModelConnection(Resource, ABC):
 
         Capability is *model-dependent*, not connection-wide: a single provider
         connection commonly serves both models that accept a native schema parameter and
-        models that do not, so it is evaluated against the *effective* model at
-        request-build time — the model actually being called, which per-request
-        parameters may override.
+        models that do not. The model to ask about is whatever ``effective_model_for``
+        returns for the parameters a request would be built from, and a caller outside
+        the connection asks that hook and nothing else. Such a caller must not
+        substitute the identifier the request is issued against: on a deployment-based
+        provider the request targets a deployment name the user chose while capability
+        belongs to the model backing it, so the two disagree in both directions.
 
         The default ``False`` keeps a connection on the prompt-engineering fallback. A
-        connection that translates a schema into a native provider parameter overrides
-        this; an unrecognized model must report ``False`` so it degrades to the fallback
-        rather than failing at the provider.
+        connection that classifies by model name must report ``False`` for a name it
+        does not recognize, so that it degrades to the fallback rather than failing at
+        the provider. A connection whose capability belongs to the endpoint rather than
+        to the model answers for the endpoint instead, and may report ``True`` for a
+        name it has never seen.
 
         Parameters
         ----------
         effective_model : str | None
-            The model the request will be issued against, may be ``None``.
+            The model whose capability is being asked about, as returned by
+            ``effective_model_for``, may be ``None``.
 
         Returns:
         -------
@@ -155,6 +161,38 @@ class BaseChatModelConnection(Resource, ABC):
             ``True`` if a schema can be applied natively for ``effective_model``.
         """
         return False
+
+    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+        """The model ``supports_native_structured_output`` should be asked about.
+
+        Derived from the parameters a request would be built from. Overriding this is
+        how a connection whose effective model is not the ``model`` parameter verbatim
+        keeps the capability answer and the request in agreement: a connection that
+        falls back to a configured default model when the parameter is absent applies
+        that fallback here, and a deployment-based provider returns the model backing
+        the deployment rather than the deployment the request targets.
+
+        Answers for whatever it is given rather than validating it: a model that does
+        not resolve comes back ``None``, and ``supports_native_structured_output`` must
+        accept ``None`` rather than raising. What a ``None`` model resolves to is that
+        predicate's own answer; the default, and every override that classifies by
+        name, reports it not capable.
+
+        An override must read ``model_kwargs`` without consuming it, so that the same
+        mapping still builds the request the answer was about.
+
+        Parameters
+        ----------
+        model_kwargs : Mapping[str, Any] | None
+            The parameters a request would be built from, may be ``None``.
+
+        Returns:
+        -------
+        str | None
+            The model to ask the capability predicate about, or ``None`` if none
+            resolves.
+        """
+        return None if model_kwargs is None else model_kwargs.get("model")
 
     def _reject_unsupported_output_schema(
         self, output_schema: OutputSchema | None

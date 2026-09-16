@@ -273,3 +273,56 @@ def test_setup_rejects_unrecognized_constructor_argument() -> None:
     """Same guarantee as the connection, for BaseChatModelSetup."""
     with pytest.raises(ValidationError, match="not_a_real_field"):
         _RecordingChatModelSetup(connection="c", model="m", not_a_real_field="oops")
+
+
+def test_effective_model_for_reads_the_model_param() -> None:
+    """The default effective model is the ``model`` parameter a request carries."""
+    connection = _RecordingConnection()
+
+    assert connection.effective_model_for({"model": "gpt-4o"}) == "gpt-4o"
+
+
+def test_effective_model_for_returns_none_when_no_model_param() -> None:
+    """A connection carrying no default of its own has no model to resolve.
+
+    The capability predicate reports a ``None`` model not capable rather than raising,
+    so answering ``None`` degrades to the prompt-engineering fallback.
+    """
+    connection = _RecordingConnection()
+
+    assert connection.effective_model_for({}) is None
+    assert connection.effective_model_for({"temperature": 0.5}) is None
+
+
+def test_effective_model_for_returns_none_for_none_params() -> None:
+    """No parameters at all resolve to no model, rather than raising."""
+    connection = _RecordingConnection()
+
+    assert connection.effective_model_for(None) is None
+
+
+def test_effective_model_for_does_not_normalize_a_blank_model() -> None:
+    """The hook answers with what it was given rather than validating it.
+
+    Substituting a default for a blank model is what the connections carrying a
+    default model do, and it belongs to their override because it is what their
+    request builder does. Doing it here would invent a fallback for connections that
+    have none.
+    """
+    connection = _RecordingConnection()
+
+    assert connection.effective_model_for({"model": "   "}) == "   "
+
+
+def test_effective_model_for_does_not_consume_the_params() -> None:
+    """Reading the model leaves the mapping able to build the request it described.
+
+    An override copying a request builder's ``pop`` idiom would hand that builder a
+    map with the model already removed, so the contract is pinned on the default too.
+    """
+    connection = _RecordingConnection()
+    model_kwargs = {"model": "gpt-4o", "temperature": 0.5}
+
+    connection.effective_model_for(model_kwargs)
+
+    assert model_kwargs == {"model": "gpt-4o", "temperature": 0.5}
