@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import logging
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, List, Mapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -809,3 +809,209 @@ def test_effective_model_for_names_the_model_the_request_judges(
     )
 
     assert judged == [named]
+
+
+# A caller-supplied output_config, kept as one object so the binding test below can tell
+# it apart from a derived one by identity rather than by comparing documents.
+_CALLER_OUTPUT_CONFIG = {
+    "format": {"type": "json_schema", "schema": {"type": "object"}}
+}
+
+
+def _query_recording_connection() -> tuple[AnthropicChatModelConnection, List[bool]]:
+    """A connection recording what the feasibility query answered on each request.
+
+    Subclassing keeps the query itself under test rather than standing a stub in for
+    it: the override notes the answer it gave and delegates to the real one.
+    """
+    answers: List[bool] = []
+
+    class _RecordingConnection(AnthropicChatModelConnection):
+        def can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
+        ) -> bool:
+            answer = super().can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
+            answers.append(answer)
+            return answer
+
+    connection = _RecordingConnection(api_key="dummy")
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text='{"verdict": "ok"}')],
+        usage=_usage(),
+    )
+    client = MagicMock()
+    client.messages.create.return_value = message
+    connection._client = client
+    return connection, answers
+
+
+def test_feasibility_query_agrees_with_the_native_branch() -> None:
+    """The answer matches whether the request carries an output_config derived here.
+
+    Comparing the answer against what the request carries, rather than against a
+    literal, is what keeps the query and the branch from drifting in step. The model is
+    capable throughout, so the schema form and the caller's output_config are what move.
+    A caller-supplied config reaches the request untouched, so the comparison is against
+    a *derived* config: identity separates the two, since writing a derived one replaces
+    the caller's object. Clearing the record per case makes the single-element
+    comparison an assertion that the query was reached exactly once, too.
+    """
+    conn, answers = _query_recording_connection()
+    tool = _StubTool(
+        name="add",
+        metadata=ToolMetadata(name="add", description="adds", args_schema=_AddArgs),
+    )
+    row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
+
+    for schema in (
+        OutputSchema(output_schema=_Answer),
+        OutputSchema(output_schema=row_type),
+        None,
+    ):
+        for caller_config in (None, _CALLER_OUTPUT_CONFIG):
+            for tools in (None, [], [tool]):
+                answers.clear()
+
+                extra = (
+                    {} if caller_config is None else {"output_config": caller_config}
+                )
+                conn.chat(
+                    [ChatMessage(role=MessageRole.USER, content="hi")],
+                    tools=tools,
+                    model=_CAPABLE_MODEL,
+                    output_schema=schema,
+                    **extra,
+                )
+
+                sent = conn.client.messages.create.call_args.kwargs
+                derived = (
+                    "output_config" in sent
+                    and sent["output_config"] is not _CALLER_OUTPUT_CONFIG
+                )
+                assert answers == [derived], (
+                    f"schema {schema}, caller_config {caller_config}, tools {tools}"
+                )
+
+
+def test_feasibility_query_follows_the_caller_output_config() -> None:
+    """A caller-supplied output_config makes an otherwise translatable schema infeasible.
+
+    Pinning the answer itself rather than only its agreement with the branch: an
+    override that dropped this term would drop it from the branch too, and the binding
+    test above would still see the two agree.
+    """
+    conn = _connection()
+    schema = OutputSchema(output_schema=_Answer)
+
+    assert (
+        conn.can_apply_native_structured_output(schema, [], {"model": _CAPABLE_MODEL})
+        is True
+    )
+    assert (
+        conn.can_apply_native_structured_output(
+            schema,
+            [],
+            {"model": _CAPABLE_MODEL, "output_config": _CALLER_OUTPUT_CONFIG},
+        )
+        is False
+    )
+
+
+def test_feasibility_query_excludes_model_capability() -> None:
+    """A translatable schema stays feasible on a model the allowlist rejects.
+
+    The two answers are independent, and it is the branch's separate capability
+    conjunct that leaves such a request unconstrained. A capability conjunct folded
+    into the query would be invisible to the binding test above, which moves both sides
+    at once, so it is pinned here.
+    """
+    conn = _connection()
+    incapable = {"model": _INCAPABLE_MODEL}
+
+    assert (
+        conn.can_apply_native_structured_output(
+            OutputSchema(output_schema=_Answer), [], incapable
+        )
+        is True
+    )
+    assert "output_config" not in _request_kwargs(
+        output_schema=OutputSchema(output_schema=_Answer), **incapable
+    )
+
+
+def test_feasibility_query_does_not_consume_the_model_kwargs() -> None:
+    """Answering leaves the mapping able to build the request it answered about.
+
+    This is the one override that reads the parameters, so a consuming implementation
+    would hand the branch below it a mapping missing the key it had just read.
+    """
+    model_kwargs = {"model": _CAPABLE_MODEL, "output_config": _CALLER_OUTPUT_CONFIG}
+
+    _connection().can_apply_native_structured_output(
+        OutputSchema(output_schema=_Answer), [], model_kwargs
+    )
+
+    assert model_kwargs == {
+        "model": _CAPABLE_MODEL,
+        "output_config": _CALLER_OUTPUT_CONFIG,
+    }
+
+
+def test_feasibility_query_is_asked_with_the_unstripped_kwargs() -> None:
+    """The query sees the parameters as they arrived, not a copy ``chat`` has stripped.
+
+    ``chat`` removes ``json_prefill`` from its own mapping before the native branch
+    runs. The key this override reads is not among the stripped ones today, so asking
+    with the stripped copy would still answer correctly; the shape is what keeps the
+    next term added here from silently reading a mapping the caller's value has already
+    left.
+    """
+    asked: List[Mapping[str, Any] | None] = []
+
+    class _CapturingConnection(AnthropicChatModelConnection):
+        def can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
+        ) -> bool:
+            asked.append(model_kwargs)
+            return super().can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
+
+    connection = _CapturingConnection(api_key="dummy")
+    message = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
+        content=[TextBlock(type="text", text='{"verdict": "ok"}')],
+        usage=_usage(),
+    )
+    client = MagicMock()
+    client.messages.create.return_value = message
+    connection._client = client
+
+    connection.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=_CAPABLE_MODEL,
+        json_prefill=True,
+        output_schema=OutputSchema(output_schema=_Answer),
+    )
+
+    assert len(asked) == 1
+    assert asked[0] is not None
+    assert asked[0]["model"] == _CAPABLE_MODEL
+    assert asked[0]["json_prefill"] is True
