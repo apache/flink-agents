@@ -237,6 +237,22 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         return profile.matches() && NATIVE_STRUCTURED_OUTPUT_MODELS.contains(profile.group(1));
     }
 
+    /**
+     * The {@code model} parameter, falling back to the model configured on the connection when the
+     * call names none, which is how the request itself resolves the model it is issued against.
+     *
+     * <p>Resolving to nothing comes back null rather than raising the way {@code resolveModel}
+     * does, because the capability predicate reports a null model not capable.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        String model = modelParams != null ? (String) modelParams.get("model") : null;
+        if (model == null || model.isBlank()) {
+            return this.defaultModel;
+        }
+        return model;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {

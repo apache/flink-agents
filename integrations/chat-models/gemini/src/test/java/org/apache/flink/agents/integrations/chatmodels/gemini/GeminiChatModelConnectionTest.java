@@ -53,6 +53,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -919,5 +920,74 @@ class GeminiChatModelConnectionTest {
         assertThatThrownBy(() -> conn.chat(List.of(ChatMessage.user("hi")), null, params()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("model name must be provided");
+    }
+
+    @Test
+    @DisplayName("The effective model falls back to the configured default")
+    void effectiveModelForFallsBackToTheConfiguredDefault() {
+        // chat resolves the model the same way before feeding the capability predicate, and
+        // connection() is configured with gemini-3-pro-preview.
+        Map<String, Object> modelParams = params();
+
+        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
+
+        modelParams.put("model", CAPABLE_MODEL);
+        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo(CAPABLE_MODEL);
+
+        // A blank model is not a model. The request path substitutes the default for it, so the
+        // hook has to as well or the two disagree on exactly this input.
+        modelParams.put("model", "   ");
+        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
+    }
+
+    /** Stops the request after the config is assembled, so no call reaches the provider. */
+    private static final class StopBeforeRequest extends RuntimeException {}
+
+    private static Map<String, Object> paramsWithModel(String model) {
+        Map<String, Object> modelParams = params();
+        modelParams.put("model", model);
+        return modelParams;
+    }
+
+    @Test
+    @DisplayName("The model the request builder judges is the one the hook names")
+    void effectiveModelForNamesTheModelTheBuilderJudges() {
+        // chat resolves the model and hands it to buildConfig, which is where the predicate is fed.
+        // Overriding buildConfig to stop once it has run binds the hook to the request without
+        // reaching the provider. Asserting each side against a literal would let the two drift in
+        // step, which is the one failure this has to catch.
+        AtomicReference<String> judged = new AtomicReference<>();
+        GeminiChatModelConnection connection =
+                new GeminiChatModelConnection(
+                        descriptor("test-key", null, "gemini-3-pro-preview"), NOOP) {
+                    @Override
+                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                        judged.set(effectiveModel);
+                        return super.supportsNativeStructuredOutput(effectiveModel);
+                    }
+
+                    @Override
+                    GenerateContentConfig buildConfig(
+                            List<ChatMessage> messages,
+                            List<Tool> tools,
+                            Map<String, Object> arguments,
+                            String modelName,
+                            Object outputSchema) {
+                        super.buildConfig(messages, tools, arguments, modelName, outputSchema);
+                        throw new StopBeforeRequest();
+                    }
+                };
+
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(
+                        paramsWithModel(CAPABLE_MODEL), paramsWithModel("   "), params())) {
+            String named = connection.effectiveModelFor(modelParams);
+
+            assertThatThrownBy(
+                            () -> connection.chat(userMessage(), null, modelParams, Report.class))
+                    .hasRootCauseInstanceOf(StopBeforeRequest.class);
+
+            assertThat(judged.get()).isEqualTo(named);
+        }
     }
 }

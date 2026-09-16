@@ -80,6 +80,18 @@ class OpenAIResponsesModelConnectionTest {
     }
 
     @Test
+    @DisplayName("Effective model falls back to the connection default when the parameter is unset")
+    void testEffectiveModelForFallsBackToTheDefaultModel() {
+        // This connection extends the base directly, so it inherits no override from the chat
+        // completions connection. Its request builder resolves the model against the configured
+        // default, and the capability answer has to be about that same model.
+        assertThat(connection().effectiveModelFor(new HashMap<>())).isEqualTo("gpt-4o");
+        assertThat(connection().effectiveModelFor(params(null))).isEqualTo("gpt-4o");
+        assertThat(connection().effectiveModelFor(params("   "))).isEqualTo("gpt-4o");
+        assertThat(connection().effectiveModelFor(params("gpt-4o-mini"))).isEqualTo("gpt-4o-mini");
+    }
+
+    @Test
     @DisplayName("Constructor throws when api_key is missing")
     void testConstructorMissingApiKey() {
         ResourceDescriptor desc = connectionDescriptor().build();

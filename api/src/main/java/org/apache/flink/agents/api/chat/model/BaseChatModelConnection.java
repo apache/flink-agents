@@ -52,19 +52,51 @@ public abstract class BaseChatModelConnection extends Resource {
      * model.
      *
      * <p>Capability is <b>model-dependent</b>, not connection-wide: a single provider connection
-     * commonly serves both models that accept a native schema parameter and models that do not. It
-     * is therefore evaluated against the <i>effective</i> model at request-build time — the model
-     * actually being called, which per-request parameters may override.
+     * commonly serves both models that accept a native schema parameter and models that do not. The
+     * model to ask about is whatever {@link #effectiveModelFor(Map)} returns for the parameters a
+     * request would be built from, and a caller outside the connection asks that hook and nothing
+     * else. Such a caller must not substitute the identifier the request is issued against: on a
+     * deployment-based provider the request targets a deployment name the user chose while
+     * capability belongs to the model backing it, so the two disagree in both directions.
      *
-     * <p>The default {@code false} keeps a connection on the prompt-engineering fallback. An
-     * unrecognized model must report {@code false} so that it degrades to the fallback rather than
-     * failing at the provider.
+     * <p>The default {@code false} keeps a connection on the prompt-engineering fallback. A
+     * connection that classifies by model name must report {@code false} for a name it does not
+     * recognize, so that it degrades to the fallback rather than failing at the provider. A
+     * connection whose capability belongs to the endpoint rather than to the model answers for the
+     * endpoint instead, and may report {@code true} for a name it has never seen.
      *
-     * @param effectiveModel the model the request will be issued against, may be null
+     * @param effectiveModel the model whose capability is being asked about, as returned by {@link
+     *     #effectiveModelFor(Map)}, may be null
      * @return true if a schema can be applied natively for {@code effectiveModel}
      */
     protected boolean supportsNativeStructuredOutput(String effectiveModel) {
         return false;
+    }
+
+    /**
+     * The model whose capability {@link #supportsNativeStructuredOutput(String)} should be asked
+     * about, derived from the parameters a request would be built from.
+     *
+     * <p>Overriding this is how a connection whose effective model is not the {@code model}
+     * parameter verbatim keeps the capability answer and the request in agreement. A connection
+     * that falls back to a configured default model when the parameter is absent applies that
+     * fallback here, and a deployment-based provider returns the model backing the deployment
+     * rather than the deployment the request targets.
+     *
+     * <p>Answers for whatever it is given rather than validating: a model that does not resolve
+     * comes back null, and {@link #supportsNativeStructuredOutput(String)} must accept null rather
+     * than throwing. What a null model resolves to is that predicate's own answer; the default, and
+     * every override that classifies by name, reports it not capable.
+     *
+     * <p>An override must read {@code modelParams} without consuming it, so that the same map still
+     * builds the request the answer was about.
+     *
+     * @param modelParams the parameters a request would be built from, may be null
+     * @return the model to ask the capability predicate about, or null if none resolves
+     */
+    @Nullable
+    protected String effectiveModelFor(@Nullable Map<String, Object> modelParams) {
+        return modelParams == null ? null : (String) modelParams.get("model");
     }
 
     /**

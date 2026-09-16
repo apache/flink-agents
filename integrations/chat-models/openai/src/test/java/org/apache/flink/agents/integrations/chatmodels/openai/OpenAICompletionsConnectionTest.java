@@ -345,6 +345,60 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
+    @DisplayName("Effective model falls back to the connection default when the parameter is unset")
+    void testEffectiveModelForFallsBackToTheDefaultModel() {
+        // buildRequest applies the same fallback before feeding the capability predicate, so an
+        // answer taken without it would disagree with the model the request is issued against.
+        assertThat(connection().effectiveModelFor(new HashMap<>())).isEqualTo("gpt-4o");
+        assertThat(connection().effectiveModelFor(params(null))).isEqualTo("gpt-4o");
+        assertThat(connection().effectiveModelFor(params("   "))).isEqualTo("gpt-4o");
+    }
+
+    @Test
+    @DisplayName("The model the request builder judges is the one the hook names")
+    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
+        // The hook duplicates the builder's own model resolution rather than centralizing it, so
+        // capturing what the builder actually feeds the predicate is the only thing that keeps the
+        // two from drifting apart. Asserting each against a literal would let them drift in step.
+        AtomicReference<String> judged = new AtomicReference<>();
+        OpenAICompletionsConnection connection =
+                new OpenAICompletionsConnection(
+                        ResourceDescriptor.Builder.newBuilder(
+                                        OpenAICompletionsConnection.class.getName())
+                                .addInitialArgument("api_key", "test-key")
+                                .addInitialArgument("model", "gpt-4o")
+                                .build(),
+                        NOOP) {
+                    @Override
+                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                        judged.set(effectiveModel);
+                        return super.supportsNativeStructuredOutput(effectiveModel);
+                    }
+                };
+
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(
+                        params("gpt-4o-mini"), params("   "), new HashMap<>())) {
+            String named = connection.effectiveModelFor(modelParams);
+
+            connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
+
+            assertThat(judged.get()).isEqualTo(named);
+        }
+    }
+
+    @Test
+    @DisplayName("Effective model reads the model parameter without consuming it")
+    void testEffectiveModelForDoesNotConsumeTheModelParameter() {
+        // buildRequest resolves the model with remove(). A query doing the same would leave the
+        // caller's parameters without a model for the request it is about to build.
+        Map<String, Object> modelParams = params("gpt-4o-mini");
+
+        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gpt-4o-mini");
+        assertThat(modelParams).containsEntry("model", "gpt-4o-mini");
+    }
+
+    @Test
     @DisplayName("Native NOT applied for a non-POJO schema form (POJO-only scope)")
     void testNativeNotAppliedForNonPojoSchema() {
         // A RowTypeInfo schema arrives wrapped in OutputSchema (not a bare POJO Class), so it must

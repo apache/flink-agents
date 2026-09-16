@@ -182,6 +182,20 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
                                                 || effectiveModel.startsWith(prefix + "-"));
     }
 
+    /**
+     * The {@code model} parameter, falling back to the model configured on the connection when the
+     * call names none, which is how the request itself resolves the model it is issued against.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        Object modelObj = modelParams != null ? modelParams.get("model") : null;
+        String modelName = modelObj != null ? modelObj.toString() : null;
+        if (modelName == null || modelName.isBlank()) {
+            return this.defaultModel;
+        }
+        return modelName;
+    }
+
     // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
     // https://platform.claude.com/docs/en/build-with-claude/working-with-messages#putting-words-in-claudes-mouth
     //

@@ -234,6 +234,23 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                 && effectiveModel.length() > NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX.length();
     }
 
+    /**
+     * The {@code model} parameter, falling back to the model configured on the connection when the
+     * call names none, which is how the request itself resolves the model it is issued against.
+     *
+     * <p>Resolving to nothing comes back null rather than raising the way request building does,
+     * because the capability predicate reports a null model not capable.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        Object modelObj = modelParams != null ? modelParams.get("model") : null;
+        String modelName = modelObj != null ? modelObj.toString() : null;
+        if (modelName == null || modelName.isBlank()) {
+            return this.defaultModel;
+        }
+        return modelName;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,

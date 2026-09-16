@@ -172,6 +172,19 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     /**
+     * The {@code model} parameter, falling back to the model configured on the connection when the
+     * call names none, which is how the request itself resolves the model it is issued against.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        String modelName = modelParams != null ? (String) modelParams.get("model") : null;
+        if (modelName == null || modelName.isBlank()) {
+            return this.defaultModel;
+        }
+        return modelName;
+    }
+
+    /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
      * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
      * set, and the entry is absent when the provider reports none.

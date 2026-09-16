@@ -358,6 +358,69 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("Effective model is the model backing the deployment, not the deployment")
+    void testEffectiveModelForReturnsBackingModelNotDeployment() {
+        // params() addresses DEPLOYMENT under "model". Capability belongs to the model backing
+        // that deployment, which is why buildRequest feeds the predicate
+        // model_of_azure_deployment instead.
+        assertThat(connection().effectiveModelFor(params("gpt-4o-mini"))).isEqualTo("gpt-4o-mini");
+    }
+
+    @Test
+    @DisplayName(
+            "The model the request builder judges is the one the hook names, never the deployment")
+    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
+        // The builder reads the backing model under its own key and feeds that to the predicate.
+        // Capturing the value it actually judges is what ties the hook to the request; comparing
+        // each against a literal would let the two drift in step.
+        AtomicReference<String> judged = new AtomicReference<>();
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", CAPABLE_API_VERSION)
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .build();
+        AzureOpenAIChatModelConnection connection =
+                new AzureOpenAIChatModelConnection(desc, NOOP) {
+                    @Override
+                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                        judged.set(effectiveModel);
+                        return super.supportsNativeStructuredOutput(effectiveModel);
+                    }
+                };
+
+        Map<String, Object> backed = params("gpt-4o-mini");
+        String named = connection.effectiveModelFor(backed);
+        connection.buildRequest(userMessage(), List.of(), backed, Person.class);
+        assertThat(judged.get()).isEqualTo(named).isNotEqualTo(DEPLOYMENT);
+
+        // The unset case has to agree too: the builder judges nothing, and so does the hook.
+        Map<String, Object> unbacked = params(null);
+        assertThat(connection.effectiveModelFor(unbacked)).isNull();
+        connection.buildRequest(userMessage(), List.of(), unbacked, Person.class);
+        assertThat(judged.get()).isNull();
+    }
+
+    @Test
+    @DisplayName("Effective model reads the backing model without consuming it")
+    void testEffectiveModelForDoesNotConsumeTheBackingModel() {
+        // The request builder removes this very key. An override copying that idiom would hand the
+        // builder a map with no backing model, and the native branch would silently disappear.
+        Map<String, Object> modelParams = params("gpt-4o-mini");
+
+        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gpt-4o-mini");
+        assertThat(modelParams).containsEntry("model_of_azure_deployment", "gpt-4o-mini");
+    }
+
+    @Test
+    @DisplayName("Effective model is null when the backing model is unset")
+    void testEffectiveModelForReturnsNullWhenBackingModelUnset() {
+        // Falling back to the deployment name would classify a user-chosen name on nothing but
+        // its spelling, so an unset backing model resolves to nothing at all.
+        assertThat(connection().effectiveModelFor(params(null))).isNull();
+    }
+
+    @Test
     @DisplayName("Native NOT applied for a backing model outside the allowlist")
     void testNativeNotAppliedForUnknownDeploymentModel() {
         ChatCompletionCreateParams request =

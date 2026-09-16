@@ -397,6 +397,49 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("the effective model falls back to the configured default")
+    void testEffectiveModelForFallsBackToTheConfiguredDefault() {
+        // buildRequest resolves the model the same way before feeding the capability predicate,
+        // and connection() is configured with claude-sonnet-4-20250514.
+        assertThat(connection().effectiveModelFor(params(null)))
+                .isEqualTo("claude-sonnet-4-20250514");
+        assertThat(connection().effectiveModelFor(paramsWithModel(CAPABLE_MODEL, null)))
+                .isEqualTo(CAPABLE_MODEL);
+        // A blank model is not a model. The builder substitutes the default for it, so the hook
+        // has to as well or the two disagree on exactly this input.
+        assertThat(connection().effectiveModelFor(paramsWithModel("   ", null)))
+                .isEqualTo("claude-sonnet-4-20250514");
+    }
+
+    @Test
+    @DisplayName("the model the request builder judges is the one the hook names")
+    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
+        // The hook duplicates the builder's resolution rather than centralizing it, so only
+        // capturing what the builder feeds the predicate keeps the two from drifting apart.
+        AtomicReference<String> judged = new AtomicReference<>();
+        AnthropicChatModelConnection connection =
+                new AnthropicChatModelConnection(descriptor("claude-sonnet-4-20250514"), NOOP) {
+                    @Override
+                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                        judged.set(effectiveModel);
+                        return super.supportsNativeStructuredOutput(effectiveModel);
+                    }
+                };
+
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(
+                        paramsWithModel(CAPABLE_MODEL, null),
+                        paramsWithModel("   ", null),
+                        params(null))) {
+            String named = connection.effectiveModelFor(modelParams);
+
+            connection.buildRequest(userMessage(), List.of(), modelParams, Answer.class);
+
+            assertThat(judged.get()).isEqualTo(named);
+        }
+    }
+
+    @Test
     @DisplayName("a schema that is not a Class keeps the prompt fallback")
     void testNonClassSchemaKeepsFallback() {
         // The RowTypeInfo case arrives wrapped rather than as a Class; anything but a Class has no

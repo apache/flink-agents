@@ -46,6 +46,7 @@ import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatType;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -128,6 +129,61 @@ class BedrockChatModelConnectionTest {
         List<ChatMessage> msgs = List.of(new ChatMessage(MessageRole.USER, "hello"));
         assertThatThrownBy(() -> conn.chat(msgs, null, Collections.emptyMap()))
                 .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    @DisplayName("the effective model falls back to the configured default")
+    void testEffectiveModelForFallsBackToTheConfiguredDefault() {
+        // buildRequest resolves the model the same way before feeding the capability predicate.
+        assertThat(connection().effectiveModelFor(new HashMap<>()))
+                .isEqualTo("us.anthropic.claude-sonnet-4-20250514-v1:0");
+        assertThat(connection().effectiveModelFor(params("qwen.qwen3-32b-v1:0")))
+                .isEqualTo("qwen.qwen3-32b-v1:0");
+        // A blank model is not a model. resolveModel substitutes the default for it, so the hook
+        // has to as well or the two disagree on exactly this input.
+        assertThat(connection().effectiveModelFor(params("   ")))
+                .isEqualTo("us.anthropic.claude-sonnet-4-20250514-v1:0");
+    }
+
+    @Test
+    @DisplayName("the model the request builder judges is the one the hook names")
+    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
+        // The hook duplicates resolveModel rather than calling it, so only capturing what the
+        // builder feeds the predicate keeps the two from drifting apart.
+        AtomicReference<String> judged = new AtomicReference<>();
+        BedrockChatModelConnection connection =
+                new BedrockChatModelConnection(
+                        descriptor("us-east-1", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
+                        NOOP) {
+                    @Override
+                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                        judged.set(effectiveModel);
+                        return super.supportsNativeStructuredOutput(effectiveModel);
+                    }
+                };
+
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(
+                        params("qwen.qwen3-32b-v1:0"), params("   "), new HashMap<>())) {
+            String named = connection.effectiveModelFor(modelParams);
+
+            connection.buildRequest(
+                    List.of(ChatMessage.user("hello")), null, modelParams, Profile.class);
+
+            assertThat(judged.get()).isEqualTo(named);
+        }
+    }
+
+    @Test
+    @DisplayName("the effective model is null rather than throwing when none resolves")
+    void testEffectiveModelForReturnsNullWhenNoModelResolves() {
+        // resolveModel rejects an unresolvable model before a request is built. This query is
+        // part of the connection contract and answers for whatever it is given, so it reports
+        // null, which the capability predicate treats as not capable.
+        BedrockChatModelConnection conn =
+                new BedrockChatModelConnection(descriptor("us-east-1", null), NOOP);
+
+        assertThat(conn.effectiveModelFor(new HashMap<>())).isNull();
     }
 
     @Test

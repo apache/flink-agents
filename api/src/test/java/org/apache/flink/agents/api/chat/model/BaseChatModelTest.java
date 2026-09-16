@@ -460,4 +460,32 @@ class BaseChatModelTest {
         assertNotNull(response);
         assertTrue(response.getContent().length() > 0);
     }
+
+    @Test
+    @DisplayName("Effective model defaults to the model parameter a request would be built from")
+    void testEffectiveModelForReadsTheModelParameter() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+
+        assertEquals("gpt-4o", connection.effectiveModelFor(modelParams));
+    }
+
+    @Test
+    @DisplayName("Effective model is null when the parameters name no model")
+    void testEffectiveModelForReturnsNullWhenModelParameterAbsent() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // A connection carrying no default of its own has no model to resolve, and the capability
+        // predicate reports a null model not capable rather than throwing.
+        assertNull(connection.effectiveModelFor(Map.of("temperature", 0.5)));
+    }
+
+    @Test
+    @DisplayName("Effective model is null for null parameters")
+    void testEffectiveModelForReturnsNullForNullParameters() {
+        RecordingConnection connection = new RecordingConnection();
+
+        assertNull(connection.effectiveModelFor(null));
+    }
 }

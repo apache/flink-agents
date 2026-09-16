@@ -224,6 +224,20 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
+     * The model backing the deployment, read from {@code model_of_azure_deployment}.
+     *
+     * <p>The {@code model} parameter carries the deployment name the request is issued against.
+     * That name is chosen by the user, and although it commonly echoes the model behind it, nothing
+     * keeps the two in step once the deployment is repointed, so it is never the answer here.
+     * Leaving the backing model unset keeps even a capable deployment on the prompt-engineering
+     * fallback rather than classifying a deployment name on its spelling.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        return modelParams == null ? null : (String) modelParams.get("model_of_azure_deployment");
+    }
+
+    /**
      * Whether the configured api-version reaches the structured-output floor.
      *
      * <p>Azure documents {@code 2024-08-01-preview} as the first api-version supporting structured

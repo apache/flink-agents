@@ -124,6 +124,19 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
         this.client = builder.build();
     }
 
+    /**
+     * The {@code model} parameter, falling back to the model configured on the connection when the
+     * call names none, which is how the request itself resolves the model it is issued against.
+     */
+    @Override
+    protected String effectiveModelFor(Map<String, Object> modelParams) {
+        String modelName = modelParams != null ? (String) modelParams.get("model") : null;
+        if (modelName == null || modelName.isBlank()) {
+            return this.defaultModel;
+        }
+        return modelName;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
