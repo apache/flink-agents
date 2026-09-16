@@ -25,7 +25,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Pins the construction contract of {@link SubagentSetup}: every setup carries the descriptor a
- * remote task rebuilds it from, so a registered sub-agent is always rebuildable.
+ * remote task rebuilds it from, and that descriptor names the setup's own type, so a registered
+ * sub-agent is always rebuildable into the right class.
  */
 public class SubagentSetupTest {
 
@@ -36,5 +37,17 @@ public class SubagentSetupTest {
         assertThatThrownBy(() -> new TestSubagentSetup((ResourceDescriptor) null, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("must carry a ResourceDescriptor");
+    }
+
+    @Test
+    void mismatchedDescriptorClazzIsRejectedAtConstruction() {
+        // The descriptor names the class a remote task reflects over to rebuild the setup, so it
+        // must name this setup's own type; a copy-paste or aliasing mistake is caught here rather
+        // than rebuilding the wrong class on a far task.
+        ResourceDescriptor mismatched =
+                ResourceDescriptor.Builder.newBuilder("com.example.SomeOtherSubagent").build();
+        assertThatThrownBy(() -> new TestSubagentSetup(mismatched, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must carry a descriptor naming its own type");
     }
 }

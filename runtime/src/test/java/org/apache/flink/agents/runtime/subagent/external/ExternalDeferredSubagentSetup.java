@@ -45,6 +45,9 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
 
     private static final Logger LOG = LoggerFactory.getLogger(ExternalDeferredSubagentSetup.class);
 
+    private static final String FIELD_BASE_URL = "base_url";
+    private static final String FIELD_POLL_INTERVAL_MILLIS = "poll_interval_millis";
+
     private final String baseUrl;
     private final long pollIntervalMillis;
 
@@ -64,8 +67,8 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
     public ExternalDeferredSubagentSetup(String baseUrl, long pollIntervalMillis) {
         this(
                 ResourceDescriptor.Builder.newBuilder(ExternalDeferredSubagentSetup.class.getName())
-                        .addInitialArgument("base_url", baseUrl)
-                        .addInitialArgument("poll_interval_millis", pollIntervalMillis)
+                        .addInitialArgument(FIELD_BASE_URL, baseUrl)
+                        .addInitialArgument(FIELD_POLL_INTERVAL_MILLIS, pollIntervalMillis)
                         .build(),
                 null);
     }
@@ -74,8 +77,8 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
     public ExternalDeferredSubagentSetup(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.baseUrl = descriptor.getArgument("base_url");
-        this.pollIntervalMillis = descriptor.getArgument("poll_interval_millis", 0L);
+        this.baseUrl = descriptor.getArgument(FIELD_BASE_URL);
+        this.pollIntervalMillis = descriptor.getArgument(FIELD_POLL_INTERVAL_MILLIS, 0L);
     }
 
     private ExternalAgentClient client() {
