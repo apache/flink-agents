@@ -207,7 +207,7 @@ class BaseChatModelSetupSubagentTest {
         assertThat(connection.capturedTools).hasSize(2);
         assertThat(connection.capturedTools.get(0).getMetadata().getName()).isEqualTo("lookup");
         ToolMetadata delegated = connection.capturedTools.get(1).getMetadata();
-        assertThat(delegated.getName()).isEqualTo("subagent_reviewer");
+        assertThat(delegated.getName()).isEqualTo("_subagent_reviewer");
         assertThat(delegated.getDescription()).isEqualTo("Reviews a file. This is subagent.");
         assertThat(delegated.getInputSchema()).isEqualTo(CUSTOM_SCHEMA);
     }
@@ -219,7 +219,7 @@ class BaseChatModelSetupSubagentTest {
 
         setup.open();
 
-        assertThat(setup.getTools().get(0).getMetadata().getName()).isEqualTo("subagent_reviewer");
+        assertThat(setup.getTools().get(0).getMetadata().getName()).isEqualTo("_subagent_reviewer");
         assertThat(setup.getTools().get(0).getMetadata().getDescription())
                 .isEqualTo("Delegate a standalone task to sub-agent reviewer This is subagent.");
         assertThat(setup.getTools().get(0).getMetadata().getInputSchema()).isEqualTo(CUSTOM_SCHEMA);
@@ -241,29 +241,29 @@ class BaseChatModelSetupSubagentTest {
 
     /**
      * A sub-agent that states no shape for its arguments leaves the model nothing to build a call
-     * from, so it is dropped rather than declared as a callable it could only misuse.
+     * from, so it is rejected at setup time rather than declared as a callable it could only
+     * misuse.
      */
     @Test
-    void aSubagentThatStatesNoInputShapeIsNotOfferedToTheModel() throws Exception {
+    void aSubagentThatStatesNoInputShapeIsRejectedAtSetup() {
         store.put("reviewer", new StubSubagentSetup("Reviews a file."));
         StubChatSetup setup = setupWith(Map.of("subagents", List.of("reviewer")));
 
-        setup.open();
-
-        assertThat(setup.getTools()).isEmpty();
+        assertThatThrownBy(setup::open)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("declares neither an input schema nor an input type");
     }
 
-    /** Dropping one is not dropping the rest: the other callables stay usable. */
+    /** A shapeless sub-agent fails the whole setup: a usable sibling does not excuse it. */
     @Test
-    void aSubagentWithoutAnInputShapeDoesNotStopTheOthersFromBeingDeclared() throws Exception {
+    void aSubagentWithoutAnInputShapeFailsTheWholeSetup() {
         store.put("opaque", new StubSubagentSetup("Reviews a file."));
         store.put("coder", new StubSubagentSetup("Writes a patch.", CUSTOM_SCHEMA));
         StubChatSetup setup = setupWith(Map.of("subagents", List.of("opaque", "coder")));
 
-        setup.open();
-
-        assertThat(setup.getTools()).hasSize(1);
-        assertThat(setup.getTools().get(0).getMetadata().getName()).isEqualTo("subagent_coder");
+        assertThatThrownBy(setup::open)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Sub-agent opaque");
     }
 
     /** The reserved prefix keeps the two namespaces apart, so one name may serve both. */
@@ -278,7 +278,7 @@ class BaseChatModelSetupSubagentTest {
 
         assertThat(setup.getTools()).hasSize(2);
         assertThat(setup.getTools().get(0).getMetadata().getName()).isEqualTo("reviewer");
-        assertThat(setup.getTools().get(1).getMetadata().getName()).isEqualTo("subagent_reviewer");
+        assertThat(setup.getTools().get(1).getMetadata().getName()).isEqualTo("_subagent_reviewer");
     }
 
     @Test
@@ -298,7 +298,7 @@ class BaseChatModelSetupSubagentTest {
 
         assertThatThrownBy(setup::open)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Duplicate callable name: subagent_reviewer");
+                .hasMessageContaining("Duplicate callable name: _subagent_reviewer");
     }
 
     /**

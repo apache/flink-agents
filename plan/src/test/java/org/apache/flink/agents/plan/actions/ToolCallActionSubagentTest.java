@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -59,7 +60,7 @@ class ToolCallActionSubagentTest {
         RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok(payload));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
@@ -73,7 +74,7 @@ class ToolCallActionSubagentTest {
         RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("done"));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         assertThat(agent.prompts).containsExactly(Map.of("prompt", "review the diff"));
         // A sub-agent call resolves through the setup, which owns its own durable execution.
@@ -86,12 +87,12 @@ class ToolCallActionSubagentTest {
                 new RecordingSubagentSetup(SubagentResult.error("upstream refused"));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Sub-agent subagent_reviewer execute failed: upstream refused");
+                .isEqualTo("Sub-agent _subagent_reviewer execute failed: upstream refused");
         assertThat(response.getError()).containsEntry("call-1", "upstream refused");
     }
 
@@ -101,12 +102,12 @@ class ToolCallActionSubagentTest {
         agent.submitFailure = new IllegalStateException("mailbox is full");
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo("Sub-agent subagent_reviewer execute failed: mailbox is full");
+                .isEqualTo("Sub-agent _subagent_reviewer execute failed: mailbox is full");
         assertThat(response.getError()).containsEntry("call-1", "mailbox is full");
     }
 
@@ -116,12 +117,12 @@ class ToolCallActionSubagentTest {
                 new RecordingSubagentSetup(SubagentResult.ok(Map.of("handle", new Object())));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
-                .startsWith("Sub-agent subagent_reviewer execute failed")
+                .startsWith("Sub-agent _subagent_reviewer execute failed")
                 .contains("result.handle");
         assertThat(response.getError().get("call-1")).contains("result.handle");
     }
@@ -133,7 +134,7 @@ class ToolCallActionSubagentTest {
                 new TypedRecordingSubagentSetup(SubagentResult.ok(new Verdict(true, "clean")));
         FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
@@ -150,7 +151,7 @@ class ToolCallActionSubagentTest {
                                 "reviewer", new RecordingSubagentSetup(SubagentResult.ok("done")))
                         .withTool("reviewer", new StubTool("reviewer"));
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent delegated = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(delegated.getSuccess()).containsEntry("call-1", true);
@@ -171,13 +172,13 @@ class ToolCallActionSubagentTest {
         FakeRunnerContext ctx = new FakeRunnerContext();
         ctx.agents.put("reviewer", new StubTool("reviewer"));
 
-        ToolCallAction.processToolRequest(toolRequest("subagent_reviewer"), ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
         assertThat(response.getResponses().get("call-1").getError())
                 .isEqualTo(
-                        "Sub-agent subagent_reviewer execute failed: Sub-agent reviewer must"
+                        "Sub-agent _subagent_reviewer execute failed: Sub-agent reviewer must"
                                 + " resolve to a SubagentSetup, but was "
                                 + StubTool.class.getName()
                                 + ".");
@@ -205,6 +206,31 @@ class ToolCallActionSubagentTest {
         assertThat(ctx.durableExecutions).isOne();
     }
 
+    /**
+     * The batched path runs sub-agent calls concurrently: every call is submitted before any is
+     * awaited, so the async setups' remote runs overlap instead of blocking one behind the next.
+     * The serial path interleaves submit and await per call, which this order assertion rejects.
+     */
+    @Test
+    void submitsEverySubagentCallBeforeAwaitingAnyUnderParallelDispatch() throws Exception {
+        List<String> ops = new ArrayList<>();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext()
+                        .withParallelToolCalls()
+                        .withAgent("a", new OrderRecordingSubagentSetup("a", ops))
+                        .withAgent("b", new OrderRecordingSubagentSetup("b", ops));
+
+        ToolCallAction.processToolRequest(twoSubagentRequest("a", "b"), ctx);
+
+        assertThat(ops).containsExactly("submit:a", "submit:b", "await:a", "await:b");
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess())
+                .containsEntry("call-1", true)
+                .containsEntry("call-2", true);
+        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("a done");
+        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("b done");
+    }
+
     private static ToolRequestEvent toolRequest(String callableName) {
         return new ToolRequestEvent(
                 "model",
@@ -218,6 +244,35 @@ class ToolCallActionSubagentTest {
                                 Map.of(
                                         "name",
                                         callableName,
+                                        "arguments",
+                                        Map.of("prompt", "review the diff")))));
+    }
+
+    /** One request carrying two sub-agent calls, so the batched path has more than one to run. */
+    private static ToolRequestEvent twoSubagentRequest(String first, String second) {
+        return new ToolRequestEvent(
+                "model",
+                List.of(
+                        Map.of(
+                                "id",
+                                "call-1",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of(
+                                        "name",
+                                        SubagentSetup.CALLABLE_NAME_PREFIX + first,
+                                        "arguments",
+                                        Map.of("prompt", "review the diff"))),
+                        Map.of(
+                                "id",
+                                "call-2",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of(
+                                        "name",
+                                        SubagentSetup.CALLABLE_NAME_PREFIX + second,
                                         "arguments",
                                         Map.of("prompt", "review the diff")))));
     }
@@ -321,6 +376,63 @@ class ToolCallActionSubagentTest {
         }
     }
 
+    /** Records the order in which submit and await happen, into a log shared across sub-agents. */
+    private static class OrderRecordingSubagentSetup extends SubagentSetup {
+        private final String label;
+        private final List<String> ops;
+
+        OrderRecordingSubagentSetup(String label, List<String> ops) {
+            super("Orders a diff.");
+            this.label = label;
+            this.ops = ops;
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt) {
+            ops.add("submit:" + label);
+            return new OrderRecordingFuture(label, ops);
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId) {
+            return submit(ctx, prompt);
+        }
+
+        @Override
+        public SubagentFuture submit(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            return submit(ctx, prompt);
+        }
+    }
+
+    /** Records its await into the shared log, then resolves to a fixed success. */
+    private static class OrderRecordingFuture extends SubagentFuture {
+        private final String label;
+        private final List<String> ops;
+
+        OrderRecordingFuture(String label, List<String> ops) {
+            super("session-" + label, "call-" + label);
+            this.label = label;
+            this.ops = ops;
+        }
+
+        @Override
+        public boolean isDone() {
+            return true;
+        }
+
+        @Override
+        public SubagentResult await() {
+            ops.add("await:" + label);
+            return SubagentResult.ok(label + " done");
+        }
+
+        @Override
+        public SubagentFutures combine(SubagentFuture... others) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
     private static class StubTool extends Tool {
         StubTool(String name) {
             super(new ToolMetadata(name, "Stub.", "{}"));
@@ -351,6 +463,13 @@ class ToolCallActionSubagentTest {
 
         FakeRunnerContext withAgent(String name, SubagentSetup agent) {
             agents.put(name, agent);
+            return this;
+        }
+
+        /** Turns on the batched path: async tool calls with room to run more than one. */
+        FakeRunnerContext withParallelToolCalls() {
+            config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
+            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
             return this;
         }
 

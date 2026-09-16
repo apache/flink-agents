@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
@@ -123,10 +124,11 @@ public class ToolCallAction {
             Tool tool = null;
             SubagentSetup agent = null;
             Exception preparationError = null;
-            // The reserved subagent_ prefix separates the two namespaces: tool registration rejects
-            // the prefix, so a prefixed callable name can only address a sub-agent. Matched once
-            // here and carried down, because resolving the AGENT resource throws when the name is
-            // absent and would otherwise have to be attempted for every plain tool call.
+            // The reserved _subagent_ prefix separates the two namespaces: tool
+            // registration rejects the prefix, so a prefixed callable name can only
+            // address a sub-agent. Matched once here and carried down, because resolving
+            // the AGENT resource throws when the name is absent and would otherwise have
+            // to be attempted for every plain tool call.
             boolean delegated = name.startsWith(SubagentSetup.CALLABLE_NAME_PREFIX);
             try {
                 if (delegated) {
@@ -231,16 +233,21 @@ public class ToolCallAction {
             Map<String, String> error,
             Map<String, ToolResponse> responses)
             throws InterruptedException {
-        // Sub-agent calls already run through durable execution inside the setup, so they stay
-        // synchronous here and only the tool calls enter the durable batch.
+        // Sub-agent calls run through durable execution inside the setup, so they cannot join the
+        // tool batch below; they are dispatched concurrently on their own (submit every call, then
+        // await each) so that, like the batched tool calls, they overlap instead of running one by
+        // one. The agent phase completes before the tool batch, so a sub-agent handle is never left
+        // submitted-but-unawaited if the batch below rethrows.
+        List<ToolCallExecution> agentExecutions = new ArrayList<>();
         List<ToolCallExecution> toolExecutions = new ArrayList<>();
         for (ToolCallExecution execution : executions) {
             if (execution.agent != null) {
-                dispatchAgentExecution(execution, ctx, success, error, responses);
+                agentExecutions.add(execution);
             } else {
                 toolExecutions.add(execution);
             }
         }
+        dispatchAgentExecutions(agentExecutions, ctx, success, error, responses);
         List<DurableCallable<ToolResponse>> callables = new ArrayList<>(toolExecutions.size());
         for (ToolCallExecution execution : toolExecutions) {
             callables.add(execution.callable);
@@ -431,15 +438,61 @@ public class ToolCallAction {
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
             recordAgentResult(execution, result, ctx, success, error, responses);
         } catch (Exception e) {
-            recordExecutionException(execution, e, success, error, responses);
-            ExecutionReporters.failed(
-                    ctx,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
-                    execution.entityMetadata,
-                    e,
-                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+            recordAgentFailure(execution, e, ctx, success, error, responses);
         }
+    }
+
+    /**
+     * Runs the sub-agent calls concurrently rather than one by one: every {@code submit} is issued
+     * first, so the async setups start their remote runs together, and each future is then awaited.
+     * Submitting and awaiting both follow {@code agentExecutions} order, which is the deterministic
+     * tool-call order, so the setup's id allocator hands out the same ids on every replay and the
+     * durable keys stay stable. The per-call try/catch keeps the isolation the serial path had: one
+     * sub-agent failing, at submit or at await, is recorded and reported without stopping the rest.
+     */
+    private static void dispatchAgentExecutions(
+            List<ToolCallExecution> agentExecutions,
+            RunnerContext ctx,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        // submit() runs through durable execution inside the setup, so it is not wrapped here.
+        List<ToolCallExecution> submitted = new ArrayList<>(agentExecutions.size());
+        List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
+        for (ToolCallExecution execution : agentExecutions) {
+            try {
+                futures.add(execution.agent.submit(ctx, execution.agentArguments));
+                submitted.add(execution);
+            } catch (Exception e) {
+                recordAgentFailure(execution, e, ctx, success, error, responses);
+            }
+        }
+        for (int i = 0; i < futures.size(); i++) {
+            ToolCallExecution execution = submitted.get(i);
+            try {
+                SubagentResult result = futures.get(i).await();
+                recordAgentResult(execution, result, ctx, success, error, responses);
+            } catch (Exception e) {
+                recordAgentFailure(execution, e, ctx, success, error, responses);
+            }
+        }
+    }
+
+    private static void recordAgentFailure(
+            ToolCallExecution execution,
+            Exception e,
+            RunnerContext ctx,
+            Map<String, Boolean> success,
+            Map<String, String> error,
+            Map<String, ToolResponse> responses) {
+        recordExecutionException(execution, e, success, error, responses);
+        ExecutionReporters.failed(
+                ctx,
+                ExecutionReporter.EntityTypes.TOOL,
+                execution.name,
+                execution.entityMetadata,
+                e,
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
     }
 
     private static void recordAgentResult(

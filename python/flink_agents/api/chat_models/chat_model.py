@@ -15,7 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import logging
 import re
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -37,8 +36,6 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
-
-_LOG = logging.getLogger(__name__)
 
 
 class StructuredOutputStrategy(str, Enum):
@@ -484,17 +481,18 @@ class BaseChatModelSetup(Resource):
                     f"but was {type(setup).__name__}"
                 )
                 raise TypeError(msg)
+            # A sub-agent that declares neither an input schema nor an input type
+            # gives the model no arguments to build a call from, so the declaration
+            # is a mistake rather than something to skip: fail the job at setup
+            # time, consistent with the duplicate-name and bridge-handle checks
+            # above.
             if setup.input_schema is None:
-                # Unlike a bridge handle this is a sub-agent the caller could have
-                # described, so it is dropped with a warning rather than failing the
-                # job: the rest of the callables stay usable.
-                _LOG.warning(
-                    "Sub-agent %s declares neither an input schema nor an input"
-                    " type, so there are no arguments for the model to build a"
-                    " call from and it is not offered as a callable.",
-                    name,
+                msg = (
+                    f"Sub-agent {name} declares neither an input schema nor an "
+                    f"input type, so there are no arguments for the model to "
+                    f"build a call from."
                 )
-                continue
+                raise ValueError(msg)
             callables.append(
                 SubagentTool.of(name, setup.description, setup.input_schema)
             )
