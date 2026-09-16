@@ -51,6 +51,8 @@ Chat models communicate through built-in events:
 - **ChatRequestEvent**: Sent by actions to request a chat completion from the LLM
 - **ChatResponseEvent**: Received by actions containing the LLM's response
 
+A `ChatRequestEvent` can name a model router instead of a chat model to pick the model per request; see [Model Routing]({{< ref "docs/development/model_routing" >}}).
+
 ### Usage Example
 
 Here's how to define and use chat models in a workflow agent:
@@ -1655,4 +1657,4 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action sends a `ChatResponseEvent`.
 
-If the model asks to call tools, `chat_model_action` sends a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}).
+If the model asks to call tools, `chat_model_action` sends a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}). When the request names a model router, `chat_model_action` selects the model first and emits a `ModelRoutingEvent`; see [Model Routing]({{< ref "docs/development/model_routing#observability" >}}).

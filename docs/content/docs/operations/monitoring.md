@@ -49,6 +49,7 @@ We offer data monitoring for built-in metrics, including input runs, events, act
 | **Action** | action.\<action_name\>.actionExecutionLatencyMs | End-to-end latency of one logical Action execution, including asynchronous waits and continuations. | Histogram |
 | **Action** | action.\<action_name\>.numOfPendingActionTasks | Current number of physical Action task segments waiting to run, including continuations. | Gauge |
 | **Action** | action.\<action_name\>.numOfActiveActionExecutions | Current number of logical Action executions that have started but have not reached a terminal state. | Gauge |
+| **Action**  | action.\<action_name\>.routingDecisionLatencyMs | Wall-clock time, in milliseconds, spent resolving a model-routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`. Recorded once per routing decision, including replayed ones; see [Model Routing]({{< ref "docs/development/model_routing#observability" >}}). | Histogram |
 | **Agent**   | eventLogTruncatedEvents                          | Number of event log records whose payload was truncated at `STANDARD` level. Increments once per event, regardless of how many fields inside it were truncated. Use this to decide whether to raise truncation thresholds or move specific event types to `VERBOSE`. | Count |
 | **Agent**   | eventLogWriteFailures                           | Number of Event Log write attempts for which `append`, `flush`, or both failed. Event Log writes are best-effort and do not fail the job. | Count |
 
@@ -461,6 +462,7 @@ You can override the level for individual event types using the `event-log.type.
 | `ToolResponseEvent`      | `_tool_response_event`           |
 | `ContextRetrievalRequestEvent`  | `_context_retrieval_request_event`  |
 | `ContextRetrievalResponseEvent` | `_context_retrieval_response_event` |
+| `ModelRoutingEvent`      | `_model_routing_event`           |
 | Execution lifecycle: created    | `_execution_created_event`          |
 | Execution lifecycle: started    | `_execution_started_event`          |
 | Execution lifecycle: finished   | `_execution_finished_event`         |
