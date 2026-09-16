@@ -185,6 +185,27 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     /**
+     * Whether a request built from these inputs would carry a native {@code response_format}, the
+     * effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Nothing else about the request constrains the native branch, so neither the tools nor the
+     * parameters are read: this connection sends a native schema alongside bound tools, and the one
+     * parameter that would matter is the model, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
+    }
+
+    /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
      * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
      * set, and the entry is absent when the provider reports none.
@@ -275,12 +296,12 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
         // the prompt-engineering fallback.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a model this predicate rejects therefore gets an unconstrained response
-        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
-        // this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility half is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on. It is asked with the parameters as they arrived,
+        // not the stripped copy above, so that an override reading a parameter sees the request
+        // the answer is about.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && supportsNativeStructuredOutput(modelName)) {
             builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 

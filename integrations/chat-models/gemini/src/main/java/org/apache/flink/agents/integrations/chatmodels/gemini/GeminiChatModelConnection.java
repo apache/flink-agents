@@ -251,6 +251,34 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         return modelName;
     }
 
+    /**
+     * Whether a config built from these inputs would carry a native {@code responseJsonSchema}, the
+     * effective model's capability aside.
+     *
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
+     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And the request
+     * must bind no tools: outside a documented preview, Gemini answers a request combining function
+     * declarations with a JSON response mime type with {@code 400 INVALID_ARGUMENT}, so a
+     * tool-carrying request keeps its tools and drops the schema. This is the only connection whose
+     * answer the tools can move.
+     *
+     * <p>No parameter is read today. It is nonetheless asked with the caller's parameters rather
+     * than a copy the request builder has consumed, so that a conjunct added here later reads the
+     * map the request is actually built from instead of one several keys short of it.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools the tools the request would bind; null and empty alike mean none
+     * @param arguments not read
+     * @return true if {@code outputSchema} is a POJO {@link Class} and no tools would be bound
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> arguments) {
+        return outputSchema instanceof Class && (tools == null || tools.isEmpty());
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
@@ -278,9 +306,12 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments,
             Object outputSchema) {
-        Map<String, Object> args = arguments != null ? new HashMap<>(arguments) : new HashMap<>();
+        // Passed through to buildConfig rather than stripped here, so the feasibility query is
+        // asked about the same map a caller outside this connection would ask with. buildConfig
+        // copies before consuming, so the caller's map is still never mutated.
+        Map<String, Object> callerArgs = arguments != null ? arguments : new HashMap<>();
 
-        Object modelObj = args.remove("model");
+        Object modelObj = callerArgs.get("model");
         String modelName = modelObj != null ? modelObj.toString() : this.defaultModel;
         if (modelName == null || modelName.isBlank()) {
             modelName = this.defaultModel;
@@ -303,7 +334,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                             .collect(Collectors.toList());
 
             GenerateContentConfig config =
-                    buildConfig(messages, tools, args, modelName, outputSchema);
+                    buildConfig(messages, tools, callerArgs, modelName, outputSchema);
 
             GenerateContentResponse response =
                     client.models.generateContent(modelName, contents, config);
@@ -353,14 +384,20 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     }
 
     // Package-visible for unit testing of the request-config assembly. modelName is passed
-    // explicitly rather than read from arguments: chat() removes the model key before calling
-    // this method, so the map never carries it here.
+    // explicitly rather than read from arguments, because chat() has already resolved it against
+    // the connection's default by this point.
+    //
+    // arguments is the caller's parameter map and is not consumed: the keys recognized here are
+    // taken from a copy, so the map stays whole for the feasibility query below, which has to be
+    // asked about the same parameters a caller outside this connection would ask with.
     GenerateContentConfig buildConfig(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments,
             String modelName,
             Object outputSchema) {
+        Map<String, Object> consumable =
+                arguments != null ? new HashMap<>(arguments) : new HashMap<>();
         GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
 
         Content systemInstruction = extractSystemInstruction(messages);
@@ -368,19 +405,19 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             builder.systemInstruction(systemInstruction);
         }
 
-        Object temperature = arguments.remove("temperature");
+        Object temperature = consumable.remove("temperature");
         if (temperature instanceof Number) {
             builder.temperature(((Number) temperature).floatValue());
         }
 
-        Object maxOutputTokens = arguments.remove("max_output_tokens");
+        Object maxOutputTokens = consumable.remove("max_output_tokens");
         if (maxOutputTokens instanceof Number) {
             builder.maxOutputTokens(((Number) maxOutputTokens).intValue());
         }
 
         @SuppressWarnings("unchecked")
         Map<String, Object> additionalKwargs =
-                (Map<String, Object>) arguments.remove("additional_kwargs");
+                (Map<String, Object>) consumable.remove("additional_kwargs");
         if (additionalKwargs != null) {
             applyAdditionalKwargs(builder, additionalKwargs);
         }
@@ -395,13 +432,10 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         // temperature and max_output_tokens, and applyAdditionalKwargs recognizes only top_k,
         // top_p and stop_sequences, so there is no caller-supplied value to collide with.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a schema form, a model, or a tool-carrying request this branch skips
-        // therefore gets an unconstrained response instead of an error. Once strategy resolution is
-        // wired up, NATIVE must either bypass this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class
-                && (tools == null || tools.isEmpty())
+        // The schema form and the empty-tools precondition are asked rather than restated, so a
+        // caller asking the same question gets the answer this branch acts on. Asked with the
+        // caller's parameters rather than the consumed copy, so both ask about the same map.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, arguments)
                 && supportsNativeStructuredOutput(modelName)) {
             builder.responseMimeType("application/json");
             builder.responseJsonSchema(toNativeJsonSchema((Class<?>) outputSchema));

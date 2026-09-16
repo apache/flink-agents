@@ -51,6 +51,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -819,6 +820,114 @@ class AzureOpenAIChatModelConnectionTest {
                                 .logprobs(Optional.empty())
                                 .message(message)
                                 .build());
+    }
+
+    /** A connection that records what the feasibility query answered on each request it built. */
+    private static AzureOpenAIChatModelConnection recordingConnection(
+            String apiVersion, AtomicReference<Boolean> answered) {
+        ResourceDescriptor desc =
+                connectionDescriptor()
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("api_version", apiVersion)
+                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
+                        .build();
+        return new AzureOpenAIChatModelConnection(desc, NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("The feasibility query answers exactly what the native branch decides")
+    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The backing model
+        // is capable throughout, so the api-version floor and the schema form are what move.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+
+        for (String apiVersion : List.of(CAPABLE_API_VERSION, BELOW_FLOOR_API_VERSION)) {
+            AzureOpenAIChatModelConnection connection = recordingConnection(apiVersion, answered);
+
+            for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
+                for (List<Tool> tools :
+                        Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
+                    answered.set(null);
+
+                    ChatCompletionCreateParams request =
+                            connection.buildRequest(
+                                    userMessage(), tools, params("gpt-4o-mini"), schema);
+
+                    // A null here means the branch never consulted the query at all, which is
+                    // the drift this test exists to catch. The value assertion below would fail
+                    // too, but on a null comparison that does not say why.
+                    assertThat(answered.get())
+                            .as("query reached for api-version %s, schema %s", apiVersion, schema)
+                            .isNotNull();
+                    assertThat(answered.get())
+                            .as("api-version %s, schema %s, tools %s", apiVersion, schema, tools)
+                            .isEqualTo(request.responseFormat().isPresent());
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("The feasibility query reports an api-version below the floor infeasible")
+    void testFeasibilityQueryFollowsTheApiVersionFloor() {
+        // Pinning the answer itself, not just its agreement with the branch: an override that
+        // dropped this conjunct would drop it from the branch too, and the binding test would
+        // still see the two agree.
+        assertThat(
+                        connection(CAPABLE_API_VERSION)
+                                .canApplyNativeStructuredOutput(
+                                        Person.class, List.of(), params("gpt-4o-mini")))
+                .isTrue();
+        assertThat(
+                        connection(BELOW_FLOOR_API_VERSION)
+                                .canApplyNativeStructuredOutput(
+                                        Person.class, List.of(), params("gpt-4o-mini")))
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("The feasibility query leaves the model's capability out of its answer")
+    void testFeasibilityQueryExcludesModelCapability() {
+        // Feasibility and capability are independent: the backing model is outside the allowlist,
+        // which the branch's own conjunct handles, and says nothing about whether this connection
+        // could translate the schema form at all.
+        Map<String, Object> incapable = params("gpt-3.5-turbo");
+
+        assertThat(connection().canApplyNativeStructuredOutput(Person.class, List.of(), incapable))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .buildRequest(userMessage(), List.of(), incapable, Person.class)
+                                .responseFormat())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
+    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+        // The request is built from the same tools and parameters the answer was about, and this
+        // builder removes the backing model from its own copy, so a query copying that idiom would
+        // answer about one request and build another. Both inputs are immutable, so a consuming
+        // implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new StubTool());
+        Map<String, Object> modelParams =
+                Map.of("model", DEPLOYMENT, "model_of_azure_deployment", "gpt-4o-mini");
+
+        connection().canApplyNativeStructuredOutput(Person.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams)
+                .isEqualTo(Map.of("model", DEPLOYMENT, "model_of_azure_deployment", "gpt-4o-mini"));
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */
