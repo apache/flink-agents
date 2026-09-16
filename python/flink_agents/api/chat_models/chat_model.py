@@ -194,6 +194,69 @@ class BaseChatModelConnection(Resource, ABC):
         """
         return None if model_kwargs is None else model_kwargs.get("model")
 
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether this connection could apply ``output_schema`` natively to a
+        request built from these tools and parameters, leaving the effective model's
+        capability out of the answer.
+
+        Feasibility, not capability: the answer covers everything this connection's
+        native branch requires apart from the effective model, including conditions
+        fixed by the connection's own configuration rather than carried by the request,
+        and says nothing about whether the model the request names would honor a native
+        schema, which is the separate question ``supports_native_structured_output``
+        answers. Neither answer bounds the other, in either direction. A ``BaseModel``
+        subclass on a model the connection does not classify as capable is feasible
+        here and not capable there; a ``RowTypeInfo``, which no connection translates
+        natively, on a connection whose capability predicate is unconditionally true is
+        capable there and not feasible here.
+
+        An override must answer from the same logic its own request path uses to decide
+        the native branch, so that the answer cannot drift from what the request ends up
+        carrying.
+
+        A ``False`` answer is not an error: it reports that the request would carry no
+        native schema, so the caller keeps the prompt-engineering fallback rather than
+        losing the schema. A ``True`` is not a promise that the call succeeds either: a
+        connection may still raise once its native branch has decided to apply the
+        schema, as happens where the caller supplied a response format of its own that
+        conflicts with it.
+
+        The default ``False`` is safe only for a connection that translates no schema at
+        all. A connection whose request path has a native branch but which leaves this
+        unoverridden reports every request infeasible: a caller that degrades to the
+        prompt-engineering fallback then silently never reaches that branch, and one
+        that refuses an unapplicable schema instead fails on a request the connection
+        could in fact have applied.
+
+        Answers about the request rather than validating it. A ``None``
+        ``output_schema`` is an unconstrained request, a ``None`` ``tools`` is a request
+        binding no tools, and a ``None`` ``model_kwargs`` is accepted; none of the three
+        may raise. The parameters must be read without being consumed, so that the same
+        mapping still builds the request the answer was about.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            The tools the request would bind, may be ``None`` or empty for none.
+        model_kwargs : Mapping[str, Any] | None
+            The parameters the request would be built from, may be ``None``.
+
+        Returns:
+        -------
+        bool
+            ``True`` if every condition the native branch imposes is met apart from
+            the effective model's capability.
+        """
+        return False
+
     def _reject_unsupported_output_schema(
         self, output_schema: OutputSchema | None
     ) -> None:
