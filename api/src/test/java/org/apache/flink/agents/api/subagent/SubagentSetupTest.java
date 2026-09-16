@@ -36,9 +36,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Pins the routing metadata {@link SubagentSetup} carries for a caller and the descriptor a remote
- * task rebuilds it from. The metadata travels as descriptor arguments, the single wire both a
- * remote task and the Python side read, so it is pinned there rather than on a serialized object.
+ * Pins the construction contract of {@link SubagentSetup} and the routing metadata it carries for a
+ * caller. Every setup carries the descriptor a remote task rebuilds it from, and that descriptor
+ * names the setup's own type, so a registered sub-agent is always rebuildable into the right class.
+ * The metadata travels as descriptor arguments, the single wire both a remote task and the Python
+ * side read, so it is pinned there rather than on a serialized object.
  */
 public class SubagentSetupTest {
 
@@ -373,6 +375,18 @@ public class SubagentSetupTest {
         assertThatThrownBy(() -> new TestSubagentSetup((ResourceDescriptor) null, null))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessageContaining("must carry a ResourceDescriptor");
+    }
+
+    @Test
+    void mismatchedDescriptorClazzIsRejectedAtConstruction() {
+        // The descriptor names the class a remote task reflects over to rebuild the setup, so it
+        // must name this setup's own type; a copy-paste or aliasing mistake is caught here rather
+        // than rebuilding the wrong class on a far task.
+        ResourceDescriptor mismatched =
+                ResourceDescriptor.Builder.newBuilder("com.example.SomeOtherSubagent").build();
+        assertThatThrownBy(() -> new TestSubagentSetup(mismatched, null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("must carry a descriptor naming its own type");
     }
 
     private static List<String> textValues(JsonNode array) {

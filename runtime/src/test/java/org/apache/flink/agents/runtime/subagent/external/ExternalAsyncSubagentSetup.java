@@ -49,6 +49,8 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     private static final Logger LOG = LoggerFactory.getLogger(ExternalAsyncSubagentSetup.class);
 
+    private static final String FIELD_BASE_URL = "base_url";
+
     private final String baseUrl;
 
     // Static because the operator materializes a rebuilt instance from the descriptor; the
@@ -68,8 +70,8 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
     public ExternalAsyncSubagentSetup(String baseUrl, long probeIntervalMillis) {
         this(
                 ResourceDescriptor.Builder.newBuilder(ExternalAsyncSubagentSetup.class.getName())
-                        .addInitialArgument("base_url", baseUrl)
-                        .addInitialArgument("status_poll_interval_millis", probeIntervalMillis)
+                        .addInitialArgument(FIELD_BASE_URL, baseUrl)
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, probeIntervalMillis)
                         .build(),
                 null);
     }
@@ -78,7 +80,7 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
     public ExternalAsyncSubagentSetup(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.baseUrl = descriptor.getArgument("base_url");
+        this.baseUrl = descriptor.getArgument(FIELD_BASE_URL);
     }
 
     private ExternalAgentClient client() {

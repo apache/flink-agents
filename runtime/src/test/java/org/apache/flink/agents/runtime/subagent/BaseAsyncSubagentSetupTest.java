@@ -475,6 +475,9 @@ public class BaseAsyncSubagentSetupTest {
 
     @Test
     void descriptorArgumentSetsTheStatusPollInterval() {
+        // The key is spelled out rather than referencing the base's protected constant on purpose:
+        // this asserts the wire contract (the exact argument name a descriptor-built setup reads),
+        // so it stays a literal to catch any change to that name.
         DescriptorAsyncSetup setup =
                 new DescriptorAsyncSetup(
                         new ResourceDescriptor(

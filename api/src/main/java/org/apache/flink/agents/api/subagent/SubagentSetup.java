@@ -82,8 +82,11 @@ public abstract class SubagentSetup extends SerializableResource {
     /**
      * Constructs the setup from the descriptor carrying its configuration. This is the only
      * construction path: concrete subclasses expose a public form of it so the framework can
-     * rebuild them from a descriptor on a remote task. The caller-facing metadata travels as
-     * descriptor arguments, so it is read back here rather than passed alongside the descriptor.
+     * rebuild them from a descriptor on a remote task. The descriptor must name this setup's own
+     * concrete type as its clazz, because that name is what the remote rebuild reflects over; a
+     * mismatch is rejected here rather than surfacing as a wrong-class rebuild on a far task. The
+     * caller-facing metadata travels as descriptor arguments, so it is read back here rather than
+     * passed alongside the descriptor.
      */
     protected SubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         this.descriptor =
@@ -91,6 +94,13 @@ public abstract class SubagentSetup extends SerializableResource {
                         descriptor,
                         "A SubagentSetup must carry a ResourceDescriptor so it can be rebuilt on a"
                                 + " remote task.");
+        if (!getClass().getName().equals(this.descriptor.getClazz())) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "A %s must carry a descriptor naming its own type, but the descriptor"
+                                    + " names %s; a remote task would rebuild the wrong class.",
+                            getClass().getName(), this.descriptor.getClazz()));
+        }
         String declaredDescription = this.descriptor.getArgument(FIELD_DESCRIPTION);
         this.description = declaredDescription == null ? "" : declaredDescription;
         String declaredInputSchema = this.descriptor.getArgument(FIELD_INPUT_SCHEMA);

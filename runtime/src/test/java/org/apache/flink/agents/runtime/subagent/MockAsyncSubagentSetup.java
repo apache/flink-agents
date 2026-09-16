@@ -38,6 +38,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
+    private static final String FIELD_QUERIES_UNTIL_COMPLETE = "queries_until_complete";
+    private static final String FIELD_FAIL_ON_POST = "fail_on_post";
+
     /** One recorded remote run, keyed by {@code sessionId#callId}. */
     private static final class Run {
         private final Object result;
@@ -83,12 +86,12 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
     public MockAsyncSubagentSetup(int queriesUntilComplete, boolean failOnPost) {
         this(
                 ResourceDescriptor.Builder.newBuilder(MockAsyncSubagentSetup.class.getName())
-                        .addInitialArgument("queries_until_complete", queriesUntilComplete)
-                        .addInitialArgument("fail_on_post", failOnPost)
+                        .addInitialArgument(FIELD_QUERIES_UNTIL_COMPLETE, queriesUntilComplete)
+                        .addInitialArgument(FIELD_FAIL_ON_POST, failOnPost)
                         // Runs turn terminal after a fixed number of probes rather than after
                         // elapsed time, so probing without a delay keeps the counts identical and
                         // the tests fast.
-                        .addInitialArgument("status_poll_interval_millis", 0L)
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, 0L)
                         .build(),
                 null);
     }
@@ -96,8 +99,8 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
     /** Descriptor-based construction, reading the config the convenience constructor captured. */
     public MockAsyncSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.queriesUntilComplete = descriptor.getArgument("queries_until_complete", 2);
-        this.failOnPost = descriptor.getArgument("fail_on_post", false);
+        this.queriesUntilComplete = descriptor.getArgument(FIELD_QUERIES_UNTIL_COMPLETE, 2);
+        this.failOnPost = descriptor.getArgument(FIELD_FAIL_ON_POST, false);
     }
 
     @Override

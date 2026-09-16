@@ -245,6 +245,16 @@ public class BaseSubagentSetupTest {
     /** Capture setup exposing the current task's registry for direct tracking. */
     public static class RegistryExposingSetup extends AllocatingCaptureSetup {
 
+        // Names its own type in the descriptor: SubagentSetup's construction check requires the
+        // descriptor clazz to match the concrete type, which the inherited convenience constructor
+        // would otherwise name as the superclass.
+        public RegistryExposingSetup() {
+            super(
+                    ResourceDescriptor.Builder.newBuilder(RegistryExposingSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
         PendingSubagentCallRegistry exposedRegistry() {
             return currentTaskRegistry();
         }

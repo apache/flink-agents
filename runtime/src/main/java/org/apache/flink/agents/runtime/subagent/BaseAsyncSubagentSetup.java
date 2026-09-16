@@ -37,6 +37,14 @@ import java.util.concurrent.Callable;
 public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
 
     /**
+     * Descriptor argument key for the status-poll interval, and the single source of truth for it:
+     * the descriptor-based constructor below reads this key, while subclasses that capture a poll
+     * interval into their descriptor write it. Sharing the constant keeps the read and write ends
+     * from drifting apart.
+     */
+    protected static final String FIELD_STATUS_POLL_INTERVAL_MILLIS = "status_poll_interval_millis";
+
+    /**
      * Delay between status probes while waiting for the run to reach a terminal state. Defaults to
      * {@code 500}. The descriptor-based constructor reads the optional {@code
      * status_poll_interval_millis} argument over it, and subclasses may override it directly.
@@ -51,7 +59,7 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
     protected BaseAsyncSubagentSetup(
             ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        Number statusPollInterval = descriptor.getArgument("status_poll_interval_millis");
+        Number statusPollInterval = descriptor.getArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS);
         if (statusPollInterval != null) {
             this.statusPollIntervalMillis = statusPollInterval.longValue();
         }

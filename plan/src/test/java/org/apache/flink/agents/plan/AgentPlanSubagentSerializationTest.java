@@ -99,14 +99,17 @@ public class AgentPlanSubagentSerializationTest {
      */
     public static class ExternalReviewSubagent extends SubagentSetup {
 
+        private static final String FIELD_ENDPOINT = "endpoint";
+        private static final String FIELD_MAX_RETRIES = "max_retries";
+
         private final String endpoint;
         private final int maxRetries;
 
         public ExternalReviewSubagent(String endpoint, int maxRetries) {
             this(
                     ResourceDescriptor.Builder.newBuilder(ExternalReviewSubagent.class.getName())
-                            .addInitialArgument("endpoint", endpoint)
-                            .addInitialArgument("max_retries", maxRetries)
+                            .addInitialArgument(FIELD_ENDPOINT, endpoint)
+                            .addInitialArgument(FIELD_MAX_RETRIES, maxRetries)
                             .build(),
                     null);
         }
@@ -114,8 +117,8 @@ public class AgentPlanSubagentSerializationTest {
         public ExternalReviewSubagent(
                 ResourceDescriptor descriptor, ResourceContext resourceContext) {
             super(descriptor, resourceContext);
-            this.endpoint = descriptor.getArgument("endpoint");
-            this.maxRetries = descriptor.getArgument("max_retries", 0);
+            this.endpoint = descriptor.getArgument(FIELD_ENDPOINT);
+            this.maxRetries = descriptor.getArgument(FIELD_MAX_RETRIES, 0);
         }
 
         public String getEndpoint() {

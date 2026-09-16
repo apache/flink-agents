@@ -33,6 +33,9 @@ public class TestSubagentSetup extends SubagentSetup {
 
     private static final long serialVersionUID = 1L;
 
+    private static final String FIELD_ENDPOINT = "endpoint";
+    private static final String FIELD_FAIL_ON_CALL = "fail_on_call";
+
     @Nullable private final String endpoint;
     private final boolean failOnCall;
 
@@ -43,8 +46,8 @@ public class TestSubagentSetup extends SubagentSetup {
     public TestSubagentSetup(@Nullable String endpoint, boolean failOnCall) {
         this(
                 ResourceDescriptor.Builder.newBuilder(TestSubagentSetup.class.getName())
-                        .addInitialArgument("endpoint", endpoint)
-                        .addInitialArgument("fail_on_call", failOnCall)
+                        .addInitialArgument(FIELD_ENDPOINT, endpoint)
+                        .addInitialArgument(FIELD_FAIL_ON_CALL, failOnCall)
                         .build(),
                 null);
     }
@@ -52,8 +55,8 @@ public class TestSubagentSetup extends SubagentSetup {
     /** Descriptor-based construction, as used by YAML-declared {@code subagents:} entries. */
     public TestSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
-        this.endpoint = descriptor.getArgument("endpoint");
-        this.failOnCall = Boolean.TRUE.equals(descriptor.getArgument("fail_on_call"));
+        this.endpoint = descriptor.getArgument(FIELD_ENDPOINT);
+        this.failOnCall = Boolean.TRUE.equals(descriptor.getArgument(FIELD_FAIL_ON_CALL));
     }
 
     @Nullable
