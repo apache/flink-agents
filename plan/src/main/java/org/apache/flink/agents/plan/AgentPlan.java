@@ -56,6 +56,8 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
+import org.apache.flink.agents.plan.subagent.InternalSubagentCompilationHelper;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
@@ -156,8 +158,18 @@ public class AgentPlan implements Serializable {
         this.actions = new LinkedHashMap<>();
         this.resourceProviders = new HashMap<>();
         this.config = config;
-        extractActionsFromAgent(agent);
-        extractResourceProvidersFromAgent(agent);
+
+        // Track visited agents for sub-agent cycle detection and plan reuse. The root owns the
+        // thread-local state and is responsible for clearing it.
+        boolean owner = InternalSubagentCompilationHelper.begin(agent);
+        try {
+            extractActionsFromAgent(agent);
+            extractResourceProvidersFromAgent(agent);
+        } finally {
+            if (owner) {
+                InternalSubagentCompilationHelper.end();
+            }
+        }
         this.actions = Collections.unmodifiableMap(new LinkedHashMap<>(actions));
         this.agentName = agentName != null ? agentName : defaultAgentName(agent);
         validateRoutingStrategies();
@@ -607,12 +619,22 @@ public class AgentPlan implements Serializable {
                         addResourceProvider(
                                 createDescriptorResourceProvider(
                                         name, ResourceType.AGENT, (ResourceDescriptor) value));
+                    } else if (value instanceof Agent) {
+                        // Compile a directly-registered child Agent into an internal sub-agent.
+                        // The child's compiled plan is reused across names and cycles are
+                        // rejected by InternalSubagentCompilationHelper. The resource name
+                        // doubles as the sub-agent scope used for runtime resolution.
+                        Agent child = (Agent) value;
+                        AgentPlan childPlan =
+                                InternalSubagentCompilationHelper.getOrCompile(
+                                        child, name, a -> new AgentPlan(a, this.config));
+                        addResourceProvider(new InternalSubagentProvider(name, childPlan));
                     } else {
                         throw new IllegalArgumentException(
                                 "AGENT resource '"
                                         + name
-                                        + "' must be a SubagentSetup or a ResourceDescriptor, but"
-                                        + " got "
+                                        + "' must be a SubagentSetup, a ResourceDescriptor, or an"
+                                        + " Agent, but got "
                                         + value.getClass().getName()
                                         + ".");
                     }

@@ -459,15 +459,19 @@ public class TaskLifecycleListenerNotificationTest {
                 // recordStart/prepared/started first and finishing/finished last. The started
                 // notification fires once per action execution, not per suspension round.
                 assertThat(RecordingListener.EVENTS)
-                        .startsWith("recordStart:5", "prepared:handleInput")
+                        .startsWith("recordStart:5", "prepared:handleInput", "started:handleInput")
                         .endsWith(
                                 "finishing:handleInput",
                                 "finished:handleInput",
                                 "recordFinished:5");
-                List<String> middle =
+                assertThat(
+                                RecordingListener.EVENTS.stream()
+                                        .filter(event -> event.equals("started:handleInput"))
+                                        .count())
+                        .as("started fires once per action execution, not per suspension round")
+                        .isEqualTo(1);
+                List<String> suspensionRounds =
                         RecordingListener.EVENTS.subList(3, RecordingListener.EVENTS.size() - 3);
-                assertThat(middle.get(0)).isEqualTo("started:handleInput");
-                List<String> suspensionRounds = middle.subList(1, middle.size());
                 assertThat(suspensionRounds)
                         .as("suspension rounds alternate transferred -> prepared")
                         .isNotEmpty();
