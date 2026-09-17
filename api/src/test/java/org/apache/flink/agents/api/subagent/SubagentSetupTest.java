@@ -25,6 +25,8 @@ import org.junit.jupiter.api.Test;
 
 import javax.annotation.Nullable;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -98,6 +100,7 @@ public class SubagentSetupTest {
     public static class Review {
         private String path;
         private int lines;
+        private byte[] payload;
 
         public String getPath() {
             return path;
@@ -105,6 +108,10 @@ public class SubagentSetupTest {
 
         public int getLines() {
             return lines;
+        }
+
+        public byte[] getPayload() {
+            return payload;
         }
     }
 
@@ -153,16 +160,26 @@ public class SubagentSetupTest {
         assertThat(new MetadataOnlySetup("desc", null).getInputSchema()).isNull();
     }
 
+    /**
+     * The derived schema is a cross-language contract, pinned here and in the Python mirror test on
+     * which properties a model must send and the JSON type of each. {@link InputSchemas} fills an
+     * object-level {@code required} from the non-defaulted properties, which Jackson's legacy
+     * generator leaves empty, and rewrites {@code byte[]} to the {@code string}/{@code binary} type
+     * pydantic gives a {@code bytes} field, rather than Jackson's array of the non-standard {@code
+     * byte} type.
+     */
     @Test
     void anInputTypeIsRenderedAsTheInputSchema() throws Exception {
-        TypedSetup setup = new TypedSetup(Review.class, Object.class);
+        JsonNode schema =
+                MAPPER.readTree(new TypedSetup(Review.class, Object.class).getInputSchema());
+        JsonNode properties = schema.path("properties");
 
-        JsonNode schema = MAPPER.readTree(setup.getInputSchema());
-        assertThat(schema.path("type").asText()).isEqualTo("object");
-        assertThat(schema.path("properties").path("path").path("type").asText())
-                .isEqualTo("string");
-        assertThat(schema.path("properties").path("lines").path("type").asText())
-                .isEqualTo("integer");
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("path", "payload");
+        assertThat(properties.path("path").path("type").asText()).isEqualTo("string");
+        assertThat(properties.path("lines").path("type").asText()).isEqualTo("integer");
+        assertThat(properties.path("payload").path("type").asText()).isEqualTo("string");
+        assertThat(properties.path("payload").path("format").asText()).isEqualTo("binary");
     }
 
     @Test
@@ -214,5 +231,11 @@ public class SubagentSetupTest {
         assertThat(json).doesNotContain("inputSchema");
         Map<String, Object> parsed = MAPPER.readValue(json, Map.class);
         assertThat(parsed).containsEntry("input_schema", customSchema);
+    }
+
+    private static List<String> textValues(JsonNode array) {
+        List<String> values = new ArrayList<>();
+        array.forEach(value -> values.add(value.asText()));
+        return values;
     }
 }

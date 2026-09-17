@@ -484,6 +484,17 @@ def _add_mcp_server(
     )
 
     for tool in mcp_server.list_tools():
+        # The remote server picks the tool names, so the reserved-prefix
+        # check has to run here too: a tool advertised as ``_subagent_*``
+        # would land in the TOOL provider map, but dispatch routes any
+        # prefixed call to AGENT, so the tool could never be called. Wrap
+        # the error with the server name so operators can tell which
+        # remote advertised the bad name.
+        try:
+            _check_tool_name_not_reserved(tool.name)
+        except ValueError as e:
+            msg = f"MCP server '{name}' advertised a tool with a reserved name: {e}"
+            raise ValueError(msg) from e
         tool.mcp_server_name = name
         resource_providers.append(
             PythonSerializableResourceProvider.from_resource(

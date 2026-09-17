@@ -96,12 +96,22 @@ def test_a_blank_input_schema_is_rejected() -> None:
 
 
 def test_an_input_type_is_rendered_as_the_input_schema() -> None:
-    """A declared argument type is rendered, so it need not be written out."""
-    schema = json.loads(TypedTestSubagentSetup().input_schema)
+    """A declared argument type is rendered, so it need not be written out.
 
-    assert schema["type"] == "object"
-    assert schema["properties"]["path"]["type"] == "string"
-    assert schema["properties"]["lines"]["type"] == "integer"
+    The derived schema is a cross-language contract, pinned here and in the Java
+    mirror test on which properties a model must send and the JSON type of each.
+    ``path`` and ``payload`` have no default so a model must send them, ``lines``
+    has one so it may be omitted, and a ``bytes`` field renders as
+    ``string``/``binary``.
+    """
+    schema = json.loads(TypedTestSubagentSetup().input_schema)
+    properties = schema["properties"]
+
+    assert set(schema["required"]) == {"path", "payload"}
+    assert properties["path"]["type"] == "string"
+    assert properties["lines"]["type"] == "integer"
+    assert properties["payload"]["type"] == "string"
+    assert properties["payload"]["format"] == "binary"
 
 
 def test_an_explicit_input_schema_wins_over_the_input_type() -> None:

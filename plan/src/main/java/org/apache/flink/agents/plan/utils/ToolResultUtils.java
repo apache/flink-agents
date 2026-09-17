@@ -25,8 +25,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Array;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Turns a sub-agent result into something a chat model can be told.
@@ -75,7 +78,7 @@ public final class ToolResultUtils {
      */
     public static Object normalizeAgentResult(Object raw, @Nullable Class<?> resultType) {
         if (resultType == null || resultType == Object.class) {
-            requireJsonCompatible(raw, "result");
+            requireJsonCompatible(raw, "result", newAncestors());
             return MAPPER.convertValue(MAPPER.valueToTree(raw), Object.class);
         }
         // Two conversions: the first reads the result as the declared type, which is what admits a
@@ -87,7 +90,7 @@ public final class ToolResultUtils {
         Object generic = MAPPER.convertValue(typed, Object.class);
         // Still required: a declared type can render a field JSON cannot express, and the result
         // outlives this call in a tool message and in state.
-        requireJsonCompatible(generic, "result");
+        requireJsonCompatible(generic, "result", newAncestors());
         return generic;
     }
 
@@ -105,7 +108,16 @@ public final class ToolResultUtils {
         return String.valueOf(value);
     }
 
-    private static void requireJsonCompatible(Object value, String path) {
+    /**
+     * The containers on the path currently being walked, by identity. A container reached again on
+     * the same path is a cycle; one reused by a sibling off the current path is a diamond and is
+     * walked normally, so entries are added on the way in and removed on the way out.
+     */
+    private static Set<Object> newAncestors() {
+        return Collections.newSetFromMap(new IdentityHashMap<>());
+    }
+
+    private static void requireJsonCompatible(Object value, String path, Set<Object> ancestors) {
         if (value == null || value instanceof String || value instanceof Boolean) {
             return;
         }
@@ -118,30 +130,55 @@ public final class ToolResultUtils {
             return;
         }
         if (value instanceof Map) {
-            for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
-                if (!(entry.getKey() instanceof String)) {
-                    throw new IllegalArgumentException(
-                            "Map keys in sub-agent result must be strings at " + path);
+            enterContainer(value, path, ancestors);
+            try {
+                for (Map.Entry<?, ?> entry : ((Map<?, ?>) value).entrySet()) {
+                    if (!(entry.getKey() instanceof String)) {
+                        throw new IllegalArgumentException(
+                                "Map keys in sub-agent result must be strings at " + path);
+                    }
+                    requireJsonCompatible(entry.getValue(), path + "." + entry.getKey(), ancestors);
                 }
-                requireJsonCompatible(entry.getValue(), path + "." + entry.getKey());
+            } finally {
+                ancestors.remove(value);
             }
             return;
         }
         if (value instanceof List) {
-            List<?> list = (List<?>) value;
-            for (int i = 0; i < list.size(); i++) {
-                requireJsonCompatible(list.get(i), path + "[" + i + "]");
+            enterContainer(value, path, ancestors);
+            try {
+                List<?> list = (List<?>) value;
+                for (int i = 0; i < list.size(); i++) {
+                    requireJsonCompatible(list.get(i), path + "[" + i + "]", ancestors);
+                }
+            } finally {
+                ancestors.remove(value);
             }
             return;
         }
         if (value.getClass().isArray()) {
-            int length = Array.getLength(value);
-            for (int i = 0; i < length; i++) {
-                requireJsonCompatible(Array.get(value, i), path + "[" + i + "]");
+            enterContainer(value, path, ancestors);
+            try {
+                int length = Array.getLength(value);
+                for (int i = 0; i < length; i++) {
+                    requireJsonCompatible(Array.get(value, i), path + "[" + i + "]", ancestors);
+                }
+            } finally {
+                ancestors.remove(value);
             }
             return;
         }
         throw invalid(path, "found " + value.getClass().getName());
+    }
+
+    /**
+     * Records a container on the current path, refusing it if it is already there, which is a
+     * cycle.
+     */
+    private static void enterContainer(Object value, String path, Set<Object> ancestors) {
+        if (!ancestors.add(value)) {
+            throw invalid(path, "cycle detected");
+        }
     }
 
     private static void requireJsonNodeCompatible(JsonNode node, String path) {
