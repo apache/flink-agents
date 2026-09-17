@@ -26,8 +26,6 @@ import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
 
-import java.util.Collections;
-
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -78,7 +76,7 @@ public class JavaActionTask extends ActionTask {
             runnerContext.checkNoPendingEvents();
             invocationEvent =
                     EventAttachmentUtils.loadEventAttachments(
-                            event, runnerContext, eventSerializer);
+                            getDelegateEvent(), runnerContext, eventSerializer);
         }
 
         JavaRunnerContextImpl javaRunnerContext = (JavaRunnerContextImpl) runnerContext;
@@ -110,7 +108,10 @@ public class JavaActionTask extends ActionTask {
                     runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()),
                     null);
         } else {
-            return new ActionTaskResult(false, Collections.emptyList(), this);
+            // A suspended action may already have emitted events (e.g. a bootstrapped internal
+            // sub-agent call): drain them so the operator dispatches them while the action waits.
+            return new ActionTaskResult(
+                    false, runnerContext.drainEvents(event.getSourceTimestamp()), this);
         }
     }
 }

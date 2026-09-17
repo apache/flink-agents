@@ -26,11 +26,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.deser.std.StdDeserializer;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -66,6 +68,8 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
             return deserializeJavaResourceProvider(node);
         } else if (JavaSerializableResourceProvider.class.getSimpleName().equals(providerType)) {
             return deserializeJavaSerializableResourceProvider(node);
+        } else if (InternalSubagentProvider.class.getSimpleName().equals(providerType)) {
+            return deserializeInternalSubagentProvider(node);
         } else {
             throw new IOException("Unsupported resource provider type: " + providerType);
         }
@@ -120,5 +124,15 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
         String serializedResource = node.get("serializedResource").asText();
         return new JavaSerializableResourceProvider(
                 name, ResourceType.fromValue(type), module, clazz, serializedResource);
+    }
+
+    private InternalSubagentProvider deserializeInternalSubagentProvider(JsonNode node) {
+        String name = node.get("name").asText();
+        try {
+            AgentPlan childPlan = mapper.treeToValue(node.get("childPlan"), AgentPlan.class);
+            return new InternalSubagentProvider(name, childPlan);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(e);
+        }
     }
 }

@@ -65,10 +65,23 @@ public abstract class ResourceProvider implements java.io.Serializable {
     /**
      * Whether the given provider materializes a resource owned by the Python runtime, so the
      * runtime must ask that runtime to build it instead of resolving it on the Java side.
+     *
+     * <p>A Python-compiled internal sub-agent carries its child plan in the serialized payload and
+     * executes natively on the Java side, so it stays Java-owned; only external Python setups
+     * (without a child plan) remain Python-owned.
      */
     public static boolean isPythonOwned(ResourceProvider provider) {
-        return provider instanceof PythonResourceProvider
-                || provider instanceof PythonSerializableResourceProvider;
+        if (provider instanceof PythonResourceProvider) {
+            return true;
+        }
+        if (provider instanceof PythonSerializableResourceProvider) {
+            PythonSerializableResourceProvider serializable =
+                    (PythonSerializableResourceProvider) provider;
+            return !(serializable.getType() == ResourceType.AGENT
+                    && serializable.getSerialized() != null
+                    && serializable.getSerialized().containsKey("child_plan"));
+        }
+        return false;
     }
 
     /**
