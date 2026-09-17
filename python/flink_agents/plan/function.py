@@ -430,7 +430,8 @@ def get_python_function_cache_keys() -> List[Tuple[str, str]]:
 
 _ASYNCIO_ERROR_MESSAGE = (
     "asyncio functions (gather/wait/create_task/sleep) are not supported "
-    "in Flink Agents. Only 'await ctx.durable_execute_async(...)' is supported."
+    "in Flink Agents. Await durable futures directly or compose them with "
+    "'ctx.gather(...)'."
 )
 
 

@@ -99,7 +99,9 @@ public class ContextRetrievalAction {
                             }
                         };
                 result =
-                        ragAsync ? ctx.durableExecuteAsync(callable) : ctx.durableExecute(callable);
+                        ragAsync
+                                ? ctx.await(ctx.durableExecuteAsync(callable))
+                                : ctx.durableExecute(callable);
             }
 
             ctx.sendEvent(
@@ -119,51 +121,53 @@ public class ContextRetrievalAction {
     private static VectorStoreQueryResult queryPythonAsync(
             PythonVectorStore store, VectorStoreQuery query, RunnerContext ctx) throws Exception {
         final float[] embedding =
-                ctx.durableExecuteAsync(
-                        new DurableCallable<float[]>() {
-                            @Override
-                            public String getId() {
-                                return "rag-embed";
-                            }
+                ctx.await(
+                        ctx.durableExecuteAsync(
+                                new DurableCallable<float[]>() {
+                                    @Override
+                                    public String getId() {
+                                        return "rag-embed";
+                                    }
 
-                            @Override
-                            public Class<float[]> getResultClass() {
-                                return float[].class;
-                            }
+                                    @Override
+                                    public Class<float[]> getResultClass() {
+                                        return float[].class;
+                                    }
 
-                            @Override
-                            public float[] call() {
-                                return store.embedQuery(query.getQueryText());
-                            }
-                        });
+                                    @Override
+                                    public float[] call() {
+                                        return store.embedQuery(query.getQueryText());
+                                    }
+                                }));
 
         try (PythonObjectScope scope = new PythonObjectScope()) {
             final Object normalized = scope.own(store.normalizeEmbedding(embedding));
 
             final List<Document> documents =
-                    ctx.durableExecuteAsync(
-                            new DurableCallable<List<Document>>() {
-                                @Override
-                                public String getId() {
-                                    return "rag-query";
-                                }
+                    ctx.await(
+                            ctx.durableExecuteAsync(
+                                    new DurableCallable<List<Document>>() {
+                                        @Override
+                                        public String getId() {
+                                            return "rag-query";
+                                        }
 
-                                @SuppressWarnings("unchecked")
-                                @Override
-                                public Class<List<Document>> getResultClass() {
-                                    return (Class<List<Document>>) (Class<?>) List.class;
-                                }
+                                        @SuppressWarnings("unchecked")
+                                        @Override
+                                        public Class<List<Document>> getResultClass() {
+                                            return (Class<List<Document>>) (Class<?>) List.class;
+                                        }
 
-                                @Override
-                                public List<Document> call() {
-                                    return store.queryNormalized(
-                                            normalized,
-                                            query.getLimit(),
-                                            query.getCollection(),
-                                            query.getFilters(),
-                                            store.getStoreKwargs());
-                                }
-                            });
+                                        @Override
+                                        public List<Document> call() {
+                                            return store.queryNormalized(
+                                                    normalized,
+                                                    query.getLimit(),
+                                                    query.getCollection(),
+                                                    query.getFilters(),
+                                                    store.getStoreKwargs());
+                                        }
+                                    }));
 
             return new VectorStoreQueryResult(documents);
         }

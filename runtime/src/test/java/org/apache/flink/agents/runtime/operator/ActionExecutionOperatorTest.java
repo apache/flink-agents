@@ -3167,18 +3167,19 @@ public class ActionExecutionOperatorTest {
             Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result =
-                        context.durableExecuteAsync(
-                                durableCallable(
-                                        "async-multiply",
-                                        Long.class,
-                                        () -> {
-                                            try {
-                                                Thread.sleep(50);
-                                            } catch (InterruptedException e) {
-                                                Thread.currentThread().interrupt();
-                                            }
-                                            return inputData * 10;
-                                        }));
+                        context.await(
+                                context.durableExecuteAsync(
+                                        durableCallable(
+                                                "async-multiply",
+                                                Long.class,
+                                                () -> {
+                                                    try {
+                                                        Thread.sleep(50);
+                                                    } catch (InterruptedException e) {
+                                                        Thread.currentThread().interrupt();
+                                                    }
+                                                    return inputData * 10;
+                                                })));
 
                 MemoryObject mem = context.getShortTermMemory();
                 mem.set("tmp", result);
@@ -3192,32 +3193,34 @@ public class ActionExecutionOperatorTest {
             Long inputData = (Long) InputEvent.fromEvent(event).getInput();
             try {
                 Long result1 =
-                        context.durableExecuteAsync(
-                                durableCallable(
-                                        "async-add",
-                                        Long.class,
-                                        () -> {
-                                            try {
-                                                Thread.sleep(30);
-                                            } catch (InterruptedException e) {
-                                                Thread.currentThread().interrupt();
-                                            }
-                                            return inputData + 100;
-                                        }));
+                        context.await(
+                                context.durableExecuteAsync(
+                                        durableCallable(
+                                                "async-add",
+                                                Long.class,
+                                                () -> {
+                                                    try {
+                                                        Thread.sleep(30);
+                                                    } catch (InterruptedException e) {
+                                                        Thread.currentThread().interrupt();
+                                                    }
+                                                    return inputData + 100;
+                                                })));
 
                 Long result2 =
-                        context.durableExecuteAsync(
-                                durableCallable(
-                                        "async-multiply",
-                                        Long.class,
-                                        () -> {
-                                            try {
-                                                Thread.sleep(30);
-                                            } catch (InterruptedException e) {
-                                                Thread.currentThread().interrupt();
-                                            }
-                                            return result1 * 2;
-                                        }));
+                        context.await(
+                                context.durableExecuteAsync(
+                                        durableCallable(
+                                                "async-multiply",
+                                                Long.class,
+                                                () -> {
+                                                    try {
+                                                        Thread.sleep(30);
+                                                    } catch (InterruptedException e) {
+                                                        Thread.currentThread().interrupt();
+                                                    }
+                                                    return result1 * 2;
+                                                })));
 
                 MemoryObject mem = context.getShortTermMemory();
                 mem.set("multiAsyncResult", result2);
@@ -3823,14 +3826,16 @@ public class ActionExecutionOperatorTest {
          */
         public static void durableAsyncExceptionAction(Event event, RunnerContext context) {
             try {
-                context.durableExecuteAsync(
-                        durableCallable(
-                                "async-exception-action",
-                                String.class,
-                                () -> {
-                                    ASYNC_EXCEPTION_CALL_COUNTER.incrementAndGet();
-                                    throw new RuntimeException("Async operation failed: API error");
-                                }));
+                context.await(
+                        context.durableExecuteAsync(
+                                durableCallable(
+                                        "async-exception-action",
+                                        String.class,
+                                        () -> {
+                                            ASYNC_EXCEPTION_CALL_COUNTER.incrementAndGet();
+                                            throw new RuntimeException(
+                                                    "Async operation failed: API error");
+                                        })));
             } catch (Exception e) {
                 ExceptionUtils.rethrow(e);
             }

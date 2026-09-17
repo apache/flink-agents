@@ -146,11 +146,11 @@ public interface RunnerContext {
     <T> T durableExecute(DurableCallable<T> callable) throws Exception;
 
     /**
-     * Asynchronously executes the provided callable with durable execution support.
+     * Creates a deferred asynchronous durable call.
      *
-     * <p>On JDK 21+, this method uses Continuation to yield the current action execution, submits
-     * the callable to a thread pool, and resumes when complete. On JDK &lt; 21, this falls back to
-     * synchronous execution.
+     * <p>Creating the returned handle does not execute the callable or reserve durable state. Use
+     * {@link #await(DurableFuture)} to execute a single call, or {@link #gather(List)} to compose
+     * multiple calls into one durable batch.
      *
      * <p>The result will be stored and returned from cache during job recovery.
      *
@@ -159,22 +159,26 @@ public interface RunnerContext {
      *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */
-    <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
+    <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable);
 
     /**
-     * Executes multiple durable callables as one batch and returns outcomes in input order.
+     * Resolves a durable future and returns its result.
      *
-     * <p>On JDK 21+, implementations may submit uncached calls concurrently and yield the current
-     * action execution until the batch completes. On JDK &lt; 21, this falls back to serial durable
-     * execution.
-     *
-     * <p>The callable list must be deterministic across recovery: same order and same {@link
-     * DurableCallable#getId()} values.
-     *
-     * <p>Access to memory and sendEvent are prohibited within the callables.
+     * <p>On JDK 21+, resolving a single durable future yields the current action execution while
+     * its callable runs. On JDK &lt; 21, execution falls back to the synchronous path. Awaiting an
+     * already resolved future returns or rethrows its locally cached outcome without consuming a
+     * second durable slot.
      */
-    <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-            throws Exception;
+    <T> T await(DurableFuture<T> future) throws Exception;
+
+    /**
+     * Composes deferred durable calls into one deferred batch.
+     *
+     * <p>The input order defines durable slot and result order. Resolving the returned future first
+     * reserves all required durable slots and then submits the uncached calls. Individual callable
+     * failures are represented as {@link Outcome#failure(Exception)} values.
+     */
+    <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures);
 
     /** Clean up the resource. */
     void close() throws Exception;

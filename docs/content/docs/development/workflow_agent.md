@@ -615,9 +615,10 @@ async def process_with_async(event: Event, ctx: RunnerContext) -> None:
     ctx.send_event(OutputEvent(output=result))
 ```
 {{< hint info >}}
-Python async actions only support `await ctx.durable_execute_async(...)`. Standard asyncio
-functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`, and
-`asyncio.sleep` are **NOT** supported because there is no asyncio event loop.
+Python durable futures can be awaited directly or composed with `ctx.gather(...)`.
+Standard asyncio functions like `asyncio.gather`, `asyncio.wait`,
+`asyncio.create_task`, and `asyncio.sleep` are **NOT** supported because there is
+no asyncio event loop.
 {{< /hint >}}
 {{< /tab >}}
 
@@ -646,7 +647,8 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
         }
     };
 
-    String result = ctx.durableExecuteAsync(call);
+    DurableFuture<String> future = ctx.durableExecuteAsync(call);
+    String result = ctx.await(future);
     ctx.sendEvent(new OutputEvent(result));
 }
 ```

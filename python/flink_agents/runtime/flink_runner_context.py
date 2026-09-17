@@ -40,8 +40,7 @@ from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.runner_context import (
-    AsyncExecutionResult,
-    DurableCall,
+    DurableFuture,
     Outcome,
     RunnerContext,
 )
@@ -86,6 +85,34 @@ def _root_cause(error: BaseException) -> BaseException:
             break
         current = cause
     return current
+
+
+@dataclass(frozen=True)
+class _DurableCall:
+    """Internal description of a deferred durable call."""
+
+    func: Callable[..., Any]
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] | None = None
+    reconciler: Callable[[], Any] | None = None
+
+
+class _AsyncExecutionResult:
+    """Internal awaitable that submits a callable only when awaited."""
+
+    def __init__(
+        self, executor: Any, func: Callable, args: tuple, kwargs: dict
+    ) -> None:
+        self._executor = executor
+        self._func = func
+        self._args = args
+        self._kwargs = kwargs
+
+    def __await__(self) -> Any:
+        future = self._executor.submit(self._func, *self._args, **self._kwargs)
+        while not future.done():
+            yield
+        return future.result()
 
 
 @dataclass(frozen=True)
@@ -169,8 +196,8 @@ class _DurableExecutionException(Exception):
         raise self.original_exception from None
 
 
-class _CachedAsyncExecutionResult(AsyncExecutionResult):
-    """An AsyncExecutionResult that returns a cached value immediately."""
+class _CachedAsyncExecutionResult(_AsyncExecutionResult):
+    """An internal awaitable that returns a cached value immediately."""
 
     def __init__(self, cached_result: Any) -> None:
         # Don't call super().__init__ as we don't need executor/func/args/kwargs
@@ -186,8 +213,8 @@ class _CachedAsyncExecutionResult(AsyncExecutionResult):
         return self._cached_result
 
 
-class _DurableAsyncExecutionResult(AsyncExecutionResult):
-    """An AsyncExecutionResult that records completion after execution."""
+class _DurableAsyncExecutionResult(_AsyncExecutionResult):
+    """An internal awaitable that records completion after execution."""
 
     def __init__(
         self, executor: Any, func: Callable, args: tuple, kwargs: dict
@@ -218,8 +245,8 @@ class _DurableAsyncExecutionResult(AsyncExecutionResult):
             return result
 
 
-class _PendingFinalizeAsyncExecutionResult(AsyncExecutionResult):
-    """An AsyncExecutionResult that finalizes a matching pending slot on await."""
+class _PendingFinalizeAsyncExecutionResult(_AsyncExecutionResult):
+    """An internal awaitable that finalizes a matching pending slot on await."""
 
     def __init__(
         self,
@@ -257,8 +284,8 @@ class _PendingFinalizeAsyncExecutionResult(AsyncExecutionResult):
         return result
 
 
-class _ReconcilerDurableAsyncExecutionResult(AsyncExecutionResult):
-    """An AsyncExecutionResult that resolves reconciler state on await."""
+class _ReconcilerDurableAsyncExecutionResult(_AsyncExecutionResult):
+    """An internal awaitable that resolves reconciler state on await."""
 
     def __init__(
         self,
@@ -320,8 +347,8 @@ class _ReconcilerDurableAsyncExecutionResult(AsyncExecutionResult):
         return result
 
 
-class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
-    def __init__(self, ctx: "FlinkRunnerContext", calls: list[DurableCall]) -> None:
+class _DurableBatchAsyncExecutionResult(_AsyncExecutionResult):
+    def __init__(self, ctx: "FlinkRunnerContext", calls: list[_DurableCall]) -> None:
         self._ctx = ctx
         self._calls = calls
 
@@ -350,6 +377,40 @@ class _DurableBatchAsyncExecutionResult(AsyncExecutionResult):
                 batch_futures, exception
             )
         return self._ctx._finalize_batch_execution(self._calls, plan, started, executed)
+
+
+class _SingleDurableFuture(DurableFuture[Any]):
+    def __init__(self, ctx: "FlinkRunnerContext", call: _DurableCall) -> None:
+        super().__init__()
+        self._ctx = ctx
+        self._call = call
+
+    def _resolve(self) -> Any:
+        return (yield from self._ctx._resolve_durable_call(self._call).__await__())
+
+
+class _GatherDurableFuture(DurableFuture[list[Outcome]]):
+    def __init__(
+        self, ctx: "FlinkRunnerContext", futures: tuple[_SingleDurableFuture, ...]
+    ) -> None:
+        super().__init__()
+        self._ctx = ctx
+        self._futures = futures
+
+    def _resolve(self) -> Any:
+        calls = []
+        for future in self._futures:
+            if future._is_done():
+                msg = "A durable future passed to gather has already been resolved"
+                raise RuntimeError(msg)
+            calls.append(future._call)
+
+        outcomes = yield from _DurableBatchAsyncExecutionResult(
+            self._ctx, calls
+        ).__await__()
+        for future, outcome in zip(self._futures, outcomes, strict=True):
+            future._complete(outcome)
+        return outcomes
 
 
 class _BatchTimeoutError(TimeoutError):
@@ -1060,10 +1121,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
         return wrapped_func
 
-    def _durable_identity(self, call: DurableCall) -> tuple[str, str]:
+    def _durable_identity(self, call: _DurableCall) -> tuple[str, str]:
         return durable_identity_for_call(call.func, call.args, call.kwargs)
 
-    def _call_matches(self, current: _PersistedCallResult, call: DurableCall) -> bool:
+    def _call_matches(
+        self, current: _PersistedCallResult, call: _DurableCall
+    ) -> bool:
         function_id, args_digest = self._durable_identity(call)
         return current.function_id == function_id and current.args_digest == args_digest
 
@@ -1077,11 +1140,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         except Exception as e:
             return Outcome.failure(e)
 
-    def _callable_for_durable_call(self, call: DurableCall) -> Callable[[], Any]:
+    def _callable_for_durable_call(self, call: _DurableCall) -> Callable[[], Any]:
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
-    def _prepare_batch_execution(self, calls: list[DurableCall]) -> _BatchExecutionPlan:
+    def _prepare_batch_execution(self, calls: list[_DurableCall]) -> _BatchExecutionPlan:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []
@@ -1144,7 +1207,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def _finalize_batch_execution(
         self,
-        calls: list[DurableCall],
+        calls: list[_DurableCall],
         plan: _BatchExecutionPlan,
         started: list[bool],
         executed: list[Outcome],
@@ -1178,11 +1241,25 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         return outcomes
 
     @override
-    def durable_execute_all_async(
-        self,
-        callables: list[DurableCall],
-    ) -> AsyncExecutionResult:
-        return _DurableBatchAsyncExecutionResult(self, callables)
+    def gather(self, *futures: DurableFuture[Any]) -> DurableFuture[list[Outcome]]:
+        seen: set[int] = set()
+        singles = []
+        for future in futures:
+            if id(future) in seen:
+                msg = "The same durable future cannot appear more than once in gather"
+                raise ValueError(msg)
+            seen.add(id(future))
+            if not isinstance(future, _SingleDurableFuture):
+                msg = "gather only accepts futures returned by durable_execute_async"
+                raise TypeError(msg)
+            if future._ctx is not self:
+                msg = "A durable future must be gathered by the context that created it"
+                raise ValueError(msg)
+            if future._is_done():
+                msg = "gather only accepts unresolved durable futures"
+                raise ValueError(msg)
+            singles.append(future)
+        return _GatherDurableFuture(self, tuple(singles))
 
     @override
     def durable_execute(
@@ -1235,7 +1312,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         reconciler: Callable[[], Any] | None = None,
         durable_id: str | None = None,
         **kwargs: Any,
-    ) -> AsyncExecutionResult:
+    ) -> DurableFuture[Any]:
         """Asynchronously execute the provided function with durable execution support.
         Access to memory is prohibited within the function.
 
@@ -1243,13 +1320,35 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         durable_execute_async call is made again during job recovery. The arguments
         and the result must be serializable.
 
-        Important: The result is only recorded when the returned AsyncExecutionResult
+        Important: The result is only recorded when the returned DurableFuture
         is awaited. Fire-and-forget calls (not awaiting the result) will NOT be
         recorded and cannot be recovered.
         """
         validated_reconciler = _validate_reconciler_callable(reconciler)
         if durable_id is not None:
             func = with_durable_id(func, durable_id)
+
+        return _SingleDurableFuture(
+            self,
+            _DurableCall(
+                func=func,
+                args=args,
+                kwargs=kwargs,
+                reconciler=validated_reconciler,
+            ),
+        )
+
+    def _resolve_durable_call(self, call: _DurableCall) -> _AsyncExecutionResult:
+        """Build the single-call resolver at consumption time.
+
+        Recovery matching and durable slot mutation must happen here instead of when
+        the public handle is created, otherwise multiple deferred handles would all
+        inspect the same current slot.
+        """
+        func = call.func
+        args = call.args
+        kwargs = call.kwargs or {}
+        validated_reconciler = call.reconciler
 
         if validated_reconciler is not None:
             return _ReconcilerDurableAsyncExecutionResult(

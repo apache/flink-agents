@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
@@ -88,9 +89,9 @@ public class ToolCallActionTest {
                                 true));
         private final List<String> durableExecuteIds = new ArrayList<>();
         private final List<String> durableExecuteAsyncIds = new ArrayList<>();
-        private final List<List<String>> durableExecuteAllAsyncIds = new ArrayList<>();
+        private final List<List<String>> gatherIds = new ArrayList<>();
         private final AtomicInteger queryOrderCalls = new AtomicInteger();
-        private List<Outcome<ToolResponse>> durableExecuteAllAsyncOutcomes;
+        private List<Outcome<ToolResponse>> gatherOutcomes;
         private ToolParameterInjection injection = ToolParameterInjection.fromConfig("tenant_id");
         private MemoryObject sensoryMemory;
         private MemoryObject shortTermMemory;
@@ -110,8 +111,8 @@ public class ToolCallActionTest {
             return this;
         }
 
-        FakeRunnerContext withDurableExecuteAllAsyncOutcomes(List<Outcome<ToolResponse>> outcomes) {
-            this.durableExecuteAllAsyncOutcomes = outcomes;
+        FakeRunnerContext withGatherOutcomes(List<Outcome<ToolResponse>> outcomes) {
+            this.gatherOutcomes = outcomes;
             return this;
         }
 
@@ -190,28 +191,41 @@ public class ToolCallActionTest {
         }
 
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableExecuteAsyncIds.add(callable.getId());
-            return callable.call();
+            return new TestDurableFuture<>(callable.getId(), callable::call);
+        }
+
+        @Override
+        public <T> T await(DurableFuture<T> future) throws Exception {
+            return ((TestDurableFuture<T>) future).resolve();
         }
 
         @Override
         @SuppressWarnings("unchecked")
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
             List<String> ids = new ArrayList<>();
-            for (DurableCallable<T> callable : callables) {
-                ids.add(callable.getId());
+            for (DurableFuture<T> future : futures) {
+                ids.add(((TestDurableFuture<T>) future).getId());
             }
-            durableExecuteAllAsyncIds.add(ids);
-            if (durableExecuteAllAsyncOutcomes != null) {
-                return (List<Outcome<T>>) (List<?>) durableExecuteAllAsyncOutcomes;
-            }
-            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-            for (DurableCallable<T> callable : callables) {
-                outcomes.add(Outcome.success(callable.call()));
-            }
-            return outcomes;
+            gatherIds.add(ids);
+            return new TestDurableFuture<>(
+                    "gather",
+                    () -> {
+                        if (gatherOutcomes != null) {
+                            return (List<Outcome<T>>) (List<?>) gatherOutcomes;
+                        }
+                        List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
+                        for (DurableFuture<T> future : futures) {
+                            try {
+                                outcomes.add(Outcome.success(await(future)));
+                            } catch (Exception e) {
+                                outcomes.add(Outcome.failure(e));
+                            }
+                        }
+                        return outcomes;
+                    });
         }
 
         @Override
@@ -450,9 +464,8 @@ public class ToolCallActionTest {
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
-        assertThat(ctx.durableExecuteAllAsyncIds)
-                .containsExactly(List.of("tool-call", "tool-call"));
-        assertThat(ctx.durableExecuteAsyncIds).isEmpty();
+        assertThat(ctx.gatherIds).containsExactly(List.of("tool-call", "tool-call"));
+        assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call", "tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
@@ -465,7 +478,7 @@ public class ToolCallActionTest {
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
-        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.gatherIds).isEmpty();
         assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call", "tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
     }
@@ -476,7 +489,7 @@ public class ToolCallActionTest {
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
-        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.gatherIds).isEmpty();
         assertThat(ctx.durableExecuteAsyncIds).isEmpty();
         assertThat(ctx.durableExecuteIds).containsExactly("tool-call", "tool-call");
     }
@@ -487,7 +500,7 @@ public class ToolCallActionTest {
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
 
-        assertThat(ctx.durableExecuteAllAsyncIds).isEmpty();
+        assertThat(ctx.gatherIds).isEmpty();
         assertThat(ctx.durableExecuteAsyncIds).containsExactly("tool-call");
         assertThat(ctx.durableExecuteIds).isEmpty();
     }
@@ -514,8 +527,7 @@ public class ToolCallActionTest {
                                 toolCall("queryOrder", "call-2", "order-2"))),
                 ctx);
 
-        assertThat(ctx.durableExecuteAllAsyncIds)
-                .containsExactly(List.of("tool-call", "tool-call"));
+        assertThat(ctx.gatherIds).containsExactly(List.of("tool-call", "tool-call"));
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("missing-call", false);
         assertThat(response.getError()).containsEntry("missing-call", "missing resource");
@@ -525,7 +537,7 @@ public class ToolCallActionTest {
     void processToolRequestRecordsOutcomeFailureAsToolError() throws Exception {
         FakeRunnerContext ctx =
                 new FakeRunnerContext()
-                        .withDurableExecuteAllAsyncOutcomes(
+                        .withGatherOutcomes(
                                 List.of(
                                         Outcome.success(ToolResponse.success("ok")),
                                         Outcome.failure(new RuntimeException("boom"))));
@@ -546,9 +558,13 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
-                    public <T> List<Outcome<T>> durableExecuteAllAsync(
-                            List<DurableCallable<T>> callables) throws Exception {
-                        throw new IllegalStateException("persist failed");
+                    public <T> DurableFuture<List<Outcome<T>>> gather(
+                            List<? extends DurableFuture<T>> futures) {
+                        return new TestDurableFuture<>(
+                                "gather",
+                                () -> {
+                                    throw new IllegalStateException("persist failed");
+                                });
                     }
                 };
 
@@ -617,9 +633,13 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
-                    public <T> List<Outcome<T>> durableExecuteAllAsync(
-                            List<DurableCallable<T>> callables) throws Exception {
-                        throw new InterruptedException("cancelled");
+                    public <T> DurableFuture<List<Outcome<T>>> gather(
+                            List<? extends DurableFuture<T>> futures) {
+                        return new TestDurableFuture<>(
+                                "gather",
+                                () -> {
+                                    throw new InterruptedException("cancelled");
+                                });
                     }
                 };
 

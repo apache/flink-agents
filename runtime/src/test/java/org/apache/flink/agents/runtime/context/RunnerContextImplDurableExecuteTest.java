@@ -129,7 +129,7 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
-    void testDurableExecuteAllAsyncStopsBatchOnInterruptionInsteadOfRecordingFailure() {
+    void testGatherStopsBatchOnInterruptionInsteadOfRecordingFailure() {
         RunnerContextImpl context = createContext(new ActionState(null));
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-call-1", String.class, () -> "ok");
@@ -150,7 +150,13 @@ class RunnerContextImplDurableExecuteTest {
 
         assertThrows(
                 InterruptedException.class,
-                () -> context.durableExecuteAllAsync(List.of(first, second, third)));
+                () ->
+                        context.await(
+                                context.gather(
+                                        List.of(
+                                                context.durableExecuteAsync(first),
+                                                context.durableExecuteAsync(second),
+                                                context.durableExecuteAsync(third)))));
 
         assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
         assertEquals(1, first.getCallCount());
@@ -158,7 +164,7 @@ class RunnerContextImplDurableExecuteTest {
         assertEquals(0, third.getCallCount(), "callables after the interrupted one must not run");
         // batch-call-1 genuinely completed before the interruption, so it's correctly persisted;
         // batch-call-2's interruption must not be recorded as a failed Outcome, though — it
-        // should propagate out of durableExecuteAllAsync instead, same as any other
+        // should propagate out of gather instead, same as any other
         // durableExecute call, leaving nothing persisted for it.
         assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
         CallResult persisted =
@@ -199,7 +205,7 @@ class RunnerContextImplDurableExecuteTest {
                         () -> "ok",
                         () -> fail("reconcile should not be called on initial async fallback"));
 
-        String result = context.durableExecuteAsync(callable);
+        String result = context.await(context.durableExecuteAsync(callable));
 
         assertEquals("ok", result);
         assertEquals(1, callable.getCallCount());

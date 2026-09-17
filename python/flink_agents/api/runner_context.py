@@ -17,7 +17,7 @@
 #################################################################################
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar
 
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
@@ -25,20 +25,16 @@ from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
-__all__ = ["AsyncExecutionResult", "DurableCall", "Outcome", "RunnerContext"]
+__all__ = [
+    "DurableFuture",
+    "Outcome",
+    "RunnerContext",
+]
+
+T = TypeVar("T")
 
 if TYPE_CHECKING:
     from flink_agents.api.memory_object import MemoryObject
-
-
-@dataclass(frozen=True)
-class DurableCall:
-    """A deterministic durable call entry for batch execution."""
-
-    func: Callable[..., Any]
-    args: tuple[Any, ...] = ()
-    kwargs: dict[str, Any] | None = None
-    reconciler: Callable[[], Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -67,51 +63,52 @@ class Outcome:
         return self.error is not None
 
 
-class AsyncExecutionResult:
-    """This class wraps an asynchronous task that will be submitted to a thread pool
-    only when awaited. This ensures lazy submission and serial execution semantics.
+class DurableFuture(ABC, Generic[T]):
+    """A deferred durable call owned and resolved by a runner context.
 
-    Note: Only `await ctx.durable_execute_async(...)` is supported. asyncio
-    functions like `asyncio.gather`, `asyncio.wait`, `asyncio.create_task`,
-    and `asyncio.sleep` are NOT supported because there is no asyncio event loop.
+    Creating a durable future does not start its callable or reserve durable state.
+    Await the handle directly for a single call, or compose handles with
+    :meth:`RunnerContext.gather` so the runtime can reserve the whole batch before
+    starting any callable. Completion is driven only by awaiting; the handle
+    intentionally exposes no polling API.
     """
 
-    def __init__(
-        self, executor: Any, func: Callable, args: tuple, kwargs: dict
-    ) -> None:
-        """Initialize an AsyncExecutionResult.
+    def __init__(self) -> None:
+        """Initialize an unresolved durable future."""
+        self._done = False
+        self._value: T | None = None
+        self._error: BaseException | None = None
 
-        Parameters
-        ----------
-        executor : Any
-            The thread pool executor to submit the task to.
-        func : Callable
-            The function to execute asynchronously.
-        args : tuple
-            Positional arguments to pass to the function.
-        kwargs : dict
-            Keyword arguments to pass to the function.
-        """
-        self._executor = executor
-        self._func = func
-        self._args = args
-        self._kwargs = kwargs
+    def _is_done(self) -> bool:
+        """Return whether this handle resolved in the current action execution."""
+        return self._done
 
     def __await__(self) -> Any:
-        """Make this object awaitable.
+        """Resolve once and replay the local outcome on subsequent awaits."""
+        if not self._done:
+            try:
+                self._value = yield from self._resolve()
+            except BaseException as error:
+                self._error = error
+                self._done = True
+                raise
+            self._done = True
 
-        When awaited, submits the task to the thread pool and yields control
-        until the task completes.
+        if self._error is not None:
+            raise self._error
+        return self._value
 
-        Returns:
-        -------
-        Any
-            The result of the function execution.
-        """
-        future = self._executor.submit(self._func, *self._args, **self._kwargs)
-        while not future.done():
-            yield
-        return future.result()
+    def _complete(self, outcome: Outcome) -> None:
+        if self._done:
+            msg = "Durable future has already been resolved"
+            raise RuntimeError(msg)
+        self._value = outcome.value
+        self._error = outcome.error
+        self._done = True
+
+    @abstractmethod
+    def _resolve(self) -> Any:
+        """Resolve this future and return a generator consumed by ``__await__``."""
 
 
 class RunnerContext(ABC):
@@ -306,7 +303,7 @@ class RunnerContext(ABC):
         reconciler: Callable[[], Any] | None = None,
         durable_id: str | None = None,
         **kwargs: Any,
-    ) -> "AsyncExecutionResult":
+    ) -> "DurableFuture[Any]":
         """Asynchronously execute the provided function with durable execution support.
         Access to memory is prohibited within the function.
 
@@ -334,9 +331,10 @@ class RunnerContext(ABC):
                 result = await ctx.durable_execute_async(slow_function, arg1, arg2)
                 ctx.send_event(OutputEvent(output=result))
 
-        Note: Only `await ctx.durable_execute_async(...)` is supported.
-        asyncio functions like `asyncio.gather`, `asyncio.wait`,
-        `asyncio.create_task`, and `asyncio.sleep` are NOT supported.
+        Note: The returned durable future can be awaited directly or composed
+        with `ctx.gather(...)`. asyncio functions like `asyncio.gather`,
+        `asyncio.wait`, `asyncio.create_task`, and `asyncio.sleep` are NOT
+        supported.
 
         Parameters
         ----------
@@ -359,20 +357,17 @@ class RunnerContext(ABC):
 
         Returns:
         -------
-        AsyncExecutionResult
+        DurableFuture
             An awaitable object that yields the function result when awaited.
         """
 
     @abstractmethod
-    def durable_execute_all_async(
-        self,
-        callables: list[DurableCall],
-    ) -> "AsyncExecutionResult":
-        """Execute multiple durable callables as one asynchronous durable batch.
+    def gather(self, *futures: "DurableFuture[Any]") -> "DurableFuture[list[Outcome]]":
+        """Compose deferred durable calls into one deferred batch.
 
-        The returned awaitable resolves to a list of ``Outcome`` values in the
-        same order as the input calls. Individual callable exceptions are returned
-        as failure outcomes instead of failing the whole batch.
+        The input order defines durable slot and result order. When the returned
+        future is awaited, the runtime reserves all required slots before starting
+        uncached calls. Individual callable failures are returned as failure outcomes.
         """
 
     @property

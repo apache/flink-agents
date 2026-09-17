@@ -184,24 +184,25 @@ public class Mem0LongTermMemoryAgent extends Agent {
 
         String timestampBeforeAdd = Instant.now().toString();
         MemorySet memorySet = ltm.getMemorySet(MEMORY_SET_NAME);
-        ctx.durableExecuteAsync(
-                new DurableCallable<Void>() {
-                    @Override
-                    public String getId() {
-                        return "mem0-add-" + input.name;
-                    }
+        ctx.await(
+                ctx.durableExecuteAsync(
+                        new DurableCallable<Void>() {
+                            @Override
+                            public String getId() {
+                                return "mem0-add-" + input.name;
+                            }
 
-                    @Override
-                    public Class<Void> getResultClass() {
-                        return Void.class;
-                    }
+                            @Override
+                            public Class<Void> getResultClass() {
+                                return Void.class;
+                            }
 
-                    @Override
-                    public Void call() throws Exception {
-                        memorySet.add(List.of(input.fact), null);
-                        return null;
-                    }
-                });
+                            @Override
+                            public Void call() throws Exception {
+                                memorySet.add(List.of(input.fact), null);
+                                return null;
+                            }
+                        }));
         String timestampAfterAdd = Instant.now().toString();
 
         MemoryObject countObj = ctx.getShortTermMemory().get("count");
@@ -224,25 +225,26 @@ public class Mem0LongTermMemoryAgent extends Agent {
         MemorySet memorySet = ctx.getLongTermMemory().getMemorySet(MEMORY_SET_NAME);
         String name = (String) record.get("name");
         int count = ((Number) record.get("count")).intValue();
-        @SuppressWarnings({"unchecked", "rawtypes"})
+        @SuppressWarnings({"rawtypes", "unchecked"})
         List<MemorySetItem> items =
-                ctx.durableExecuteAsync(
-                        new DurableCallable<List>() {
-                            @Override
-                            public String getId() {
-                                return "mem0-get-" + name + "-" + count;
-                            }
+                ctx.await(
+                        ctx.durableExecuteAsync(
+                                new DurableCallable<List>() {
+                                    @Override
+                                    public String getId() {
+                                        return "mem0-get-" + name + "-" + count;
+                                    }
 
-                            @Override
-                            public Class<List> getResultClass() {
-                                return List.class;
-                            }
+                                    @Override
+                                    public Class<List> getResultClass() {
+                                        return List.class;
+                                    }
 
-                            @Override
-                            public List<MemorySetItem> call() throws Exception {
-                                return memorySet.get(null, null, null);
-                            }
-                        });
+                                    @Override
+                                    public List<MemorySetItem> call() throws Exception {
+                                        return memorySet.get(null, null, null);
+                                    }
+                                }));
         if (("alice".equals(name) || "bob".equals(name)) && count == 2) {
             // Serialise the items as a JSON string. Embedding the raw List<Map<String,Object>>
             // here trips up Flink's Kryo deep-copy when chained operators forward the record:

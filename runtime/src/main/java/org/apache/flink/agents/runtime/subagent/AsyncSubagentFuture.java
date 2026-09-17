@@ -86,7 +86,7 @@ final class AsyncSubagentFuture extends SubagentFuture {
         if (!consumed) {
             DurableCallable<SubagentResult> awaitCall =
                     setup.awaitResult(ctx, getSessionId(), getCallId());
-            value = ctx.durableExecuteAsync(awaitCall);
+            value = ctx.await(ctx.durableExecuteAsync(awaitCall));
             consumed = true;
             if (registry != null) {
                 registry.untrackPendingSubagentCall(identity());

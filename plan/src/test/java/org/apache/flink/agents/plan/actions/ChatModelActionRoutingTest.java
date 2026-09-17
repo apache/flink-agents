@@ -31,6 +31,7 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
@@ -231,27 +232,39 @@ public class ChatModelActionRoutingTest {
 
         @SuppressWarnings("unchecked")
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableCallIds.add(callable.getId());
-            if (durableStore.containsKey(callable.getId())) {
-                return (T) durableStore.get(callable.getId());
-            }
-            return callable.call();
+            return new TestDurableFuture<>(
+                    callable.getId(),
+                    () -> {
+                        if (durableStore.containsKey(callable.getId())) {
+                            return (T) durableStore.get(callable.getId());
+                        }
+                        return callable.call();
+                    });
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>();
-            for (DurableCallable<T> callable : callables) {
-                durableCallIds.add(callable.getId());
-                try {
-                    outcomes.add(Outcome.success(callable.call()));
-                } catch (Exception e) {
-                    outcomes.add(Outcome.failure(e));
-                }
-            }
-            return outcomes;
+        public <T> T await(DurableFuture<T> future) throws Exception {
+            return ((TestDurableFuture<T>) future).resolve();
+        }
+
+        @Override
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            return new TestDurableFuture<>(
+                    "gather",
+                    () -> {
+                        List<Outcome<T>> outcomes = new ArrayList<>();
+                        for (DurableFuture<T> future : futures) {
+                            try {
+                                outcomes.add(Outcome.success(await(future)));
+                            } catch (Exception e) {
+                                outcomes.add(Outcome.failure(e));
+                            }
+                        }
+                        return outcomes;
+                    });
         }
 
         @Override

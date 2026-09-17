@@ -68,7 +68,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
         if (durableExecutionContext != null) {
             Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
@@ -85,7 +85,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
             throws Exception {
         if (callables.isEmpty()) {
             return List.of();

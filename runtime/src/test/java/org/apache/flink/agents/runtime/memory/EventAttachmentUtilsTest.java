@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
@@ -35,7 +36,6 @@ import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
@@ -290,18 +290,19 @@ class EventAttachmentUtilsTest {
         }
 
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-            return callable.call();
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+            throw new UnsupportedOperationException();
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-            for (DurableCallable<T> callable : callables) {
-                outcomes.add(Outcome.success(callable.call()));
-            }
-            return outcomes;
+        public <T> T await(DurableFuture<T> future) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

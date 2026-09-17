@@ -24,6 +24,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.Outcome;
@@ -56,6 +57,7 @@ import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -488,15 +490,69 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+    public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+        return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
+    }
+
+    @Override
+    public <T> T await(DurableFuture<T> future) throws Exception {
+        return requireOwnedFuture(future).resolveAndCache();
+    }
+
+    @Override
+    public <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures) {
+        Preconditions.checkNotNull(futures, "futures must not be null");
+        List<SingleDurableFuture<T>> singleFutures = new ArrayList<>(futures.size());
+        java.util.Set<DurableFuture<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (DurableFuture<T> future : futures) {
+            Preconditions.checkNotNull(future, "future must not be null");
+            if (!seen.add(future)) {
+                throw new IllegalArgumentException(
+                        "The same durable future cannot appear more than once in gather");
+            }
+            DurableFutureImpl<T> internalFuture = requireOwnedFuture(future);
+            if (!(internalFuture instanceof SingleDurableFuture)) {
+                throw new IllegalArgumentException(
+                        "gather only accepts futures returned by durableExecuteAsync");
+            }
+            if (internalFuture.isDone()) {
+                throw new IllegalArgumentException(
+                        "gather only accepts durable futures that have not been resolved");
+            }
+            @SuppressWarnings("unchecked")
+            SingleDurableFuture<T> singleFuture = (SingleDurableFuture<T>) internalFuture;
+            singleFutures.add(singleFuture);
+        }
+        return new GatherDurableFuture<>(this, singleFutures);
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> DurableFutureImpl<T> requireOwnedFuture(DurableFuture<T> future) {
+        Preconditions.checkNotNull(future, "future must not be null");
+        if (!(future instanceof DurableFutureImpl)) {
+            throw new IllegalArgumentException(
+                    "The durable future was not created by a Flink Agents runner context");
+        }
+        DurableFutureImpl<T> internalFuture = (DurableFutureImpl<T>) future;
+        if (internalFuture.getOwner() != this) {
+            throw new IllegalArgumentException(
+                    "A durable future must be resolved by the runner context that created it");
+        }
+        return internalFuture;
+    }
+
+    /**
+     * Resolves one deferred durable call. Java contexts override this with Continuation support.
+     */
+    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
         LOG.debug(
                 "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
                 callable.getId());
         return durableExecute(callable);
     }
 
-    @Override
-    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+    /** Resolves a durable batch. Java contexts override this with Continuation support. */
+    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
             throws Exception {
         List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
         for (DurableCallable<T> callable : callables) {

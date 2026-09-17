@@ -75,7 +75,7 @@ public final class DeferredSubagentFuture extends SubagentFuture {
      * of being folded into an error result.
      */
     void execute() throws Exception {
-        complete(ctx.durableExecuteAsync(prepare()));
+        complete(ctx.await(ctx.durableExecuteAsync(prepare())));
     }
 
     /**
