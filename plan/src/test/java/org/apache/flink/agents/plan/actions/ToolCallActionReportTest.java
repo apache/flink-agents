@@ -929,6 +929,73 @@ class ToolCallActionReportTest {
     }
 
     @Test
+    void interruptionBeforeToolInvocationReportsCreatedWithoutTerminal() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        Tool tool = mock(Tool.class);
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig());
+        when(ctx.<ToolResponse>durableExecute(any()))
+                .thenThrow(new InterruptedException("cancelled"));
+
+        Thread.interrupted();
+        assertThatThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        new ToolRequestEvent(
+                                                "test-model", List.of(toolCall("call-1"))),
+                                        ctx))
+                .isInstanceOf(InterruptedException.class);
+        Thread.interrupted();
+
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        verify(reporter)
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+        verify(reporter, never())
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+        verifyNoTerminalReport(reporter);
+    }
+
+    @Test
+    void parallelInterruptionReportsStartedToolsWithoutTerminal() throws Exception {
+        RunnerContext ctx =
+                mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
+        Tool tool = mock(Tool.class);
+        when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
+        when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
+        when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
+        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
+                .thenAnswer(
+                        inv -> {
+                            List<DurableCallable<ToolResponse>> callables = inv.getArgument(0);
+                            for (DurableCallable<ToolResponse> callable : callables) {
+                                callable.call();
+                            }
+                            throw new InterruptedException("cancelled");
+                        });
+
+        Thread.interrupted();
+        assertThatThrownBy(
+                        () ->
+                                ToolCallAction.processToolRequest(
+                                        new ToolRequestEvent(
+                                                "test-model",
+                                                List.of(toolCall("call-1"), toolCall("call-2"))),
+                                        ctx))
+                .isInstanceOf(InterruptedException.class);
+        Thread.interrupted();
+
+        ExecutionReporter reporter = (ExecutionReporter) ctx;
+        verify(reporter, times(2))
+                .reportExecutionCreated(
+                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+        verify(reporter, times(2))
+                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+        verifyNoTerminalReport(reporter);
+    }
+
+    @Test
     void executionMetadataCannotMutateToolCallParameters() throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
@@ -1013,6 +1080,14 @@ class ToolCallActionReportTest {
         toolCall.put("id", id);
         toolCall.put("function", function);
         return toolCall;
+    }
+
+    private static void verifyNoTerminalReport(ExecutionReporter reporter) throws Exception {
+        verify(reporter, never())
+                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
+        verify(reporter, never())
+                .reportExecutionFailedAt(
+                        anyString(), anyString(), anyMap(), any(), anyString(), anyString());
     }
 
     private static final class ReportingTool extends Tool implements ToolExecutionMetadataProvider {
