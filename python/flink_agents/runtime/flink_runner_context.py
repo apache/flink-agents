@@ -569,6 +569,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         # registered via add_task_lifecycle_listener() (aligned with the Java
         # operator's taskLifecycleListeners).
         self.__task_lifecycle_listeners: list = []
+        # The namespace of the task the operator last reported prepared, extracted
+        # eagerly so no pemja reference is retained across calls. Replayed onto a
+        # sub-agent handle materialized lazily during the action body — see
+        # __observe_subagent_setup().
+        self.__prepared_namespace: Any = None
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -614,6 +619,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         resource = cache.get_resource(name, type)
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
+        self.__observe_subagent_setup(resource)
         return resource
 
     def __active_resource_cache(self) -> ResourceCache:
@@ -633,6 +639,49 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             cache.set_java_resource_adapter(self.__j_resource_adapter)
             self.__scoped_resource_caches[plan_json] = cache
         return cache
+
+    def __observe_subagent_setup(self, resource: Any) -> None:
+        """Wire a lazily materialized sub-agent handle into the task lifecycle.
+
+        An external Python setup is materialized eagerly at open and registered
+        before the first action, so it already observes the lifecycle. A
+        Python-compiled internal sub-agent is Java-owned (its child plan
+        dispatches on the Java side), so its caller-facing handle is first built
+        here, mid-action, after ``on_action_prepared`` has fanned out. Register it
+        now and replay the prepared namespace so a no-id ``submit`` can mint
+        deterministic identities; later tasks reach it through the ordinary
+        fan-out.
+        """
+        from flink_agents.runtime.base_subagent import BaseSubagentSetup
+
+        if not isinstance(resource, BaseSubagentSetup):
+            return
+        if any(resource is listener for listener in self.__task_lifecycle_listeners):
+            # Eagerly registered (external setup) or already wired on a prior
+            # get_resource: the ordinary fan-out covers it.
+            return
+        self.add_task_lifecycle_listener(resource)
+        if self.__prepared_namespace is not None:
+            resource.adopt_prepared_namespace(self.__prepared_namespace)
+
+    def __capture_prepared_namespace(self, task: Any) -> None:
+        """Record ``task``'s namespace as the id-assignment source, best-effort.
+
+        A live ``ActionTask`` proxy always yields a namespace, extracted eagerly
+        here (plain Python values, no pemja reference retained) so a sub-agent
+        handle built later in the action body can adopt it — see
+        __observe_subagent_setup(). The lifecycle-bridge fan-out is also
+        exercised with opaque placeholder tasks that expose no accessor surface
+        (see test_task_lifecycle_bridge); those carry no facts to mint a
+        sub-agent identity from, so the capture yields nothing rather than
+        raising, leaving the pure fan-out to forward them untouched.
+        """
+        from flink_agents.runtime.base_subagent import Namespace
+
+        try:
+            self.__prepared_namespace = Namespace.from_task(task)
+        except AttributeError:
+            self.__prepared_namespace = None
 
     def eager_materialize(self, resource_type: str) -> Dict[str, Resource]:
         """Materialize every Python-owned resource of ``resource_type``.
@@ -665,6 +714,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_prepared(self, task: Any) -> None:
         """Fan out the operator's onActionPrepared to the task lifecycle listeners."""
+        self.__capture_prepared_namespace(task)
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_prepared(task)
 
@@ -675,11 +725,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_transferred(self, from_task: Any, to_task: Any) -> None:
         """Fan out the operator's onActionTransferred to the listeners."""
+        self.__capture_prepared_namespace(to_task)
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_transferred(from_task, to_task)
 
     def notify_action_finishing(self, task: Any) -> None:
         """Fan out the operator's onActionFinishing to the task lifecycle listeners."""
+        self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_finishing(task)
 
@@ -690,6 +742,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_reused(self, task: Any) -> None:
         """Fan out the operator's onActionReused to the task lifecycle listeners."""
+        self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_reused(task)
 

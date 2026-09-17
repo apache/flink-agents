@@ -29,6 +29,8 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
@@ -935,6 +937,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * lives in the Python runtime, so it joins the Python runtime's listeners and this operator
      * notifies them through a single bridge listener.
      *
+     * <p>The bridge listener is registered when the Python runtime has any sub-agent setup to
+     * notify: an external Python setup materialized eagerly here, or a Python-compiled internal
+     * sub-agent whose Java-owned child plan leaves its caller-facing handle to be built lazily in
+     * the Python runtime (see {@link #hasPythonCompiledSubagent()}).
+     *
      * <p>Runs while the operator opens, after the Python bridge is up, because the Python runtime
      * materializes the setups it owns.
      */
@@ -960,10 +967,33 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 getRuntimeContext().getUserCodeClassLoader(), resourceCache));
             }
         }
-        if (pythonSetupRegistered) {
+        if (pythonSetupRegistered || hasPythonCompiledSubagent()) {
             addTaskLifecycleListener(
                     new PythonTaskLifecycleListener(pythonBridge.getPythonActionExecutor()));
         }
+    }
+
+    /**
+     * Whether the root plan declares a sub-agent compiled from Python. Such a sub-agent keeps a
+     * caller-facing handle in the Python runtime even when its child plan dispatches on the Java
+     * side — an internal sub-agent is Java-owned, so it is materialized as a Java {@link
+     * InternalSubagentSetup} here and its Python handle is built lazily during the action body. The
+     * operator must still bridge the task lifecycle into Python so that handle observes {@code
+     * onActionPrepared} and a no-id submit can mint identities. A Python-compiled agent declares
+     * its top-level sub-agents in the root plan, so this root-level check also covers nested ones
+     * (the bridge listener is operator-wide and fires for child-scope actions too).
+     */
+    private boolean hasPythonCompiledSubagent() {
+        Map<String, ResourceProvider> agentProviders =
+                agentPlan
+                        .getResourceProviders()
+                        .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
+        for (ResourceProvider provider : agentProviders.values()) {
+            if (provider instanceof PythonSerializableResourceProvider) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
