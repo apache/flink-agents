@@ -57,6 +57,7 @@ public class ResourceCache implements AutoCloseable {
     private volatile PythonResourceAdapter pythonResourceAdapter;
     private volatile PythonActionExecutor pythonActionExecutor;
     private final ResourceContextImpl resourceContext;
+    private final ResourceCache parent;
 
     /**
      * Construct a cache that resolves {@code classpath:} skill sources via {@code classLoader}.
@@ -75,6 +76,33 @@ public class ResourceCache implements AutoCloseable {
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             ClassLoader classLoader,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
+        this(resourceProviders, classLoader, null, interpreterManagerSupplier);
+    }
+
+    /**
+     * Construct a cache with a parent for resource inheritance. Resolution order: own cache → own
+     * providers → parent. The parent's resources are cached in the parent; this cache's {@link
+     * #close()} does not affect them.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent) {
+        this(resourceProviders, classLoader, parent, () -> null);
+    }
+
+    /**
+     * Construct a cache with both a parent for resource inheritance and the operator's interpreter
+     * supplier. Sub-agent child scopes pass a {@code () -> null} supplier, matching the base-cache
+     * default, so a child scope resolves {@code classpath:} skills through {@code classLoader}
+     * without the operator's interpreter, exactly as it did before the supplier existed.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent,
+            Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
+        this.parent = parent;
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
@@ -154,6 +182,9 @@ public class ResourceCache implements AutoCloseable {
 
         Map<String, ResourceProvider> providers = resourceProviders.get(type);
         if (providers == null || !providers.containsKey(name)) {
+            if (parent != null) {
+                return parent.getResource(name, type);
+            }
             throw new IllegalArgumentException("Resource not found: " + name + " of type " + type);
         }
         ResourceProvider provider = providers.get(name);
@@ -198,6 +229,15 @@ public class ResourceCache implements AutoCloseable {
      */
     public void put(String name, ResourceType type, Resource resource) {
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
+    }
+
+    /** Snapshot of the resources of the given type already materialized in this cache. */
+    public List<Resource> materializedResources(ResourceType type) {
+        Map<String, Resource> typed = cache.get(type);
+        if (typed == null) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(typed.values());
     }
 
     /**

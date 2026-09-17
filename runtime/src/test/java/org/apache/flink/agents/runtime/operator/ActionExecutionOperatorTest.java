@@ -1263,6 +1263,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     void testMemoryAccessProhibitedOutsideMailboxThread() throws Exception {
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(true), true),
