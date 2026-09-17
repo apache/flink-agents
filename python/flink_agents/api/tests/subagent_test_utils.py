@@ -33,6 +33,7 @@ class Review(BaseModel):
 
     path: str
     lines: int = 0
+    payload: bytes
 
 
 class Verdict(BaseModel):

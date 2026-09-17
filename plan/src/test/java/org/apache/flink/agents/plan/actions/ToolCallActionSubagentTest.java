@@ -280,6 +280,106 @@ class ToolCallActionSubagentTest {
         assertThat(ops).containsExactly("submit:a", "submit:b", "await:a", "cancel:a", "cancel:b");
     }
 
+    /**
+     * Under the batched path, sub-agent calls split off from the tool batch and run on their own
+     * track, then the tool batch runs through {@code durableExecuteAllAsync} against a list built
+     * alongside {@code toolExecutions}. Each call id must land on its own result: if the two lists
+     * drift against each other, one call's response ends up under another call's id, and neither a
+     * sub-agent-only nor a tool-only case can see it. Two tools keep the reverse-index shape of the
+     * drift observable.
+     */
+    @Test
+    void parallelDispatchKeepsToolAndSubagentResultsOnTheirOwnIds() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext()
+                        .withParallelToolCalls()
+                        .withAgent(
+                                "reviewer",
+                                new RecordingSubagentSetup(SubagentResult.ok("agent-result")))
+                        .withTool("alpha", new StubTool("alpha"))
+                        .withTool("beta", new StubTool("beta"));
+
+        ToolCallAction.processToolRequest(mixedRequest("reviewer", "alpha", "beta"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess())
+                .containsEntry("call-1", true)
+                .containsEntry("call-2", true)
+                .containsEntry("call-3", true);
+        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("agent-result");
+        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("alpha called");
+        assertThat(response.getResponses().get("call-3").getResult()).isEqualTo("beta called");
+    }
+
+    /**
+     * A sub-agent that returns a result reaching back into itself cannot be normalized to JSON, and
+     * the walk used to recurse until the stack gave out. A {@link StackOverflowError} is an {@link
+     * Error}, so it slipped past the {@code catch (Exception)} that reports a rejected result and
+     * failed the whole job. The cycle is now reported while the walk still can, so it lands as a
+     * failed delegation the model can see, exactly like any other result JSON cannot express.
+     */
+    @Test
+    void rejectsACyclicResultAsAFailedDelegation() throws Exception {
+        Map<String, Object> cyclic = new LinkedHashMap<>();
+        cyclic.put("self", cyclic);
+        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok(cyclic));
+        FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
+
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", false);
+        assertThat(response.getResponses().get("call-1").getError())
+                .startsWith("Sub-agent _subagent_reviewer execute failed")
+                .contains("cycle detected");
+        assertThat(response.getError().get("call-1")).contains("cycle detected");
+    }
+
+    /**
+     * A {@link StackOverflowError} raised while a single sub-agent call is handled must be absorbed
+     * into a failed delegation, not left to escape as an {@link Error} that fails the job. The
+     * result walk refuses a cycle before it can overflow, so what reaches here is a result nested
+     * deeper than the stack allows; the double injects that directly, since one deep enough to
+     * overflow a real stack is impractical to build.
+     */
+    @Test
+    void absorbsAStackOverflowFromASubagentCallInsteadOfFailingTheJob() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext().withAgent("reviewer", new OverflowingSubagentSetup());
+
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess()).containsEntry("call-1", false);
+        assertThat(response.getResponses().get("call-1").getError())
+                .startsWith("Sub-agent _subagent_reviewer execute failed");
+    }
+
+    /**
+     * The batched path awaits each submitted handle in its own try, so an overflow while awaiting
+     * one sub-agent is absorbed into that call's failed delegation and the rest are still awaited,
+     * rather than escaping as an {@link Error} that fails the job mid-batch.
+     */
+    @Test
+    void absorbsAStackOverflowUnderParallelDispatchInsteadOfFailingTheJob() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext()
+                        .withParallelToolCalls()
+                        .withAgent("a", new OverflowingSubagentSetup())
+                        .withAgent("b", new OverflowingSubagentSetup());
+
+        ToolCallAction.processToolRequest(twoSubagentRequest("a", "b"), ctx);
+
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getSuccess())
+                .containsEntry("call-1", false)
+                .containsEntry("call-2", false);
+        assertThat(response.getResponses().get("call-1").getError())
+                .startsWith("Sub-agent _subagent_a execute failed");
+        assertThat(response.getResponses().get("call-2").getError())
+                .startsWith("Sub-agent _subagent_b execute failed");
+    }
+
     private static ToolRequestEvent toolRequest(String callableName) {
         return new ToolRequestEvent(
                 "model",
@@ -324,6 +424,43 @@ class ToolCallActionSubagentTest {
                                         SubagentSetup.CALLABLE_NAME_PREFIX + second,
                                         "arguments",
                                         Map.of("prompt", "review the diff")))));
+    }
+
+    /**
+     * One request carrying a sub-agent call and two plain tool calls, so the batched path splits
+     * into a single-entry agent track and a two-entry tool track, and the tool track has more than
+     * one entry to keep in order against the outcomes list.
+     */
+    private static ToolRequestEvent mixedRequest(
+            String subagentName, String firstTool, String secondTool) {
+        return new ToolRequestEvent(
+                "model",
+                List.of(
+                        Map.of(
+                                "id",
+                                "call-1",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of(
+                                        "name",
+                                        SubagentSetup.CALLABLE_NAME_PREFIX + subagentName,
+                                        "arguments",
+                                        Map.of("prompt", "review the diff"))),
+                        Map.of(
+                                "id",
+                                "call-2",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of("name", firstTool, "arguments", Map.of("q", "x"))),
+                        Map.of(
+                                "id",
+                                "call-3",
+                                "type",
+                                "function",
+                                "function",
+                                Map.of("name", secondTool, "arguments", Map.of("q", "y")))));
     }
 
     /** Captures every prompt it is handed and resolves to a preset outcome. */
@@ -541,6 +678,55 @@ class ToolCallActionSubagentTest {
         @Override
         public void cancel() {
             ops.add("cancel:" + label);
+        }
+
+        @Override
+        public SubagentFutures combine(SubagentFuture... others) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** Its await overflows the stack, to drive the {@link StackOverflowError} absorption path. */
+    private static class OverflowingSubagentSetup extends SubagentSetup {
+        OverflowingSubagentSetup() {
+            super("Overflows on await.");
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt) {
+            return new OverflowingFuture();
+        }
+
+        @Override
+        public SubagentFuture submit(RunnerContext ctx, Object prompt, String sessionId) {
+            return submit(ctx, prompt);
+        }
+
+        @Override
+        public SubagentFuture submit(
+                RunnerContext ctx, Object prompt, String sessionId, String callId) {
+            return submit(ctx, prompt);
+        }
+    }
+
+    /**
+     * Reports an overflow instead of resolving. A {@link StackOverflowError} is an {@link Error},
+     * so {@code await} needs no throws clause to raise it, and it stands in for an overflow the
+     * result walk reaches on a result nested deeper than the stack allows.
+     */
+    private static class OverflowingFuture extends SubagentFuture {
+        OverflowingFuture() {
+            super("session", "call");
+        }
+
+        @Override
+        public boolean isDone() {
+            return true;
+        }
+
+        @Override
+        public SubagentResult await() {
+            throw new StackOverflowError("result normalization recursed without end");
         }
 
         @Override

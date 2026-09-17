@@ -446,6 +446,21 @@ public class ToolCallAction {
             throw e;
         } catch (Exception e) {
             recordAgentFailure(execution, e, ctx, success, error, responses);
+        } catch (StackOverflowError e) {
+            // Normalizing a result nested deeper than the stack allows overflows it; the cycle
+            // guard reports a plain cycle earlier, so what reaches here is a result too deep to
+            // walk. A StackOverflowError is an Error, so it would escape the catch above and fail
+            // the job; fold it into the same failed delegation the model can read and correct.
+            recordAgentFailure(
+                    execution,
+                    new RuntimeException(
+                            "Sub-agent result is cyclic or too deeply nested to normalize as"
+                                    + " JSON",
+                            e),
+                    ctx,
+                    success,
+                    error,
+                    responses);
         }
     }
 
@@ -499,6 +514,20 @@ public class ToolCallAction {
                 throw e;
             } catch (Exception e) {
                 recordAgentFailure(execution, e, ctx, success, error, responses);
+            } catch (StackOverflowError e) {
+                // As in the serial path: an overflow while normalizing one result is an Error that
+                // would otherwise escape and fail the job mid-batch, so it is folded into that
+                // call's failed delegation and the remaining handles are still awaited.
+                recordAgentFailure(
+                        execution,
+                        new RuntimeException(
+                                "Sub-agent result is cyclic or too deeply nested to normalize"
+                                        + " as JSON",
+                                e),
+                        ctx,
+                        success,
+                        error,
+                        responses);
             }
         }
     }

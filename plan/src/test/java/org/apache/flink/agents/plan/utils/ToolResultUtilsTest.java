@@ -150,6 +150,73 @@ class ToolResultUtilsTest {
     }
 
     /**
+     * A result that reaches back into itself has no finite JSON form. Walking it without tracking
+     * the path taken recurses until the stack gives out, and a {@link StackOverflowError} is an
+     * {@link Error}, so it slips past the {@code catch (Exception)} that turns a rejected result
+     * into a failed delegation and fails the job instead. The walk must report the cycle as an
+     * {@link IllegalArgumentException} while it still can.
+     */
+    @Test
+    void normalizeRejectsACyclicResult() {
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("self", raw);
+
+        assertThatThrownBy(() -> ToolResultUtils.normalizeAgentResult(raw))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("result")
+                .hasMessageContaining("cycle detected");
+    }
+
+    /**
+     * A value reused by two siblings is a diamond, not a cycle: each path reaches it once and ends.
+     * The cycle guard tracks the path currently being walked, so a shared value off the current
+     * path is still normalized rather than mistaken for a cycle.
+     */
+    @Test
+    void normalizeAcceptsAValueReusedOutsideTheCurrentPath() {
+        Map<String, Object> shared = new LinkedHashMap<>();
+        shared.put("leaf", 1);
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("left", shared);
+        raw.put("right", shared);
+
+        Object normalized = ToolResultUtils.normalizeAgentResult(raw);
+
+        assertThat(normalized)
+                .isEqualTo(Map.of("left", Map.of("leaf", 1), "right", Map.of("leaf", 1)));
+    }
+
+    /**
+     * A cycle-free result is normalized however deeply it is nested: a deep but finite tree still
+     * has a JSON form, so depth on its own is never a reason to refuse it, and only a cycle, which
+     * has no finite form, is refused. The stack is the real bound; a result too deep to walk
+     * overflows and the caller folds that into a failed delegation, so the walk itself sets no
+     * fixed limit on nesting.
+     */
+    @Test
+    void normalizeAcceptsAResultNestedDeeperThanAnyFixedLimit() {
+        // Deeper than a real result reaches, yet shallow enough for the stack to walk.
+        int depth = 200;
+        Map<String, Object> node = new LinkedHashMap<>();
+        node.put("leaf", 1);
+        for (int i = 0; i < depth; i++) {
+            Map<String, Object> parent = new LinkedHashMap<>();
+            parent.put("next", node);
+            node = parent;
+        }
+
+        Object normalized = ToolResultUtils.normalizeAgentResult(node);
+
+        // Walk back down: every level survived and the leaf is intact at the bottom.
+        Object cursor = normalized;
+        for (int i = 0; i < depth; i++) {
+            assertThat(cursor).isInstanceOf(Map.class);
+            cursor = ((Map<?, ?>) cursor).get("next");
+        }
+        assertThat(cursor).isEqualTo(Map.of("leaf", 1));
+    }
+
+    /**
      * Declaring a result type is what makes a result JSON cannot express reportable: the type says
      * how to read it, and what comes out is only what the type declares.
      */
