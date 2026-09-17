@@ -287,6 +287,12 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         for (Event outputEvent : actionTaskResult.getOutputEvents()) {
             actionState.addEvent(outputEvent);
         }
+        RunnerContextImpl.SubagentScope subagentScope = context.getSubagentScope();
+        if (subagentScope != null) {
+            for (Event outputEvent : subagentScope.getOutputEvents()) {
+                actionState.addSubagentResultEvent(outputEvent);
+            }
+        }
 
         actionState.markCompleted();
 

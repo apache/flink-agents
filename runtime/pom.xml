@@ -255,6 +255,37 @@ under the License.
                                     </compilerArgs>
                                 </configuration>
                             </execution>
+                            <!--
+                              Tests run against target/classes, where the multi-release layout is
+                              inert: only a packaged jar resolves META-INF/versions/21. Compiling
+                              the same sources into test-classes puts them ahead of the JDK 11
+                              fallback on the test classpath, so tests exercise the real
+                              continuation executor instead of its synchronous stand-in.
+
+                              These class files are JDK 21 bytecode, so switching this tree back
+                              to JDK 11 needs a `mvn clean` first: javac cannot read them.
+                            -->
+                            <execution>
+                                <id>compile-java21-for-tests</id>
+                                <phase>process-test-classes</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <release combine.self="override"/>
+                                    <source>21</source>
+                                    <target>21</target>
+                                    <fork>true</fork>
+                                    <compileSourceRoots>
+                                        <compileSourceRoot>${project.basedir}/src/main/java21</compileSourceRoot>
+                                    </compileSourceRoots>
+                                    <outputDirectory>${project.build.testOutputDirectory}</outputDirectory>
+                                    <compilerArgs>
+                                        <arg>--add-exports</arg>
+                                        <arg>java.base/jdk.internal.vm=ALL-UNNAMED</arg>
+                                    </compilerArgs>
+                                </configuration>
+                            </execution>
                         </executions>
                     </plugin>
                 </plugins>

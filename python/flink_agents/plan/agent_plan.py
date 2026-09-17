@@ -36,6 +36,7 @@ from flink_agents.api.skills import (
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
+from flink_agents.plan import subagent as _subagent
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
@@ -78,9 +79,11 @@ class AgentPlan(BaseModel):
 
     @field_serializer("resource_providers")
     def __serialize_resource_providers(
-        self, providers: Dict[ResourceType, Dict[str, ResourceProvider]]
-    ) -> dict:
+        self, providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None
+    ) -> dict | None:
         # append meta info to help deserialize resource providers
+        if providers is None:
+            return None
         data = {}
         for type in providers:
             data[type] = {}
@@ -141,27 +144,44 @@ class AgentPlan(BaseModel):
         agent: Agent, config: AgentConfiguration, agent_name: str | None = None
     ) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
-        actions = {}
-        for action in _get_actions(agent) + BUILT_IN_ACTIONS:
-            assert action.name not in actions, f"Duplicate action name: {action.name}"
-            actions[action.name] = action
+        # Track visited agents for sub-agent cycle detection and plan reuse.
+        # The root owns the thread-local state and is responsible for
+        # clearing it; registering the root as being compiled makes a cycle
+        # running through it fail like any other.
+        owner = _subagent.begin(agent)
+        try:
+            plan = AgentPlan(actions={})
 
-        resource_providers = {}
-        for provider in _get_resource_providers(agent, config):
-            type = provider.type
-            if type not in resource_providers:
-                resource_providers[type] = {}
-            name = provider.name
-            assert name not in resource_providers[type], (
-                f"Duplicate resource name: {name}"
+            actions = {}
+            for action in _get_actions(agent) + BUILT_IN_ACTIONS:
+                assert action.name not in actions, (
+                    f"Duplicate action name: {action.name}"
+                )
+                actions[action.name] = action
+
+            resource_providers = {}
+            for provider in _get_resource_providers(agent, config):
+                type = provider.type
+                if type not in resource_providers:
+                    resource_providers[type] = {}
+                name = provider.name
+                assert name not in resource_providers[type], (
+                    f"Duplicate resource name: {name}"
+                )
+                resource_providers[type][name] = provider
+
+            # Populate the placeholder in place so any references handed to
+            # child plans during the walk above see the finished plan.
+            plan.actions = actions
+            plan.resource_providers = resource_providers
+            plan.agent_name = (
+                agent_name if agent_name is not None else agent.__class__.__name__
             )
-            resource_providers[type][name] = provider
-        return AgentPlan(
-            actions=actions,
-            resource_providers=resource_providers,
-            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
-            config=config,
-        )
+            plan.config = config
+            return plan
+        finally:
+            if owner:
+                _subagent.end()
 
     def get_action_config(self, action_name: str) -> Dict[str, Any]:
         """Get config of the action.
@@ -420,10 +440,37 @@ def _get_resource_providers(
             resource_providers.append(
                 PythonResourceProvider.get(name=name, descriptor=value)
             )
+        elif isinstance(value, Agent):
+            # Compile a directly-registered child Agent into an internal
+            # sub-agent. The child's compiled plan is reused across names and
+            # cycles are rejected by the compilation helper. The resource
+            # name doubles as the sub-agent scope used for runtime resolution.
+            child_plan = _subagent.get_or_compile(
+                value,
+                name,
+                lambda child: AgentPlan.from_agent(child, config),
+            )
+            # Reference the runtime setup by name to keep the plan -> runtime
+            # dependency direction; the provider materializes
+            # flink_agents.runtime.internal_subagent.InternalSubagentSetup at
+            # runtime. The live child plan rides in the serialized map and is
+            # dumped lazily. This branch carries the child plan itself, so it
+            # appends its own provider instead of the shared descriptor one.
+            resource_providers.append(
+                PythonSerializableResourceProvider(
+                    name=name,
+                    type=ResourceType.AGENT,
+                    module="flink_agents.runtime.internal_subagent",
+                    clazz="InternalSubagentSetup",
+                    serialized={"child_plan": child_plan, "scope": name},
+                )
+            )
+            continue
         else:
             msg = (
-                f"AGENT resource '{name}' must be a SubagentSetup or a "
-                f"ResourceDescriptor, but got {type(value).__name__}."
+                f"AGENT resource '{name}' must be a SubagentSetup, a "
+                f"ResourceDescriptor, or an Agent, but got "
+                f"{type(value).__name__}."
             )
             raise TypeError(msg)
 

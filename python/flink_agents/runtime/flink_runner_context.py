@@ -561,6 +561,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         )
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.__config = self.__agent_plan.config
+        self.__j_resource_adapter = j_resource_adapter
+        # Resource caches for sub-agent scopes, keyed by the child plan JSON.
+        self.__scoped_resource_caches: dict = {}
         self.executor = executor
         # Task lifecycle listeners the operator's callbacks fan out to,
         # registered via add_task_lifecycle_listener() (aligned with the Java
@@ -607,10 +610,29 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         self, name: str, type: ResourceType, metric_group: MetricGroup = None
     ) -> Resource:
         self._j_runner_context.checkMailboxThread()
-        resource = self.__resource_cache.get_resource(name, type)
+        cache = self.__active_resource_cache()
+        resource = cache.get_resource(name, type)
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
         return resource
+
+    def __active_resource_cache(self) -> ResourceCache:
+        """The resource cache in effect: the child plan's while inside a
+        sub-agent call (so a child agent resolves its own resources, including
+        any nested sub-agents), else the root plan's.
+        """
+        plan_json = self._j_runner_context.getActiveScopePlanJson()
+        if plan_json is None:
+            return self.__resource_cache
+        cache = self.__scoped_resource_caches.get(plan_json)
+        if cache is None:
+            from flink_agents.plan.agent_plan import AgentPlan
+
+            scoped_plan = AgentPlan.model_validate_json(plan_json)
+            cache = ResourceCache(scoped_plan.resource_providers, scoped_plan.config)
+            cache.set_java_resource_adapter(self.__j_resource_adapter)
+            self.__scoped_resource_caches[plan_json] = cache
+        return cache
 
     def eager_materialize(self, resource_type: str) -> Dict[str, Resource]:
         """Materialize every Python-owned resource of ``resource_type``.
@@ -1454,6 +1476,32 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             args,
             kwargs,
         )
+
+    def bootstrap_subagent_call(
+        self, scope: str, session_id: str, call_id: str, prompt: Any
+    ) -> None:
+        """Bootstrap an internal sub-agent call under the assigned identity.
+
+        Implements
+        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
+        Delegates to the Java ``RunnerContextImpl.bootstrapSubagentCallForScope``,
+        which resolves the materialized sub-agent setup by ``scope`` and sends
+        the bootstrap event. Must run on the mailbox thread.
+        """
+        self._j_runner_context.bootstrapSubagentCallForScope(
+            scope, session_id, call_id, prompt
+        )
+
+    def await_subagent_call(self, session_id: str, call_id: str) -> list:
+        """Block until the identified internal sub-agent call quiesces.
+
+        Implements
+        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
+        Delegates to the Java ``RunnerContextImpl.awaitSubagentCall``. Must run
+        off the mailbox thread (e.g. on the durable-execution async worker) so
+        the mailbox stays free to dispatch the child agent's actions.
+        """
+        return list(self._j_runner_context.awaitSubagentCall(session_id, call_id))
 
     @property
     @override

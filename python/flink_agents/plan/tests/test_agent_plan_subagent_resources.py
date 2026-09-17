@@ -16,6 +16,7 @@
 # limitations under the License.
 ################################################################################
 """Tests for compiling AGENT resources (SubagentSetup) into the agent plan."""
+
 import pytest
 
 from flink_agents.api.agents.agent import Agent
@@ -68,5 +69,78 @@ def test_non_setup_agent_resource_is_rejected() -> None:
     agent = Agent()
     agent.resources[ResourceType.AGENT]["bad"] = object()
 
-    with pytest.raises(TypeError, match="must be a SubagentSetup"):
+    with pytest.raises(
+        TypeError,
+        match="must be a SubagentSetup, a ResourceDescriptor, or an Agent",
+    ):
         AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_child_agent_compiles_into_internal_provider() -> None:
+    """A directly-registered child Agent becomes an internal sub-agent."""
+    root = Agent()
+    child = Agent()
+    root.add_resource("child", ResourceType.AGENT, child)
+
+    plan = AgentPlan.from_agent(root, AgentConfiguration())
+
+    agents = plan.resource_providers[ResourceType.AGENT]
+    provider = agents["child"]
+    assert provider.module == "flink_agents.runtime.internal_subagent"
+    assert provider.clazz == "InternalSubagentSetup"
+    assert provider.serialized["scope"] == "child"
+    assert provider.serialized["child_plan"] is not None
+
+
+def test_shared_child_agent_compiles_to_single_plan() -> None:
+    """The same Agent instance under two names shares one compiled plan."""
+    root = Agent()
+    child = Agent()
+    root.add_resource("first", ResourceType.AGENT, child)
+    root.add_resource("second", ResourceType.AGENT, child)
+
+    plan = AgentPlan.from_agent(root, AgentConfiguration())
+
+    agents = plan.resource_providers[ResourceType.AGENT]
+    first_plan = agents["first"].serialized["child_plan"]
+    second_plan = agents["second"].serialized["child_plan"]
+    assert first_plan is second_plan
+
+
+def test_cycle_not_through_root_is_rejected_with_cycle_path() -> None:
+    """A cycle below the root is rejected and reports the resource path."""
+    root, agent_a, agent_b = Agent(), Agent(), Agent()
+    root.add_resource("a", ResourceType.AGENT, agent_a)
+    agent_a.add_resource("b", ResourceType.AGENT, agent_b)
+    agent_b.add_resource("a", ResourceType.AGENT, agent_a)
+
+    with pytest.raises(
+        ValueError, match=r"Cyclic sub-agent definition detected: a -> b -> a"
+    ):
+        AgentPlan.from_agent(root, AgentConfiguration())
+
+
+def test_cycle_through_root_is_rejected() -> None:
+    """A cycle running through the root agent is rejected like any other."""
+    root = Agent()
+    child = Agent()
+    root.add_resource("b", ResourceType.AGENT, child)
+    child.add_resource("root", ResourceType.AGENT, root)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Cyclic sub-agent definition detected: <root> -> b -> root",
+    ):
+        AgentPlan.from_agent(root, AgentConfiguration())
+
+
+def test_self_reference_is_rejected() -> None:
+    """An agent registered as its own sub-agent is rejected."""
+    root = Agent()
+    root.add_resource("itself", ResourceType.AGENT, root)
+
+    with pytest.raises(
+        ValueError,
+        match=r"Cyclic sub-agent definition detected: <root> -> itself",
+    ):
+        AgentPlan.from_agent(root, AgentConfiguration())
