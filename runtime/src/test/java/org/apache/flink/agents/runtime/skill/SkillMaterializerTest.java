@@ -48,7 +48,6 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -603,20 +602,21 @@ class SkillMaterializerTest {
     // -------------------------------------------------------
 
     /**
-     * Server declares a Content-Length larger than the cap. The pre-flight check must reject before
-     * reading any body bytes.
+     * Server declares a Content-Length larger than the injected cap. The pre-flight check must
+     * reject before reading any body bytes.
      */
     @Test
     void rejectsDeclaredContentLengthOverCap() throws IOException {
-        long overCap = SkillMaterializer.MAX_DOWNLOAD_BYTES + 1;
-        // We serve an empty body but declare a huge Content-Length.
-        // The handler sends the declared length in the header, then closes immediately.
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
+        long overCap = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
                 "/",
                 exchange -> {
                     exchange.getResponseHeaders().add("Content-Length", String.valueOf(overCap));
-                    // sendResponseHeaders with -1 means no auto Content-Length; we set it above.
                     exchange.sendResponseHeaders(200, 0);
                     exchange.getResponseBody().close();
                     exchange.close();
@@ -632,34 +632,34 @@ class SkillMaterializerTest {
                                     SkillMaterializer.downloadToTempFile(
                                             "http://127.0.0.1:" + port + "/skill.zip",
                                             5_000,
-                                            true));
+                                            true,
+                                            limits));
             assertTrue(
                     ex.getMessage().contains("exceeding the limit"),
                     "error must mention the limit, got: " + ex.getMessage());
-            // Confirm no temp file was left behind.
-            // (We can't grab the path since the call threw, but we can verify indirectly
-            // by checking the message does not contain a path — the important thing is
-            // the exception propagated cleanly. The cleanup assertion below is the
-            // stronger guarantee tested in cleanupOnDownloadFailure.)
         } finally {
             server.stop(0);
         }
     }
 
     /**
-     * Server declares a small (below-cap) Content-Length but actually streams more bytes. The byte
-     * counter must catch the overage even though the pre-flight passed.
+     * Server declares a small Content-Length but actually streams more bytes. The byte counter must
+     * catch the overage even though the pre-flight check passed.
+     *
+     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes instead of 512 MiB + 1.
      */
     @Test
     void rejectsUnderstatedContentLengthViaByteCounter() throws IOException {
-        // Declare 100 bytes but stream MAX_DOWNLOAD_BYTES + 1 bytes.
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
         int declaredLength = 100;
-        long actualBytes = SkillMaterializer.MAX_DOWNLOAD_BYTES + 1;
+        long actualBytes = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
                 "/",
                 exchange -> {
-                    // Set a small declared size so the pre-flight passes.
                     exchange.getResponseHeaders()
                             .add("Content-Length", String.valueOf(declaredLength));
                     exchange.sendResponseHeaders(200, 0);
@@ -673,7 +673,6 @@ class SkillMaterializerTest {
                             body.write(chunk, 0, toWrite);
                             body.flush();
                         } catch (IOException ignored) {
-                            // Client closed; stop writing.
                             break;
                         }
                         remaining -= toWrite;
@@ -690,8 +689,9 @@ class SkillMaterializerTest {
                             () ->
                                     SkillMaterializer.downloadToTempFile(
                                             "http://127.0.0.1:" + port + "/skill.zip",
-                                            30_000,
-                                            true));
+                                            5_000,
+                                            true,
+                                            limits));
             assertTrue(
                     ex.getMessage().contains("exceeded the limit"),
                     "error must mention the limit, got: " + ex.getMessage());
@@ -703,15 +703,20 @@ class SkillMaterializerTest {
     /**
      * Server streams past the cap with no Content-Length header at all. The byte counter must catch
      * it.
+     *
+     * <p>Uses a 1 KiB injectable cap so the test streams only 1,025 bytes instead of 512 MiB + 1.
      */
     @Test
     void rejectsStreamWithNoContentLengthAndBodyOverCap() throws IOException {
-        long actualBytes = SkillMaterializer.MAX_DOWNLOAD_BYTES + 1;
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
+        long actualBytes = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
                 "/",
                 exchange -> {
-                    // 0 enables chunked transfer without a Content-Length header.
                     exchange.sendResponseHeaders(200, 0);
                     OutputStream body = exchange.getResponseBody();
                     byte[] chunk = new byte[65536];
@@ -739,8 +744,9 @@ class SkillMaterializerTest {
                             () ->
                                     SkillMaterializer.downloadToTempFile(
                                             "http://127.0.0.1:" + port + "/skill.zip",
-                                            30_000,
-                                            true));
+                                            5_000,
+                                            true,
+                                            limits));
             assertTrue(
                     ex.getMessage().contains("exceeded the limit"),
                     "error must mention the limit, got: " + ex.getMessage());
@@ -749,25 +755,26 @@ class SkillMaterializerTest {
         }
     }
 
-    /** A body exactly at the cap (MAX_DOWNLOAD_BYTES bytes) must succeed. */
+    /**
+     * A body of exactly {@code cap} bytes must succeed (boundary is inclusive). Uses a 1 KiB
+     * injectable cap so the test does not allocate 512 MiB.
+     */
     @Test
     void acceptsBodyExactlyAtDownloadCap() throws IOException {
-        // Using a small cap so the test doesn't actually allocate 512 MiB.
-        // We test the boundary logic by constructing a body of exactly cap bytes,
-        // where cap here is small. Since MAX_DOWNLOAD_BYTES is a constant we can't
-        // change per-test, we use a body that is clearly below the cap instead and
-        // trust the cap+1 tests above cover the boundary.
-        // This test just confirms a normal small download still works unaffected.
-        byte[] body = new byte[1024];
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
+        byte[] body = new byte[(int) cap];
         Arrays.fill(body, (byte) 'z');
         HttpServer server = startServer(200, body);
         try {
             int port = server.getAddress().getPort();
             Path file =
                     SkillMaterializer.downloadToTempFile(
-                            "http://127.0.0.1:" + port + "/skill.zip", 5_000, true);
+                            "http://127.0.0.1:" + port + "/skill.zip", 5_000, true, limits);
             try {
-                assertEquals(1024, Files.size(file));
+                assertEquals(cap, Files.size(file));
             } finally {
                 Files.deleteIfExists(file);
             }
@@ -776,13 +783,72 @@ class SkillMaterializerTest {
         }
     }
 
+    /**
+     * A body of {@code cap + 1} bytes must be rejected. Paired with {@link
+     * #acceptsBodyExactlyAtDownloadCap()} to prove the boundary is enforced at exactly the right
+     * byte.
+     *
+     * <p>The server intentionally omits {@code Content-Length} so the pre-f;ight check cannot fire;
+     * only the streaming counter can reject the download. this isolates the counter under test.
+     */
+    @Test
+    void rejectsBodyOneByteOverDownloadCap() throws IOException {
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
+        // byte[] body = new byte[(int) cap + 1];
+        // Arrays.fill(body, (byte) 'z');
+        // HttpServer server = startServer(200, body);
+        long actualBytes = cap + 1;
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    // sendResponseHeaders with 0 = chunked / no Content-Length header,
+                    // so only the streaming byte counter can reject the download.
+                    exchange.sendResponseHeaders(200, 0);
+                    OutputStream out = exchange.getResponseBody();
+                    byte[] chunk = new byte[(int) actualBytes];
+                    Arrays.fill(chunk, (byte) 'z');
+                    try {
+                        out.write(chunk);
+                        out.flush();
+                    } catch (IOException ignored) {
+                        // client closed early after limit hit - expected
+                    }
+                    exchange.close();
+                });
+        server.setExecutor(null);
+        server.start();
+        try {
+            int port = server.getAddress().getPort();
+            IOException ex =
+                    assertThrows(
+                            IOException.class,
+                            () ->
+                                    SkillMaterializer.downloadToTempFile(
+                                            "http://127.0.0.1:" + port + "/skill.zip",
+                                            5_000,
+                                            true,
+                                            limits));
+            assertTrue(
+                    ex.getMessage().contains("exceeded the limit"),
+                    "error must mention the limit, got: " + ex.getMessage());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     /** After a download size rejection the temp file must not exist. */
     @Test
     void cleanupOnDownloadFailure() throws IOException {
-        long overCap = SkillMaterializer.MAX_DOWNLOAD_BYTES + 1;
+        long cap = 1024L;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
+
+        long overCap = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
-        // Capture the path of any flink-agents-skills-*.zip file that appears in the temp dir
-        // before we call the method; then confirm it is gone after.
         Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
 
         server.createContext(
@@ -797,7 +863,6 @@ class SkillMaterializerTest {
         server.start();
         try {
             int port = server.getAddress().getPort();
-            // Count flink-agents-skills-*.zip files before the call.
             long before;
             try (Stream<Path> ls = Files.list(tmpDir)) {
                 before =
@@ -816,9 +881,11 @@ class SkillMaterializerTest {
                     IOException.class,
                     () ->
                             SkillMaterializer.downloadToTempFile(
-                                    "http://127.0.0.1:" + port + "/skill.zip", 5_000, true));
+                                    "http://127.0.0.1:" + port + "/skill.zip",
+                                    5_000,
+                                    true,
+                                    limits));
 
-            // Count again; must be the same (the failed download's temp file was deleted).
             long after;
             try (Stream<Path> ls = Files.list(tmpDir)) {
                 after =
@@ -860,64 +927,11 @@ class SkillMaterializerTest {
         }
         return zip;
     }
+
     /**
-     * Deliberately corrupt the uncompressed-size metadata of a one-entry DEFLATED ZIP.
-     *
-     * <p>The actual compressed payload is left untouched. Only the size recorded in:
-     *
-     * <ul>
-     *   <li>the local file header
-     *   <li>the central directory entry
-     * </ul>
-     *
-     * is changed.
-     *
-     * <p>This creates a test fixture where the declared size is small enough to pass the metadata
-     * pre-check, while the actual decompressed stream is larger.
+     * Patch the declared uncompressed size in both the local file header (LFH) and central
+     * directory header (CDH) for every entry.
      */
-    private static void forgeDeclaredUncompressedSize(Path zip, long declaredSize)
-            throws IOException {
-        if (declaredSize < 0 || declaredSize > 0xFFFFFFFFL) {
-            throw new IllegalArgumentException("declaredSize must fit in a ZIP 32-bit size field");
-        }
-
-        byte[] bytes = Files.readAllBytes(zip);
-
-        byte[] localHeaderSignature = {'P', 'K', 3, 4};
-        byte[] centralDirectorySignature = {'P', 'K', 1, 2};
-
-        if (!startsWith(bytes, localHeaderSignature)) {
-            throw new IOException("ZIP does not start with a local file header");
-        }
-
-        int centralDirectoryOffset = lastIndexOf(bytes, centralDirectorySignature);
-
-        if (centralDirectoryOffset < 0) {
-            throw new IOException("ZIP does not contain a central directory entry");
-        }
-
-        // Local file header:
-        // signature       4 bytes
-        // version         2
-        // flags           2
-        // method          2
-        // time/date       4
-        // CRC             4
-        // compressed size 4
-        // uncompressed    4  <-- offset 22
-        writeLittleEndianInt(bytes, 22, declaredSize);
-
-        // Central directory header:
-        // signature       4 bytes
-        // ...
-        // CRC             4
-        // compressed size 4
-        // uncompressed    4  <-- offset 24
-        writeLittleEndianInt(bytes, centralDirectoryOffset + 24, declaredSize);
-
-        Files.write(zip, bytes);
-    }
-
     private static void forgeDeclaredSizesForAllEntries(Path zip, long declaredSizePerEntry)
             throws IOException {
         if (declaredSizePerEntry < 0 || declaredSizePerEntry > 0xFFFFFFFFL) {
@@ -928,45 +942,36 @@ class SkillMaterializerTest {
         byte[] bytes = Files.readAllBytes(zip);
 
         byte[] lfhSig = {'P', 'K', 3, 4};
-        for (int i = 0; i <= bytes.length - 30; i++) {
-            if (bytes[i] == lfhSig[0]
-                    && bytes[i + 1] == lfhSig[1]
-                    && bytes[i + 2] == lfhSig[2]
-                    && bytes[i + 3] == lfhSig[3]) {
-                writeLittleEndianInt(bytes, i + 22, declaredSizePerEntry);
+        int pos = 0;
+        while (pos <= bytes.length - 30) {
+            if (bytes[pos] == lfhSig[0]
+                    && bytes[pos + 1] == lfhSig[1]
+                    && bytes[pos + 2] == lfhSig[2]
+                    && bytes[pos + 3] == lfhSig[3]) {
+                writeLittleEndianInt(bytes, pos + 22, declaredSizePerEntry);
+                int filenameLen = readLittleEndianShort(bytes, pos + 26);
+                int extraLen = readLittleEndianShort(bytes, pos + 28);
+                pos += 30 + filenameLen + extraLen;
+            } else {
+                pos++;
             }
         }
 
-        byte[] eocdSig = {'P', 'K', 5, 6};
-        int eocdOffset = -1;
-        for (int i = bytes.length - 22; i >= 0; i--) {
-            if (bytes[i] == eocdSig[0]
-                    && bytes[i + 1] == eocdSig[1]
-                    && bytes[i + 2] == eocdSig[2]
-                    && bytes[i + 3] == eocdSig[3]) {
-                eocdOffset = i;
-                break;
+        byte[] cdhSig = {'P', 'K', 1, 2};
+        pos = 0;
+        while (pos <= bytes.length - 46) {
+            if (bytes[pos] == cdhSig[0]
+                    && bytes[pos + 1] == cdhSig[1]
+                    && bytes[pos + 2] == cdhSig[2]
+                    && bytes[pos + 3] == cdhSig[3]) {
+                writeLittleEndianInt(bytes, pos + 24, declaredSizePerEntry);
+                int filenameLen = readLittleEndianShort(bytes, pos + 28);
+                int extraLen = readLittleEndianShort(bytes, pos + 30);
+                int commentLen = readLittleEndianShort(bytes, pos + 32);
+                pos += 46 + filenameLen + extraLen + commentLen;
+            } else {
+                pos++;
             }
-        }
-        if (eocdOffset < 0) {
-            throw new IOException("ZIP does not contain an End of Central Directory record");
-        }
-
-        int cdOffset = (int) readLittleEndianInt(bytes, eocdOffset + 16);
-
-        byte[] cdeSig = {'P', 'K', 1, 2};
-        int pos = cdOffset;
-        while (pos + 46 <= bytes.length
-                && bytes[pos] == cdeSig[0]
-                && bytes[pos + 1] == cdeSig[1]
-                && bytes[pos + 2] == cdeSig[2]
-                && bytes[pos + 3] == cdeSig[3]) {
-            writeLittleEndianInt(bytes, pos + 24, declaredSizePerEntry);
-
-            int filenameLen = readLittleEndianShort(bytes, pos + 28);
-            int extraLen = readLittleEndianShort(bytes, pos + 30);
-            int commentLen = readLittleEndianShort(bytes, pos + 32);
-            pos += 46 + filenameLen + extraLen + commentLen;
         }
 
         Files.write(zip, bytes);
@@ -983,34 +988,6 @@ class SkillMaterializerTest {
         return (bytes[offset] & 0xFF) | ((bytes[offset + 1] & 0xFF) << 8);
     }
 
-    private static boolean startsWith(byte[] bytes, byte[] prefix) {
-        if (bytes.length < prefix.length) {
-            return false;
-        }
-
-        for (int i = 0; i < prefix.length; i++) {
-            if (bytes[i] != prefix[i]) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static int lastIndexOf(byte[] bytes, byte[] target) {
-        outer:
-        for (int i = bytes.length - target.length; i >= 0; i--) {
-            for (int j = 0; j < target.length; j++) {
-                if (bytes[i + j] != target[j]) {
-                    continue outer;
-                }
-            }
-            return i;
-        }
-
-        return -1;
-    }
-
     private static void writeLittleEndianInt(byte[] bytes, int offset, long value) {
         bytes[offset] = (byte) (value & 0xFF);
         bytes[offset + 1] = (byte) ((value >>> 8) & 0xFF);
@@ -1020,9 +997,11 @@ class SkillMaterializerTest {
 
     @Test
     void rejectsArchiveWithTooManyEntries(@TempDir Path tempDir) throws IOException {
+        SkillMaterializer.Limits limits = new SkillMaterializer.Limits(1024L, 1024L, 10_000L, 2);
+
         Path zip = tempDir.resolve("many.zip");
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
-            for (int i = 0; i <= SkillMaterializer.MAX_EXTRACT_ENTRIES; i++) {
+            for (int i = 0; i < 3; i++) {
                 zos.putNextEntry(new ZipEntry("entry-" + i + ".txt"));
                 zos.write(new byte[0]);
                 zos.closeEntry();
@@ -1030,7 +1009,8 @@ class SkillMaterializerTest {
         }
 
         IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+                assertThrows(
+                        IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
         assertTrue(
                 ex.getMessage().contains("entries") && ex.getMessage().contains("limit"),
                 "error must mention entry count limit, got: " + ex.getMessage());
@@ -1038,63 +1018,66 @@ class SkillMaterializerTest {
 
     @Test
     void rejectsDeclaredEntrySizeOverCap(@TempDir Path tempDir) throws IOException {
-        long declaredSize = SkillMaterializer.MAX_EXTRACT_ENTRY_BYTES + 1;
+        long cap = 400L;
+        SkillMaterializer.Limits limits = new SkillMaterializer.Limits(1024L, cap, 4_000L, 1_000);
 
         Path zip = writeSingleEntryZip(tempDir, "entry.bin", 1);
-
-        forgeDeclaredUncompressedSize(zip, declaredSize);
-
-        try (ZipFile zf = new ZipFile(zip.toFile())) {
-            ZipEntry entry = zf.entries().nextElement();
-            assertEquals(declaredSize, entry.getSize());
-        }
+        forgeDeclaredSizesForAllEntries(zip, cap + 1);
 
         IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
-
+                assertThrows(
+                        IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
         assertTrue(
                 ex.getMessage().contains("per-entry limit"),
                 "expected declared per-entry limit error: " + ex.getMessage());
     }
 
-    /**
-     * An entry whose actual decompressed bytes exceed the per-entry cap must be rejected during
-     * extraction (Pass 4 byte counter), not just in the declared-size pre-pass.
-     *
-     * <p>Uses a small cap simulation: we write content of exactly (MAX_EXTRACT_ENTRY_BYTES + 65537)
-     * bytes so the counter catches it on the second chunk boundary. To avoid allocating 200 MiB in
-     * the test, we write a moderately sized entry and check that the message is correct — the
-     * actual byte threshold is exercised in the unit test for the constants.
-     *
-     * <p>Since allocating 200 MiB in a unit test is impractical, this test verifies the counter
-     * logic with a smaller self-consistent value: we write an entry of (MAX_EXTRACT_ENTRY_BYTES +
-     * 1) bytes using a streaming zip writer that doesn't hold all bytes in memory at once. On most
-     * CI systems this is acceptable for a security test.
-     */
     @Test
     void rejectsActualBytesOverPerEntryCapWhenDeclaredSizePasses(@TempDir Path tempDir)
             throws IOException {
-        long actualSize = SkillMaterializer.MAX_EXTRACT_ENTRY_BYTES + 1;
-        long declaredSize = 1;
+        int actualSize = 512;
+        int cap = 400;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(1024L, cap, cap * 10L, 1_000);
 
-        Path zip = writeSingleEntryZip(tempDir, "big.bin", actualSize);
+        writeSingleEntryZip(tempDir, "large.bin", actualSize);
+        Path zip = tempDir.resolve("test.zip");
+        forgeDeclaredSizesForAllEntries(zip, 1L);
 
-        // Deliberately forge the ZIP metadata so the declared size is safely below
-        // the per-entry limit while the actual decompressed payload remains > limit.
-        forgeDeclaredUncompressedSize(zip, declaredSize);
+        IOException ex =
+                assertThrows(
+                        IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
+        assertTrue(
+                ex.getMessage().contains("per-entry limit"),
+                "expected actual per-entry byte counter to reject the entry, got: "
+                        + ex.getMessage());
+    }
 
-        // Prove the fixture is exactly the case we want:
-        // declared size passes, but the actual payload is over the limit.
-        try (ZipFile zf = new ZipFile(zip.toFile())) {
-            ZipEntry entry = zf.entries().nextElement();
-            assertEquals(
-                    declaredSize,
-                    entry.getSize(),
-                    "test fixture must declare an in-limit uncompressed size");
-            assertTrue(
-                    entry.getCompressedSize() < actualSize,
-                    "test fixture should remain compressed");
+    @Test
+    void tamperedDeclaredSizeBelowActualExtractsSuccessfully(@TempDir Path tempDir)
+            throws IOException {
+        int actualSize = 512;
+        writeSingleEntryZip(tempDir, "large.bin", actualSize);
+        Path zip = tempDir.resolve("test.zip");
+        // Declared size is forged below actual size in both ZIP headers.
+        forgeDeclaredSizesForAllEntries(zip, 1L);
+
+        try (SkillMaterializer.Materialized m = SkillMaterializer.extractZipSafely(zip)) {
+            Path extracted = m.getDir().resolve("large.bin");
+            assertEquals(actualSize, Files.size(extracted));
         }
+    }
+
+    @Test
+    void tamperedDeclaredEntrySizeStillCleansUp(@TempDir Path tempDir) throws IOException {
+        int actualSize = 512;
+        int cap = 400;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(1024L, cap, cap * 10L, 1_000);
+
+        writeSingleEntryZip(tempDir, "large.bin", actualSize);
+        Path zip = tempDir.resolve("test.zip");
+        forgeDeclaredSizesForAllEntries(zip, 1L);
 
         Path tmpDir = Path.of(System.getProperty("java.io.tmpdir"));
         long before;
@@ -1109,13 +1092,7 @@ class SkillMaterializerTest {
                             .count();
         }
 
-        IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
-
-        assertTrue(
-                ex.getMessage().contains("per-entry limit"),
-                "expected actual per-entry byte counter to reject the entry, got: "
-                        + ex.getMessage());
+        assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
 
         long after;
         try (Stream<Path> ls = Files.list(tmpDir)) {
@@ -1128,26 +1105,27 @@ class SkillMaterializerTest {
                                                     && Files.isDirectory(p))
                             .count();
         }
-
-        assertEquals(
-                before, after, "failed extraction must not leave a temporary directory behind");
+        assertEquals(before, after, "failed extraction must not leave a temp dir behind");
     }
 
+    /**
+     * Two entries of 600 bytes each fit individually under the per-entry cap (700 bytes) but
+     * together exceed the total cap (1,024 bytes). The forged declared sizes make the metadata
+     * pre-check pass, so only the actual streaming byte counter rejects the archive.
+     */
     @Test
     void rejectsCumulativeBytesOverTotalCap(@TempDir Path tempDir) throws IOException {
-        long perEntry = SkillMaterializer.MAX_EXTRACT_TOTAL_BYTES / 6 + 1;
+        int entryBytes = 600;
+        SkillMaterializer.Limits limits =
+                new SkillMaterializer.Limits(512L * 1024 * 1024, 700L, 1_024L, 1_000);
+
         Path zip = tempDir.resolve("cumulative.zip");
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
-            for (int i = 0; i < 6; i++) {
+            for (int i = 0; i < 2; i++) {
                 zos.putNextEntry(new ZipEntry("entry-" + i + ".bin"));
-                byte[] chunk = new byte[65536];
-                Arrays.fill(chunk, (byte) 'B');
-                long written = 0;
-                while (written < perEntry) {
-                    int toWrite = (int) Math.min(chunk.length, perEntry - written);
-                    zos.write(chunk, 0, toWrite);
-                    written += toWrite;
-                }
+                byte[] content = new byte[entryBytes];
+                Arrays.fill(content, (byte) 'B');
+                zos.write(content);
                 zos.closeEntry();
             }
         }
@@ -1155,7 +1133,8 @@ class SkillMaterializerTest {
         forgeDeclaredSizesForAllEntries(zip, 1L);
 
         IOException ex =
-                assertThrows(IOException.class, () -> SkillMaterializer.extractZipSafely(zip));
+                assertThrows(
+                        IOException.class, () -> SkillMaterializer.extractZipSafely(zip, limits));
         assertTrue(
                 ex.getMessage().contains("total extracted size"),
                 "byte counter must reject cumulative total, got: " + ex.getMessage());

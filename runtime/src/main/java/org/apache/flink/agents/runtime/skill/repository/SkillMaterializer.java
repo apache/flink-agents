@@ -63,24 +63,101 @@ public final class SkillMaterializer {
 
     // --- Size caps for download and extraction (issue #1072) ---
 
-    /** Maximum number of bytes accepted from a single HTTP download. */
-    public static final long MAX_DOWNLOAD_BYTES = 512L * 1024 * 1024; // 512 MiB
+    /**
+     * All four resource limits for a single materializer operation, grouped so tests can inject
+     * small thresholds without touching production defaults and so future config wiring has a
+     * single object to populate from {@code SkillMaterializerOptions}.
+     *
+     * <p>Production callers use {@link #DEFAULT}; tests construct a small instance and pass it to
+     * the overloads of {@link SkillMaterializer#downloadToTempFile} and {@link
+     * SkillMaterializer#extractZipSafely} that accept a {@code Limits} argument.
+     */
+    public static final class Limits {
+        /** Maximum number of bytes accepted from a single HTTP download. */
+        public final long maxDownloadBytes;
+
+        /**
+         * Maximum uncompressed size of any single entry during zip extraction. Enforced against
+         * actual bytes written, not the attacker-controlled declared size.
+         */
+        public final long maxExtractEntryBytes;
+
+        /**
+         * Maximum cumulative uncompressed bytes written across all entries during a single zip
+         * extraction. Enforced against actual bytes written.
+         */
+        public final long maxExtractTotalBytes;
+
+        /** Maximum number of entries permitted in a single zip archive. */
+        public final int maxExtractEntries;
+
+        /**
+         * Conservative production defaults. These are intentionally lower than the original issue
+         * #1072 values to limit disk consumption per materialization, especially when multiple
+         * skills are materialized concurrently. Deployments that need larger archives should raise
+         * them explicitly via a {@code Limits} instance.
+         *
+         * <p>TODO: wire these through {@code AgentConfigOptions} / {@code SkillMaterializerOptions}
+         * so deployments can override them from the YAML config without code changes (follow-up
+         * PR).
+         */
+        public static final Limits DEFAULT =
+                new Limits(
+                        64L * 1024 * 1024, // 64 MiB download
+                        64L * 1024 * 1024, // 64 MiB per entry
+                        256L * 1024 * 1024, // 256 MiB total extraction
+                        1_000); // entries
+
+        /**
+         * Construct a {@code Limits} instance. All values must be strictly positive.
+         *
+         * @throws IllegalArgumentException if any value is not strictly positive.
+         */
+        public Limits(
+                long maxDownloadBytes,
+                long maxExtractEntryBytes,
+                long maxExtractTotalBytes,
+                int maxExtractEntries) {
+            if (maxDownloadBytes <= 0
+                    || maxExtractEntryBytes <= 0
+                    || maxExtractTotalBytes <= 0
+                    || maxExtractEntries <= 0) {
+                throw new IllegalArgumentException("All Limits values must be strictly positive");
+            }
+            this.maxDownloadBytes = maxDownloadBytes;
+            this.maxExtractEntryBytes = maxExtractEntryBytes;
+            this.maxExtractTotalBytes = maxExtractTotalBytes;
+            this.maxExtractEntries = maxExtractEntries;
+        }
+    }
 
     /**
-     * Maximum uncompressed size of any single entry during zip extraction. Declared sizes in the
-     * zip central directory are attacker-controlled; this cap is enforced against actual bytes
-     * written, not {@link ZipEntry#getSize()}.
+     * Backward-compatible alias for {@link Limits#DEFAULT#maxDownloadBytes}.
+     *
+     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
      */
-    public static final long MAX_EXTRACT_ENTRY_BYTES = 200L * 1024 * 1024; // 200 MiB
+    public static final long MAX_DOWNLOAD_BYTES = Limits.DEFAULT.maxDownloadBytes;
 
     /**
-     * Maximum cumulative uncompressed bytes written across all entries during a single zip
-     * extraction. Enforced against actual bytes written.
+     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntryBytes}.
+     *
+     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
      */
-    public static final long MAX_EXTRACT_TOTAL_BYTES = 1024L * 1024 * 1024; // 1 GiB
+    public static final long MAX_EXTRACT_ENTRY_BYTES = Limits.DEFAULT.maxExtractEntryBytes;
 
-    /** Maximum number of entries permitted in a single zip archive. */
-    public static final int MAX_EXTRACT_ENTRIES = 10_000;
+    /**
+     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractTotalBytes}.
+     *
+     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
+     */
+    public static final long MAX_EXTRACT_TOTAL_BYTES = Limits.DEFAULT.maxExtractTotalBytes;
+
+    /**
+     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntries}.
+     *
+     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
+     */
+    public static final int MAX_EXTRACT_ENTRIES = Limits.DEFAULT.maxExtractEntries;
 
     private SkillMaterializer() {}
 
@@ -164,15 +241,25 @@ public final class SkillMaterializer {
      *     cap is exceeded, or on I/O errors.
      */
     public static Materialized extractZipSafely(Path zipPath) throws IOException {
-        Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
+        return extractZipSafely(zipPath, Limits.DEFAULT);
+    }
 
-        // Register the fallback cleanup hook before any work so the empty dir is always reclaimed,
-        // even if validation or extraction raises.
+    /**
+     * Extract a zip into a fresh temp directory using the supplied {@link Limits}, and return a
+     * {@link Materialized} handle owning that directory.
+     *
+     * <p>This overload exists so tests can inject small thresholds without allocating hundreds of
+     * MiB of data. Production callers should use {@link #extractZipSafely(Path)}.
+     *
+     * @see #extractZipSafely(Path)
+     */
+    public static Materialized extractZipSafely(Path zipPath, Limits limits) throws IOException {
+        Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
         Thread hook = registerCleanup(extractDir);
         Materialized materialized = new Materialized(extractDir, hook);
 
         try {
-            extractZipSafelyInto(zipPath, extractDir);
+            extractZipSafelyInto(zipPath, extractDir, limits);
         } catch (IOException e) {
             materialized.close();
             throw e;
@@ -188,15 +275,16 @@ public final class SkillMaterializer {
      * Core extraction logic: validates, checks bounds, then extracts. Separated from {@link
      * #extractZipSafely} so the caller can handle cleanup on failure.
      */
-    private static void extractZipSafelyInto(Path zipPath, Path extractDir) throws IOException {
+    private static void extractZipSafelyInto(Path zipPath, Path extractDir, Limits limits)
+            throws IOException {
         try (ZipFile zf = new ZipFile(zipPath.toFile())) {
             int entryCount = zf.size();
-            if (entryCount > MAX_EXTRACT_ENTRIES) {
+            if (entryCount > limits.maxExtractEntries) {
                 throw new IOException(
                         "Skill archive contains "
                                 + entryCount
                                 + " entries, exceeding the limit of "
-                                + MAX_EXTRACT_ENTRIES);
+                                + limits.maxExtractEntries);
             }
 
             List<? extends ZipEntry> entries = Collections.list(zf.entries());
@@ -220,14 +308,14 @@ public final class SkillMaterializer {
 
                 long declared = entry.getSize();
 
-                if (declared > MAX_EXTRACT_ENTRY_BYTES) {
+                if (declared > limits.maxExtractEntryBytes) {
                     throw new IOException(
                             "Skill archive entry '"
                                     + entry.getName()
                                     + "' declared size "
                                     + declared
                                     + " exceeds the per-entry limit of "
-                                    + MAX_EXTRACT_ENTRY_BYTES
+                                    + limits.maxExtractEntryBytes
                                     + " bytes");
                 }
 
@@ -236,12 +324,12 @@ public final class SkillMaterializer {
                 }
             }
 
-            if (totalDeclared > MAX_EXTRACT_TOTAL_BYTES) {
+            if (totalDeclared > limits.maxExtractTotalBytes) {
                 throw new IOException(
                         "Skill archive declared total uncompressed size "
                                 + totalDeclared
                                 + " exceeds the limit of "
-                                + MAX_EXTRACT_TOTAL_BYTES
+                                + limits.maxExtractTotalBytes
                                 + " bytes");
             }
 
@@ -270,19 +358,19 @@ public final class SkillMaterializer {
 
                     int n;
                     while ((n = in.read(buf)) != -1) {
-                        if (perEntryWritten + n > MAX_EXTRACT_ENTRY_BYTES) {
+                        if (perEntryWritten + n > limits.maxExtractEntryBytes) {
                             throw new IOException(
                                     "Skill archive entry '"
                                             + entry.getName()
                                             + "' exceeds the per-entry limit of "
-                                            + MAX_EXTRACT_ENTRY_BYTES
+                                            + limits.maxExtractEntryBytes
                                             + " bytes");
                         }
 
-                        if (totalWritten + n > MAX_EXTRACT_TOTAL_BYTES) {
+                        if (totalWritten + n > limits.maxExtractTotalBytes) {
                             throw new IOException(
                                     "Skill archive total extracted size exceeds the limit of "
-                                            + MAX_EXTRACT_TOTAL_BYTES
+                                            + limits.maxExtractTotalBytes
                                             + " bytes");
                         }
 
@@ -416,7 +504,7 @@ public final class SkillMaterializer {
      * @throws IOException on connect / read failures or HTTP error responses.
      */
     public static Path downloadToTempFile(String url, int timeoutMs) throws IOException {
-        return downloadToTempFile(url, timeoutMs, false);
+        return downloadToTempFile(url, timeoutMs, false, Limits.DEFAULT);
     }
 
     /**
@@ -437,6 +525,25 @@ public final class SkillMaterializer {
      */
     public static Path downloadToTempFile(String url, int timeoutMs, boolean allowInsecureHttp)
             throws IOException {
+        return downloadToTempFile(url, timeoutMs, allowInsecureHttp, Limits.DEFAULT);
+    }
+
+    /**
+     * Download {@code url}, optionally permitting plain HTTP transport, enforcing the supplied
+     * {@link Limits}.
+     *
+     * <p>This overload exists so tests can inject small thresholds without streaming hundreds of
+     * MiB of data. Production callers should use {@link #downloadToTempFile(String, int)} or {@link
+     * #downloadToTempFile(String, int, boolean)}.
+     *
+     * <p>Security properties: (same as before, but references {@code limits.maxDownloadBytes}).
+     *
+     * @throws IOException on connect / read failures, HTTP error responses, or size cap exceeded.
+     */
+    public static Path downloadToTempFile(
+            String url, int timeoutMs, boolean allowInsecureHttp, Limits limits)
+            throws IOException {
+
         URL u;
 
         try {
@@ -536,12 +643,12 @@ public final class SkillMaterializer {
                     // in which case we fall through and let the byte counter catch it.
                     long contentLength = conn.getContentLengthLong();
 
-                    if (contentLength > MAX_DOWNLOAD_BYTES) {
+                    if (contentLength > limits.maxDownloadBytes) {
                         throw new IOException(
                                 "Skill archive download size declared as "
                                         + contentLength
                                         + " bytes, exceeding the limit of "
-                                        + MAX_DOWNLOAD_BYTES
+                                        + limits.maxDownloadBytes
                                         + " bytes");
                     }
 
@@ -552,10 +659,10 @@ public final class SkillMaterializer {
                     int n;
 
                     while ((n = in.read(buf)) != -1) {
-                        if (written + n > MAX_DOWNLOAD_BYTES) {
+                        if (written + n > limits.maxDownloadBytes) {
                             throw new IOException(
                                     "Skill archive download exceeded the limit of "
-                                            + MAX_DOWNLOAD_BYTES
+                                            + limits.maxDownloadBytes
                                             + " bytes");
                         }
 
