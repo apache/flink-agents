@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.Preconditions;
@@ -36,14 +37,18 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 public abstract class BaseChatModelSetup extends Resource {
+
     protected final String connectionName;
     protected String model;
     protected Object prompt;
     protected List<String> toolNames;
+    protected final List<String> subagentNames;
     @Nullable protected List<String> skills;
     @Nullable protected String skillDiscoveryPrompt;
     protected List<String> allowedCommands;
@@ -59,6 +64,9 @@ public abstract class BaseChatModelSetup extends Resource {
         this.model = descriptor.getArgument("model");
         this.prompt = descriptor.getArgument("prompt");
         this.toolNames = descriptor.getArgument("tools");
+        List<String> declaredSubagents = descriptor.getArgument("subagents");
+        this.subagentNames =
+                declaredSubagents == null ? new ArrayList<>() : new ArrayList<>(declaredSubagents);
         this.skills = descriptor.getArgument("skills");
         List<String> declaredCommands = descriptor.getArgument("allowed_commands");
         this.allowedCommands =
@@ -93,7 +101,7 @@ public abstract class BaseChatModelSetup extends Resource {
         }
         if (this.skills != null) {
             this.skillDiscoveryPrompt =
-                    this.resourceContext.generateAvailableSkillsPrompt(this.skills);
+                    nullIfEmpty(this.resourceContext.generateAvailableSkillsPrompt(this.skills));
             List<String> mutable =
                     this.toolNames == null ? new ArrayList<>() : new ArrayList<>(this.toolNames);
             if (!mutable.contains(Skills.LOAD_SKILL_TOOL)) {
@@ -104,11 +112,52 @@ public abstract class BaseChatModelSetup extends Resource {
             }
             this.toolNames = mutable;
         }
+        // Rebuilt from scratch: open() may run again on the same instance, and the callables must
+        // not accumulate.
+        this.tools.clear();
+        Set<String> callableNames = new LinkedHashSet<>();
         if (this.toolNames != null) {
             for (String name : this.toolNames) {
+                Preconditions.checkState(
+                        callableNames.add(name), "Duplicate callable name: %s", name);
                 this.tools.add((Tool) this.resourceContext.getResource(name, ResourceType.TOOL));
             }
         }
+        for (String name : this.subagentNames) {
+            // Tools are forbidden to carry the reserved prefix at registration, so a prefixed
+            // callable name can only come from this loop and a clash with a tool is impossible.
+            // Checked before the schema below, because a name declared twice is a mistake in the
+            // declaration whether or not it ends up registered.
+            Preconditions.checkState(
+                    callableNames.add(SubagentSetup.CALLABLE_NAME_PREFIX + name),
+                    "Duplicate callable name: %s",
+                    SubagentSetup.CALLABLE_NAME_PREFIX + name);
+            Resource resource = this.resourceContext.getResource(name, ResourceType.AGENT);
+            // A sub-agent owned by the other language resolves to a bridge handle here, which
+            // carries no schema to declare, so it is rejected instead of silently dropped.
+            Preconditions.checkState(
+                    resource instanceof SubagentSetup,
+                    "Sub-agent %s must resolve to a SubagentSetup, but was %s",
+                    name,
+                    resource.getClass().getName());
+            SubagentSetup setup = (SubagentSetup) resource;
+            String inputSchema = setup.getInputSchema();
+            // A sub-agent that declares neither an input schema nor an input type gives the model
+            // no arguments to build a call from, so the declaration is a mistake rather than
+            // something to skip: fail the job at setup time, consistent with the duplicate-name and
+            // bridge-handle checks above.
+            Preconditions.checkState(
+                    inputSchema != null,
+                    "Sub-agent %s declares neither an input schema nor an input type, so there are"
+                            + " no arguments for the model to build a call from.",
+                    name);
+            this.tools.add(new SubagentTool(name, setup.getDescription(), inputSchema));
+        }
+    }
+
+    @Nullable
+    private static String nullIfEmpty(@Nullable String value) {
+        return value == null || value.isEmpty() ? null : value;
     }
 
     public abstract Map<String, Object> getParameters();
@@ -170,10 +219,11 @@ public abstract class BaseChatModelSetup extends Resource {
             messages = promptMessages;
         }
 
-        if (this.skillDiscoveryPrompt != null && !this.skillDiscoveryPrompt.isEmpty()) {
-            int idx = ChatMessage.findFirstSystemMessage(messages);
+        if (this.skillDiscoveryPrompt != null) {
+            // Right after the first system message, or at the head when there is none.
+            int idx = ChatMessage.findFirstSystemMessage(messages) + 1;
             List<ChatMessage> mutated = new ArrayList<>(messages);
-            mutated.add(idx + 1, new ChatMessage(MessageRole.SYSTEM, this.skillDiscoveryPrompt));
+            mutated.add(idx, new ChatMessage(MessageRole.SYSTEM, this.skillDiscoveryPrompt));
             messages = mutated;
         }
         return messages;
@@ -223,6 +273,16 @@ public abstract class BaseChatModelSetup extends Resource {
     @VisibleForTesting
     public List<String> getToolNames() {
         return toolNames;
+    }
+
+    /** Names of the {@code AGENT} resources this setup declares as delegable. */
+    public List<String> getSubagentNames() {
+        return subagentNames;
+    }
+
+    @VisibleForTesting
+    public List<Tool> getTools() {
+        return tools;
     }
 
     @Nullable
