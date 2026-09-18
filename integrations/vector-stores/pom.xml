@@ -34,6 +34,7 @@ under the License.
         <module>elasticsearch</module>
         <module>milvus</module>
         <module>opensearch</module>
+        <module>pgvector</module>
         <module>s3vectors</module>
     </modules>
 

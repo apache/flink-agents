@@ -238,6 +238,10 @@ public final class ResourceName {
         public static final String MILVUS_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore";
 
+        // PostgreSQL pgvector
+        public static final String PGVECTOR_VECTOR_STORE =
+                "org.apache.flink.agents.integrations.vectorstores.pgvector.PgVectorVectorStore";
+
         /** Python implementations of VectorStore. */
         public static final class Python {
 

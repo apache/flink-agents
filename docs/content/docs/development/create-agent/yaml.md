@@ -750,6 +750,7 @@ Vector-store aliases:
 | `opensearch`    | —              | OpenSearch      |
 | `s3_vectors`    | —              | S3 Vectors      |
 | `milvus`        | —              | Milvus          |
+| `pgvector`      | —              | PostgreSQL pgvector |
 
 MCP-server aliases:
 

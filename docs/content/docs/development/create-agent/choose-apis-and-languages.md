@@ -150,6 +150,7 @@ where supported and install its dependencies.
 | [Elasticsearch]({{< ref "docs/development/vector-search/vector_stores/providers#elasticsearch" >}}) | ❌ | ✅ |
 | [Mem0]({{< ref "docs/development/vector-search/vector_stores/providers#mem0" >}}) | ✅ | ❌ |
 | [Milvus]({{< ref "docs/development/vector-search/vector_stores/providers#milvus" >}}) | ❌ | ✅ |
+| [PostgreSQL pgvector]({{< ref "docs/development/vector-search/vector_stores/providers#postgresql-pgvector" >}}) | ❌ | ✅ |
 
 **Decision Models**
 

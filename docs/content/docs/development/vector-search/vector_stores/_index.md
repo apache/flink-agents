@@ -179,7 +179,7 @@ For vector stores that implement `CollectionManageableVectorStore`, you can crea
 * `delete_collection` / `deleteCollection`: Delete a collection by name.
 
 {{< hint info >}}
-Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Mem0 (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
+Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Mem0 (Python), Elasticsearch (Java), OpenSearch (Java), Milvus (Java), and pgvector (Java) implement this interface.
 {{< /hint >}}
 
 {{< tabs "Collection level operations" >}}
