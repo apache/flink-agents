@@ -172,7 +172,7 @@ For vector stores that implement `CollectionManageableVectorStore`, you can crea
 * `delete_collection` / `deleteCollection`: Delete a collection by name.
 
 {{< hint info >}}
-Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Mem0 (Python), Elasticsearch (Java), OpenSearch (Java), and Milvus (Java) implement this interface.
+Collection-level operations are only supported for vector stores that implement `CollectionManageableVectorStore`. Among the built-in providers, Chroma (Python), Mem0 (Python), Elasticsearch (Java), OpenSearch (Java), Milvus (Java), and pgvector (Java) implement this interface.
 {{< /hint >}}
 
 {{< tabs "Collection level operations" >}}
@@ -989,9 +989,83 @@ public static ResourceDescriptor vectorStore() {
 
 {{< /tabs >}}
 
+### PostgreSQL pgvector
+
+[pgvector](https://github.com/pgvector/pgvector) adds vector similarity search to PostgreSQL, so an existing PostgreSQL installation can serve as the vector store.
+
+{{< hint info >}}
+pgvector is currently supported in the Java API only. To use it from Python agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+{{< /hint >}}
+
+#### Prerequisites
+
+1. A PostgreSQL server with the `pgvector` extension installed (PostgreSQL 13 or later, as pgvector requires; iterative index scans need pgvector 0.8). `tools/docker/pgvector/docker-compose.yml` starts one for local development.
+2. A role that can create tables in the target schema. `CREATE EXTENSION IF NOT EXISTS vector` is a no-op once the extension is installed; it only needs privileges when the extension is still missing. Set `create_extension` to `false` to skip the statement entirely, for example where DDL is audited or the role may not issue it.
+
+#### PgVectorVectorStore Parameters
+
+| Parameter          | Type | Default                                      | Description                                                                                         |
+|--------------------|------|----------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| `embedding_model`  | str  | Required                                     | Reference to embedding model resource name                                                          |
+| `uri`              | str  | `"jdbc:postgresql://localhost:5432/postgres"` | JDBC URL of the database (any `jdbc:postgresql:` form pgjdbc accepts)                              |
+| `host`, `port`, `database` | str, int, str | `localhost`, `5432`, `postgres`  | Build the JDBC URL when `uri` is not set; any subset may be given                                    |
+| `username`         | str  | None                                         | Database user                                                                                        |
+| `password`         | str  | None                                         | Database password                                                                                    |
+| `connect_timeout_s` | int | driver default (`10`)                        | Seconds to wait for a TCP connection and login; when omitted, the `uri` parameters or driver defaults apply |
+| `socket_timeout_s` | int  | driver default (`0`, no limit)               | Seconds to wait for any statement reply before dropping the connection; when omitted, the `uri` parameters or driver defaults apply |
+| `schema`           | str  | `"public"`                                   | PostgreSQL schema that holds the tables                                                              |
+| `collection`       | str  | `"flink_agents_pgvector_collection"`         | Default table name; `collection_name` and `index` are accepted as aliases                            |
+| `id_field`         | str  | `"id"`                                       | Name of the text primary key column                                                                  |
+| `content_field`    | str  | `"content"`                                  | Name of the text column storing document content                                                     |
+| `metadata_field`   | str  | `"metadata"`                                 | Name of the `jsonb` column storing document metadata                                                 |
+| `vector_field`     | str  | `"embedding"`                                | Name of the `vector` column used for similarity search                                               |
+| `dims`             | int  | `768`                                        | Vector dimensionality of created tables                                                              |
+| `metric_type`      | str  | `"COSINE"`                                   | Distance metric: `COSINE`, `L2` or `IP`                                                              |
+| `index_type`       | str  | `"HNSW"`                                     | Vector index for created tables: `HNSW`, `IVFFLAT` or `NONE`                                         |
+| `index_params`     | map  | `{}`                                         | Index storage parameters, for example `m` and `ef_construction` (HNSW) or `lists` (IVFFlat)          |
+| `create_extension` | bool | `true`                                       | Run `CREATE EXTENSION IF NOT EXISTS vector` before creating a table (a no-op once installed)         |
+| `iterative_scan`   | str  | `"RELAXED_ORDER"`                            | Iterative index scan mode for similarity searches on pgvector 0.8+: `RELAXED_ORDER`, `STRICT_ORDER` (HNSW only; IVFFlat always scans in relaxed order) or `OFF` |
+
+Table, schema and column names must be plain identifiers (letters, digits and underscores, at most 63 characters); `metadata_field` and `vector_field` are limited to 48 characters so that their index names stay within PostgreSQL's 63-character limit for any table name. Collection names passed per call follow the same rule as tables. `index_params` values must be integers or plain words.
+
+`createCollectionIfNotExists` creates the table with a text primary key, a text content column, a `jsonb` metadata column and a `vector(dims)` column, plus a GIN index on the metadata column and the configured vector index. If the table already exists it is left untouched, and a warning is logged when its vector column width or index operator class does not match the store's `dims` and `metric_type`; `PgVectorVectorStore.schemaMismatches(collection, options)` returns the same findings as a list for callers that prefer to fail fast. A view or other non-table relation occupying the name is rejected with an error. Equality filters compile to a single `jsonb` containment predicate (`metadata @> '{"key": "value"}'`), so they apply to `query`, `get` and `delete` alike and are served by the GIN index. Filter values must be scalars; nested maps and lists are rejected. `add` and `update` both write by primary key (an existing id is replaced, so a replayed batch is idempotent; `add` generates ids that are missing, `update` requires them) and write each batch in one transaction; `get` with `limit: null` returns every matching row, and `delete` with an empty id list is a no-op.
+
+A filtered similarity search on an HNSW or IVFFlat index is post-filtered by PostgreSQL: the index yields its nearest candidates (`hnsw.ef_search`, default 40) and the filter is applied to those, so a selective filter can return fewer rows than requested. On pgvector 0.8 or later the store therefore runs every similarity search with the index's iterative scan enabled (`iterative_scan`, default `RELAXED_ORDER`, applied with `SET LOCAL` in the search's own transaction block), which keeps scanning until `limit` rows match. Set it to `OFF` to keep the server settings, or pass `iterative_scan` in the query's extra arguments to override it for one query. The same setting lets an unfiltered HNSW search return more than `hnsw.ef_search` (default 40) rows. Older pgvector versions fall back to the plain scan.
+
+HNSW and IVFFlat indexes support at most 2000 dimensions, so `createCollectionIfNotExists` rejects wider vectors unless `index_type` is `NONE`; existing tables of any width can be queried. Set `socket_timeout_s` when a job must fail over instead of waiting on an unresponsive server, keeping it above the longest index build you expect. The JDBC driver registers itself with `java.sql.DriverManager` when it is loaded; on a long-lived session cluster that receives many job submissions, put the Flink Agents dist jar in Flink's `lib/` directory rather than in each job jar, as with any JDBC driver, so the driver is loaded once. An IVFFlat index built on an empty table has untrained centroids, so load the data first or run `REINDEX` afterwards; HNSW has no such requirement. Names are quoted as given and therefore matched case-sensitively.
+
+Results are returned nearest first (hits from a relaxed iterative scan are re-sorted before they are returned). The score on each document depends on the metric: the cosine similarity for `COSINE` and the inner product for `IP` (higher is better), and the Euclidean distance for `L2` (lower is better). A per-query `metric_type` argument overrides the metric, but the vector index is only used when it matches the index's operator class.
+
+#### Usage Example
+
+{{< tabs "pgvector Usage Example" >}}
+
+{{< tab "Java" >}}
+
+```java
+@VectorStore
+public static ResourceDescriptor vectorStore() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.PGVECTOR_VECTOR_STORE)
+            .addInitialArgument("embedding_model", "embeddingModel")
+            .addInitialArgument("uri", "jdbc:postgresql://localhost:5432/postgres")
+            .addInitialArgument("username", "postgres")
+            .addInitialArgument("password", "postgres")
+            .addInitialArgument("collection", "my_documents")
+            .addInitialArgument("dims", 1536)
+            .addInitialArgument("metric_type", "COSINE")
+            .addInitialArgument("index_type", "HNSW")
+            .addInitialArgument("index_params", Map.of("m", 16, "ef_construction", 64))
+            .build();
+}
+```
+
+{{< /tab >}}
+
+{{< /tabs >}}
+
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch and Milvus are currently Java-only, Chroma is currently Python-only).
+Flink Agents supports cross-language vector store integration, allowing you to use vector stores implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a vector store provider is only available in one language (e.g., Elasticsearch, Milvus and pgvector are currently Java-only, Chroma is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**

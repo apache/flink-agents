@@ -46,6 +46,18 @@ under the License.
         <module>flink-2.3</module>
     </modules>
 
+    <dependencyManagement>
+        <dependencies>
+            <!-- Requested by several integrations (Milvus SDK: 3.37.0, pgjdbc: 3.49.3). Pin the newest
+                 so the bundled version does not depend on declaration order; NOTICE lists it. -->
+            <dependency>
+                <groupId>org.checkerframework</groupId>
+                <artifactId>checker-qual</artifactId>
+                <version>3.49.3</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <dependency>
             <groupId>org.apache.flink</groupId>
@@ -120,6 +132,11 @@ under the License.
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-agents-integrations-vector-stores-opensearch</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-integrations-vector-stores-pgvector</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
