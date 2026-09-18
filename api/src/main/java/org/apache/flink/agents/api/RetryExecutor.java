@@ -199,7 +199,28 @@ public class RetryExecutor {
             return this;
         }
 
+        /**
+         * Builds a {@link RetryExecutor} after checking the configured values.
+         *
+         * @throws IllegalArgumentException if {@code maxRetries} is negative, if {@code
+         *     initialBackoffMs} is negative, or if {@code maxBackoffMs} is smaller than {@code
+         *     initialBackoffMs}
+         */
         public RetryExecutor build() {
+            if (maxRetries < 0) {
+                throw new IllegalArgumentException(
+                        "maxRetries must be >= 0, but was " + maxRetries);
+            }
+            if (initialBackoffMs < 0) {
+                throw new IllegalArgumentException(
+                        "initialBackoffMs must be >= 0, but was " + initialBackoffMs);
+            }
+            if (maxBackoffMs < initialBackoffMs) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "maxBackoffMs must be >= initialBackoffMs, but was %d < %d",
+                                maxBackoffMs, initialBackoffMs));
+            }
             return new RetryExecutor(
                     maxRetries, initialBackoffMs, maxBackoffMs, retryablePredicate);
         }
