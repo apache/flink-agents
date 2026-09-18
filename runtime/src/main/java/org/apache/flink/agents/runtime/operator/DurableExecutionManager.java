@@ -325,6 +325,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                             actionTask.event,
                             actionState,
                             this);
+            putDurableContext(actionTask, durableContext);
         }
 
         actionTask.getRunnerContext().setDurableExecutionContext(durableContext);

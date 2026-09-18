@@ -17,10 +17,47 @@
  */
 package org.apache.flink.agents.runtime.async;
 
+import org.apache.flink.agents.runtime.operator.ActionTask;
+
 /**
- * Marker context for continuation execution.
- *
- * <p>This class is part of the base (JDK 11) sources. JDK 21 provides a multi-release variant with
- * continuation-specific fields.
+ * Context for continuation execution (base JDK 11 sources). Carries the current key, the {@link
+ * ActionTask}, and its (recordIndex, taskIndex) priority so {@link ContinuationActionExecutor} can
+ * re-acquire the lock at the right priority and restore the runner context on the parallel path.
+ * JDK 21 provides a multi-release variant with continuation-specific state instead.
  */
-public class ContinuationContext {}
+public class ContinuationContext {
+
+    private Object key;
+    private ActionTask actionTask;
+    private long recordIndex;
+    private long taskIndex;
+
+    public void setKey(Object key) {
+        this.key = key;
+    }
+
+    public Object getKey() {
+        return key;
+    }
+
+    public void setActionTask(ActionTask actionTask) {
+        this.actionTask = actionTask;
+    }
+
+    public ActionTask getActionTask() {
+        return actionTask;
+    }
+
+    public void setPriority(long recordIndex, long taskIndex) {
+        this.recordIndex = recordIndex;
+        this.taskIndex = taskIndex;
+    }
+
+    public long getRecordIndex() {
+        return recordIndex;
+    }
+
+    public long getTaskIndex() {
+        return taskIndex;
+    }
+}

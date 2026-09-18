@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
@@ -107,6 +108,28 @@ class DurableExecutionManagerTest {
         dem.notifyCheckpointComplete(1L);
         dem.snapshotRecoveryMarker();
         dem.close();
+    }
+
+    @Test
+    void setupDurableExecutionContextPinsFreshContext() {
+        InMemoryActionStateStore store = new InMemoryActionStateStore(false);
+        DurableExecutionManager manager = new DurableExecutionManager(store);
+        Action action = TestActions.noopAction();
+        Event event = new InputEvent(1L);
+        ActionTask task = new JavaActionTask("key", event, action, 1L);
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
+        task.setRunnerContext(runnerContext);
+
+        manager.setupDurableExecutionContext(task, new ActionState(event), 0L);
+
+        assertThat(manager.getDurableContext(task))
+                .isSameAs(task.getRunnerContext().getDurableExecutionContext());
     }
 
     @Test
