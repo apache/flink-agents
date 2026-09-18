@@ -194,6 +194,9 @@ def test_resolve_clazz_covers_vector_store_java_and_python() -> None:
     assert resolve_clazz("milvus", ResourceType.VECTOR_STORE, "java").endswith(
         "MilvusVectorStore"
     )
+    assert resolve_clazz("pgvector", ResourceType.VECTOR_STORE, "java").endswith(
+        "PgVectorVectorStore"
+    )
     assert resolve_clazz("mem0", ResourceType.VECTOR_STORE, "python").endswith(
         "Mem0VectorStore"
     )

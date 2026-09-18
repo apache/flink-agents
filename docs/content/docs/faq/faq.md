@@ -126,6 +126,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 | [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
 | [Mem0]({{< ref "docs/development/vector_stores#mem0" >}}) | ✅ | ❌ |
 | [Milvus]({{< ref "docs/development/vector_stores#milvus" >}}) | ❌ | ✅ |
+| [PostgreSQL pgvector]({{< ref "docs/development/vector_stores#postgresql-pgvector" >}}) | ❌ | ✅ |
 
 **MCP Server**
 

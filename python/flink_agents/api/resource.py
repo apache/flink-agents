@@ -397,5 +397,8 @@ class ResourceName:
             # Milvus
             MILVUS_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore"
 
+            # PostgreSQL pgvector
+            PGVECTOR_VECTOR_STORE = "org.apache.flink.agents.integrations.vectorstores.pgvector.PgVectorVectorStore"
+
     # MCP resource names
     MCP_SERVER = "flink_agents.integrations.mcp.mcp.MCPServer"

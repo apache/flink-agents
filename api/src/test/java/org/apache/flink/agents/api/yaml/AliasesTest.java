@@ -85,6 +85,9 @@ class AliasesTest {
         assertThat(s3Vectors).isEqualTo(ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE);
         String milvus = Aliases.resolveClazz("milvus", ResourceType.VECTOR_STORE, Language.JAVA);
         assertThat(milvus).isEqualTo(ResourceName.VectorStore.MILVUS_VECTOR_STORE);
+        String pgvector =
+                Aliases.resolveClazz("pgvector", ResourceType.VECTOR_STORE, Language.JAVA);
+        assertThat(pgvector).isEqualTo(ResourceName.VectorStore.PGVECTOR_VECTOR_STORE);
         String mem0 = Aliases.resolveClazz("mem0", ResourceType.VECTOR_STORE, Language.PYTHON);
         assertThat(mem0).isEqualTo(ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);
     }
