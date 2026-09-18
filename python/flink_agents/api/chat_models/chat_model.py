@@ -41,7 +41,7 @@ class StructuredOutputStrategy(str, Enum):
 
     This expresses *policy* only. Whether a connection *can* apply the provider's
     native structured-output API is a separate, model-dependent *capability*
-    question. Policy and capability are combined at request-build time.
+    question. ``resolves_to_native`` combines the two.
 
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
@@ -149,6 +149,13 @@ class BaseChatModelConnection(Resource, ABC):
         to the model answers for the endpoint instead, and may report ``True`` for a
         name it has never seen.
 
+        This answer is advisory rather than binding: it is a statement about the model
+        that a configured policy is permitted to overrule, and
+        ``StructuredOutputStrategy.resolves_to_native`` is defined to do so in either
+        direction. Feasibility admits no such override, which is why
+        ``can_apply_native_structured_output`` is a separate hook rather than a further
+        condition folded into this one.
+
         Parameters
         ----------
         effective_model : str | None
@@ -214,6 +221,11 @@ class BaseChatModelConnection(Resource, ABC):
         here and not capable there; a ``RowTypeInfo``, which no connection translates
         natively, on a connection whose capability predicate is unconditionally true is
         capable there and not feasible here.
+
+        This answer is binding rather than advisory, which is the asymmetry that keeps
+        it separate from capability. A request whose schema this connection cannot
+        encode has no native form to send, so no policy can overrule a ``False`` here,
+        whereas a policy is permitted to overrule the capability answer.
 
         An override must answer from the same logic its own request path uses to decide
         the native branch, so that the answer cannot drift from what the request ends up
@@ -430,8 +442,8 @@ class BaseChatModelSetup(Resource):
     structured_output_strategy: StructuredOutputStrategy = Field(
         default=StructuredOutputStrategy.AUTO,
         description=(
-            "Intent about how an output schema should be applied. Whether native "
-            "structured output is actually used combines this policy with the "
+            "Intent about how an output schema should be applied. "
+            "``resolves_to_native`` combines this policy with the "
             "connection's model-dependent capability. An explicitly null value is "
             "normalized to AUTO, so a validated setup always carries a real strategy."
         ),

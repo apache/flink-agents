@@ -65,6 +65,13 @@ public abstract class BaseChatModelConnection extends Resource {
      * connection whose capability belongs to the endpoint rather than to the model answers for the
      * endpoint instead, and may report {@code true} for a name it has never seen.
      *
+     * <p>This answer is advisory rather than binding: it is a statement about the model that a
+     * configured policy is permitted to overrule, and {@link
+     * StructuredOutputStrategy#resolvesToNative(boolean)} is defined to do so in either direction.
+     * Feasibility admits no such override, which is why {@link
+     * #canApplyNativeStructuredOutput(Object, List, Map)} is a separate hook rather than a further
+     * condition folded into this one.
+     *
      * @param effectiveModel the model whose capability is being asked about, as returned by {@link
      *     #effectiveModelFor(Map)}, may be null
      * @return true if a schema can be applied natively for {@code effectiveModel}
@@ -110,6 +117,11 @@ public abstract class BaseChatModelConnection extends Resource {
      * direction. A POJO on a model the connection does not classify as capable is feasible here and
      * not capable there; a {@code RowTypeInfo} on a connection whose capability predicate is
      * unconditionally true is capable there and not feasible here.
+     *
+     * <p>This answer is binding rather than advisory, which is the asymmetry that keeps it separate
+     * from capability. A request whose schema this connection cannot encode has no native form to
+     * send, so no policy can overrule a {@code false} here, whereas a policy is permitted to
+     * overrule the capability answer.
      *
      * <p>An override must answer from the same logic its own request builder uses to decide the
      * native branch, so that the answer cannot drift from what the request ends up carrying.
