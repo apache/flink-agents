@@ -112,6 +112,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
             "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_CONNECTION,
+            "openai": ResourceName.EmbeddingModel.Java.OPENAI_CONNECTION,
         },
     },
     ResourceType.EMBEDDING_MODEL: {
@@ -123,6 +124,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
             "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_SETUP,
+            "openai": ResourceName.EmbeddingModel.Java.OPENAI_SETUP,
         },
     },
     ResourceType.VECTOR_STORE: {
