@@ -54,6 +54,7 @@ import java.util.function.IntPredicate;
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.ACTION_STATE_STORE_BACKEND;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.FLUSS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateStore.BackendType.KAFKA;
+import static org.apache.flink.agents.runtime.actionstate.KafkaActionStateRecoveryMarker.UNION_STATE_NAME;
 
 /**
  * Owns the durable-execution side of {@link ActionExecutionOperator}: the optional {@link
@@ -85,7 +86,6 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DurableExecutionManager.class);
 
-    private static final String RECOVERY_MARKER_STATE_NAME = "recoveryMarker";
     private static final String LAST_COMPLETED_SEQUENCE_NUMBER_STATE_NAME =
             "lastCompletedSequenceNumber";
 
@@ -147,7 +147,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             recoveryMarkerOpState =
                     operatorStateBackend.getUnionListState(
                             new ListStateDescriptor<>(
-                                    RECOVERY_MARKER_STATE_NAME, TypeInformation.of(Object.class)));
+                                    UNION_STATE_NAME, TypeInformation.of(Object.class)));
         }
     }
 
@@ -215,7 +215,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
             ListState<Object> markerState =
                     operatorStateBackend.getUnionListState(
                             new ListStateDescriptor<>(
-                                    RECOVERY_MARKER_STATE_NAME, TypeInformation.of(Object.class)));
+                                    UNION_STATE_NAME, TypeInformation.of(Object.class)));
             Iterable<Object> recoveryMarkers = markerState.get();
             if (recoveryMarkers != null) {
                 recoveryMarkers.forEach(markers::add);
