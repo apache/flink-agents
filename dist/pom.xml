@@ -165,9 +165,45 @@ under the License.
                                 <exclude>META-INF/org/apache/logging/log4j/**</exclude>
                                 <exclude>META-INF/services/org.apache.logging.log4j.*</exclude>
                                 <exclude>META-INF/licenses/LICENSE.slf4j*</exclude>
+                                <!-- The shade plugin relocates bytecode but not file
+                                     paths under META-INF/versions/**: relocated MR entries
+                                     keep the original package path while their bytecode
+                                     declares the shaded name, which breaks the JDK 9+ MR
+                                     lookup of the original class with NoClassDefFoundError
+                                     (wrong name). The base classes are kept, so dropping the
+                                     MR copies is lossless. -->
+                                <exclude>META-INF/versions/*/com/fasterxml/**</exclude>
                             </excludes>
                         </filter>
                     </filters>
+                    <!--
+                        Relocate third-party libraries that are commonly present in user job JARs
+                        or other JARs on the Flink classpath. When flink-agents-dist is submitted
+                        alongside user code (e.g. via the "jars" option or placed in lib/) it lands
+                        in the same ClassLoader as user code, so a version mismatch on these
+                        packages causes NoSuchMethodError or ClassCastException.
+
+                        Packages that Flink already relocates in flink-shaded-* (jackson, guava,
+                        netty, asm) are NOT repeated here: Flink's copies live under
+                        org.apache.flink.shaded.* and therefore never conflict with ours.
+
+                        kotlin / okhttp3 / okio are intentionally NOT relocated: the shade plugin
+                        applies string replacement to all resource file names, corrupting
+                        Kotlin's .kotlin_builtins metadata files. okhttp3/okio are Kotlin-based
+                        and must move together with kotlin stdlib, so all three are left unshaded.
+                    -->
+                    <relocations>
+                        <!-- kafka-clients is ubiquitous in Flink streaming jobs -->
+                        <relocation>
+                            <pattern>org.apache.kafka</pattern>
+                            <shadedPattern>org.apache.flink.agents.shaded.org.apache.kafka</shadedPattern>
+                        </relocation>
+                        <!-- jackson is widely used for JSON serialisation in user code -->
+                        <relocation>
+                            <pattern>com.fasterxml</pattern>
+                            <shadedPattern>org.apache.flink.agents.shaded.com.fasterxml</shadedPattern>
+                        </relocation>
+                    </relocations>
                 </configuration>
                 <executions>
                     <execution>
@@ -185,6 +221,8 @@ under the License.
                                         <Multi-Release>true</Multi-Release>
                                     </manifestEntries>
                                 </transformer>
+                                <!-- Merge META-INF/services entries from all bundled JARs -->
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                             </transformers>
                         </configuration>
                     </execution>
