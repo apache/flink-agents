@@ -261,6 +261,19 @@ public class BaseSubagentSetupTest {
         BaseSubagentSetup rootSetup =
                 (BaseSubagentSetup) rootCache.getResource("root-setup", ResourceType.AGENT);
         assertThat(rootSetup.getSubagentName()).isEqualTo("root-setup");
+
+        // A child cache injects the local resource name as resolved in the child plan: the
+        // enclosing scope is routing-level context the setup never sees.
+        Agent childAgent = new Agent();
+        childAgent.addResource("nested", ResourceType.AGENT, new AllocatingCaptureSetup());
+        ResourceCache childCache =
+                new ResourceCache(
+                        new AgentPlan(childAgent).getResourceProviders(),
+                        Thread.currentThread().getContextClassLoader(),
+                        rootCache);
+        BaseSubagentSetup nestedSetup =
+                (BaseSubagentSetup) childCache.getResource("nested", ResourceType.AGENT);
+        assertThat(nestedSetup.getSubagentName()).isEqualTo("nested");
     }
 
     @SuppressWarnings("unchecked")
