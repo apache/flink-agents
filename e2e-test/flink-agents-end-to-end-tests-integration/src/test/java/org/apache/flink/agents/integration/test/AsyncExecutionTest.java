@@ -210,14 +210,15 @@ public class AsyncExecutionTest {
     }
 
     /**
-     * Tests that async execution on JDK 21+ actually executes tasks in parallel.
+     * Tests that async execution actually executes tasks in parallel.
      *
      * <p>This test creates multiple tasks that each sleep for a fixed duration. Each async task
      * records its start and end timestamps. We verify parallel execution by checking if the
      * execution time ranges overlap.
      *
-     * <p>On JDK 21+: Tasks run in parallel, their execution times overlap On JDK &lt; 21: Tasks run
-     * sequentially, no overlap
+     * <p>On JDK 21+: the coroutine engine runs tasks in parallel, their execution times overlap. On
+     * JDK &lt; 21: the blocking-inline parallel execution engine (enabled by default for pure-Java
+     * agents) also runs these multi-key tasks in parallel.
      */
     @Test
     public void testAsyncExecutionIsActuallyParallel() throws Exception {
@@ -322,15 +323,18 @@ public class AsyncExecutionTest {
                             expectedOverlaps - 1, overlapCount));
             System.out.println("✓ Async execution is PARALLEL (as expected on JDK 21+)");
         } else {
-            // On JDK < 21, tasks run sequentially - no overlap expected
-            Assertions.assertEquals(
-                    0,
-                    overlapCount,
+            // On JDK < 21, the blocking-inline parallel execution engine (enabled by default
+            // for pure-Java agents) also runs these multi-key tasks in parallel.
+            int expectedOverlaps = (numRequests * (numRequests - 1)) / 2;
+            Assertions.assertTrue(
+                    overlapCount >= expectedOverlaps - 1, // Allow some tolerance
                     String.format(
-                            "On JDK < 21, async tasks should run sequentially (no overlap). "
-                                    + "But found %d overlapping pairs.",
-                            overlapCount));
-            System.out.println("✓ Async execution is SEQUENTIAL (as expected on JDK < 21)");
+                            "On JDK < 21, the parallel execution engine should run async tasks "
+                                    + "in parallel (overlapping). "
+                                    + "Expected at least %d overlapping pairs, but found %d.",
+                            expectedOverlaps - 1, overlapCount));
+            System.out.println(
+                    "✓ Async execution is PARALLEL (blocking-inline engine on JDK < 21)");
         }
 
         System.out.println("=== Test Passed ===");

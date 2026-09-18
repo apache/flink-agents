@@ -303,6 +303,26 @@ class AgentExecutionOptions:
         default=os.cpu_count() * 2,
     )
 
+    # Experimental fallback switch for the Java JDK<21 parallel execution engine.
+    # Only consulted for pure-Java agents without coroutine support; plans
+    # containing Python actions never use the parallel engine regardless of
+    # this value.
+    PARALLEL_EXECUTION_ENABLED = ConfigOption(
+        key="parallel-execution.enabled",
+        config_type=bool,
+        default=True,
+    )
+
+    # Maximum number of input records that may be in flight concurrently. Only
+    # enforced by the Java JDK<21 parallel execution engine for pure-Java
+    # agents; the JDK 21 coroutine engine and plans containing Python actions
+    # ignore it.
+    MAX_IN_FLIGHT_INPUT_RECORDS = ConfigOption(
+        key="max-in-flight-input-records",
+        config_type=int,
+        default=100,
+    )
+
     CHAT_ASYNC = ConfigOption(
         key="chat.async",
         config_type=bool,

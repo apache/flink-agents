@@ -234,6 +234,18 @@ class OperatorStateManager {
     }
 
     /**
+     * Counts the pending {@link ActionTask}s buffered for the current key without removing any.
+     * Used on recovery to grant one pull credit per already-queued task.
+     */
+    int countActionTasks() throws Exception {
+        int count = 0;
+        for (ActionTask ignored : actionTasksKState.get()) {
+            count++;
+        }
+        return count;
+    }
+
+    /**
      * Removes and returns the next pending {@link ActionTask} for the current key.
      *
      * @return the next {@link ActionTask}, or {@code null} if the queue for the current key is
