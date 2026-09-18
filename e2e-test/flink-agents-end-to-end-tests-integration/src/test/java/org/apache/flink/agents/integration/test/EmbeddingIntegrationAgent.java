@@ -48,6 +48,7 @@ import java.util.Map;
  */
 public class EmbeddingIntegrationAgent extends Agent {
     public static final String OLLAMA_MODEL = "nomic-embed-text";
+    public static final String OPENAI_MODEL = "text-embedding-3-small";
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @EmbeddingModelConnection
@@ -58,6 +59,12 @@ public class EmbeddingIntegrationAgent extends Agent {
                             ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
                     .addInitialArgument("host", "http://localhost:11434")
                     .addInitialArgument("timeout", 60)
+                    .build();
+        } else if (provider.equals("OPENAI")) {
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.EmbeddingModel.OPENAI_CONNECTION)
+                    .addInitialArgument("api_key", System.getenv().get("OPENAI_API_KEY"))
+                    .addInitialArgument("request_timeout", 60)
                     .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));
@@ -71,6 +78,12 @@ public class EmbeddingIntegrationAgent extends Agent {
             return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OLLAMA_SETUP)
                     .addInitialArgument("connection", "embeddingConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
+                    .build();
+        } else if (provider.equals("OPENAI")) {
+            return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OPENAI_SETUP)
+                    .addInitialArgument("connection", "embeddingConnection")
+                    .addInitialArgument("model", OPENAI_MODEL)
+                    .addInitialArgument("dimensions", 256)
                     .build();
         } else {
             throw new RuntimeException(String.format("Unknown model provider %s", provider));

@@ -585,7 +585,7 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 | Alias     | `type: python` | `type: java`   |
 | --------- | -------------- | -------------- |
 | `ollama`  | Ollama         | Ollama         |
-| `openai`  | OpenAI         | —              |
+| `openai`  | OpenAI         | OpenAI (Java)  |
 | `tongyi`  | Tongyi         | —              |
 | `bedrock` | —              | Bedrock (Java) |
 
