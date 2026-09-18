@@ -245,8 +245,8 @@ public abstract class BaseChatModelSetup extends Resource {
 
     /**
      * The configured intent about how an output schema should be applied, defaulting to {@link
-     * StructuredOutputStrategy#AUTO}. Whether native structured output is actually applied combines
-     * this policy with the connection's model-dependent capability.
+     * StructuredOutputStrategy#AUTO}. {@link StructuredOutputStrategy#resolvesToNative(boolean)}
+     * combines this policy with the connection's model-dependent capability.
      *
      * @return the structured output strategy
      */

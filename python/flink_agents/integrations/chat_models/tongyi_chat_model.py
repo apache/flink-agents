@@ -200,6 +200,48 @@ class TongyiChatModelConnection(BaseChatModelConnection):
             return DEFAULT_MODEL
         return model_kwargs.get("model", DEFAULT_MODEL)
 
+    @override
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native
+        ``response_format``, leaving the effective model's capability out of the answer.
+
+        Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
+        wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
+        prompt-engineering fallback.
+
+        A caller-supplied ``response_format`` is deliberately not a condition: the
+        branch answers that conflict by raising rather than by skipping, so a caller
+        that asked here first can still be met with an exception. Reporting the
+        conflict infeasible instead would turn a documented error into a silently
+        unconstrained request. Rendering raises likewise, on a ``BaseModel`` that
+        carries no JSON Schema, so a ``True`` is not a promise the call succeeds.
+
+        Neither the tools nor the parameters are read: this connection sends a native
+        schema alongside bound tools, and the one parameter that would bear on the
+        answer is the model, which is the capability question this excludes.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Not read.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
+        """
+        return _native_output_model(output_schema) is not None
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -231,6 +273,13 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message.
         """
+        # Snapshotted before the pops below, so the feasibility query is asked with
+        # the parameters as they arrived rather than with a mapping this path has
+        # already stripped. No term of today's answer reads them; the shape is what
+        # keeps a term added later from answering about a request other than the one
+        # being built.
+        raw_kwargs = dict(kwargs)
+
         tongyi_messages = self.__convert_to_tongyi_messages(messages)
 
         tongyi_tools: List[Dict[str, Any]] | None = (
@@ -247,24 +296,21 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         # popped on the line above, so a kwargs lookup would yield None on every call
         # and report every model incapable.
         #
-        # TODO(#912): the requested strategy is not visible here, so this check
-        # cannot tell an explicit NATIVE request apart from one that merely
-        # resolved to native. A caller asking for NATIVE on a model this predicate
-        # rejects therefore gets an unconstrained response instead of an error.
-        # Once strategy resolution is wired up, NATIVE must either bypass this
-        # capability check or fail explicitly.
-        if output_schema is not None and self.supports_native_structured_output(
-            model_name
-        ):
-            # Resolved before the conflict test, so a payload with no native
-            # translation does not raise over a response_format this branch was
-            # never going to write. Tested before the schema is rendered, because a
-            # caller who supplies both a schema and a response_format has a conflict
-            # to resolve whatever the schema turns out to render to, and reporting a
-            # render failure instead would describe the wrong problem. The name is
-            # read off the model class, so this needs no rendered document.
+        # The feasibility half is asked rather than restated, so a caller asking the
+        # same question gets the answer this branch acts on. A payload with no native
+        # translation is reported infeasible there, so it never reaches the conflict
+        # test below and cannot raise over a response_format this branch was never
+        # going to write.
+        if self.can_apply_native_structured_output(
+            output_schema, tools, raw_kwargs
+        ) and self.supports_native_structured_output(model_name):
+            # Tested before the schema is rendered, because a caller who supplies both
+            # a schema and a response_format has a conflict to resolve whatever the
+            # schema turns out to render to, and reporting a render failure instead
+            # would describe the wrong problem. The name is read off the model class,
+            # so this needs no rendered document.
             native_model = _native_output_model(output_schema)
-            if native_model is not None and "response_format" in kwargs:
+            if "response_format" in kwargs:
                 msg = (
                     f"The {native_model.__name__} output schema is sent as "
                     f"response_format to model '{model_name}', so response_format "
@@ -272,9 +318,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
                     f"omit output_schema to set response_format directly."
                 )
                 raise ValueError(msg)
-            response_format = _native_response_format(output_schema)
-            if response_format is not None:
-                kwargs["response_format"] = response_format
+            kwargs["response_format"] = _native_response_format(output_schema)
 
         response = Generation.call(
             model=model_name,

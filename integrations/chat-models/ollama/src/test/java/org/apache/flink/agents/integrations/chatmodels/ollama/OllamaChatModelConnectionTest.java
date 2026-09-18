@@ -39,9 +39,11 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,6 +57,14 @@ class OllamaChatModelConnectionTest {
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * A tool input schema carrying the {@code properties} object {@code convertToOllamaTools}
+     * documents as expected. A schema without one raises there, before the native branch this test
+     * is about is ever reached.
+     */
+    private static final String TOOL_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"}}}";
 
     /** Output schema fixture with a plain field and a map whose values carry a type. */
     public static class Report {
@@ -205,6 +215,91 @@ class OllamaChatModelConnectionTest {
                         .buildRequest(userMessage(), List.of(), params("qwen3:4b"), nonClassSchema);
 
         assertThat(request.getFormat()).isNull();
+    }
+
+    /** A connection that records what the feasibility query answered on each request it built. */
+    private static OllamaChatModelConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                        .addInitialArgument("endpoint", "http://localhost:11434")
+                        .build();
+        return new OllamaChatModelConnection(desc, NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("The feasibility query answers exactly what the native branch decides")
+    void feasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. This connection
+        // reports every model capable, so the schema form is the only thing that moves.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        OllamaChatModelConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            // No null-tools case here: convertToOllamaTools iterates the list without a null
+            // guard, so this builder rejects null well before the native branch. The query itself
+            // accepts null, which feasibilityQueryIgnoresBoundTools pins against the query direct.
+            for (List<Tool> tools :
+                    List.of(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool(TOOL_SCHEMA)))) {
+                answered.set(null);
+
+                OllamaChatRequest request =
+                        connection.buildRequest(userMessage(), tools, params("qwen3:4b"), schema);
+
+                // A null here means the branch never consulted the query at all, which is the
+                // drift this test exists to catch. The value assertion below would fail too, but
+                // on a null comparison that does not say why.
+                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
+                assertThat(answered.get())
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(request.getFormat() != null);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools do not make a POJO schema infeasible here")
+    void feasibilityQueryIgnoresBoundTools() {
+        // Ollama's native branch imposes no empty-tools precondition, unlike Gemini's. Pinning the
+        // answer keeps an override from acquiring one by being copied from a connection that does.
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(new SchemaOnlyTool(TOOL_SCHEMA)),
+                                        params("qwen3:4b")))
+                .isTrue();
+        // A null list means no tools, and the query accepts one even though this builder does not.
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class, null, params("qwen3:4b")))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
+    void feasibilityQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool(TOOL_SCHEMA));
+        Map<String, Object> modelParams = Map.of("model", "qwen3:4b", "think", false);
+
+        connection().canApplyNativeStructuredOutput(Report.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", "qwen3:4b", "think", false));
     }
 
     @Test

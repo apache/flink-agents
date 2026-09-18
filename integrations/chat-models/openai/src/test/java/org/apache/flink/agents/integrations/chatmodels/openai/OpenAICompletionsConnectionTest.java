@@ -38,6 +38,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -476,6 +477,87 @@ class OpenAICompletionsConnectionTest {
         assertThat(connection.supportsNativeStructuredOutput("some-unknown-model")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput("")).isFalse();
         assertThat(connection.supportsNativeStructuredOutput(null)).isFalse();
+    }
+
+    /** A connection that records what the feasibility query answered on each request it built. */
+    private static OpenAICompletionsConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
+                        .addInitialArgument("api_key", "test-key")
+                        .addInitialArgument("model", "gpt-4o")
+                        .build();
+        return new OpenAICompletionsConnection(desc, NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("The feasibility query answers exactly what the native branch decides")
+    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable in every case, so the only conjunct left for the branch is the query itself.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        OpenAICompletionsConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
+                answered.set(null);
+
+                ChatCompletionCreateParams request =
+                        connection.buildRequest(userMessage(), tools, params("gpt-4o"), schema);
+
+                // A null here means the branch never consulted the query at all, which is the
+                // drift this test exists to catch. The value assertion below would fail too, but
+                // on a null comparison that does not say why.
+                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
+                assertThat(answered.get())
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(request.responseFormat().isPresent());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("The feasibility query leaves the model's capability out of its answer")
+    void testFeasibilityQueryExcludesModelCapability() {
+        // The two answers are independent: a POJO is feasible here even on a model the allowlist
+        // rejects, and it is the branch's separate capability conjunct that keeps that request
+        // unconstrained. An override that folded capability in would make this pair agree, which
+        // the binding test above cannot see because it moves both sides at once.
+        Map<String, Object> incapable = params("gpt-4o-2024-05-13");
+
+        assertThat(connection().canApplyNativeStructuredOutput(Person.class, List.of(), incapable))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .buildRequest(userMessage(), List.of(), incapable, Person.class)
+                                .responseFormat())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
+    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new StubTool());
+        Map<String, Object> modelParams = Map.of("model", "gpt-4o", "temperature", 0.5);
+
+        connection().canApplyNativeStructuredOutput(Person.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", "gpt-4o", "temperature", 0.5));
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */

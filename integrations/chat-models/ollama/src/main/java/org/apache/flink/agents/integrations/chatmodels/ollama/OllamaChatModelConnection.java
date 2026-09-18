@@ -204,6 +204,29 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         return true;
     }
 
+    /**
+     * Whether a request built from these inputs would carry a native {@code format}, the effective
+     * model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Since this connection's capability predicate is unconditionally true, the schema form is the
+     * whole of what it can report infeasible.
+     *
+     * <p>Neither the tools nor the parameters are read; this connection sends a native schema
+     * alongside bound tools.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
@@ -312,12 +335,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         // the request's format, which is left unset when no native translation applies and is then
         // omitted from the serialized body rather than serialized as null.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a schema form this branch skips therefore gets an unconstrained response
-        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
-        // this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility half is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                && supportsNativeStructuredOutput(modelName)) {
             chatRequest.setFormat(toNativeFormat((Class<?>) outputSchema));
         }
 

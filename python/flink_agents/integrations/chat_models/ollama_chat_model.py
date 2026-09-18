@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import uuid
-from typing import Any, Dict, List, Literal, Sequence
+from typing import Any, Dict, List, Literal, Mapping, Sequence
 
 from ollama import Client, Message
 from pydantic import BaseModel, Field
@@ -35,12 +35,15 @@ DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
 
 
-def _native_format(output_schema: Any) -> Dict[str, Any] | None:
-    """Build the Ollama ``format`` payload for a native structured-output request.
+def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
 
-    Returns ``None`` (leaving the request unconstrained) unless the schema is a
-    ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
-    prompt-engineering fallback.
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the feasibility query has to know whether a
+    schema would be sent without rendering it, and rendering raises on a schema it
+    cannot express.
     """
     if output_schema is None:
         return None
@@ -48,6 +51,19 @@ def _native_format(output_schema: Any) -> Dict[str, Any] | None:
         output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
     )
     if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
+
+
+def _native_format(output_schema: Any) -> Dict[str, Any] | None:
+    """Build the Ollama ``format`` payload for a native structured-output request.
+
+    Returns ``None`` (leaving the request unconstrained) unless the schema is a
+    ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
+    prompt-engineering fallback.
+    """
+    model = _native_output_model(output_schema)
+    if model is None:
         return None
     return model.model_json_schema()
 
@@ -124,6 +140,47 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         """
         return True
 
+    @override
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native ``format``,
+        leaving the effective model's capability out of the answer.
+
+        Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
+        wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
+        prompt-engineering fallback. Since this connection's capability predicate is
+        unconditionally true, the schema form is the whole of what it can report
+        infeasible.
+
+        Neither the tools nor the parameters are read: this connection sends a native
+        schema alongside bound tools, and the one parameter that would bear on the
+        answer is the model, which is the capability question this excludes.
+
+        A ``True`` is not a promise that the call succeeds. The branch renders the
+        schema once it has decided to apply it, and rendering raises on a ``BaseModel``
+        that carries no JSON Schema.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Not read.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
+        """
+        return _native_output_model(output_schema) is not None
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -160,6 +217,12 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
+        # Snapshotted before the pop below, so the feasibility query is asked with the
+        # parameters as they arrived rather than with a mapping this path has already
+        # stripped. No term of today's answer reads them; the shape is what keeps a
+        # term added later from answering about a request other than the one built.
+        raw_kwargs = dict(kwargs)
+
         model_name = kwargs.pop("model")
 
         # Native structured output applies only for a BaseModel schema; any other schema
@@ -168,18 +231,13 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # than a sampling option, so it is passed as the format argument, which is
         # omitted altogether when no native translation applies.
         #
-        # TODO(#912): the requested strategy is not visible here, so this re-check
-        # cannot tell an explicit NATIVE request apart from one that merely resolved to
-        # native. A caller asking for NATIVE on a schema form this branch skips
-        # therefore gets an unconstrained response instead of an error. Once strategy
-        # resolution is wired up, NATIVE must either bypass this capability re-check or
-        # fail explicitly.
-        native_format = None
-        if output_schema is not None and self.supports_native_structured_output(
-            model_name
-        ):
-            native_format = _native_format(output_schema)
-        format_kwargs = {} if native_format is None else {"format": native_format}
+        # The feasibility half is asked rather than restated, so a caller asking the
+        # same question gets the answer this branch acts on.
+        format_kwargs: Dict[str, Any] = {}
+        if self.can_apply_native_structured_output(
+            output_schema, tools, raw_kwargs
+        ) and self.supports_native_structured_output(model_name):
+            format_kwargs = {"format": _native_format(output_schema)}
 
         response = self.client.chat(
             model=model_name,

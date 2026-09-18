@@ -41,7 +41,7 @@ class StructuredOutputStrategy(str, Enum):
 
     This expresses *policy* only. Whether a connection *can* apply the provider's
     native structured-output API is a separate, model-dependent *capability*
-    question. Policy and capability are combined at request-build time.
+    question. ``resolves_to_native`` combines the two.
 
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
@@ -149,6 +149,13 @@ class BaseChatModelConnection(Resource, ABC):
         to the model answers for the endpoint instead, and may report ``True`` for a
         name it has never seen.
 
+        This answer is advisory rather than binding: it is a statement about the model
+        that a configured policy is permitted to overrule, and
+        ``StructuredOutputStrategy.resolves_to_native`` is defined to do so in either
+        direction. Feasibility admits no such override, which is why
+        ``can_apply_native_structured_output`` is a separate hook rather than a further
+        condition folded into this one.
+
         Parameters
         ----------
         effective_model : str | None
@@ -193,6 +200,74 @@ class BaseChatModelConnection(Resource, ABC):
             resolves.
         """
         return None if model_kwargs is None else model_kwargs.get("model")
+
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether this connection could apply ``output_schema`` natively to a
+        request built from these tools and parameters, leaving the effective model's
+        capability out of the answer.
+
+        Feasibility, not capability: the answer covers everything this connection's
+        native branch requires apart from the effective model, including conditions
+        fixed by the connection's own configuration rather than carried by the request,
+        and says nothing about whether the model the request names would honor a native
+        schema, which is the separate question ``supports_native_structured_output``
+        answers. Neither answer bounds the other, in either direction. A ``BaseModel``
+        subclass on a model the connection does not classify as capable is feasible
+        here and not capable there; a ``RowTypeInfo``, which no connection translates
+        natively, on a connection whose capability predicate is unconditionally true is
+        capable there and not feasible here.
+
+        This answer is binding rather than advisory, which is the asymmetry that keeps
+        it separate from capability. A request whose schema this connection cannot
+        encode has no native form to send, so no policy can overrule a ``False`` here,
+        whereas a policy is permitted to overrule the capability answer.
+
+        An override must answer from the same logic its own request path uses to decide
+        the native branch, so that the answer cannot drift from what the request ends up
+        carrying.
+
+        A ``False`` answer is not an error: it reports that the request would carry no
+        native schema, so the caller keeps the prompt-engineering fallback rather than
+        losing the schema. A ``True`` is not a promise that the call succeeds either: a
+        connection may still raise once its native branch has decided to apply the
+        schema, as happens where the caller supplied a response format of its own that
+        conflicts with it.
+
+        The default ``False`` is safe only for a connection that translates no schema at
+        all. A connection whose request path has a native branch but which leaves this
+        unoverridden reports every request infeasible: a caller that degrades to the
+        prompt-engineering fallback then silently never reaches that branch, and one
+        that refuses an unapplicable schema instead fails on a request the connection
+        could in fact have applied.
+
+        Answers about the request rather than validating it. A ``None``
+        ``output_schema`` is an unconstrained request, a ``None`` ``tools`` is a request
+        binding no tools, and a ``None`` ``model_kwargs`` is accepted; none of the three
+        may raise. The parameters must be read without being consumed, so that the same
+        mapping still builds the request the answer was about.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            The tools the request would bind, may be ``None`` or empty for none.
+        model_kwargs : Mapping[str, Any] | None
+            The parameters the request would be built from, may be ``None``.
+
+        Returns:
+        -------
+        bool
+            ``True`` if every condition the native branch imposes is met apart from
+            the effective model's capability.
+        """
+        return False
 
     def _reject_unsupported_output_schema(
         self, output_schema: OutputSchema | None
@@ -367,8 +442,8 @@ class BaseChatModelSetup(Resource):
     structured_output_strategy: StructuredOutputStrategy = Field(
         default=StructuredOutputStrategy.AUTO,
         description=(
-            "Intent about how an output schema should be applied. Whether native "
-            "structured output is actually used combines this policy with the "
+            "Intent about how an output schema should be applied. "
+            "``resolves_to_native`` combines this policy with the "
             "connection's model-dependent capability. An explicitly null value is "
             "normalized to AUTO, so a validated setup always carries a real strategy."
         ),
