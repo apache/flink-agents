@@ -528,6 +528,17 @@ public class ResourceCacheTest {
 
     /** Test Java sub-agent setup, registered as an AGENT resource. */
     public static class TestAgentSetup extends BaseSubagentSetup {
+
+        public TestAgentSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(TestAgentSetup.class.getName()).build(),
+                    null);
+        }
+
+        public TestAgentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
         @Override
         public SubagentFuture submit(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {

@@ -18,8 +18,6 @@
 
 package org.apache.flink.agents.api.subagent;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -35,30 +33,30 @@ public class TestSubagentSetup extends SubagentSetup {
 
     private static final long serialVersionUID = 1L;
 
+    private static final String FIELD_ENDPOINT = "endpoint";
+    private static final String FIELD_FAIL_ON_CALL = "fail_on_call";
+
     @Nullable private final String endpoint;
     private final boolean failOnCall;
-
-    public TestSubagentSetup() {
-        this(null, false);
-    }
 
     public TestSubagentSetup(@Nullable String endpoint) {
         this(endpoint, false);
     }
 
-    @JsonCreator
-    public TestSubagentSetup(
-            @JsonProperty("endpoint") @Nullable String endpoint,
-            @JsonProperty("failOnCall") boolean failOnCall) {
-        this.endpoint = endpoint;
-        this.failOnCall = failOnCall;
+    public TestSubagentSetup(@Nullable String endpoint, boolean failOnCall) {
+        this(
+                ResourceDescriptor.Builder.newBuilder(TestSubagentSetup.class.getName())
+                        .addInitialArgument(FIELD_ENDPOINT, endpoint)
+                        .addInitialArgument(FIELD_FAIL_ON_CALL, failOnCall)
+                        .build(),
+                null);
     }
 
     /** Descriptor-based construction, as used by YAML-declared {@code subagents:} entries. */
     public TestSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
-        this(
-                (String) descriptor.getArgument("endpoint"),
-                Boolean.TRUE.equals(descriptor.getArgument("fail_on_call")));
+        super(descriptor, resourceContext);
+        this.endpoint = descriptor.getArgument(FIELD_ENDPOINT);
+        this.failOnCall = Boolean.TRUE.equals(descriptor.getArgument(FIELD_FAIL_ON_CALL));
     }
 
     @Nullable

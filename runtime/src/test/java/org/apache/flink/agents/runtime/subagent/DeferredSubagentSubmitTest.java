@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
@@ -269,7 +271,21 @@ public class DeferredSubagentSubmitTest {
     }
 
     /** Deferred setup whose prepared callable throws a system-level failure instead of folding. */
-    private static final class ThrowingDeferredSubagentSetup extends BaseDeferredSubagentSetup {
+    public static final class ThrowingDeferredSubagentSetup extends BaseDeferredSubagentSetup {
+
+        public ThrowingDeferredSubagentSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(
+                                    ThrowingDeferredSubagentSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
+        public ThrowingDeferredSubagentSetup(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
         @Override
         protected DurableCallable<SubagentResult> prepare(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {

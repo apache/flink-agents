@@ -391,23 +391,25 @@ def _get_resource_providers(
 
     for name, value in agent.resources[ResourceType.AGENT].items():
         if isinstance(value, SubagentSetup):
-            resource_providers.append(
-                PythonSerializableResourceProvider.from_resource(
-                    name=name, resource=value
-                )
+            # A live setup travels as its descriptor, so a remote task rebuilds
+            # it from the class name and configuration.
+            descriptor = ResourceDescriptor(
+                clazz=f"{value.__class__.__module__}.{value.__class__.__name__}",
+                arguments=value.model_dump(),
             )
         elif isinstance(value, ResourceDescriptor):
             # Declared via YAML: the descriptor names a SubagentSetup subclass
             # that is instantiated when the resource is first resolved.
-            resource_providers.append(
-                PythonResourceProvider.get(name=name, descriptor=value)
-            )
+            descriptor = value
         else:
             msg = (
                 f"AGENT resource '{name}' must be a SubagentSetup or a "
                 f"ResourceDescriptor, but got {type(value).__name__}."
             )
             raise TypeError(msg)
+        resource_providers.append(
+            PythonResourceProvider.get(name=name, descriptor=descriptor)
+        )
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
