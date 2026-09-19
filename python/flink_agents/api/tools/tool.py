@@ -103,7 +103,15 @@ class ToolMetadata(BaseModel):
         parameters = {
             k: v
             for k, v in parameters.items()
-            if k in ["type", "properties", "required", "definitions", "$defs"]
+            if k
+            in [
+                "type",
+                "properties",
+                "required",
+                "additionalProperties",
+                "definitions",
+                "$defs",
+            ]
         }
         return parameters
 

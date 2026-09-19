@@ -121,6 +121,7 @@ def test_subagent_factory_validates_input_and_keeps_instructions_literal() -> No
         "additionalProperties": False,
     }
     from flink_agents.api.chat_models.subagent_tool import SubagentTool
+    from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 
     callable_tool = SubagentTool.of(
         "researcher",
@@ -128,7 +129,9 @@ def test_subagent_factory_validates_input_and_keeps_instructions_literal() -> No
         child.subagent_metadata.input_schema,
     )
     assert (
-        callable_tool.metadata.args_schema.model_json_schema()["additionalProperties"]
+        to_openai_tool(metadata=callable_tool.metadata)["function"]["parameters"][
+            "additionalProperties"
+        ]
         is False
     )
     ctx = Mock(spec=RunnerContext)

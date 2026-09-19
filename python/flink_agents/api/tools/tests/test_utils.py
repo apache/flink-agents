@@ -355,3 +355,96 @@ def test_model_from_schema_keeps_free_form_root_properties() -> None:
         "FreeForm", {"type": "object", "additionalProperties": True}
     )
     assert rebuilt(key="value").model_dump() == {"key": "value"}
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize(
+    ("extra_schema", "valid_extra", "invalid_extras"),
+    [
+        ({"type": "integer", "minimum": 1}, 2, ["not an integer", 0]),
+        (
+            {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+                "additionalProperties": {"type": "integer", "minimum": 0},
+            },
+            {"label": "value", "count": 2},
+            [{"count": 2}, {"label": "value", "count": -1}],
+        ),
+    ],
+)
+def test_typed_extra_properties_survive_metadata_round_trip(
+    nested: bool, extra_schema: dict, valid_extra: Any, invalid_extras: list[Any]
+) -> None:
+    """Provider schemas and validation retain constraints on unnamed properties."""
+    from flink_agents.api.chat_models.subagent_tool import SubagentTool
+    from flink_agents.api.tools.tool import ToolMetadata
+    from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
+
+    object_schema = {
+        "type": "object",
+        "properties": {"fixed": {"type": "string"}},
+        "required": ["fixed"],
+        "additionalProperties": extra_schema,
+    }
+    schema = (
+        {
+            "type": "object",
+            "properties": {"values": object_schema},
+            "required": ["values"],
+        }
+        if nested
+        else object_schema
+    )
+    tool = SubagentTool.of("typed_extras", "Accept typed extras", json.dumps(schema))
+    restored = ToolMetadata.model_validate_json(tool.metadata.model_dump_json())
+    for metadata in [tool.metadata, restored]:
+        advertised = to_openai_tool(metadata=metadata)["function"]["parameters"]
+        target = advertised
+        if nested:
+            reference = advertised["properties"]["values"]["$ref"].split("/")[-1]
+            target = advertised["$defs"][reference]
+        extra = target["additionalProperties"]
+        if "$ref" in extra:
+            extra = advertised["$defs"][extra["$ref"].split("/")[-1]]
+        for key, value in extra_schema.items():
+            if key == "properties":
+                assert extra[key]["label"]["type"] == "string"
+            else:
+                assert extra[key] == value
+
+        valid = {"fixed": "named field", "extra": valid_extra}
+        payload = {"values": valid} if nested else valid
+        assert metadata.args_schema(**payload).model_dump() == payload
+        for invalid_extra in invalid_extras:
+            invalid = {"fixed": "named field", "extra": invalid_extra}
+            with pytest.raises(ValidationError):
+                metadata.args_schema(**({"values": invalid} if nested else invalid))
+
+
+def test_forward_schema_references_use_json_definition_names() -> None:
+    """A later definition can have a name that is not a Python identifier."""
+    rebuilt = create_model_from_schema(
+        "References",
+        {
+            "type": "object",
+            "properties": {"request": {"$ref": "#/$defs/Request"}},
+            "required": ["request"],
+            "$defs": {
+                "Request": {
+                    "type": "object",
+                    "additionalProperties": {"$ref": "#/$defs/Extra-Value"},
+                },
+                "Extra-Value": {
+                    "type": "object",
+                    "properties": {"count": {"type": "integer"}},
+                    "required": ["count"],
+                },
+            },
+        },
+    )
+    payload = {"request": {"extra": {"count": 2}}}
+    assert rebuilt(**payload).model_dump() == payload
+    with pytest.raises(ValidationError):
+        rebuilt(request={"extra": {"count": "not an integer"}})

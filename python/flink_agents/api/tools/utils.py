@@ -116,12 +116,32 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
     BaseModel.model_json_schema().
     """
     models: dict[str, type[BaseModel]] = {}
+    definitions = schema.get("$defs", {})
+    definition_refs = {
+        definition: f"_schema_definition_{index}"
+        for index, definition in enumerate(definitions)
+    }
+
+    def resolve_extra_value_type(value_schema: dict, field_name: str) -> Any:
+        """Keep the type and constraints on each additional property's value."""
+        value_type = resolve_field_type(value_schema, field_name)
+        field_params = __get_field_params_from_field_schema(value_schema)
+        # A schema default does not supply missing dictionary entries.
+        field_params.pop("default", None)
+        if field_params:
+            return typing.Annotated[value_type, Field(**field_params)]
+        return value_type
 
     def resolve_field_type(field_schema: dict, field_name: str) -> type[typing.Any]:
         """Resolve scalar, nested-object, array, and dictionary field types."""
         if "$ref" in field_schema:
             model_reference = field_schema["$ref"].split("/")[-1]
-            return models.get(model_reference, Any)
+            if model_reference in models:
+                return models[model_reference]
+            if model_reference in definitions:
+                # Definition names are JSON keys, not Python expressions.
+                return typing.ForwardRef(definition_refs[model_reference])
+            return Any
 
         if "anyOf" in field_schema:
             types = [
@@ -141,7 +161,7 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
             if "properties" in field_schema or additional_props is False:
                 return build_model(field_name, field_schema)
             value_type = (
-                resolve_field_type(additional_props, f"{field_name}_value")
+                resolve_extra_value_type(additional_props, f"{field_name}_value")
                 if isinstance(additional_props, dict)
                 else typing.Any
             )
@@ -170,9 +190,16 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
 
         config = {}
         if "additionalProperties" in model_schema:
-            config["extra"] = (
-                "forbid" if model_schema["additionalProperties"] is False else "allow"
-            )
+            additional_props = model_schema["additionalProperties"]
+            config["extra"] = "forbid" if additional_props is False else "allow"
+            if isinstance(additional_props, dict):
+                value_type = resolve_extra_value_type(
+                    additional_props, f"{model_name}_extra"
+                )
+                fields["__pydantic_extra__"] = (
+                    dict[str, value_type],
+                    Field(init=False),
+                )
         return create_model(
             model_name,
             **fields,
@@ -180,8 +207,13 @@ def create_model_from_schema(name: str, schema: dict) -> type[BaseModel]:
             __config__=config,
         )
 
-    for model_name, model_schema in schema.get("$defs", {}).items():
+    for model_name, model_schema in definitions.items():
         models[model_name] = build_model(model_name, model_schema)
+    # Definitions can refer to later definitions, including the type of an
+    # additional property. Resolve them only after all model types exist.
+    namespace = {definition_refs[name]: model for name, model in models.items()}
+    for model in models.values():
+        model.model_rebuild(_types_namespace=namespace)
 
     return build_model(name, schema)
 
