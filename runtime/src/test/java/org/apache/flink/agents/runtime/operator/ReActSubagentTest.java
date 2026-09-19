@@ -44,18 +44,22 @@ import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -65,7 +69,8 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 @Timeout(30)
 public class ReActSubagentTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    private static final List<String> CALLS = new ArrayList<>();
+    private static final List<String> CALLS = new CopyOnWriteArrayList<>();
+    private static final AtomicInteger TOOL_CALLS = new AtomicInteger();
     private static boolean structured;
 
     public static class Answer {
@@ -76,6 +81,7 @@ public class ReActSubagentTest {
     void reset() {
         assumeTrue(Runtime.version().feature() >= 21, "Internal Java calls need continuations");
         CALLS.clear();
+        TOOL_CALLS.set(0);
         structured = false;
     }
 
@@ -128,6 +134,7 @@ public class ReActSubagentTest {
     public static class ChildTools {
         @org.apache.flink.agents.api.annotation.Tool(description = "Child evidence")
         public static String evidence() {
+            TOOL_CALLS.incrementAndGet();
             return "child evidence";
         }
     }
@@ -353,6 +360,136 @@ public class ReActSubagentTest {
         recovered.getKeyedActionStates().put(2L, childStates);
         assertThat(run(new AgentPlan(explicitParent()), 2L, recovered)).isEqualTo(failure);
         assertThat(CALLS).isEmpty();
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 2, 3, 4})
+    void checkpointRestoresInFlightChildAtEachLoopStage(int stage) throws Exception {
+        InMemoryActionStateStore store = new SnapshotStore();
+        AgentPlan plan = new AgentPlan(explicitParent());
+        OperatorSubtaskState snapshot;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                checkpointHarness(plan, store)) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(stage == 3 ? 2L : 1L));
+            // First mail starts and suspends the parent, leaving child tasks in keyed state.
+            harness.getTaskMailbox().take(0).run();
+            if (stage != 0) {
+                while (!hasCheckpointStage(store, stage)) {
+                    harness.getTaskMailbox().take(0).run();
+                }
+            }
+            assertThat(harness.getRecordOutput()).isEmpty();
+            snapshot = harness.snapshot(1L, 1L);
+        }
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
+                checkpointHarness(plan, store)) {
+            restored.initializeState(snapshot);
+            restored.open();
+            ((ActionExecutionOperator<Long, Object>) restored.getOperator())
+                    .waitInFlightEventsFinished();
+            assertThat(restored.getRecordOutput()).hasSize(1);
+            Object result = restored.getRecordOutput().iterator().next().getValue();
+            if (stage == 3) {
+                assertThat(result.toString()).contains("only a string 'prompt'");
+                assertThat(CALLS).isEmpty();
+            } else {
+                assertThat(result).isEqualTo(List.of("child answer"));
+                assertThat(CALLS).containsExactly("child:user", "child:tool");
+                assertThat(TOOL_CALLS.get()).isEqualTo(1);
+            }
+        }
+    }
+
+    private static boolean hasCheckpointStage(InMemoryActionStateStore store, int stage) {
+        return store.getKeyedActionStates().values().stream()
+                .flatMap(states -> states.values().stream())
+                .anyMatch(
+                        state -> {
+                            if (!(state.getTaskEvent() instanceof InternalSubagentCallEvent)
+                                    || !state.isCompleted()) {
+                                return false;
+                            }
+                            InternalSubagentCallEvent event =
+                                    (InternalSubagentCallEvent) state.getTaskEvent();
+                            if (stage == 3) {
+                                return state.getSubagentFailureMessage() != null;
+                            }
+                            return event.getDelegateEventType()
+                                    .equals(
+                                            stage == 1
+                                                    ? "_chat_request_event"
+                                                    : stage == 2
+                                                            ? "_tool_request_event"
+                                                            : "_chat_response_event");
+                        });
+    }
+
+    public static void invokeNested(Event event, RunnerContext ctx) throws Exception {
+        int count =
+                ctx.getSensoryMemory().isExist("count")
+                        ? ((Number) ctx.getSensoryMemory().get("count").getValue()).intValue()
+                        : 0;
+        ctx.getSensoryMemory().set("count", count + 1);
+        ctx.sendEvent(new OutputEvent("before-await"));
+        SubagentSetup nested = (SubagentSetup) ctx.getResource("researcher", ResourceType.AGENT);
+        SubagentResult result = nested.submit(ctx, Map.of("prompt", "investigate")).await();
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.getResult()).isEqualTo(List.of("child answer"));
+        ctx.sendEvent(new OutputEvent(ctx.getSensoryMemory().get("count").getValue()));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void checkpointRestoresNestedCallsWithoutRepeatingUnfinishedMemoryWrites(boolean durable)
+            throws Exception {
+        Agent middle = new Agent();
+        middle.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ReActSubagentTest.class.getMethod(
+                        "invokeNested", Event.class, RunnerContext.class));
+        middle.addResource("researcher", ResourceType.AGENT, child());
+        Agent parent = new Agent();
+        parent.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                ReActSubagentTest.class.getMethod("invoke", Event.class, RunnerContext.class));
+        parent.addResource(
+                "connection",
+                ResourceType.CHAT_MODEL_CONNECTION,
+                new ResourceDescriptor(ScriptedConnection.class.getName(), Map.of()));
+        parent.addResource("researcher", ResourceType.AGENT, middle);
+        AgentPlan plan = new AgentPlan(parent);
+        InMemoryActionStateStore store = durable ? new SnapshotStore() : null;
+        OperatorSubtaskState snapshot;
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                checkpointHarness(plan, store)) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(1L));
+            harness.getTaskMailbox().take(0).run();
+            harness.getTaskMailbox().take(0).run();
+            snapshot = harness.snapshot(1L, 1L);
+        }
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
+                checkpointHarness(plan, store)) {
+            restored.initializeState(snapshot);
+            restored.open();
+            ((ActionExecutionOperator<Long, Object>) restored.getOperator())
+                    .waitInFlightEventsFinished();
+            assertThat(restored.getRecordOutput()).hasSize(1);
+            assertThat(restored.getRecordOutput().iterator().next().getValue())
+                    .isEqualTo(List.of("before-await", 1));
+            assertThat(CALLS).containsExactly("child:user", "child:tool");
+        }
+    }
+
+    private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> checkpointHarness(
+            AgentPlan plan, InMemoryActionStateStore store) throws Exception {
+        AgentPlan reconstructed =
+                MAPPER.readValue(MAPPER.writeValueAsString(plan), AgentPlan.class);
+        return new KeyedOneInputStreamOperatorTestHarness<>(
+                new ActionExecutionOperatorFactory<>(reconstructed, true, store),
+                (KeySelector<Long, Long>) value -> value,
+                TypeInformation.of(Long.class));
     }
 
     @Test

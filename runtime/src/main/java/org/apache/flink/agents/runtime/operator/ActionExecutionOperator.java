@@ -273,7 +273,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         contextManager =
                 new ActionTaskContextManager(
                         agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS),
-                        pythonBridge::releaseCurrentThreadInterpreter);
+                        pythonBridge::releaseCurrentThreadInterpreter,
+                        TypeInformation.of(MemoryObjectImpl.MemoryItem.class)
+                                .createSerializer(getExecutionConfig().getSerializerConfig()));
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -660,6 +662,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         actionTaskResult);
                 isFinished = actionTaskResult.isFinished();
                 outputEvents = actionTaskResult.getOutputEvents();
+                if (isFinished && subagentScope != null) {
+                    outputEvents = new ArrayList<>(outputEvents);
+                    outputEvents.addAll(subagentScope.getOutputEvents());
+                }
                 generatedActionTaskOpt = actionTaskResult.getGeneratedActionTask();
                 if (isFinished) {
                     notifyActionFinished(actionTask);
@@ -864,6 +870,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
+        Object previousKey = getCurrentKey();
+        try {
+            Iterable<Object> processingKeys = stateManager.getProcessingKeys();
+            for (Object key : processingKeys == null ? Collections.emptyList() : processingKeys) {
+                setCurrentKey(key);
+                List<InternalSubagentSetup.Snapshot> snapshots = new ArrayList<>();
+                for (InternalSubagentSetup setup : internalSetups) {
+                    snapshots.add(setup.snapshotCalls(key));
+                }
+                stateManager.snapshotInternalCalls(snapshots);
+            }
+        } finally {
+            if (previousKey != null) {
+                setCurrentKey(previousKey);
+            }
+        }
         durableExecManager.snapshotRecoveryMarker();
         durableExecManager.snapshotLastCompletedSequenceNumbers(
                 getKeyedStateBackend(), context.getCheckpointId());
@@ -1141,6 +1163,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void notifyRecordFinished(Object key) {
+        stateManager.clearInternalCallSnapshots();
         for (TaskLifecycleListener listener : taskLifecycleListeners) {
             listener.onRecordFinished(key);
         }
@@ -1232,6 +1255,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 }
                 if (!ownedKeys.add(key)) {
                     continue;
+                }
+                setCurrentKey(key);
+                for (InternalSubagentSetup.Snapshot snapshot :
+                        stateManager.getInternalCallSnapshots()) {
+                    InternalSubagentSetup setup =
+                            (InternalSubagentSetup)
+                                    resourceCache.getResource(
+                                            snapshot.getName(), ResourceType.AGENT);
+                    setup.restoreCalls(
+                            key,
+                            snapshot,
+                            TypeInformation.of(MemoryObjectImpl.MemoryItem.class)
+                                    .createSerializer(getExecutionConfig().getSerializerConfig()));
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
                 String contextKey = resolveContextKey(key);

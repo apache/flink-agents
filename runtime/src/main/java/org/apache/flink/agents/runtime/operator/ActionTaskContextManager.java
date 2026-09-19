@@ -33,7 +33,10 @@ import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.MapState;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
 
@@ -75,12 +78,25 @@ class ActionTaskContextManager implements AutoCloseable {
     private final Map<ActionTask, ActionTaskContexts> actionTaskContexts;
 
     private ContinuationActionExecutor continuationActionExecutor;
+    private final TypeSerializer<MemoryObjectImpl.MemoryItem> memoryItemSerializer;
 
     ActionTaskContextManager(int numAsyncThreads) {
         this(numAsyncThreads, () -> {});
     }
 
     ActionTaskContextManager(int numAsyncThreads, Runnable asyncThreadCleanup) {
+        this(
+                numAsyncThreads,
+                asyncThreadCleanup,
+                TypeInformation.of(MemoryObjectImpl.MemoryItem.class)
+                        .createSerializer(new ExecutionConfig().getSerializerConfig()));
+    }
+
+    ActionTaskContextManager(
+            int numAsyncThreads,
+            Runnable asyncThreadCleanup,
+            TypeSerializer<MemoryObjectImpl.MemoryItem> memoryItemSerializer) {
+        this.memoryItemSerializer = memoryItemSerializer;
         this.actionTaskContexts = new HashMap<>();
         this.continuationActionExecutor =
                 new ContinuationActionExecutor(numAsyncThreads, asyncThreadCleanup);
@@ -292,7 +308,7 @@ class ActionTaskContextManager implements AutoCloseable {
                             ? new RunnerContextImpl.MemoryContext(
                                     new CachedMemoryStore(sensoryMemState),
                                     new CachedMemoryStore(shortTermMemState))
-                            : scope.getCallStatus().newMemoryContext();
+                            : scope.getCallStatus().newMemoryContext(memoryItemSerializer);
             putMemoryContext(actionTask, memoryContext);
         }
 

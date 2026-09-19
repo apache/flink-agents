@@ -20,9 +20,13 @@ package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -45,9 +49,12 @@ public class InternalSubagentCallStatus {
     private int pendingEvents;
     private final List<Object> output = new ArrayList<>();
 
-    /** Each action tracks its own updates while sharing this invocation's memory values. */
-    public RunnerContextImpl.MemoryContext newMemoryContext() {
-        return new RunnerContextImpl.MemoryContext(sensoryMemory, shortTermMemory);
+    /** Unfinished actions keep their writes private until the operator commits their memory. */
+    public RunnerContextImpl.MemoryContext newMemoryContext(
+            TypeSerializer<MemoryObjectImpl.MemoryItem> serializer) {
+        return new RunnerContextImpl.MemoryContext(
+                sensoryMemory.createActionStore(serializer),
+                shortTermMemory.createActionStore(serializer));
     }
 
     public InternalSubagentCallStatus(
@@ -56,6 +63,92 @@ public class InternalSubagentCallStatus {
         this.scope = scope;
         this.sessionId = sessionId;
         this.setup = setup;
+    }
+
+    /** Captures call coordination and memory without retaining runtime resources or futures. */
+    public Snapshot snapshot() {
+        return new Snapshot(this);
+    }
+
+    /** Restores memory with the same serializer configuration as the operator's keyed state. */
+    public static InternalSubagentCallStatus restore(
+            Snapshot snapshot,
+            InternalSubagentSetup setup,
+            TypeSerializer<MemoryObjectImpl.MemoryItem> serializer) {
+        InternalSubagentCallStatus status =
+                new InternalSubagentCallStatus(
+                        snapshot.callId, snapshot.scope, snapshot.sessionId, setup);
+        status.sensoryMemory.restore(snapshot.sensoryMemory, serializer);
+        status.shortTermMemory.restore(snapshot.shortTermMemory, serializer);
+        status.runningActions = snapshot.runningActions;
+        status.pendingEvents = snapshot.pendingEvents;
+        status.output.addAll(status.copyOutput(snapshot.output));
+        status.failureMessage = snapshot.failureMessage;
+        if (snapshot.cancelled) {
+            status.responseFuture.cancel(false);
+        } else if (snapshot.failureMessage != null) {
+            status.responseFuture.completeExceptionally(
+                    new IllegalStateException(snapshot.failureMessage));
+        } else if (snapshot.completed) {
+            status.responseFuture.complete(status.copyOutput(snapshot.completedOutput));
+        }
+        return status;
+    }
+
+    private List<Object> copyOutput(List<Object> values) {
+        List<Object> copy = new ArrayList<>(values.size());
+        for (Object value : values) {
+            copy.add(sensoryMemory.copyValue(value));
+        }
+        return copy;
+    }
+
+    /** Serializable state for one call; its owning setup is resolved separately on restore. */
+    public static final class Snapshot implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final String callId;
+        private final String scope;
+        private final String sessionId;
+        private final Map<String, MemoryObjectImpl.MemoryItem> sensoryMemory;
+        private final Map<String, MemoryObjectImpl.MemoryItem> shortTermMemory;
+        private final int runningActions;
+        private final int pendingEvents;
+        private final List<Object> output;
+        private final String failureMessage;
+        private final boolean completed;
+        private final boolean cancelled;
+        private final List<Object> completedOutput;
+
+        private Snapshot(InternalSubagentCallStatus status) {
+            callId = status.callId;
+            scope = status.scope;
+            sessionId = status.sessionId;
+            sensoryMemory = status.sensoryMemory.snapshot();
+            shortTermMemory = status.shortTermMemory.snapshot();
+            runningActions = status.runningActions;
+            pendingEvents = status.pendingEvents;
+            output = status.copyOutput(status.output);
+            failureMessage = status.failureMessage;
+            completed = status.responseFuture.isDone();
+            cancelled = status.responseFuture.isCancelled();
+            completedOutput =
+                    completed && !status.responseFuture.isCompletedExceptionally()
+                            ? status.copyOutput(status.responseFuture.getNow(null))
+                            : null;
+        }
+
+        public String getCallId() {
+            return callId;
+        }
+
+        public String getScope() {
+            return scope;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
     }
 
     /**

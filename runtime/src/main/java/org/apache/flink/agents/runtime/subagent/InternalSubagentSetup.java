@@ -36,13 +36,18 @@ import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.operator.ActionTask;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
 import org.apache.flink.util.ExceptionUtils;
 
 import javax.annotation.Nullable;
 
+import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -220,13 +225,19 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
      * the executing task rather than an ambient holder.
      */
     public void bootstrap(RunnerContext ctx, String sessionId, String callId, Object prompt) {
-        InternalSubagentCallStatus cs =
-                new InternalSubagentCallStatus(callId, scope, sessionId, this);
-        callStatuses.computeIfAbsent(sessionId, k -> new HashMap<>()).put(callId, cs);
+        boolean restored = getCallStatus(sessionId, callId) != null;
+        if (!restored) {
+            InternalSubagentCallStatus cs =
+                    new InternalSubagentCallStatus(callId, scope, sessionId, this);
+            callStatuses.computeIfAbsent(sessionId, k -> new HashMap<>()).put(callId, cs);
+        }
         ActionTask task = currentTask();
         Object key = task != null ? task.getKey() : null;
         if (key != null) {
-            keySessionIds.computeIfAbsent(key, k -> new ArrayList<>()).add(sessionId);
+            List<String> sessions = keySessionIds.computeIfAbsent(key, k -> new ArrayList<>());
+            if (!sessions.contains(sessionId)) {
+                sessions.add(sessionId);
+            }
         }
         if (ctx instanceof RunnerContextImpl) {
             // Let the shared context resolve this session off the mailbox thread (pemja await),
@@ -235,9 +246,83 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             runnerContext.registerInternalCallOwner(sessionId, this);
             ownerContexts.put(sessionId, runnerContext);
         }
-        ctx.sendEvent(
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent(prompt), scope, callId, sessionId));
+        // A restored parent continuation re-executes its submit/await. Its child tasks and
+        // call state already came from the same checkpoint; emitting again would duplicate work.
+        if (!restored) {
+            ctx.sendEvent(
+                    InternalSubagentCallEvent.bootstrap(
+                            new InputEvent(prompt), scope, callId, sessionId));
+        }
+    }
+
+    /** Checkpoint data for one setup subtree, addressed by resource name within its parent. */
+    public static final class Snapshot implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final String name;
+        private final List<InternalSubagentCallStatus.Snapshot> calls;
+        private final Map<String, Snapshot> children;
+
+        private Snapshot(
+                String name,
+                List<InternalSubagentCallStatus.Snapshot> calls,
+                Map<String, Snapshot> children) {
+            this.name = name;
+            this.calls = calls;
+            this.children = children;
+        }
+
+        public String getName() {
+            return name;
+        }
+    }
+
+    /** Capture only the calls owned by this record key, including nested setups. */
+    public Snapshot snapshotCalls(Object key) {
+        List<InternalSubagentCallStatus.Snapshot> calls = new ArrayList<>();
+        for (String session : keySessionIds.getOrDefault(key, Collections.emptyList())) {
+            for (InternalSubagentCallStatus call : callStatuses.get(session).values()) {
+                calls.add(call.snapshot());
+            }
+        }
+        Map<String, Snapshot> children = new LinkedHashMap<>();
+        for (ResourceCache cache : childCaches.values()) {
+            for (Resource resource : cache.materializedResources(ResourceType.AGENT)) {
+                if (resource instanceof InternalSubagentSetup) {
+                    InternalSubagentSetup child = (InternalSubagentSetup) resource;
+                    children.put(child.getSubagentName(), child.snapshotCalls(key));
+                }
+            }
+        }
+        return new Snapshot(getSubagentName(), calls, children);
+    }
+
+    /** Restore call coordination before the operator resumes any checkpointed child task. */
+    public void restoreCalls(
+            Object key, Snapshot snapshot, TypeSerializer<MemoryObjectImpl.MemoryItem> serializer) {
+        for (InternalSubagentCallStatus.Snapshot call : snapshot.calls) {
+            callStatuses
+                    .computeIfAbsent(call.getSessionId(), ignored -> new HashMap<>())
+                    .put(
+                            call.getCallId(),
+                            InternalSubagentCallStatus.restore(call, this, serializer));
+            List<String> sessions =
+                    keySessionIds.computeIfAbsent(key, ignored -> new ArrayList<>());
+            if (!sessions.contains(call.getSessionId())) {
+                sessions.add(call.getSessionId());
+            }
+        }
+        for (ResourceCache cache : childCaches.values()) {
+            for (Resource resource : cache.materializedResources(ResourceType.AGENT)) {
+                if (resource instanceof InternalSubagentSetup) {
+                    InternalSubagentSetup child = (InternalSubagentSetup) resource;
+                    Snapshot childSnapshot = snapshot.children.get(child.getSubagentName());
+                    if (childSnapshot != null) {
+                        child.restoreCalls(key, childSnapshot, serializer);
+                    }
+                }
+            }
+        }
     }
 
     /**

@@ -1535,7 +1535,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
         /** Records an output event emitted by the child and folds its payload into the call. */
         public void accumulateOutput(OutputEvent outputEvent) {
-            callStatus.accumulateOutput(outputEvent.getOutput());
+            // Publish only once the action completes. An unfinished continuation is rerun
+            // after failover, so putting its outputs into checkpointed call state duplicates them.
             outputEvents.add(outputEvent);
         }
 
