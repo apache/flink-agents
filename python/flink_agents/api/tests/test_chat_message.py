@@ -146,6 +146,8 @@ _INVALID_WIRE_PAYLOADS = [
     {"type": "image", "media_type": "image/png", "source": {"type": "url", "url": ""}},
     # Missing media type.
     {"type": "image", "source": {"type": "base64", "data": "aGk="}},
+    # Empty media type.
+    {"type": "image", "media_type": "", "source": {"type": "base64", "data": "aGk="}},
 ]
 
 
@@ -154,6 +156,14 @@ def test_invalid_wire_payloads_rejected(payload: dict) -> None:
     """The wire path rejects exactly the payloads Java rejects."""
     with pytest.raises(ValidationError):
         ChatMessage.model_validate({"role": "user", "blocks": [payload]})
+
+
+def test_media_type_must_not_be_empty() -> None:
+    """Java rejects an empty media type, so the Python model must too."""
+    with pytest.raises(ValidationError):
+        ImageBlock.from_base64("", "aGk=")
+    with pytest.raises(ValidationError):
+        ImageBlock(media_type="", source=Base64Source(data="aGk="))
 
 
 def test_blocks_are_frozen() -> None:

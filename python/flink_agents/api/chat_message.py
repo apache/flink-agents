@@ -117,7 +117,9 @@ class MediaBlock(BaseModel):
     # and matches the validated immutable construction on the Java side.
     model_config = ConfigDict(frozen=True)
 
-    media_type: str
+    # min_length mirrors the Java constructor: both languages reject an empty
+    # media type, so a block valid here is valid after crossing the bridge.
+    media_type: str = Field(min_length=1)
     source: MediaSource
     name: str | None = None
     size_bytes: int | None = None

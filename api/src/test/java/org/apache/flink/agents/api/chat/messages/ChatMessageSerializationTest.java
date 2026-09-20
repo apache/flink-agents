@@ -139,6 +139,8 @@ class ChatMessageSerializationTest {
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ImageBlock.fromBase64(null, "aGk="))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ImageBlock.fromBase64("", "aGk="))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new ImageBlock("image/png", null, null, null, null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
@@ -165,6 +167,9 @@ class ChatMessageSerializationTest {
                     + "\"source\":{\"type\":\"url\",\"url\":\"\"}}",
             // Missing media type.
             "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"}}",
+            // Empty media type.
+            "{\"type\":\"image\",\"media_type\":\"\","
+                    + "\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"}}",
         };
         for (String json : invalid) {
             assertThatThrownBy(() -> MAPPER.readValue(json, ContentBlock.class))
