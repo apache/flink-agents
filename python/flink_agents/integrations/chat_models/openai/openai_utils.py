@@ -225,7 +225,9 @@ def convert_from_openai_message(
         ]
     if message.refusal is not None:
         extra_args = {**extra_args, "refusal": message.refusal}
-    return ChatMessage.of(MessageRole(message.role), message.content or "",
+    return ChatMessage.of(
+        MessageRole(message.role),
+        message.content or "",
         tool_calls=tool_calls,
         extra_args=extra_args,
     )

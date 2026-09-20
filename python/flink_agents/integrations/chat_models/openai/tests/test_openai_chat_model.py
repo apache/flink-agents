@@ -101,9 +101,7 @@ def test_openai_chat_with_tools() -> None:
         tools=["add"],
         resource_context=mock_ctx,
     )
-    response = chat_model.chat(
-        [ChatMessage.of(MessageRole.USER, "What is 377 + 688?")]
-    )
+    response = chat_model.chat([ChatMessage.of(MessageRole.USER, "What is 377 + 688?")])
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]

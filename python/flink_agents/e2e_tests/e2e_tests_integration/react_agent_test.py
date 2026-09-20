@@ -121,7 +121,9 @@ def test_react_agent_on_remote_runner(
     # prepare prompt
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage.of(MessageRole.SYSTEM, 'An example of output is {"result": 30.32}.',
+            ChatMessage.of(
+                MessageRole.SYSTEM,
+                'An example of output is {"result": 30.32}.',
             ),
             ChatMessage.of(MessageRole.USER, "What is ({a} + {b}) * {c}"),
         ],

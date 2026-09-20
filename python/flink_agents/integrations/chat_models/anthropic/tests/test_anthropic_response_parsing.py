@@ -509,9 +509,7 @@ def _prefill_outcome(**chat_kwargs: Any) -> tuple:
         usage=_usage(),
     )
     connection = _connection_returning(message)
-    response = connection.chat(
-        [ChatMessage.of(MessageRole.USER, "hi")], **chat_kwargs
-    )
+    response = connection.chat([ChatMessage.of(MessageRole.USER, "hi")], **chat_kwargs)
     sent = connection.client.messages.create.call_args.kwargs["messages"]
     return sent[-1] == {"role": "assistant", "content": "{"}, response.text
 

@@ -203,7 +203,9 @@ def _connection(
 
 
 def _chat(conn: OpenAIChatModelConnection) -> ChatMessage:
-    return conn.chat([ChatMessage.of(role=MessageRole.USER, content="hi")], model="gpt-4o")
+    return conn.chat(
+        [ChatMessage.of(role=MessageRole.USER, content="hi")], model="gpt-4o"
+    )
 
 
 def test_chat_records_finish_reason_in_extra_args() -> None:

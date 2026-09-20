@@ -112,7 +112,9 @@ def test_azure_openai_chat_with_tools() -> None:
     )
     response = chat_model.chat(
         [
-            ChatMessage.of(MessageRole.USER, "You MUST use the add tool to calculate: What is 377 + 688?",
+            ChatMessage.of(
+                MessageRole.USER,
+                "You MUST use the add tool to calculate: What is 377 + 688?",
             )
         ]
     )

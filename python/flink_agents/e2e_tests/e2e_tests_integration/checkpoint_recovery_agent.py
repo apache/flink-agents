@@ -331,7 +331,9 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
             # wrapped as a JSON object because the caller parses this round against
             # the output schema; the joined text survives verbatim inside the field.
             content = "\n".join(message.text for message in messages)
-            return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
+            return ChatMessage.of(
+                MessageRole.ASSISTANT,
+                json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
             )
 
         # Validate the tool was bound before the model was invoked.
@@ -342,7 +344,9 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
             "type": ToolType.FUNCTION,
             "function": {"name": BLOCKING_TOOL_NAME, "arguments": {}},
         }
-        return ChatMessage.of(MessageRole.ASSISTANT, _ROUND_ONE_MARKER,
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            _ROUND_ONE_MARKER,
             tool_calls=[tool_call],
         )
 
@@ -439,9 +443,7 @@ class CheckpointRecoveryAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="recovery_chat_model",
-                messages=[
-                    ChatMessage.of(MessageRole.USER, input_data.content)
-                ],
+                messages=[ChatMessage.of(MessageRole.USER, input_data.content)],
                 prompt_args={"task": input_data.content},
                 # Set once, on the only request this agent issues. The framework
                 # persists it with the tool-call context and re-reads the restored

@@ -114,7 +114,8 @@ def test_chat_does_not_read_template_vars_from_extra_args() -> None:
     prompt = Prompt.from_text(text="Task: {key}")
     setup, connection = _build_setup(prompt)
 
-    user_message = ChatMessage.of(MessageRole.USER, "hello", extra_args={"key": "value"}
+    user_message = ChatMessage.of(
+        MessageRole.USER, "hello", extra_args={"key": "value"}
     )
     setup.chat([user_message], prompt_args={})
 

@@ -51,11 +51,15 @@ review_analysis_system_prompt_str = """
 
 review_analysis_prompt = Prompt.from_messages(
     messages=[
-        ChatMessage.of(MessageRole.SYSTEM, review_analysis_system_prompt_str,
+        ChatMessage.of(
+            MessageRole.SYSTEM,
+            review_analysis_system_prompt_str,
         ),
         # Here we just fill the prompt with input, user should deserialize
         # input element to input text self in action.
-        ChatMessage.of(MessageRole.USER, """
+        ChatMessage.of(
+            MessageRole.USER,
+            """
             "input":
             {input}
             """,
@@ -66,12 +70,16 @@ review_analysis_prompt = Prompt.from_messages(
 # Prompt for review analysis react agent.
 review_analysis_react_prompt = Prompt.from_messages(
     messages=[
-        ChatMessage.of(MessageRole.SYSTEM, review_analysis_system_prompt_str,
+        ChatMessage.of(
+            MessageRole.SYSTEM,
+            review_analysis_system_prompt_str,
         ),
         # For react agent, if the input element is not primitive types,
         # framework will deserialize input element to dict and fill the prompt.
         # Note, the input element should be primitive types, BaseModel or Row.
-        ChatMessage.of(MessageRole.USER, """
+        ChatMessage.of(
+            MessageRole.USER,
+            """
             "id": {id},
             "review": {review}
             """,

@@ -99,7 +99,9 @@ def test_tongyi_chat_with_tools() -> None:
 
     response = llm.chat(
         [
-            ChatMessage.of(MessageRole.USER, "Could you help me calculate the sum of 1 and 2?",
+            ChatMessage.of(
+                MessageRole.USER,
+                "Could you help me calculate the sum of 1 and 2?",
             )
         ]
     )

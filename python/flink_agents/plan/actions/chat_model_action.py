@@ -537,7 +537,9 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         initial_request_id,
         None,
         [
-            ChatMessage.of(MessageRole.TOOL, str(response),
+            ChatMessage.of(
+                MessageRole.TOOL,
+                str(response),
                 extra_args={"external_id": event.external_ids.get(tool_id)}
                 if event.external_ids and event.external_ids.get(tool_id)
                 else {},

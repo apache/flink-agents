@@ -134,7 +134,9 @@ class MockToolChatConnection(BaseChatModelConnection):
                 raise RuntimeError(msg)
 
         order_id = str(last_message.text)
-        return ChatMessage.of(MessageRole.ASSISTANT, "",
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            "",
             tool_calls=[
                 {
                     "id": f"call-{order_id}",

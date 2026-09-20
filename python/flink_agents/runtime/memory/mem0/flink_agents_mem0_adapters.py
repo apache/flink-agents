@@ -132,7 +132,9 @@ class FlinkAgentsLLM(LLMBase):
             The generated response content as a string.
         """
         chat_messages = [
-            ChatMessage.of(MessageRole(msg["role"]), msg["content"],
+            ChatMessage.of(
+                MessageRole(msg["role"]),
+                msg["content"],
             )
             for msg in messages
         ]

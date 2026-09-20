@@ -85,12 +85,16 @@ class MockChatModelSetup:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"facts": self._last_facts}),
+            return ChatMessage.of(
+                MessageRole.ASSISTANT,
+                json.dumps({"facts": self._last_facts}),
             )
 
         # Call 2: Memory update — return ADD for each extracted fact.
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"memory": memory_ops}),
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            json.dumps({"memory": memory_ops}),
         )
 
 
@@ -377,12 +381,16 @@ class MockChatModelWithTokenUsage:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"facts": self._last_facts}),
+            return ChatMessage.of(
+                MessageRole.ASSISTANT,
+                json.dumps({"facts": self._last_facts}),
                 extra_args=extra_args,
             )
 
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage.of(MessageRole.ASSISTANT, json.dumps({"memory": memory_ops}),
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            json.dumps({"memory": memory_ops}),
             extra_args=extra_args,
         )
 

@@ -99,7 +99,9 @@ class SkillTestAgent(Agent):
     def system_prompt() -> Prompt:
         return Prompt.from_messages(
             messages=[
-                ChatMessage.of(MessageRole.SYSTEM, "You are a help assistant. Use the math-calculator skill when asked to evaluate "
+                ChatMessage.of(
+                    MessageRole.SYSTEM,
+                    "You are a help assistant. Use the math-calculator skill when asked to evaluate "
                     "an expression. You **must load the skill first** and strictly follow the instructions "
                     "of the skill.",
                 )
@@ -116,7 +118,9 @@ class SkillTestAgent(Agent):
                 ChatRequestEvent(
                     model="openai_setup",
                     messages=[
-                        ChatMessage.of(MessageRole.USER, f"Please evaluate the expression: ({input.a} ^ {input.b})",
+                        ChatMessage.of(
+                            MessageRole.USER,
+                            f"Please evaluate the expression: ({input.a} ^ {input.b})",
                         )
                     ],
                 )
@@ -127,7 +131,9 @@ class SkillTestAgent(Agent):
                 ChatRequestEvent(
                     model="openai_setup",
                     messages=[
-                        ChatMessage.of(MessageRole.USER, input,
+                        ChatMessage.of(
+                            MessageRole.USER,
+                            input,
                         )
                     ],
                 )
@@ -273,11 +279,15 @@ def test_react_agent_with_skills(tmp_path: Path) -> None:
     # prepare prompt
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage.of(MessageRole.SYSTEM, "You are a math calculate assistant. Use the math-calculator skill when asked to evaluate "
+            ChatMessage.of(
+                MessageRole.SYSTEM,
+                "You are a math calculate assistant. Use the math-calculator skill when asked to evaluate "
                 "an expression. You **must load the skill first** and strictly follow the instructions "
                 "of the skill.",
             ),
-            ChatMessage.of(MessageRole.USER, "Please evaluate the expression: {a} ^ {b}",
+            ChatMessage.of(
+                MessageRole.USER,
+                "Please evaluate the expression: {a} ^ {b}",
             ),
         ],
     )

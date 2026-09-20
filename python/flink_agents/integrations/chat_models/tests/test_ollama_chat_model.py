@@ -101,7 +101,9 @@ def test_ollama_chat_with_tools() -> None:
 
     response = llm.chat(
         [
-            ChatMessage.of(MessageRole.USER, "Could you help me calculate the sum of 1 and 2?",
+            ChatMessage.of(
+                MessageRole.USER,
+                "Could you help me calculate the sum of 1 and 2?",
             )
         ]
     )
@@ -217,7 +219,9 @@ def test_ollama_chat_with_extract_reasoning() -> None:
     # Call the chat method
     response = llm.chat(
         [
-            ChatMessage.of(MessageRole.USER, "What's the meaning of life?",
+            ChatMessage.of(
+                MessageRole.USER,
+                "What's the meaning of life?",
             )
         ]
     )

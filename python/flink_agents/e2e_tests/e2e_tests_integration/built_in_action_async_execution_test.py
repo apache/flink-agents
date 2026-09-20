@@ -56,8 +56,7 @@ class SlowMockChatModel(BaseChatModelSetup):
                 "type": ToolType.FUNCTION,
                 "function": function,
             }
-            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call]
-            )
+            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call])
         else:
             content = "\n".join([message.text for message in messages])
             return ChatMessage.of(MessageRole.ASSISTANT, content)

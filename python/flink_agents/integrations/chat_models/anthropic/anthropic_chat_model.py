@@ -532,12 +532,16 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             ]
 
             extra_args["anthropic_content_blocks"] = message.content
-            return ChatMessage.of(MessageRole(message.role), text,
+            return ChatMessage.of(
+                MessageRole(message.role),
+                text,
                 tool_calls=tool_calls,
                 extra_args=extra_args,
             )
         else:
-            return ChatMessage.of(MessageRole(message.role), text,
+            return ChatMessage.of(
+                MessageRole(message.role),
+                text,
                 extra_args=extra_args,
             )
 

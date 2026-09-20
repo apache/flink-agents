@@ -626,9 +626,7 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage.of(MessageRole.USER, "hi").model_dump(
-                        mode="json"
-                    )
+                    ChatMessage.of(MessageRole.USER, "hi").model_dump(mode="json")
                 ]
             },
         )
@@ -678,9 +676,7 @@ class TestProcessToolResponsePromptArgsForwarding:
             "_TOOL_CALL_CONTEXT",
             {
                 str(initial_request_id): [
-                    ChatMessage.of(MessageRole.USER, "hi").model_dump(
-                        mode="json"
-                    )
+                    ChatMessage.of(MessageRole.USER, "hi").model_dump(mode="json")
                 ]
             },
         )

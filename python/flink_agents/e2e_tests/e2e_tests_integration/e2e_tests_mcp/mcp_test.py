@@ -142,7 +142,9 @@ class MyMCPAgent(Agent):
             )
         else:
             # Send chat request asking to use the add tool
-            msg = ChatMessage.of(MessageRole.USER, f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
+            msg = ChatMessage.of(
+                MessageRole.USER,
+                f"Please use the add tool to calculate the sum of {input_data.a} and {input_data.b}.",
             )
             ctx.send_event(ChatRequestEvent(model="math_chat_model", messages=[msg]))
 

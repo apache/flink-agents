@@ -226,7 +226,9 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = response.prompt_eval_count
             extra_args["completionTokens"] = response.eval_count
 
-        return ChatMessage.of(MessageRole(response.message.role), content,
+        return ChatMessage.of(
+            MessageRole(response.message.role),
+            content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )

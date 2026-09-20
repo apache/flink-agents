@@ -112,9 +112,7 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
 
     llm.open()
 
-    response = llm.chat(
-        [ChatMessage.of(MessageRole.USER, "Hello!")], top_p=0.5
-    )
+    response = llm.chat([ChatMessage.of(MessageRole.USER, "Hello!")], top_p=0.5)
 
     mock_model.chat.assert_called_once()
     call_kwargs = mock_model.chat.call_args.kwargs
@@ -275,9 +273,7 @@ def test_chat_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -> Non
     mock_model.chat.side_effect = [unauthorized]
     mock_model.chat.reset_mock()
     with pytest.raises(ApiRequestFailure):
-        connection.chat(
-            [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
-        )
+        connection.chat([ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model)
     assert mock_model.chat.call_count == 1
 
 
@@ -331,7 +327,9 @@ def test_convert_to_watsonx_messages_round_trip() -> None:
                 }
             ],
         ),
-        ChatMessage.of(MessageRole.TOOL, "3",
+        ChatMessage.of(
+            MessageRole.TOOL,
+            "3",
             extra_args={"external_id": "call_abc123"},
         ),
     ]

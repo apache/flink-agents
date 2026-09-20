@@ -130,9 +130,7 @@ class MCPPrompt(Prompt):
 
         Returns a text representation of the prompt.
         """
-        text = "\n".join(
-            message.text for message in self.format_messages(**arguments)
-        )
+        text = "\n".join(message.text for message in self.format_messages(**arguments))
         return text
 
     @override

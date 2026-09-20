@@ -162,7 +162,9 @@ def commentary_request(event: Event, ctx: RunnerContext) -> None:
         ChatRequestEvent(
             model="chat_model",
             messages=[
-                ChatMessage.of(MessageRole.USER, (
+                ChatMessage.of(
+                    MessageRole.USER,
+                    (
                         "Here is a math answer from another assistant: "
                         f"{data.answer!r}. Reply with the numeric result only."
                     ),

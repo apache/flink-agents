@@ -231,8 +231,7 @@ class MockChatModelImpl(BaseChatModelSetup):
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Testing Implementation."""
-        return ChatMessage.of(MessageRole.ASSISTANT, self.host + " " + self.desc
-        )
+        return ChatMessage.of(MessageRole.ASSISTANT, self.host + " " + self.desc)
 
 
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):

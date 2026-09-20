@@ -55,7 +55,9 @@ class MathAgent(Agent):
         """System prompt instructing the model to use the skill."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage.of(MessageRole.SYSTEM, "You are a helpful math assistant. Use the "
+                ChatMessage.of(
+                    MessageRole.SYSTEM,
+                    "You are a helpful math assistant. Use the "
                     "math-calculator skill when asked to evaluate an expression. "
                     "You must load the skill first and strictly follow its "
                     "instructions. Reply with only the final numeric result.",
