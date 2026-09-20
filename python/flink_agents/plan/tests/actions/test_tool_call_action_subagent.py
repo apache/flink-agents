@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, PrivateAttr
@@ -31,6 +32,7 @@ from flink_agents.api.subagent import (
     SubagentResult,
     SubagentSetup,
 )
+from flink_agents.api.trace import ExecutionEntityTypes, ExecutionReporter
 from flink_agents.plan.actions.tool_call_action import process_tool_request
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import PythonFunction
@@ -167,13 +169,14 @@ class _OrderRecordingSubagentSetup(SubagentSetup):
         return _OrderRecordingFuture(self._label, self._ops)
 
 
-class _Context:
+class _Context(ExecutionReporter):
     def __init__(self) -> None:
         self.config = AgentConfiguration({})
         self.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, False)
         self.sensory_memory = None
         self.short_term_memory = None
         self.sent_events = []
+        self.reports: list[tuple[str, str, str, str | None]] = []
         self.tools = {}
         self.agents = {}
         self.durable_executions = 0
@@ -218,6 +221,63 @@ class _Context:
 
     def send_event(self, event: Any) -> None:
         self.sent_events.append(event)
+
+    @override
+    def report_execution_created(
+        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+    ) -> None:
+        self.reports.append(("created", entity_type, entity_name, None))
+
+    @override
+    def report_execution_started(
+        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+    ) -> None:
+        self.reports.append(("started", entity_type, entity_name, None))
+
+    @override
+    def report_execution_started_at(
+        self, entity_type: str, entity_name: str, entity_metadata: Any, timestamp: str
+    ) -> None:
+        self.reports.append(("started", entity_type, entity_name, timestamp))
+
+    @override
+    def report_execution_succeeded(
+        self, entity_type: str, entity_name: str, entity_metadata: Any = None
+    ) -> None:
+        self.reports.append(("succeeded", entity_type, entity_name, None))
+
+    @override
+    def report_execution_succeeded_at(
+        self, entity_type: str, entity_name: str, entity_metadata: Any, timestamp: str
+    ) -> None:
+        self.reports.append(("succeeded", entity_type, entity_name, timestamp))
+
+    @override
+    def report_execution_failed(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any,
+        error: BaseException,
+        problem_category: str | None = None,
+    ) -> None:
+        self.reports.append(("failed", entity_type, entity_name, None))
+
+    @override
+    def report_execution_failed_at(
+        self,
+        entity_type: str,
+        entity_name: str,
+        entity_metadata: Any,
+        error: BaseException,
+        problem_category: str | None,
+        timestamp: str,
+    ) -> None:
+        self.reports.append(("failed", entity_type, entity_name, timestamp))
+
+
+def _parse_timestamp(timestamp: str) -> datetime:
+    return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
 
 
 def tool_request(callable_name: str) -> ToolRequestEvent:
@@ -455,3 +515,25 @@ def test_submits_every_subagent_call_before_awaiting_any_in_parallel() -> None:
     assert response.success["call-2"] is True
     assert response.responses["call-1"] == "a done"
     assert response.responses["call-2"] == "b done"
+
+
+def test_reports_a_resolved_subagent_delegation_under_the_subagent_scope() -> None:
+    """A resolved delegation is reported under the sub-agent scope keyed by the
+    registered agent name -- not the reserved callable name and not the tool
+    scope -- and carries a start occurrence, so the runtime attributes a latency
+    window to it instead of bucketing it as an unknown tool with no latency.
+    """
+    agent = _RecordingSubagentSetup.of(SubagentResult.ok("done"))
+    ctx = _Context().with_agent("reviewer", agent)
+
+    asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
+
+    assert [report[0] for report in ctx.reports] == ["created", "started", "succeeded"]
+    for _, entity_type, entity_name, _ in ctx.reports:
+        assert entity_type == ExecutionEntityTypes.SUBAGENT
+        assert entity_name == "reviewer"
+    started_timestamp = ctx.reports[1][3]
+    succeeded_timestamp = ctx.reports[2][3]
+    assert started_timestamp is not None
+    assert succeeded_timestamp is not None
+    assert _parse_timestamp(succeeded_timestamp) >= _parse_timestamp(started_timestamp)

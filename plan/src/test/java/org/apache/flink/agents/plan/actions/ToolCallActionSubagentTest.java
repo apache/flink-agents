@@ -39,9 +39,11 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -378,6 +380,37 @@ class ToolCallActionSubagentTest {
                 .startsWith("Sub-agent _subagent_a execute failed");
         assertThat(response.getResponses().get("call-2").getError())
                 .startsWith("Sub-agent _subagent_b execute failed");
+    }
+
+    /**
+     * A resolved delegation is reported under the sub-agent scope keyed by the registered agent
+     * name -- not the reserved callable name and not the tool scope -- and carries a start
+     * occurrence, so the runtime attributes a latency window to it instead of bucketing it as an
+     * unknown tool with no latency.
+     */
+    @Test
+    void reportsAResolvedSubagentDelegationUnderTheSubagentScope() throws Exception {
+        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("done"));
+        FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
+
+        ToolCallAction.processToolRequest(toolRequest("_subagent_reviewer"), ctx);
+
+        assertThat(ctx.reports)
+                .extracting(report -> report.phase)
+                .containsExactly("created", "started", "succeeded");
+        assertThat(ctx.reports)
+                .allSatisfy(
+                        report -> {
+                            assertThat(report.entityType)
+                                    .isEqualTo(ExecutionReporter.EntityTypes.SUBAGENT);
+                            assertThat(report.entityName).isEqualTo("reviewer");
+                        });
+        ExecutionReport started = ctx.reports.get(1);
+        ExecutionReport succeeded = ctx.reports.get(2);
+        assertThat(started.timestamp).isNotNull();
+        assertThat(succeeded.timestamp).isNotNull();
+        assertThat(Instant.parse(succeeded.timestamp))
+                .isAfterOrEqualTo(Instant.parse(started.timestamp));
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
@@ -751,8 +784,9 @@ class ToolCallActionSubagentTest {
         }
     }
 
-    private static class FakeRunnerContext implements RunnerContext {
+    private static class FakeRunnerContext implements RunnerContext, ExecutionReporter {
         private final List<Event> sentEvents = new ArrayList<>();
+        private final List<ExecutionReport> reports = new ArrayList<>();
         private final Map<String, Resource> tools = new LinkedHashMap<>();
         private final Map<String, Resource> agents = new LinkedHashMap<>();
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
@@ -854,6 +888,79 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
+        public void reportExecutionCreated(
+                String entityType, String entityName, Map<String, Object> entityMetadata) {
+            reports.add(new ExecutionReport("created", entityType, entityName, null));
+        }
+
+        @Override
+        public void reportExecutionStarted(
+                String entityType, String entityName, Map<String, Object> entityMetadata) {
+            reports.add(new ExecutionReport("started", entityType, entityName, null));
+        }
+
+        @Override
+        public void reportExecutionStartedAt(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                String timestamp) {
+            reports.add(new ExecutionReport("started", entityType, entityName, timestamp));
+        }
+
+        @Override
+        public void reportExecutionSucceeded(
+                String entityType, String entityName, Map<String, Object> entityMetadata) {
+            reports.add(new ExecutionReport("succeeded", entityType, entityName, null));
+        }
+
+        @Override
+        public void reportExecutionSucceededAt(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                String timestamp) {
+            reports.add(new ExecutionReport("succeeded", entityType, entityName, timestamp));
+        }
+
+        @Override
+        public void reportExecutionFailed(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                Throwable error,
+                String problemCategory) {
+            reports.add(new ExecutionReport("failed", entityType, entityName, null));
+        }
+
+        @Override
+        public void reportExecutionFailedAt(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                Throwable error,
+                String problemCategory,
+                String timestamp) {
+            reports.add(new ExecutionReport("failed", entityType, entityName, timestamp));
+        }
+
+        @Override
         public void close() {}
+    }
+
+    /** One lifecycle report captured by {@link FakeRunnerContext}, for scope assertions. */
+    private static final class ExecutionReport {
+        private final String phase;
+        private final String entityType;
+        private final String entityName;
+        private final String timestamp;
+
+        private ExecutionReport(
+                String phase, String entityType, String entityName, String timestamp) {
+            this.phase = phase;
+            this.entityType = entityType;
+            this.entityName = entityName;
+            this.timestamp = timestamp;
+        }
     }
 }

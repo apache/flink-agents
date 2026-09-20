@@ -95,14 +95,20 @@ class _ToolCallOccurrence:
     started_at: datetime | None = None
     finished_at: datetime | None = None
 
+    def mark_started(self) -> None:
+        self.started_at = datetime.now(timezone.utc)
+
+    def mark_finished(self) -> None:
+        self.finished_at = datetime.now(timezone.utc)
+
     def wrap(self, func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
         def observed_call(*args: Any, **kwargs: Any) -> Any:
-            self.started_at = datetime.now(timezone.utc)
+            self.mark_started()
             try:
                 return func(*args, **kwargs)
             finally:
-                self.finished_at = datetime.now(timezone.utc)
+                self.mark_finished()
 
         return observed_call
 
@@ -209,12 +215,25 @@ def _build_tool_call_executions(
         entity_metadata = _tool_entity_metadata(
             event.id, call_id, external_id, name, tool, call_kwargs
         )
-        ExecutionReporters.created(
-            ctx,
-            ExecutionEntityTypes.TOOL,
-            name,
-            entity_metadata,
-        )
+        # A resolved delegation is reported under the sub-agent scope keyed by the
+        # registered agent name, so the runtime attributes its outcome and latency to
+        # that sub-agent instead of bucketing the reserved callable name as an unknown
+        # tool. An unresolved _subagent_ name keeps the tool scope and lands in
+        # tool=unknown.
+        if agent is not None:
+            ExecutionReporters.created(
+                ctx,
+                ExecutionEntityTypes.SUBAGENT,
+                name[len(CALLABLE_NAME_PREFIX) :],
+                entity_metadata,
+            )
+        else:
+            ExecutionReporters.created(
+                ctx,
+                ExecutionEntityTypes.TOOL,
+                name,
+                entity_metadata,
+            )
 
         unresolved = tool is None and agent is None
         if unresolved or preparation_error is not None:
@@ -398,6 +417,11 @@ async def _dispatch_agent_execution(
     error: dict,
 ) -> None:
     try:
+        # The start occurrence is reported once here, before the hand-off, so a failure
+        # while normalizing the result -- which re-enters _record_agent_failure below --
+        # still yields a single started/terminal pair rather than a duplicate start.
+        execution.occurrence.mark_started()
+        _report_subagent_started(execution, ctx)
         # submit() and awaiting the handle already run through durable execution inside
         # the setup, so wrapping the call again here would nest durable cursors.
         future = await execution.agent.submit(ctx, execution.agent_kwargs)
@@ -431,6 +455,10 @@ async def _dispatch_agent_executions(
     futures = []
     for execution in agent_executions:
         try:
+            # As in the serial path: report the start once, before the hand-off, so a
+            # later normalization failure still yields a single started/terminal pair.
+            execution.occurrence.mark_started()
+            _report_subagent_started(execution, ctx)
             futures.append(await execution.agent.submit(ctx, execution.agent_kwargs))
             submitted.append(execution)
         except Exception as e:  # noqa: PERF203
@@ -443,6 +471,34 @@ async def _dispatch_agent_executions(
             _record_agent_failure(execution, e, ctx, responses, success, error)
 
 
+def _report_subagent_started(execution: _ToolCallExecution, ctx: RunnerContext) -> None:
+    """Report the single start occurrence for a resolved delegation.
+
+    The start is emitted before the hand-off rather than alongside the terminal
+    report, so a failure while normalizing the result -- which re-enters
+    ``_record_agent_failure`` -- cannot produce a second start.
+    """
+    started_at = execution.occurrence.started_at
+    if started_at is not None:
+        ExecutionReporters.started_at(
+            ctx,
+            ExecutionEntityTypes.SUBAGENT,
+            _subagent_report_name(execution),
+            execution.entity_metadata,
+            started_at.isoformat().replace("+00:00", "Z"),
+        )
+
+
+def _subagent_report_name(execution: _ToolCallExecution) -> str:
+    """The registered sub-agent name the metric scope is keyed by.
+
+    Derived by dropping the reserved callable prefix from the name the model
+    emitted, so the scope is bounded by the plan rather than by whatever names a
+    model may emit.
+    """
+    return execution.name[len(CALLABLE_NAME_PREFIX) :]
+
+
 def _record_agent_failure(
     execution: _ToolCallExecution,
     exception: BaseException,
@@ -452,13 +508,15 @@ def _record_agent_failure(
     error: dict,
 ) -> None:
     _record_execution_exception(execution, exception, responses, success, error)
-    ExecutionReporters.failed(
+    execution.occurrence.mark_finished()
+    ExecutionReporters.failed_at(
         ctx,
-        ExecutionEntityTypes.TOOL,
-        execution.name,
+        ExecutionEntityTypes.SUBAGENT,
+        _subagent_report_name(execution),
         execution.entity_metadata,
         exception,
         ExecutionProblemCategories.TOOL_CALL_FAILED,
+        execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
     )
 
 
@@ -475,11 +533,13 @@ def _record_agent_result(
             normalize_agent_result(result.result, execution.agent.result_type())
         )
         success[execution.id] = True
-        ExecutionReporters.succeeded(
+        execution.occurrence.mark_finished()
+        ExecutionReporters.succeeded_at(
             ctx,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
+            ExecutionEntityTypes.SUBAGENT,
+            _subagent_report_name(execution),
             execution.entity_metadata,
+            execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
         )
     else:
         # The model sees why the delegation failed, so it can correct the call
@@ -490,13 +550,15 @@ def _record_agent_result(
         )
         success[execution.id] = False
         error[execution.id] = result.error_message
-        ExecutionReporters.failed(
+        execution.occurrence.mark_finished()
+        ExecutionReporters.failed_at(
             ctx,
-            ExecutionEntityTypes.TOOL,
-            execution.name,
+            ExecutionEntityTypes.SUBAGENT,
+            _subagent_report_name(execution),
             execution.entity_metadata,
             result.exception,
             ExecutionProblemCategories.TOOL_CALL_FAILED,
+            execution.occurrence.finished_at.isoformat().replace("+00:00", "Z"),
         )
 
 

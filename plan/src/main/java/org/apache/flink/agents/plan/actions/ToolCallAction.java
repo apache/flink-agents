@@ -165,8 +165,20 @@ public class ToolCallAction {
                             name,
                             tool,
                             metadataParameters);
-            ExecutionReporters.created(
-                    ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
+            // A resolved delegation is reported under the sub-agent scope keyed by the registered
+            // agent name, so the runtime attributes its outcome and latency to that sub-agent
+            // instead of bucketing the reserved callable name as an unknown tool. An unresolved
+            // _subagent_ name keeps the tool scope and lands in tool=unknown.
+            if (agent != null) {
+                ExecutionReporters.created(
+                        ctx,
+                        ExecutionReporter.EntityTypes.SUBAGENT,
+                        name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length()),
+                        entityMetadata);
+            } else {
+                ExecutionReporters.created(
+                        ctx, ExecutionReporter.EntityTypes.TOOL, name, entityMetadata);
+            }
             boolean unresolved = tool == null && agent == null;
             if (unresolved || preparationError != null) {
                 Exception failure =
@@ -435,6 +447,11 @@ public class ToolCallAction {
             Map<String, ToolResponse> responses)
             throws InterruptedException {
         try {
+            // The start occurrence is reported once here, before the hand-off, so a failure while
+            // normalizing the result -- which re-enters recordAgentFailure below -- still yields a
+            // single started/terminal pair rather than a duplicate start.
+            execution.occurrence.markStarted();
+            reportSubagentStarted(execution, ctx);
             // submit() and await() already run through durable execution inside the setup, so
             // wrapping the call again here would nest durable cursors.
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
@@ -490,6 +507,10 @@ public class ToolCallAction {
         List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
         for (ToolCallExecution execution : agentExecutions) {
             try {
+                // As in the serial path: report the start once, before the hand-off, so a later
+                // normalization failure still yields a single started/terminal pair.
+                execution.occurrence.markStarted();
+                reportSubagentStarted(execution, ctx);
                 futures.add(execution.agent.submit(ctx, execution.agentArguments));
                 submitted.add(execution);
             } catch (InterruptedException e) {
@@ -550,13 +571,15 @@ public class ToolCallAction {
             Map<String, String> error,
             Map<String, ToolResponse> responses) {
         recordExecutionException(execution, e, success, error, responses);
-        ExecutionReporters.failed(
+        execution.occurrence.markFinished();
+        ExecutionReporters.failedAt(
                 ctx,
-                ExecutionReporter.EntityTypes.TOOL,
-                execution.name,
+                ExecutionReporter.EntityTypes.SUBAGENT,
+                subagentReportName(execution),
                 execution.entityMetadata,
                 e,
-                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                execution.occurrence.finishedAt.toString());
     }
 
     private static void recordAgentResult(
@@ -575,11 +598,13 @@ public class ToolCallAction {
                             ToolResultUtils.toChatMessageContent(
                                     ToolResultUtils.normalizeAgentResult(
                                             result.getResult(), execution.agent.getResultType()))));
-            ExecutionReporters.succeeded(
+            execution.occurrence.markFinished();
+            ExecutionReporters.succeededAt(
                     ctx,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
-                    execution.entityMetadata);
+                    ExecutionReporter.EntityTypes.SUBAGENT,
+                    subagentReportName(execution),
+                    execution.entityMetadata,
+                    execution.occurrence.finishedAt.toString());
         } else {
             // The model sees why the delegation failed, so it can correct the call instead of
             // repeating it blindly; the error map keeps the same detail for observability.
@@ -591,14 +616,41 @@ public class ToolCallAction {
                                     String.format("Sub-agent %s execute failed", execution.name),
                                     result.getErrorMessage())));
             error.put(execution.id, result.getErrorMessage());
-            ExecutionReporters.failed(
+            execution.occurrence.markFinished();
+            ExecutionReporters.failedAt(
                     ctx,
-                    ExecutionReporter.EntityTypes.TOOL,
-                    execution.name,
+                    ExecutionReporter.EntityTypes.SUBAGENT,
+                    subagentReportName(execution),
                     execution.entityMetadata,
                     result.getException(),
-                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                    ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                    execution.occurrence.finishedAt.toString());
         }
+    }
+
+    /**
+     * Reports the single start occurrence for a resolved delegation. The start is emitted before
+     * the hand-off rather than alongside the terminal report, so a failure while normalizing the
+     * result -- which re-enters {@link #recordAgentFailure} -- cannot produce a second start.
+     */
+    private static void reportSubagentStarted(ToolCallExecution execution, RunnerContext ctx) {
+        Instant startedAt = execution.occurrence.startedAt;
+        if (startedAt != null) {
+            ExecutionReporters.startedAt(
+                    ctx,
+                    ExecutionReporter.EntityTypes.SUBAGENT,
+                    subagentReportName(execution),
+                    execution.entityMetadata,
+                    startedAt.toString());
+        }
+    }
+
+    /**
+     * The registered sub-agent name, derived by dropping the reserved callable prefix from the name
+     * the model emitted, so the metric scope is keyed by the agent and bounded by the plan.
+     */
+    private static String subagentReportName(ToolCallExecution execution) {
+        return execution.name.substring(SubagentSetup.CALLABLE_NAME_PREFIX.length());
     }
 
     private static void recordExecutionException(

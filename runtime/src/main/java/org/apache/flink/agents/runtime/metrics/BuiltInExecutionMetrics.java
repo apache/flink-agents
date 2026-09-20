@@ -30,7 +30,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Predicate;
 
-/** Derives built-in LLM and Tool metrics from execution lifecycle events. */
+/** Derives built-in LLM, tool, and sub-agent metrics from execution lifecycle events. */
 final class BuiltInExecutionMetrics {
 
     private final FlinkAgentsMetricGroupImpl agentMetricGroup;
@@ -43,12 +43,15 @@ final class BuiltInExecutionMetrics {
         ExecutionMetricRecorder llmMetricRecorder = new LlmExecutionMetricRecorder();
         ExecutionMetricRecorder toolMetricRecorder =
                 new ToolExecutionMetricRecorder(isRegisteredTool);
+        ExecutionMetricRecorder subagentMetricRecorder = new SubagentExecutionMetricRecorder();
         this.metricRecordersByEntityType =
                 Map.of(
                         llmMetricRecorder.entityType(),
                         llmMetricRecorder,
                         toolMetricRecorder.entityType(),
-                        toolMetricRecorder);
+                        toolMetricRecorder,
+                        subagentMetricRecorder.entityType(),
+                        subagentMetricRecorder);
     }
 
     void executionEventObserved(
