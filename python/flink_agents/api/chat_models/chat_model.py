@@ -43,6 +43,10 @@ class StructuredOutputStrategy(str, Enum):
     native structured-output API is a separate, model-dependent *capability*
     question. ``resolves_to_native`` combines the two.
 
+    TODO(#912): strategy resolution is not wired into production yet. Once it is, the
+    native branches must honor the resolved policy rather than vetoing NATIVE through
+    their own capability check.
+
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
     lowercase, so ``_missing_`` accepts either form in any case — matching the

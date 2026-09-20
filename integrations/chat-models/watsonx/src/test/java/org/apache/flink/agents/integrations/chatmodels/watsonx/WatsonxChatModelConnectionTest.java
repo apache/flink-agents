@@ -917,6 +917,45 @@ class WatsonxChatModelConnectionTest {
                 .isTrue();
     }
 
+    /** A connection reporting no model capable, so capability and feasibility can disagree. */
+    private static WatsonxChatModelConnection incapableConnection() {
+        return new WatsonxChatModelConnection(
+                descriptor("https://us-south.ml.cloud.ibm.com", "test-key", "test-project"),
+                NOOP,
+                NO_ENVIRONMENT) {
+            @Override
+            protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                return false;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("Feasibility is answered without consulting the capability predicate")
+    void feasibilityQueryExcludesModelCapability() {
+        // WatsonxChatModelConnection reports every model capable, so no model name can separate
+        // the two answers. A subclass that reports nothing capable can: the query must still
+        // answer true, which fails the moment a capability conjunct is folded into the override.
+        // That folding is invisible to feasibilityQueryAgreesWithTheNativeBranch, which moves
+        // both sides at once. The payload stays unconstrained meanwhile, which is the branch's
+        // own conjunct doing the work the query does not.
+        WatsonxChatModelConnection connection = incapableConnection();
+
+        assertThat(
+                        connection.canApplyNativeStructuredOutput(
+                                Report.class, List.of(), Map.of("model", MODEL)))
+                .isTrue();
+
+        ObjectNode payload =
+                connection.buildPayload(
+                        List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                        List.of(),
+                        Map.of("model", MODEL),
+                        Report.class);
+
+        assertThat(payload.has("response_format")).isFalse();
+    }
+
     @Test
     @DisplayName("The feasibility query reads its tools and parameters without consuming them")
     void feasibilityQueryDoesNotConsumeItsInputs() {

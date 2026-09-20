@@ -161,6 +161,25 @@ def test_native_not_applied_for_default_model(monkeypatch) -> None:
     assert "response_format" not in kwargs
 
 
+def test_native_not_applied_for_a_non_string_model(monkeypatch) -> None:
+    """A model that is not a string is answered with the fallback rather than an error.
+
+    This connection's capability predicate tests membership of a frozenset allowlist,
+    which answers for any hashable value without raising, so a schema sent against such
+    a model degrades to prompt engineering and the request carries no
+    ``response_format``. The value reaches the provider as the model either way, which
+    is what decides the call. Sibling connections classify by other means and several
+    raise on this input, so the tolerance is local to this connection rather than a
+    contract every connection keeps.
+    """
+    response, kwargs = _chat(
+        monkeypatch, model=123, output_schema=OutputSchema(output_schema=Person)
+    )
+    assert response.content == "ok"
+    assert "response_format" not in kwargs
+    assert kwargs["model"] == 123
+
+
 def test_native_not_applied_when_schema_none(monkeypatch) -> None:
     """A call without a schema carries no response format key at all.
 

@@ -287,6 +287,42 @@ class OllamaChatModelConnectionTest {
                 .isTrue();
     }
 
+    /** A connection reporting no model capable, so capability and feasibility can disagree. */
+    private static OllamaChatModelConnection incapableConnection() {
+        ResourceDescriptor desc =
+                ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                        .addInitialArgument("endpoint", "http://localhost:11434")
+                        .build();
+        return new OllamaChatModelConnection(desc, NOOP) {
+            @Override
+            protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                return false;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("Feasibility is answered without consulting the capability predicate")
+    void feasibilityQueryExcludesModelCapability() {
+        // OllamaChatModelConnection reports every model capable, so no model name can separate
+        // the two answers. A subclass that reports nothing capable can: the query must still
+        // answer true, which fails the moment a capability conjunct is folded into the override.
+        // That folding is invisible to feasibilityQueryAgreesWithTheNativeBranch, which moves
+        // both sides at once. The request stays unconstrained meanwhile, which is the branch's
+        // own conjunct doing the work the query does not.
+        OllamaChatModelConnection connection = incapableConnection();
+
+        assertThat(
+                        connection.canApplyNativeStructuredOutput(
+                                Report.class, List.of(), params("qwen3:4b")))
+                .isTrue();
+
+        OllamaChatRequest request =
+                connection.buildRequest(userMessage(), List.of(), params("qwen3:4b"), Report.class);
+
+        assertThat(request.getFormat()).isNull();
+    }
+
     @Test
     @DisplayName("The feasibility query reads its tools and parameters without consuming them")
     void feasibilityQueryDoesNotConsumeItsInputs() {
