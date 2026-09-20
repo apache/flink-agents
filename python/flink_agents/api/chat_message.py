@@ -18,8 +18,8 @@
 from enum import Enum
 from typing import Any, Dict, List, Literal, Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from typing_extensions import Annotated
+from pydantic import BaseModel, ConfigDict, Field
+from typing_extensions import Annotated, Self
 
 
 class MessageRole(str, Enum):
@@ -56,16 +56,61 @@ class TextBlock(BaseModel):
         return self.text
 
 
+class Base64Source(BaseModel):
+    """An inline media payload, carried as base64 text."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["base64"] = "base64"
+    data: str = Field(min_length=1)
+
+    @property
+    def size_bytes(self) -> int:
+        """The decoded byte count implied by the base64 length."""
+        padding = 2 if self.data.endswith("==") else 1 if self.data.endswith("=") else 0
+        return len(self.data) * 3 // 4 - padding
+
+    def __str__(self) -> str:
+        return f"Base64Source({self.size_bytes} bytes)"
+
+
+class UrlSource(BaseModel):
+    """An externally managed media location: a URL or a provider file URI.
+
+    The location is externally managed: it may expire, may not be reachable by
+    the model provider, and may be invalid after recovery from a checkpoint.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    type: Literal["url"] = "url"
+    url: str = Field(min_length=1)
+
+    def __str__(self) -> str:
+        return f"UrlSource({self.url})"
+
+
+MediaSource = Annotated[
+    Base64Source | UrlSource,
+    Field(discriminator="type"),
+]
+"""Where a MediaBlock's payload lives: a discriminated, immutable value.
+
+The kind of source is structural rather than a validation rule over nullable
+fields; a managed blob/reference source can be added later without touching
+the block shape. Providers explicitly convert or reject the source kinds they
+support.
+"""
+
+
 class MediaBlock(BaseModel):
     """Shared shape for binary media blocks: modality is the concrete type,
-    encoding is the media type (RFC 6838; historically called a MIME type).
+    encoding is the media type (RFC 6838; historically called a MIME type), and
+    the payload location is a typed ``source``.
 
-    Media blocks are immutable, and the payload is carried by exactly one of
-    base64 ``data`` or an externally managed ``url``. URL-backed content is
-    externally managed: URLs may expire, may not be reachable by the model
-    provider, and may be invalid after recovery from a checkpoint. The optional
-    ``name``/``size_bytes``/``sha256`` metadata also serves the Event Log,
-    which records media metadata instead of payload bytes.
+    Media blocks are immutable. The optional ``name``/``size_bytes``/``sha256``
+    metadata also serves the Event Log, which records media metadata instead of
+    payload bytes.
     """
 
     # Frozen keeps sharing a block (e.g. across a routing context copy) safe,
@@ -73,22 +118,23 @@ class MediaBlock(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     media_type: str
-    data: str | None = None  # base64; exactly one of data / url set
-    url: str | None = None
+    source: MediaSource
     name: str | None = None
     size_bytes: int | None = None
     sha256: str | None = None
 
-    @model_validator(mode="after")
-    def _exactly_one_source(self) -> "MediaBlock":
-        if (self.data is None) == (self.url is None):
-            msg = "A media block carries exactly one of base64 data or a URL."
-            raise ValueError(msg)
-        return self
+    @classmethod
+    def from_base64(cls, media_type: str, data: str, **kwargs: Any) -> Self:
+        """Create a block carrying an inline base64 payload."""
+        return cls(media_type=media_type, source=Base64Source(data=data), **kwargs)
+
+    @classmethod
+    def from_url(cls, media_type: str, url: str, **kwargs: Any) -> Self:
+        """Create a block referencing an externally managed URL or file URI."""
+        return cls(media_type=media_type, source=UrlSource(url=url), **kwargs)
 
     def __str__(self) -> str:
-        source = "inline" if self.data is not None else f"url={self.url}"
-        return f"{type(self).__name__}({self.media_type}, {source})"
+        return f"{type(self).__name__}({self.media_type}, {self.source})"
 
 
 class ImageBlock(MediaBlock):

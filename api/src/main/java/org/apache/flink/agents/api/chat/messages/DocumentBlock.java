@@ -29,22 +29,21 @@ public final class DocumentBlock extends MediaBlock {
     @JsonCreator
     public DocumentBlock(
             @JsonProperty("media_type") String mediaType,
-            @JsonProperty("data") @Nullable String data,
-            @JsonProperty("url") @Nullable String url,
+            @JsonProperty("source") MediaSource source,
             @JsonProperty("name") @Nullable String name,
             @JsonProperty("size_bytes") @Nullable Long sizeBytes,
             @JsonProperty("sha256") @Nullable String sha256) {
-        super(mediaType, data, url, name, sizeBytes, sha256);
+        super(mediaType, source, name, sizeBytes, sha256);
     }
 
     /** Creates a document block carrying an inline base64 payload. */
     public static DocumentBlock fromBase64(String mediaType, String data) {
-        return new DocumentBlock(mediaType, data, null, null, null, null);
+        return new DocumentBlock(mediaType, new Base64Source(data), null, null, null);
     }
 
     /** Creates a document block referencing an externally managed URL or provider file URI. */
     public static DocumentBlock fromUrl(String mediaType, String url) {
-        return new DocumentBlock(mediaType, null, url, null, null, null);
+        return new DocumentBlock(mediaType, new UrlSource(url), null, null, null);
     }
 
     @Override

@@ -29,22 +29,21 @@ public final class VideoBlock extends MediaBlock {
     @JsonCreator
     public VideoBlock(
             @JsonProperty("media_type") String mediaType,
-            @JsonProperty("data") @Nullable String data,
-            @JsonProperty("url") @Nullable String url,
+            @JsonProperty("source") MediaSource source,
             @JsonProperty("name") @Nullable String name,
             @JsonProperty("size_bytes") @Nullable Long sizeBytes,
             @JsonProperty("sha256") @Nullable String sha256) {
-        super(mediaType, data, url, name, sizeBytes, sha256);
+        super(mediaType, source, name, sizeBytes, sha256);
     }
 
     /** Creates a video block carrying an inline base64 payload. */
     public static VideoBlock fromBase64(String mediaType, String data) {
-        return new VideoBlock(mediaType, data, null, null, null, null);
+        return new VideoBlock(mediaType, new Base64Source(data), null, null, null);
     }
 
     /** Creates a video block referencing an externally managed URL or provider file URI. */
     public static VideoBlock fromUrl(String mediaType, String url) {
-        return new VideoBlock(mediaType, null, url, null, null, null);
+        return new VideoBlock(mediaType, new UrlSource(url), null, null, null);
     }
 
     @Override

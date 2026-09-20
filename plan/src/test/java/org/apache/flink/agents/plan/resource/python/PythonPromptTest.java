@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.resource.python;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -90,8 +91,8 @@ public class PythonPromptTest {
                         block -> {
                             ImageBlock image = (ImageBlock) block;
                             assertThat(image.getMediaType()).isEqualTo("image/png");
-                            assertThat(image.getUrl()).isEqualTo("https://example.org/cat.png");
-                            assertThat(image.getData()).isNull();
+                            assertThat(image.getSource())
+                                    .isEqualTo(new UrlSource("https://example.org/cat.png"));
                         });
     }
 
@@ -115,8 +116,10 @@ public class PythonPromptTest {
         Map<String, Object> block = new HashMap<>();
         block.put("type", "image");
         block.put("media_type", mediaType);
-        block.put("data", null);
-        block.put("url", url);
+        Map<String, Object> source = new HashMap<>();
+        source.put("type", "url");
+        source.put("url", url);
+        block.put("source", source);
         block.put("name", null);
         block.put("size_bytes", null);
         block.put("sha256", null);

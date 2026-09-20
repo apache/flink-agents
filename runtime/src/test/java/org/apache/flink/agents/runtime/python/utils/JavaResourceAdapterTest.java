@@ -45,7 +45,13 @@ public class JavaResourceAdapterTest {
         List<Map<String, Object>> blocks =
                 List.of(
                         Map.of("type", "text", "text", "hello"),
-                        Map.of("type", "image", "media_type", "image/png", "data", "aGk="));
+                        Map.of(
+                                "type",
+                                "image",
+                                "media_type",
+                                "image/png",
+                                "source",
+                                Map.of("type", "base64", "data", "aGk=")));
         ChatMessage converted = adapter.fromPythonChatMessage("user", blocks, toolCalls, extraArgs);
 
         assertThat(converted.getRole()).isEqualTo(MessageRole.USER);

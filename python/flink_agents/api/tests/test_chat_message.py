@@ -20,11 +20,13 @@ from pydantic import ValidationError
 
 from flink_agents.api.chat_message import (
     AudioBlock,
+    Base64Source,
     ChatMessage,
     DocumentBlock,
     ImageBlock,
     MessageRole,
     TextBlock,
+    UrlSource,
     VideoBlock,
 )
 
@@ -45,11 +47,16 @@ def test_media_block_wire_shape_omits_absent_fields() -> None:
     message = ChatMessage.user(
         [
             TextBlock(text="What's in this picture?"),
-            ImageBlock(media_type="image/png", data="aGk="),
+            ImageBlock.from_base64("image/png", "aGk="),
         ]
     )
     image = message.model_dump(mode="json", exclude_none=True)["blocks"][1]
-    assert image == {"type": "image", "media_type": "image/png", "data": "aGk="}
+    # The payload location is a typed, discriminated source.
+    assert image == {
+        "type": "image",
+        "media_type": "image/png",
+        "source": {"type": "base64", "data": "aGk="},
+    }
 
 
 def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
@@ -59,11 +66,11 @@ def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
             TextBlock(text="before"),
             ImageBlock(
                 media_type="image/jpeg",
-                url="https://example.org/cat.jpg",
+                source=UrlSource(url="https://example.org/cat.jpg"),
                 name="cat.jpg",
                 size_bytes=123,
             ),
-            DocumentBlock(media_type="application/pdf", data="cGRm"),
+            DocumentBlock.from_base64("application/pdf", "cGRm"),
             TextBlock(text="after"),
         ],
     )
@@ -81,8 +88,8 @@ def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
 def test_audio_and_video_round_trip() -> None:
     original = ChatMessage.user(
         [
-            AudioBlock(media_type="audio/wav", data="d2F2"),
-            VideoBlock(media_type="video/mp4", url="https://example.org/v.mp4"),
+            AudioBlock.from_base64("audio/wav", "d2F2"),
+            VideoBlock.from_url("video/mp4", "https://example.org/v.mp4"),
         ]
     )
     restored = ChatMessage.model_validate_json(original.model_dump_json())
@@ -95,7 +102,11 @@ def test_java_wire_shape_deserializes() -> None:
         "role": "user",
         "blocks": [
             {"type": "text", "text": "hi"},
-            {"type": "image", "media_type": "image/png", "data": "aGk="},
+            {
+                "type": "image",
+                "media_type": "image/png",
+                "source": {"type": "base64", "data": "aGk="},
+            },
         ],
         "tool_calls": [],
         "extra_args": {},
@@ -103,6 +114,7 @@ def test_java_wire_shape_deserializes() -> None:
     message = ChatMessage.model_validate(payload)
     assert isinstance(message.blocks[0], TextBlock)
     assert isinstance(message.blocks[1], ImageBlock)
+    assert isinstance(message.blocks[1].source, Base64Source)
     assert message.text == "hi"
 
 
@@ -112,11 +124,36 @@ def test_legacy_content_kwarg_fails_loudly() -> None:
         ChatMessage(role=MessageRole.USER, content="hi")
 
 
-def test_media_requires_exactly_one_source() -> None:
+# Mirrored verbatim in the Java suite (ChatMessageSerializationTest
+# .testJacksonPathValidation), so both languages agree on which wire values
+# are valid.
+_INVALID_WIRE_PAYLOADS = [
+    # Missing source.
+    {"type": "image", "media_type": "image/png"},
+    # Unknown source kind.
+    {
+        "type": "image",
+        "media_type": "image/png",
+        "source": {"type": "blob", "blob_id": "b1"},
+    },
+    # Empty base64 payload.
+    {
+        "type": "image",
+        "media_type": "image/png",
+        "source": {"type": "base64", "data": ""},
+    },
+    # Empty URL.
+    {"type": "image", "media_type": "image/png", "source": {"type": "url", "url": ""}},
+    # Missing media type.
+    {"type": "image", "source": {"type": "base64", "data": "aGk="}},
+]
+
+
+@pytest.mark.parametrize("payload", _INVALID_WIRE_PAYLOADS)
+def test_invalid_wire_payloads_rejected(payload: dict) -> None:
+    """The wire path rejects exactly the payloads Java rejects."""
     with pytest.raises(ValidationError):
-        ImageBlock(media_type="image/png")
-    with pytest.raises(ValidationError):
-        ImageBlock(media_type="image/png", data="aGk=", url="https://example.org/x")
+        ChatMessage.model_validate({"role": "user", "blocks": [payload]})
 
 
 def test_blocks_are_frozen() -> None:
@@ -124,13 +161,13 @@ def test_blocks_are_frozen() -> None:
     text = TextBlock(text="hi")
     with pytest.raises(ValidationError):
         text.text = "mutated"
-    image = ImageBlock(media_type="image/png", data="aGk=")
+    image = ImageBlock.from_base64("image/png", "aGk=")
     with pytest.raises(ValidationError):
-        image.data = "bXV0YXRlZA=="
+        image.source = UrlSource(url="https://example.org/x")
     with pytest.raises(ValidationError):
-        image.url = "https://example.org/x"
+        image.source.data = "bXV0YXRlZA=="
     assert text.text == "hi"
-    assert image.data == "aGk="
+    assert image.source == Base64Source(data="aGk=")
 
 
 def test_factories_and_text_projection() -> None:

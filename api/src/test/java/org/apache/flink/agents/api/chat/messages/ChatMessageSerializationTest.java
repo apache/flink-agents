@@ -65,14 +65,18 @@ class ChatMessageSerializationTest {
 
         JsonNode image = MAPPER.valueToTree(message).get("blocks").get(1);
 
-        // The discriminator is written once: getType() is @JsonIgnore, the resolver owns the key.
+        // Each discriminator is written once: getType() is @JsonIgnore on both the block and
+        // its source, the type resolver owns the key.
         assertThat(MAPPER.writeValueAsString(message.getBlocks().get(1)))
-                .containsOnlyOnce("\"type\"");
+                .containsOnlyOnce("\"type\":\"image\"")
+                .containsOnlyOnce("\"type\":\"base64\"");
         assertThat(image.get("type").asText()).isEqualTo("image");
         assertThat(image.get("media_type").asText()).isEqualTo("image/png");
-        assertThat(image.get("data").asText()).isEqualTo("aGk=");
+        // The payload location is a typed, discriminated source.
+        assertThat(image.get("source").get("type").asText()).isEqualTo("base64");
+        assertThat(image.get("source").get("data").asText()).isEqualTo("aGk=");
+        assertThat(image.get("source").has("url")).isFalse();
         // Absent optional fields are omitted, not serialized as nulls.
-        assertThat(image.has("url")).isFalse();
         assertThat(image.has("name")).isFalse();
         assertThat(image.has("size_bytes")).isFalse();
         assertThat(image.has("sha256")).isFalse();
@@ -83,7 +87,11 @@ class ChatMessageSerializationTest {
     void testMixedBlocksRoundTrip() throws Exception {
         ImageBlock image =
                 new ImageBlock(
-                        "image/jpeg", null, "https://example.org/cat.jpg", "cat.jpg", 123L, null);
+                        "image/jpeg",
+                        new UrlSource("https://example.org/cat.jpg"),
+                        "cat.jpg",
+                        123L,
+                        null);
         ChatMessage original =
                 new ChatMessage(
                         MessageRole.TOOL,
@@ -119,44 +127,50 @@ class ChatMessageSerializationTest {
     }
 
     @Test
-    @DisplayName("Media factories enforce exactly one of data and url")
+    @DisplayName("Media factories and sources reject empty payloads, URLs, and media types")
     void testMediaSourceValidation() {
         assertThatThrownBy(() -> ImageBlock.fromBase64("image/png", null))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ImageBlock.fromBase64("image/png", ""))
+                .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ImageBlock.fromUrl("image/png", null))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ImageBlock.fromUrl("image/png", ""))
                 .isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> ImageBlock.fromBase64(null, "aGk="))
                 .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ImageBlock("image/png", null, null, null, null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
+    /**
+     * The Jackson path runs the same validation as the factories. The invalid payloads here are
+     * mirrored verbatim in the Python suite ({@code test_invalid_wire_payloads_rejected}), so both
+     * languages agree on which wire values are valid.
+     */
     @Test
-    @DisplayName("The Jackson path runs the same validation as the factories")
+    @DisplayName("The Jackson path rejects the same wire payloads as the factories and Python")
     void testJacksonPathValidation() {
-        // Both sources present.
-        assertThatThrownBy(
-                        () ->
-                                MAPPER.readValue(
-                                        "{\"type\":\"image\",\"media_type\":\"image/png\","
-                                                + "\"data\":\"aGk=\",\"url\":\"https://example.org/x\"}",
-                                        ContentBlock.class))
-                .isInstanceOf(JsonMappingException.class)
-                .hasRootCauseInstanceOf(IllegalArgumentException.class);
-        // Neither source present.
-        assertThatThrownBy(
-                        () ->
-                                MAPPER.readValue(
-                                        "{\"type\":\"image\",\"media_type\":\"image/png\"}",
-                                        ContentBlock.class))
-                .isInstanceOf(JsonMappingException.class)
-                .hasRootCauseInstanceOf(IllegalArgumentException.class);
-        // Missing media type.
-        assertThatThrownBy(
-                        () ->
-                                MAPPER.readValue(
-                                        "{\"type\":\"image\",\"data\":\"aGk=\"}",
-                                        ContentBlock.class))
-                .isInstanceOf(JsonMappingException.class)
-                .hasRootCauseInstanceOf(IllegalArgumentException.class);
+        String[] invalid = {
+            // Missing source.
+            "{\"type\":\"image\",\"media_type\":\"image/png\"}",
+            // Unknown source kind.
+            "{\"type\":\"image\",\"media_type\":\"image/png\","
+                    + "\"source\":{\"type\":\"blob\",\"blob_id\":\"b1\"}}",
+            // Empty base64 payload.
+            "{\"type\":\"image\",\"media_type\":\"image/png\","
+                    + "\"source\":{\"type\":\"base64\",\"data\":\"\"}}",
+            // Empty URL.
+            "{\"type\":\"image\",\"media_type\":\"image/png\","
+                    + "\"source\":{\"type\":\"url\",\"url\":\"\"}}",
+            // Missing media type.
+            "{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"}}",
+        };
+        for (String json : invalid) {
+            assertThatThrownBy(() -> MAPPER.readValue(json, ContentBlock.class))
+                    .as(json)
+                    .isInstanceOf(JsonMappingException.class);
+        }
     }
 
     @Test
@@ -178,19 +192,23 @@ class ChatMessageSerializationTest {
         assertThat(image.get("type")).isEqualTo("image");
         assertThat(image.get("media_type")).isEqualTo("image/png");
         // The inline payload is dropped entirely, so a reconstruction attempt fails loudly
-        // instead of producing a block with a fake payload.
-        assertThat(image).doesNotContainKey("data");
+        // instead of producing a block with a fake payload; the source keeps only its kind.
+        assertThat(image.get("source")).isEqualTo(Map.of("type", "base64"));
         assertThat(image.get("size_bytes")).isEqualTo(5L);
-        assertThat(image).doesNotContainKey("url");
 
         Map<String, Object> document =
-                new DocumentBlock("application/pdf", "cGRm", null, "a.pdf", 999L, "abc123")
+                new DocumentBlock(
+                                "application/pdf",
+                                new Base64Source("cGRm"),
+                                "a.pdf",
+                                999L,
+                                "abc123")
                         .sanitize();
         // Stored metadata wins over the derived size, and the whitelist keeps name and sha256.
         assertThat(document.get("size_bytes")).isEqualTo(999L);
         assertThat(document.get("name")).isEqualTo("a.pdf");
         assertThat(document.get("sha256")).isEqualTo("abc123");
-        assertThat(document).doesNotContainKey("data");
+        assertThat(document.get("source")).isEqualTo(Map.of("type", "base64"));
     }
 
     @Test
@@ -202,10 +220,13 @@ class ChatMessageSerializationTest {
                                 "https://user:secret@example.org:8443/media/cat.png"
                                         + "?X-Amz-Signature=abc&token=t#frag")
                         .sanitize();
-        assertThat(signed.get("url")).isEqualTo("https://example.org:8443/media/cat.png");
+        assertThat(signed.get("source"))
+                .isEqualTo(Map.of("type", "url", "url", "https://example.org:8443/media/cat.png"));
+        assertThat(signed).doesNotContainKey("size_bytes");
 
         Map<String, Object> unparseable =
                 ImageBlock.fromUrl("image/png", "http://exa mple.org/x").sanitize();
-        assertThat(unparseable.get("url")).isEqualTo("<unparseable-url>");
+        assertThat(unparseable.get("source"))
+                .isEqualTo(Map.of("type", "url", "url", "<unparseable-url>"));
     }
 }

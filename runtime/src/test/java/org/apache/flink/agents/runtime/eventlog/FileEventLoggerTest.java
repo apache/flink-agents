@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.logger.EventLogger;
@@ -451,7 +452,11 @@ class FileEventLoggerTest {
                                 TextBlock.of("what is in this picture?"),
                                 ImageBlock.fromBase64("image/png", payload),
                                 new DocumentBlock(
-                                        "application/pdf", null, signedUrl, "cat.pdf", 42L, null)));
+                                        "application/pdf",
+                                        new UrlSource(signedUrl),
+                                        "cat.pdf",
+                                        42L,
+                                        null)));
         ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
 
         append(logger, event, null);
@@ -467,10 +472,12 @@ class FileEventLoggerTest {
         assertEquals("what is in this picture?", logged.get("blocks").get(0).get("text").asText());
         JsonNode image = logged.get("blocks").get(1);
         assertEquals("image/png", image.get("media_type").asText());
-        assertFalse(image.has("data"), "Inline data is dropped entirely, not masked");
+        assertEquals("base64", image.get("source").get("type").asText());
+        assertFalse(image.get("source").has("data"), "Inline data is dropped, not masked");
         assertTrue(image.get("size_bytes").isNumber(), "Derived size metadata should be logged");
         JsonNode document = logged.get("blocks").get(2);
-        assertEquals("https://example.org/media/cat.png", document.get("url").asText());
+        assertEquals(
+                "https://example.org/media/cat.png", document.get("source").get("url").asText());
         assertEquals("cat.pdf", document.get("name").asText());
         assertEquals(42L, document.get("size_bytes").asLong());
     }
