@@ -64,10 +64,34 @@ class VectorStoreQueryTest {
     }
 
     @Test
-    @DisplayName("Zero and positive limits stay legal and are returned unchanged")
-    void testLegalLimitsAccepted() {
-        assertThat(new VectorStoreQuery("flink", 0).getLimit()).isZero();
+    @DisplayName("Zero limit is rejected with a message naming the parameter and its value")
+    void testZeroLimitRejected() {
+        assertThatThrownBy(() -> new VectorStoreQuery("flink", 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("limit")
+                .hasMessageContaining("0");
+    }
 
+    @Test
+    @DisplayName("Zero limit is rejected through the fully specified constructor")
+    void testZeroLimitRejectedWithAllArguments() {
+        assertThatThrownBy(
+                        () ->
+                                new VectorStoreQuery(
+                                        VectorStoreQueryMode.SEMANTIC,
+                                        "flink",
+                                        0,
+                                        "collection",
+                                        null,
+                                        new HashMap<>()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("limit")
+                .hasMessageContaining("0");
+    }
+
+    @Test
+    @DisplayName("Positive limits stay legal and are returned unchanged")
+    void testPositiveLimitsAccepted() {
         assertThat(new VectorStoreQuery("flink", 5).getLimit()).isEqualTo(5);
 
         assertThat(

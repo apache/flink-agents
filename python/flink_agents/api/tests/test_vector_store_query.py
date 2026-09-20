@@ -30,8 +30,12 @@ def test_negative_limit_rejected() -> None:
         VectorStoreQuery(query_text="flink", limit=-1)
 
 
-def test_zero_and_positive_limits_accepted() -> None:
-    assert VectorStoreQuery(query_text="flink", limit=0).limit == 0
+def test_zero_limit_rejected() -> None:
+    with pytest.raises(ValidationError, match="limit"):
+        VectorStoreQuery(query_text="flink", limit=0)
+
+
+def test_positive_limits_accepted() -> None:
     assert VectorStoreQuery(query_text="flink", limit=5).limit == 5
 
 

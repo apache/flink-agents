@@ -89,11 +89,11 @@ public class VectorStoreQuery {
      *
      * @param mode the query mode
      * @param queryText the text to search for
-     * @param limit maximum number of results to return; must be non-null and non-negative
+     * @param limit maximum number of results to return; must be non-null and positive
      * @param collection the collection to query to
      * @param filters unified filter DSL (equality shorthand) or {@code null} for no filter
      * @param extraArgs store-specific additional parameters
-     * @throws IllegalArgumentException if {@code limit} is {@code null} or negative
+     * @throws IllegalArgumentException if {@code limit} is {@code null} or non-positive
      */
     public VectorStoreQuery(
             VectorStoreQueryMode mode,
@@ -105,9 +105,9 @@ public class VectorStoreQuery {
         if (limit == null) {
             throw new IllegalArgumentException("`limit` must not be null.");
         }
-        if (limit < 0) {
+        if (limit <= 0) {
             throw new IllegalArgumentException(
-                    String.format("`limit` must not be negative, but was %d.", limit));
+                    String.format("`limit` must be positive, but was %d.", limit));
         }
         this.mode = mode;
         this.queryText = queryText;

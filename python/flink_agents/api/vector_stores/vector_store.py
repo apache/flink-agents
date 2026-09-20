@@ -54,7 +54,7 @@ class VectorStoreQuery(BaseModel):
     query_text : str
         Text query to be converted to embedding for semantic search.
     limit : int
-        Maximum number of results to return (default: 10).
+        Maximum number of results to return; must be positive (default: 10).
     collection_name : str
         The collection to apply the query. Optional.
     extra_args : Dict[str, Any]
@@ -70,7 +70,7 @@ class VectorStoreQuery(BaseModel):
         description="Text query to be converted to embedding for semantic search."
     )
     limit: int = Field(
-        default=10, ge=0, description="Maximum number of results to return."
+        default=10, gt=0, description="Maximum number of results to return."
     )
     collection_name: str | None = Field(
         default=None, description="The collection to apply the query."
