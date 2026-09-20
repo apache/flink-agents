@@ -18,15 +18,18 @@
 
 package org.apache.flink.agents.api.subagent;
 
+import com.fasterxml.jackson.databind.BeanDescription;
+import com.fasterxml.jackson.databind.JavaType;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.introspect.AnnotatedMember;
+import com.fasterxml.jackson.databind.introspect.BeanPropertyDefinition;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import javax.annotation.Nullable;
 
-import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -110,47 +113,104 @@ final class InputSchemas {
      *       Schema form for binary data: Jackson renders it as an array of {@code byte}, which is
      *       not a JSON Schema type. pydantic gives a {@code bytes} field the same form.
      * </ul>
+     *
+     * <p>Both steps run at every level, since Jackson inlines a nested bean under its property
+     * rather than referring out to it: an object reached through a property, or through an array's
+     * items, gets its own {@code required} and its own {@code byte[]} rewritten, which is what
+     * pydantic does for a nested model. Properties are matched on the name they carry in the
+     * schema, not the Java field name, so a {@code boolean isActive} (schema name {@code active}),
+     * a getter renamed with {@code @JsonProperty}, and a getter with no field are each judged by
+     * the type the schema actually shows rather than missed and wrongly required.
      */
     private static JsonNode alignWithCrossLanguageForm(Class<?> type, JsonNode schema) {
-        ObjectNode object = (ObjectNode) schema;
+        if (schema instanceof ObjectNode) {
+            alignObject(type, (ObjectNode) schema);
+        }
+        return schema;
+    }
+
+    /**
+     * Aligns one object node in place: drops the {@code required} Jackson left, recomputes it from
+     * the properties whose Java type carries no implicit default, and recurses into nested objects.
+     */
+    private static void alignObject(Class<?> type, ObjectNode object) {
         JsonNode properties = object.get("properties");
         object.remove("required");
         if (properties == null || !properties.isObject()) {
             // Without properties this is a scalar, array, or null schema, not an object one;
             // fromType declares only object schemas and returns null for the rest, so there is
-            // nothing here to align.
-            return object;
+            // nothing here to align. A nested node reaches here only through an object property.
+            return;
         }
-        Map<String, Boolean> primitiveByProperty = primitiveFields(type);
+        Map<String, JavaType> typeByProperty = propertyTypes(type);
         List<String> required = new ArrayList<>();
         Iterator<Map.Entry<String, JsonNode>> fields = properties.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> entry = fields.next();
-            JsonNode property = entry.getValue();
-            if (property instanceof ObjectNode) {
-                ObjectNode propertyObject = (ObjectNode) property;
-                propertyObject.remove("required");
-                rewriteBytes(propertyObject);
-            }
+            String name = entry.getKey();
+            JavaType propertyType = typeByProperty.get(name);
+            alignProperty(entry.getValue(), propertyType);
             // A property a model must send is one whose Java type carries no implicit default: a
             // primitive always has one (0, false), so it may be omitted, while an object reference
             // defaults to null and must be sent. This is pydantic's rule, where a field with no
             // default is required. A field given an initializer is still judged by its type, since
-            // reflection does not see the initializer; an input type is a plain data holder and
-            // should not carry one.
-            if (!Boolean.TRUE.equals(primitiveByProperty.get(entry.getKey()))) {
-                required.add(entry.getKey());
+            // introspection does not see the initializer; an input type is a plain data holder and
+            // should not carry one. A property introspection does not report is judged by the safe
+            // reading and required, so a model is never told it may drop something the sub-agent
+            // reads.
+            if (propertyType == null || !propertyType.isPrimitive()) {
+                required.add(name);
             }
         }
         if (!required.isEmpty()) {
             ArrayNode requiredNode = object.putArray("required");
             required.forEach(requiredNode::add);
         }
-        return object;
     }
 
-    /** Rewrites a {@code byte[]} property, which Jackson renders as an array of {@code byte}. */
-    private static void rewriteBytes(ObjectNode property) {
+    /**
+     * Aligns one property node in place: rewrites it when it is a {@code byte[]}, and otherwise
+     * recurses when it is a nested object, or an array of them, so each gets the same step.
+     */
+    private static void alignProperty(JsonNode property, @Nullable JavaType propertyType) {
+        if (!(property instanceof ObjectNode)) {
+            return;
+        }
+        ObjectNode propertyObject = (ObjectNode) property;
+        if (rewriteBytes(propertyObject)) {
+            return;
+        }
+        String schemaType = propertyObject.path("type").asText();
+        if ("object".equals(schemaType)) {
+            // A nested bean, which Jackson inlines here: align it as an object in its own right.
+            // Without a reported type there is nothing to judge its properties by, so drop the
+            // marker Jackson left rather than guess a required list for it.
+            Class<?> nested = propertyType == null ? null : propertyType.getRawClass();
+            if (nested != null) {
+                alignObject(nested, propertyObject);
+            } else {
+                propertyObject.remove("required");
+            }
+        } else if ("array".equals(schemaType)) {
+            JsonNode items = propertyObject.get("items");
+            if (items instanceof ObjectNode && "object".equals(items.path("type").asText())) {
+                // An array of beans shares one item schema: align it through the element type.
+                JavaType content = propertyType == null ? null : propertyType.getContentType();
+                Class<?> element = content == null ? null : content.getRawClass();
+                if (element != null) {
+                    alignObject(element, (ObjectNode) items);
+                } else {
+                    ((ObjectNode) items).remove("required");
+                }
+            }
+        }
+    }
+
+    /**
+     * Rewrites a {@code byte[]} property, which Jackson renders as an array of {@code byte}, and
+     * reports whether it did, so the caller stops there rather than reading it as a nested object.
+     */
+    private static boolean rewriteBytes(ObjectNode property) {
         JsonNode items = property.get("items");
         if ("array".equals(property.path("type").asText())
                 && items != null
@@ -158,19 +218,31 @@ final class InputSchemas {
             property.remove("items");
             property.put("type", "string");
             property.put("format", "binary");
+            return true;
         }
+        return false;
     }
 
-    /** Whether each declared field of {@code type} is a primitive, keyed by field name. */
-    private static Map<String, Boolean> primitiveFields(Class<?> type) {
-        Map<String, Boolean> primitiveByName = new HashMap<>();
-        for (Class<?> c = type; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field field : c.getDeclaredFields()) {
-                if (!field.isSynthetic()) {
-                    primitiveByName.put(field.getName(), field.getType().isPrimitive());
-                }
+    /**
+     * The Java type of each property of {@code type}, keyed by the name it carries in the schema.
+     * Going through Jackson's own introspection rather than the declared fields is what makes the
+     * keys line up with the schema the generator produced from the same config: it applies the same
+     * bean naming ({@code isActive} to {@code active}), the same {@code @JsonProperty} renames, and
+     * sees a getter that has no field behind it.
+     */
+    private static Map<String, JavaType> propertyTypes(Class<?> type) {
+        Map<String, JavaType> typeByName = new HashMap<>();
+        BeanDescription bean =
+                MAPPER.getSerializationConfig().introspect(MAPPER.constructType(type));
+        for (BeanPropertyDefinition property : bean.findProperties()) {
+            AnnotatedMember member = property.getPrimaryMember();
+            if (member == null) {
+                member = property.getAccessor();
+            }
+            if (member != null) {
+                typeByName.put(property.getName(), member.getType());
             }
         }
-        return primitiveByName;
+        return typeByName;
     }
 }

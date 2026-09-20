@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tests.subagent_test_utils import (
+    NestedTypedTestSubagentSetup,
     TestSubagentSetup,
     TypedTestSubagentSetup,
 )
@@ -112,6 +113,26 @@ def test_an_input_type_is_rendered_as_the_input_schema() -> None:
     assert properties["lines"]["type"] == "integer"
     assert properties["payload"]["type"] == "string"
     assert properties["payload"]["format"] == "binary"
+
+
+def test_a_nested_object_carries_its_own_required_and_binary() -> None:
+    """A nested model states its own required properties and binary type.
+
+    The Java mirror test pins the same contract one level down: which properties
+    a model must send, and the ``string``/``binary`` form of a ``bytes`` field.
+    pydantic factors the nested model into ``$defs`` and points at it with
+    ``$ref`` where Jackson inlines it under the property, but which properties
+    are required and the type of each is the same on both sides, and that is what
+    the cross-language contract pins.
+    """
+    schema = json.loads(NestedTypedTestSubagentSetup().input_schema)
+    nested = schema["$defs"]["Nested"]
+
+    assert set(schema["required"]) == {"id", "nested"}
+    assert set(nested["required"]) == {"name", "blob"}
+    assert nested["properties"]["count"]["type"] == "integer"
+    assert nested["properties"]["blob"]["type"] == "string"
+    assert nested["properties"]["blob"]["format"] == "binary"
 
 
 def test_an_explicit_input_schema_wins_over_the_input_type() -> None:

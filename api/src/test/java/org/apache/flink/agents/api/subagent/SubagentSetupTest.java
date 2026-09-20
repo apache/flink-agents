@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.subagent;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -124,6 +125,69 @@ public class SubagentSetupTest {
         }
     }
 
+    /** A value object one level down, so alignment has to recurse to reach it. */
+    public static class Nested {
+        private String name;
+        private int count;
+        private byte[] blob;
+
+        public String getName() {
+            return name;
+        }
+
+        public int getCount() {
+            return count;
+        }
+
+        public byte[] getBlob() {
+            return blob;
+        }
+    }
+
+    /**
+     * Holds a {@link Nested} object, whose own required list and {@code byte[]} sit one level in.
+     */
+    public static class WithNested {
+        private String id;
+        private Nested nested;
+
+        public String getId() {
+            return id;
+        }
+
+        public Nested getNested() {
+            return nested;
+        }
+    }
+
+    /**
+     * Properties whose name in the schema is not the Java field name: a {@code boolean isActive}
+     * the schema calls {@code active}, a getter renamed with {@link JsonProperty}, and a getter
+     * with no field behind it. All three are primitives, so all three are optional; matching on the
+     * field name finds none of them and wrongly marks each one required.
+     */
+    public static class Naming {
+        private boolean isActive;
+        private String label;
+
+        public boolean isActive() {
+            return isActive;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+
+        @JsonProperty("renamed")
+        public int getCount() {
+            return 0;
+        }
+
+        public boolean isReady() {
+            return true;
+        }
+    }
+
     @Test
     void aSetupThatDeclaresNothingStatesNoShapeForItsArguments() {
         MetadataOnlySetup setup = new MetadataOnlySetup();
@@ -180,6 +244,47 @@ public class SubagentSetupTest {
         assertThat(properties.path("lines").path("type").asText()).isEqualTo("integer");
         assertThat(properties.path("payload").path("type").asText()).isEqualTo("string");
         assertThat(properties.path("payload").path("format").asText()).isEqualTo("binary");
+    }
+
+    /**
+     * Alignment recurses: a nested object gets the same step as the top level, so it carries its
+     * own {@code required} list ({@code name} and {@code blob}, not the primitive {@code count})
+     * and its {@code byte[]} is rewritten to {@code string}/{@code binary} rather than left an
+     * array of the non-standard {@code byte} type. This is the shape pydantic gives the same model,
+     * which the cross-language contract pins.
+     */
+    @Test
+    void aNestedObjectIsAlignedLikeTheTopLevel() throws Exception {
+        JsonNode schema =
+                MAPPER.readTree(new TypedSetup(WithNested.class, Object.class).getInputSchema());
+        JsonNode nested = schema.path("properties").path("nested");
+
+        assertThat(textValues(schema.path("required"))).containsExactlyInAnyOrder("id", "nested");
+        assertThat(textValues(nested.path("required"))).containsExactlyInAnyOrder("name", "blob");
+        assertThat(nested.path("properties").path("count").path("type").asText())
+                .isEqualTo("integer");
+        assertThat(nested.path("properties").path("blob").path("type").asText())
+                .isEqualTo("string");
+        assertThat(nested.path("properties").path("blob").path("format").asText())
+                .isEqualTo("binary");
+    }
+
+    /**
+     * A property is judged optional by whether its Java type is a primitive, matched on the name it
+     * carries in the schema. {@code active} (from {@code isActive}), {@code renamed} (a getter with
+     * {@link JsonProperty}), and {@code ready} (a getter with no field) are all primitives that a
+     * field-name lookup never finds, so only the {@code String label} is required.
+     */
+    @Test
+    void aPrimitiveIsOptionalWhateverItsSchemaName() throws Exception {
+        JsonNode schema =
+                MAPPER.readTree(new TypedSetup(Naming.class, Object.class).getInputSchema());
+        JsonNode properties = schema.path("properties");
+
+        assertThat(textValues(schema.path("required"))).containsExactly("label");
+        assertThat(properties.path("active").path("type").asText()).isEqualTo("boolean");
+        assertThat(properties.path("renamed").path("type").asText()).isEqualTo("integer");
+        assertThat(properties.path("ready").path("type").asText()).isEqualTo("boolean");
     }
 
     @Test
