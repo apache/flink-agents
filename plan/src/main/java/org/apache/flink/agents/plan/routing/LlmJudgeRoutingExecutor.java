@@ -140,7 +140,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                 judgeMetadata.put("judge_prompt_tokens", promptTokens);
                 judgeMetadata.put("judge_completion_tokens", completionTokens);
             }
-            verdictModel = parseVerdict(reply.getContent(), candidateNames).orElse(null);
+            verdictModel = parseVerdict(reply.getText(), candidateNames).orElse(null);
             abstainReason = verdictModel == null ? "judge verdict was not a candidate name" : null;
         } catch (InterruptedException cancellation) {
             // Cancellation surfacing from the between-retries backoff sleep.
@@ -325,7 +325,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             List<ChatMessage> messages, Set<Integer> pinnedIndices) {
         for (int i = 0; i < messages.size(); i++) {
             ChatMessage message = messages.get(i);
-            boolean hasText = message.getContent() != null && !message.getContent().isEmpty();
+            boolean hasText = !message.getText().isEmpty();
             if (hasText && (message.getRole() == MessageRole.USER || pinnedIndices.contains(i))) {
                 return true;
             }
@@ -394,15 +394,15 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     }
 
     private static long length(ChatMessage message) {
-        return message.getContent() == null ? 0 : message.getContent().length();
+        return message.getText().length();
     }
 
     /** Serializes the conversation as role-labeled lines, framed as data for the judge. */
     private static String renderConversation(List<ChatMessage> messages) {
         StringBuilder rendered = new StringBuilder();
         for (ChatMessage message : messages) {
-            String content = message.getContent();
-            if (content == null || content.isEmpty()) {
+            String content = message.getText();
+            if (content.isEmpty()) {
                 continue;
             }
             if (rendered.length() > 0) {

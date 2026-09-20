@@ -1357,7 +1357,7 @@ public class ChatModelActionRoutingTest {
                 ctx);
 
         assertThat(judge.lastMessages).hasSize(2);
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: You review Java concurrency code");
         assertThat(judgeInput).contains("USER: Focus on race conditions");
         assertThat(judgeInput).contains("USER: synchronized void transfer()");
@@ -1388,7 +1388,7 @@ public class ChatModelActionRoutingTest {
                         null),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput)
                 .contains("Review this SQL for performance issues: SELECT * FROM orders");
     }
@@ -1423,7 +1423,7 @@ public class ChatModelActionRoutingTest {
                                 new ChatMessage(MessageRole.USER, "current question"))),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: task framing");
         assertThat(judgeInput).contains("USER: current question");
         assertThat(judgeInput).doesNotContain(oldTurn);

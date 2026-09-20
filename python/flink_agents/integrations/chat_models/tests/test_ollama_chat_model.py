@@ -133,7 +133,7 @@ def test_ollama_chat_with_output_schema() -> None:
 
     response = server.chat(
         [
-            ChatMessage(
+            ChatMessage.of(
                 role=MessageRole.USER,
                 content="Ada Lovelace is 36 years old. Extract the person.",
             )
@@ -143,10 +143,10 @@ def test_ollama_chat_with_output_schema() -> None:
         think=False,
     )
 
-    payload = json.loads(response.content)
+    payload = json.loads(response.text)
     assert {"name", "age"}.issubset(payload)
 
-    person = Person.model_validate_json(response.content)
+    person = Person.model_validate_json(response.text)
     assert isinstance(person.name, str)
     assert isinstance(person.age, int)
 

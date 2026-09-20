@@ -479,7 +479,7 @@ def test_capability_predicate_reads_no_instance_state() -> None:
 
 def _chat_with_schema(conn: AzureOpenAIChatModelConnection, schema: Any) -> None:
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         model=DEPLOYMENT,
         model_of_azure_deployment="gpt-4o-mini",
         output_schema=OutputSchema(output_schema=schema),
@@ -610,7 +610,7 @@ def test_effective_model_for_names_the_model_the_request_judges(
 
     named = conn.effective_model_for(model_kwargs)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         output_schema=OutputSchema(output_schema=Person),
         **model_kwargs,
     )

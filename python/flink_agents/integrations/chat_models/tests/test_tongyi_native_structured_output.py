@@ -73,7 +73,7 @@ def _connection() -> TongyiChatModelConnection:
 
 
 def _messages() -> list[ChatMessage]:
-    return [ChatMessage(role=MessageRole.USER, content="hi")]
+    return [ChatMessage.of(role=MessageRole.USER, content="hi")]
 
 
 def _mocked_response() -> SimpleNamespace:
@@ -154,7 +154,7 @@ def test_native_not_applied_for_default_model(monkeypatch) -> None:
     response, kwargs = _chat(
         monkeypatch, output_schema=OutputSchema(output_schema=Person)
     )
-    assert response.content == "ok"
+    assert response.text == "ok"
     assert "response_format" not in kwargs
 
 
@@ -180,7 +180,7 @@ def test_native_not_applied_for_row_type_info(monkeypatch) -> None:
         model=_CAPABLE_MODEL,
         output_schema=OutputSchema(output_schema=row_type),
     )
-    assert response.content == "ok"
+    assert response.text == "ok"
     assert "response_format" not in kwargs
 
 
@@ -258,7 +258,7 @@ def test_row_type_info_leaves_a_caller_response_format_alone(monkeypatch) -> Non
         output_schema=OutputSchema(output_schema=row_type),
         response_format=caller_format,
     )
-    assert response.content == "ok"
+    assert response.text == "ok"
     assert kwargs["response_format"] == caller_format
 
 

@@ -359,7 +359,7 @@ class TestChatModelActionFinishReason:
             chat(
                 uuid4(),
                 "test-model",
-                [ChatMessage(role=MessageRole.USER, content="hi")],
+                [ChatMessage.of(role=MessageRole.USER, content="hi")],
                 {},
                 output_schema,
                 ctx,
@@ -369,7 +369,7 @@ class TestChatModelActionFinishReason:
     def test_truncated_text_response_rejected(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -391,7 +391,7 @@ class TestChatModelActionFinishReason:
         # one and cannot tell them apart.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="",
                 extra_args={"finish_reason": "content_filter"},
@@ -409,7 +409,7 @@ class TestChatModelActionFinishReason:
     def test_truncated_tool_call_response_rejected_before_tool_dispatch(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="",
                 tool_calls=[
@@ -447,7 +447,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="hello",
                 extra_args=extra_args,
@@ -461,7 +461,7 @@ class TestChatModelActionFinishReason:
 
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)
-        assert sent_events[0].response.content == "hello"
+        assert sent_events[0].response.text == "hello"
 
     def test_accepted_finish_reason_dispatches_tool_request_event(self) -> None:
         # A response carrying tool calls passes the same finish-reason gate as a
@@ -469,7 +469,7 @@ class TestChatModelActionFinishReason:
         tool_calls = [{"id": "call-1", "function": {"name": "f", "arguments": {}}}]
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="",
                 tool_calls=tool_calls,
@@ -491,7 +491,7 @@ class TestChatModelActionFinishReason:
         # and no event carries the truncated content downstream.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -514,7 +514,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage(
+            return_value=ChatMessage.of(
                 role=MessageRole.ASSISTANT,
                 content='{"result": 42}',
                 extra_args={

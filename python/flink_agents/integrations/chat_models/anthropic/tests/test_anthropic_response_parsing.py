@@ -151,7 +151,7 @@ def test_response_records_finish_reason(stop_reason: str, finish_reason: str) ->
     )
 
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")]
+        [ChatMessage.of(role=MessageRole.USER, content="hi")]
     )
 
     assert response.extra_args["finish_reason"] == finish_reason
@@ -170,7 +170,7 @@ def test_response_omits_finish_reason_when_absent() -> None:
     )
 
     response = _connection_returning(message).chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")]
+        [ChatMessage.of(role=MessageRole.USER, content="hi")]
     )
 
     assert "finish_reason" not in response.extra_args
@@ -694,7 +694,7 @@ def _sent_sampling(model: str, **sampling: Any) -> Dict[str, Any]:
     )
     connection = _connection_returning(message)
     connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         model=model,
         **sampling,
     )
@@ -803,7 +803,7 @@ def test_effective_model_for_names_the_model_the_request_judges(
 
     named = connection.effective_model_for(model_kwargs)
     connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         output_schema=OutputSchema(output_schema=_Answer),
         **model_kwargs,
     )

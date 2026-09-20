@@ -111,8 +111,8 @@ class WatsonxChatModelLiveTest {
         // its own: the schema may not have been enforced, or may not have described the type the
         // caller passed, or the reply may carry a property the schema permits — no
         // additionalProperties: false is sent — but this reader rejects.
-        assertThat(response.getContent()).isNotBlank();
-        Answer answer = new ObjectMapper().readValue(response.getContent(), Answer.class);
+        assertThat(response.getText()).isNotBlank();
+        Answer answer = new ObjectMapper().readValue(response.getText(), Answer.class);
         assertThat(answer.verdict).isNotNull();
     }
 }

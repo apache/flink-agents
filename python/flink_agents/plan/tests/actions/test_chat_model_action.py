@@ -216,7 +216,7 @@ _PARSEABLE_CONTENT = '{"result": 42}'
 
 
 def _response(extra_args) -> ChatMessage:
-    return ChatMessage(
+    return ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content=_PARSEABLE_CONTENT,
         extra_args=extra_args,

@@ -109,13 +109,13 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getContent());
+                        aggregated.append(message.getText());
                     }
                 }
                 return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
             }
 
-            String requestId = lastMessage.getContent();
+            String requestId = lastMessage.getText();
             return new ChatMessage(
                     MessageRole.ASSISTANT,
                     "",
@@ -218,13 +218,13 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getContent());
+                        aggregated.append(message.getText());
                     }
                 }
                 return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
             }
 
-            String requestId = lastMessage.getContent();
+            String requestId = lastMessage.getText();
             return new ChatMessage(
                     MessageRole.ASSISTANT,
                     "",
@@ -292,7 +292,7 @@ public class AsyncExecutionAgent {
         @Action(EventType.ChatResponseEvent)
         public static void emitToolTimings(Event event, RunnerContext ctx) {
             ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
-            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getText()));
         }
     }
 
@@ -314,13 +314,13 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getContent());
+                        aggregated.append(message.getText());
                     }
                 }
                 return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
             }
 
-            String requestId = lastMessage.getContent();
+            String requestId = lastMessage.getText();
             List<Map<String, Object>> toolCalls = new java.util.ArrayList<>();
             for (int i = 1; i <= ToolBatchMaxParallelismAgent.TOOL_COUNT; i++) {
                 toolCalls.add(
@@ -365,13 +365,13 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getContent());
+                        aggregated.append(message.getText());
                     }
                 }
                 return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
             }
 
-            String requestId = lastMessage.getContent();
+            String requestId = lastMessage.getText();
             return new ChatMessage(
                     MessageRole.ASSISTANT,
                     "",
@@ -439,7 +439,7 @@ public class AsyncExecutionAgent {
         @Action(EventType.ChatResponseEvent)
         public static void emitToolTimings(Event event, RunnerContext ctx) {
             ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
-            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getText()));
         }
     }
 
@@ -510,7 +510,7 @@ public class AsyncExecutionAgent {
         @Action(EventType.ChatResponseEvent)
         public static void emitToolTimings(Event event, RunnerContext ctx) {
             ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
-            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getText()));
         }
     }
 
@@ -564,7 +564,7 @@ public class AsyncExecutionAgent {
         @Action(EventType.ChatResponseEvent)
         public static void emitToolTimings(Event event, RunnerContext ctx) {
             ChatResponseEvent responseEvent = ChatResponseEvent.fromEvent(event);
-            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getContent()));
+            ctx.sendEvent(new OutputEvent(responseEvent.getResponse().getText()));
         }
     }
 

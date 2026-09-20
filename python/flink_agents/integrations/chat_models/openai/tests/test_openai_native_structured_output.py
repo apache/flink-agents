@@ -236,7 +236,7 @@ def test_capability_predicate_rejects_incapable_models(model: str | None) -> Non
 
 def _chat_with_schema(conn: OpenAIChatModelConnection, schema: Any) -> None:
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         model="gpt-4o",
         output_schema=OutputSchema(output_schema=schema),
     )
@@ -318,7 +318,7 @@ def test_effective_model_for_names_the_model_the_request_judges(
 
     named = conn.effective_model_for(model_kwargs)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         output_schema=OutputSchema(output_schema=Person),
         **model_kwargs,
     )

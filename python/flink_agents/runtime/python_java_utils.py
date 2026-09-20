@@ -315,7 +315,7 @@ def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     return normalized_call
 
 
-def _dump_blocks(chat_message: ChatMessage) -> List[Dict[str, Any]]:
+def dump_blocks(chat_message: ChatMessage) -> List[Dict[str, Any]]:
     """Content blocks as plain dicts in the serialized shape, for the Java bridge."""
     return [
         block.model_dump(mode="json", exclude_none=True)
@@ -348,7 +348,7 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
 
     j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
     j_chat_message.setRole(j_MessageRole.fromValue(chat_message.role.value))
-    j_chat_message.setBlocksFromMaps(_dump_blocks(chat_message))
+    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
         tool_calls = [
@@ -362,7 +362,7 @@ def to_java_chat_message(chat_message: ChatMessage) -> Any:
 # TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
 def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
     """Update a Java chat message using Python chat message."""
-    j_chat_message.setBlocksFromMaps(_dump_blocks(chat_message))
+    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
     j_chat_message.setExtraArgs(chat_message.extra_args)
     if chat_message.tool_calls:
         tool_calls = [

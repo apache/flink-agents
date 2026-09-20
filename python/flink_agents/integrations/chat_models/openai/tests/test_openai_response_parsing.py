@@ -66,7 +66,7 @@ def test_convert_to_openai_message_omits_response_metadata(
     role: MessageRole,
 ) -> None:
     """Completion metadata held in extra_args never reaches an outbound param."""
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=role,
         content="hello",
         extra_args={
@@ -86,7 +86,7 @@ def test_convert_to_openai_message_forwards_string_refusal(refusal: str) -> None
     """A string refusal on an assistant message is sent to the provider."""
     # The outbound guard is a type check rather than a truthiness check, so an
     # empty reason forwards like any other.
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content="",
         extra_args={"refusal": refusal},
@@ -102,7 +102,7 @@ def test_convert_to_openai_message_omits_non_string_refusal(
     refusal: object,
 ) -> None:
     """Only a string refusal is forwarded; a value of any other type is dropped."""
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content="",
         extra_args={"refusal": refusal},
@@ -115,7 +115,7 @@ def test_convert_to_openai_message_omits_non_string_refusal(
 
 def test_convert_to_openai_message_assistant_tool_calls() -> None:
     """An assistant message requesting tool calls sends them with a null content."""
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content="",
         tool_calls=[
@@ -136,7 +136,7 @@ def test_convert_to_openai_message_assistant_tool_calls() -> None:
 
 def test_convert_to_openai_message_tool_role_unchanged() -> None:
     """A tool result carries its call id and nothing else from extra_args."""
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=MessageRole.TOOL,
         content="42",
         extra_args={"external_id": "call_abc", "promptTokens": 7},
@@ -203,7 +203,7 @@ def _connection(
 
 
 def _chat(conn: OpenAIChatModelConnection) -> ChatMessage:
-    return conn.chat([ChatMessage(role=MessageRole.USER, content="hi")], model="gpt-4o")
+    return conn.chat([ChatMessage.of(role=MessageRole.USER, content="hi")], model="gpt-4o")
 
 
 def test_chat_records_finish_reason_in_extra_args() -> None:

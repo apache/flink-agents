@@ -53,7 +53,7 @@ class _RecordingConnection(BaseChatModelConnection):
         """Record the request and answer with a fixed message."""
         self.captured_messages = list(messages)
         self.captured_tools = list(tools or [])
-        return ChatMessage(role=MessageRole.ASSISTANT, content="ok")
+        return ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
 
 
 class _StubSetup(BaseChatModelSetup):
@@ -349,13 +349,13 @@ def test_declared_subagents_inject_no_listing_message() -> None:
 
     setup.chat(
         [
-            ChatMessage(role=MessageRole.SYSTEM, content="You are helpful."),
-            ChatMessage(role=MessageRole.USER, content="review it"),
+            ChatMessage.of(role=MessageRole.SYSTEM, content="You are helpful."),
+            ChatMessage.of(role=MessageRole.USER, content="review it"),
         ]
     )
 
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content == "You are helpful."
+    assert connection.captured_messages[0].text == "You are helpful."
     assert len(connection.captured_tools) == 2
 
 
@@ -371,11 +371,11 @@ def test_only_the_skill_listing_is_injected_when_subagents_are_declared() -> Non
     setup, connection = _build(store, subagents=["reviewer"], skills=["github"])
     setup.open()
 
-    setup.chat([ChatMessage(role=MessageRole.USER, content="review it")])
+    setup.chat([ChatMessage.of(role=MessageRole.USER, content="review it")])
 
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content.startswith("<available_skills>")
-    assert connection.captured_messages[1].content == "review it"
+    assert connection.captured_messages[0].text.startswith("<available_skills>")
+    assert connection.captured_messages[1].text == "review it"
 
 
 def test_a_setup_without_subagents_injects_nothing() -> None:
@@ -383,7 +383,7 @@ def test_a_setup_without_subagents_injects_nothing() -> None:
     setup, connection = _build({})
     setup.open()
 
-    setup.chat([ChatMessage(role=MessageRole.USER, content="hi")])
+    setup.chat([ChatMessage.of(role=MessageRole.USER, content="hi")])
 
     assert len(connection.captured_messages) == 1
     assert connection.captured_tools == []

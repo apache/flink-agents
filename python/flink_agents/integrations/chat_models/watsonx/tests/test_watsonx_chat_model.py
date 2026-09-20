@@ -177,7 +177,7 @@ def test_watsonx_chat_carries_unknown_finish_reason_verbatim(
     )
     llm = _setup_llm(mock_model, monkeypatch)
 
-    response = llm.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+    response = llm.chat([ChatMessage.of(role=MessageRole.USER, content="Hello!")])
 
     assert response.extra_args["finish_reason"] == "some_vendor_reason"
 
@@ -192,7 +192,7 @@ def test_watsonx_chat_no_finish_reason_key_when_none(
     )
     llm = _setup_llm(mock_model, monkeypatch)
 
-    response = llm.chat([ChatMessage(role=MessageRole.USER, content="Hello!")])
+    response = llm.chat([ChatMessage.of(role=MessageRole.USER, content="Hello!")])
 
     assert "finish_reason" not in response.extra_args
 
