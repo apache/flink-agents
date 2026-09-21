@@ -202,21 +202,27 @@ class _Context(ExecutionReporter):
             raise ValueError(msg)
         return registry[name]
 
-    def durable_execute(self, func: Any, **kwargs: Any) -> Any:
+    def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_executions += 1
-        return func(**kwargs)
+        return func(*args, **kwargs)
 
-    async def durable_execute_async(self, func: Any, **kwargs: Any) -> Any:
-        self.durable_executions += 1
-        return func(**kwargs)
-
-    async def durable_execute_all_async(self, calls: list[Any]) -> list[Outcome]:
-        outcomes = []
-        for call in calls:
+    def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        # Deferred: the count reflects executions (when the future is awaited,
+        # directly or via gather), not handle creations, matching the lazy
+        # durable-future contract.
+        async def execute() -> Any:
             self.durable_executions += 1
-            outcomes.append(
-                Outcome.success(call.func(*call.args, **(call.kwargs or {})))
-            )
+            return func(*args, **kwargs)
+
+        return execute()
+
+    async def gather(self, *futures: Any) -> list[Outcome]:
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(Outcome.success(await future))
+            except Exception as error:  # noqa: PERF203
+                outcomes.append(Outcome.failure(error))
         return outcomes
 
     def send_event(self, event: Any) -> None:

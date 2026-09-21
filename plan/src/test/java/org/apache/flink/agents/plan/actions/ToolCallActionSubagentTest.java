@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -284,11 +285,11 @@ class ToolCallActionSubagentTest {
 
     /**
      * Under the batched path, sub-agent calls split off from the tool batch and run on their own
-     * track, then the tool batch runs through {@code durableExecuteAllAsync} against a list built
-     * alongside {@code toolExecutions}. Each call id must land on its own result: if the two lists
-     * drift against each other, one call's response ends up under another call's id, and neither a
-     * sub-agent-only nor a tool-only case can see it. Two tools keep the reverse-index shape of the
-     * drift observable.
+     * track, then the tool batch runs through {@code gather} against a list built alongside {@code
+     * toolExecutions}. Each call id must land on its own result: if the two lists drift against
+     * each other, one call's response ends up under another call's id, and neither a sub-agent-only
+     * nor a tool-only case can see it. Two tools keep the reverse-index shape of the drift
+     * observable.
      */
     @Test
     void parallelDispatchKeepsToolAndSubagentResultsOnTheirOwnIds() throws Exception {
@@ -871,20 +872,33 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-            durableExecutions++;
-            return callable.call();
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+            // A deferred handle: the callable runs only when the future is awaited, directly
+            // or as part of gather, so the count reflects executions, not handle creations.
+            return new TestDurableFuture<>(
+                    callable.getId(),
+                    () -> {
+                        durableExecutions++;
+                        return callable.call();
+                    });
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-            for (DurableCallable<T> callable : callables) {
-                durableExecutions++;
-                outcomes.add(Outcome.success(callable.call()));
-            }
-            return outcomes;
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            return new TestDurableFuture<>(
+                    "gather",
+                    () -> {
+                        List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
+                        for (DurableFuture<T> future : futures) {
+                            try {
+                                outcomes.add(Outcome.success(future.await()));
+                            } catch (Exception e) {
+                                outcomes.add(Outcome.failure(e));
+                            }
+                        }
+                        return outcomes;
+                    });
         }
 
         @Override
