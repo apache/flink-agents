@@ -17,7 +17,7 @@
 #################################################################################
 import pytest
 
-from flink_agents.api.decorators import action, tool
+from flink_agents.api.decorators import ActionDeclaration, action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.function import JavaFunction, PythonFunction
@@ -104,77 +104,104 @@ def _java_target() -> JavaFunction:
     return JavaFunction.for_action("com.example.Handlers", "handle")
 
 
-def test_action_decorator_with_cross_language_target() -> None:
+def test_action_applied_to_descriptor_returns_immutable_declaration() -> None:
     target = _java_target()
 
-    @action(EventType.InputEvent, target=target)
-    def stub(event: Event, ctx: RunnerContext) -> None:
-        msg = "cross-language stub"
-        raise NotImplementedError(msg)
+    declaration = action(EventType.InputEvent)(target)
 
-    assert stub._trigger_conditions == (InputEvent.EVENT_TYPE,)
-    assert stub._target is target
-
-
-def test_action_decorator_rejects_non_function_target() -> None:
-    with pytest.raises(TypeError, match="api-layer Function descriptor"):
-
-        @action(EventType.InputEvent, target="not a function")  # type: ignore[arg-type]
-        def stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+    assert isinstance(declaration, ActionDeclaration)
+    assert declaration.trigger_conditions == (InputEvent.EVENT_TYPE,)
+    assert declaration.func is target
+    assert declaration.name is None
 
 
-def test_action_decorator_without_target_does_not_set_attribute() -> None:
+def test_action_declaration_does_not_mutate_descriptor() -> None:
+    target = _java_target()
+
+    action(EventType.InputEvent)(target)
+
+    # The descriptor is pure data and must stay free of declaration metadata,
+    # so the same descriptor can back multiple independent declarations.
+    assert not hasattr(target, "_trigger_conditions")
+    assert not hasattr(target, "_action_name")
+
+
+def test_action_declaration_keeps_shared_descriptor_declarations_distinct() -> None:
+    shared = _java_target()
+
+    first = action(EventType.InputEvent)(shared)
+    second = action(EventType.OutputEvent, name="renamed")(shared)
+
+    assert first.trigger_conditions == (InputEvent.EVENT_TYPE,)
+    assert second.trigger_conditions == (OutputEvent.EVENT_TYPE,)
+    assert second.name == "renamed"
+    assert first.func is second.func is shared
+
+
+def test_action_rejects_non_callable_non_descriptor() -> None:
+    with pytest.raises(TypeError, match="callable or an api-layer Function"):
+        action(EventType.InputEvent)("not a function")
+
+
+def test_native_action_does_not_produce_declaration() -> None:
     @action(EventType.InputEvent)
     def regular(event: Event, ctx: RunnerContext) -> None:
         pass
 
-    assert not hasattr(regular, "_target")
+    assert not isinstance(regular, ActionDeclaration)
+    assert regular._trigger_conditions == (InputEvent.EVENT_TYPE,)
+    assert not hasattr(regular, "_action_name")
 
 
-def test_action_decorator_rejects_java_target_with_empty_qualname() -> None:
+def test_native_action_records_name_override() -> None:
+    @action(EventType.InputEvent, name="renamed")
+    def regular(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert regular._action_name == "renamed"
+
+
+def test_empty_name_override_is_normalized_to_none() -> None:
+    # An empty-string override means "no override" (mirrors Java resolveActionName):
+    # it must not be recorded on a native action nor stored on a declaration.
+    @action(EventType.InputEvent, name="")
+    def regular(event: Event, ctx: RunnerContext) -> None:
+        pass
+
+    assert not hasattr(regular, "_action_name")
+
+    declaration = action(EventType.InputEvent, name="")(_java_target())
+    assert declaration.name is None
+
+
+def test_action_rejects_java_descriptor_with_empty_qualname() -> None:
     bad = JavaFunction(qualname="", method_name="handle", parameter_types=[])
     with pytest.raises(ValueError, match="qualname"):
-
-        @action(EventType.InputEvent, target=bad)
-        def stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+        action(EventType.InputEvent)(bad)
 
 
-def test_action_decorator_rejects_java_target_with_empty_method_name() -> None:
+def test_action_rejects_java_descriptor_with_empty_method_name() -> None:
     bad = JavaFunction(qualname="com.example.X", method_name="", parameter_types=[])
     with pytest.raises(ValueError, match="method_name"):
-
-        @action(EventType.InputEvent, target=bad)
-        def stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+        action(EventType.InputEvent)(bad)
 
 
-def test_action_decorator_rejects_python_target_with_empty_module() -> None:
+def test_action_rejects_python_descriptor_with_empty_module() -> None:
     bad = PythonFunction(module="", qualname="handle")
     with pytest.raises(ValueError, match="module"):
-
-        @action(EventType.InputEvent, target=bad)
-        def stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+        action(EventType.InputEvent)(bad)
 
 
-def test_action_decorator_rejects_python_target_with_empty_qualname() -> None:
+def test_action_rejects_python_descriptor_with_empty_qualname() -> None:
     bad = PythonFunction(module="pkg.mod", qualname="")
     with pytest.raises(ValueError, match="qualname"):
-
-        @action(EventType.InputEvent, target=bad)
-        def stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+        action(EventType.InputEvent)(bad)
 
 
-def test_action_decorator_target_error_names_decorated_function() -> None:
+def test_action_descriptor_error_names_override() -> None:
     bad = PythonFunction(module="pkg.mod", qualname="")
-    with pytest.raises(ValueError, match="my_named_stub"):
-
-        @action(EventType.InputEvent, target=bad)
-        def my_named_stub(event: Event, ctx: RunnerContext) -> None:
-            pass
+    with pytest.raises(ValueError, match="my_named_action"):
+        action(EventType.InputEvent, name="my_named_action")(bad)
 
 
 def test_tool_decorator_supports_injected_args() -> None:

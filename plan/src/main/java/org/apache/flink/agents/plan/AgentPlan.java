@@ -66,6 +66,7 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -230,6 +231,9 @@ public class AgentPlan implements Serializable {
     }
 
     private void registerAction(Action action) {
+        if (actions.containsKey(action.getName())) {
+            throw new IllegalStateException("Duplicate action name '" + action.getName() + "'.");
+        }
         actions.put(action.getName(), action);
     }
 
@@ -239,58 +243,43 @@ public class AgentPlan implements Serializable {
         addBuiltAction(ToolCallAction.getToolCallAction());
         addBuiltAction(ContextRetrievalAction.getContextRetrievalAction());
 
-        // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
-        // getDeclaredMethods() skips inherited @Action methods; reject loudly.
-        for (Class<?> parent = agentClass.getSuperclass();
-                parent != null && parent != Agent.class;
-                parent = parent.getSuperclass()) {
-            for (Method inherited : parent.getDeclaredMethods()) {
-                if (inherited.isAnnotationPresent(
-                        org.apache.flink.agents.api.annotation.Action.class)) {
-                    throw new IllegalStateException(
-                            "Inherited @Action '"
-                                    + parent.getName()
-                                    + "#"
-                                    + inherited.getName()
-                                    + "' is not supported; declare on the concrete agent.");
-                }
-            }
-        }
+        // getDeclaredMethods()/getDeclaredFields() skip inherited @Action members; reject loudly.
+        rejectInheritedActions(agentClass);
+
+        // @Action on a method: the method body is the native Java implementation.
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (actionAnnotation == null) {
                 continue;
             }
-            org.apache.flink.agents.api.annotation.Action actionAnnotation =
-                    Objects.requireNonNull(
-                            method.getAnnotation(
-                                    org.apache.flink.agents.api.annotation.Action.class));
-            String[] triggerConditions = actionAnnotation.value();
-            org.apache.flink.agents.api.annotation.PythonFunction target =
-                    actionAnnotation.target();
-            String targetModule = target.module();
-            String targetQualname = target.qualname();
-            boolean moduleSet = !targetModule.isEmpty();
-            boolean qualnameSet = !targetQualname.isEmpty();
+            org.apache.flink.agents.plan.Function execFunction =
+                    new org.apache.flink.agents.plan.JavaFunction(
+                            method.getDeclaringClass(),
+                            method.getName(),
+                            method.getParameterTypes());
+            extractActions(
+                    resolveActionName(actionAnnotation.name(), method.getName()),
+                    actionAnnotation.value(),
+                    execFunction,
+                    null);
+        }
 
-            org.apache.flink.agents.plan.Function execFunction;
-            if (!moduleSet && !qualnameSet) {
-                execFunction =
-                        new org.apache.flink.agents.plan.JavaFunction(
-                                method.getDeclaringClass(),
-                                method.getName(),
-                                method.getParameterTypes());
-            } else if (moduleSet && qualnameSet) {
-                execFunction =
-                        new org.apache.flink.agents.plan.PythonFunction(
-                                targetModule, targetQualname);
-            } else {
-                throw new IllegalStateException(
-                        "PythonFunction target on '"
-                                + method.getName()
-                                + "' must set both module and qualname");
+        // @Action on a field: the field value is the cross-language target descriptor.
+        for (Field field : agentClass.getDeclaredFields()) {
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    field.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (actionAnnotation == null) {
+                continue;
             }
-            extractActions(method.getName(), triggerConditions, execFunction, null);
+            org.apache.flink.agents.api.function.Function descriptor =
+                    readActionDescriptorField(field);
+            extractActions(
+                    resolveActionName(actionAnnotation.name(), field.getName()),
+                    actionAnnotation.value(),
+                    toPlanFunction(descriptor),
+                    null);
         }
 
         for (var action : agent.getActions().entrySet()) {
@@ -298,6 +287,70 @@ public class AgentPlan implements Serializable {
             var definition = action.getValue();
             extractActions(actionName, definition.f0, toPlanFunction(definition.f1), definition.f2);
         }
+    }
+
+    private static String resolveActionName(String override, String memberName) {
+        return override == null || override.isEmpty() ? memberName : override;
+    }
+
+    /** Reject any {@code @Action} declared on a superclass; it must sit on the concrete agent. */
+    private static void rejectInheritedActions(Class<?> agentClass) {
+        for (Class<?> parent = agentClass.getSuperclass();
+                parent != null && parent != Agent.class;
+                parent = parent.getSuperclass()) {
+            for (Method inherited : parent.getDeclaredMethods()) {
+                rejectInheritedAction(parent, inherited.getName(), inherited);
+            }
+            for (Field inherited : parent.getDeclaredFields()) {
+                rejectInheritedAction(parent, inherited.getName(), inherited);
+            }
+        }
+    }
+
+    private static void rejectInheritedAction(
+            Class<?> parent, String memberName, AnnotatedElement element) {
+        if (element.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+            throw new IllegalStateException(
+                    "Inherited @Action '"
+                            + parent.getName()
+                            + "#"
+                            + memberName
+                            + "' is not supported; declare on the concrete agent.");
+        }
+    }
+
+    /**
+     * Read an {@code @Action}-annotated field as an api-layer {@link
+     * org.apache.flink.agents.api.function.Function} descriptor. The field must be {@code static
+     * final} and hold a non-null descriptor; anything else fails with an actionable error at plan
+     * construction. Cross-language target resolution stays deferred to the runtime boundary that
+     * owns the real user-code classloader or Python interpreter.
+     */
+    private static org.apache.flink.agents.api.function.Function readActionDescriptorField(
+            Field field) throws IllegalAccessException {
+        int modifiers = field.getModifiers();
+        if (!Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers)) {
+            throw new IllegalStateException(
+                    "@Action field '"
+                            + field.getName()
+                            + "' must be declared 'static final' and hold a Function descriptor.");
+        }
+        field.setAccessible(true);
+        Object value = field.get(null);
+        if (value == null) {
+            throw new IllegalStateException(
+                    "@Action field '" + field.getName() + "' must hold a non-null descriptor.");
+        }
+        if (!(value instanceof org.apache.flink.agents.api.function.Function)) {
+            throw new IllegalStateException(
+                    "@Action field '"
+                            + field.getName()
+                            + "' must hold an api-layer Function descriptor (for example "
+                            + "PythonFunction or JavaFunction), but got "
+                            + value.getClass().getName()
+                            + ".");
+        }
+        return (org.apache.flink.agents.api.function.Function) value;
     }
 
     private static ResourceDescriptor requireResourceDescriptor(
