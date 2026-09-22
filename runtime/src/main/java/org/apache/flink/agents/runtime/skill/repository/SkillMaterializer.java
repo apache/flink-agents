@@ -18,7 +18,10 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.skills.SkillUrlUtils;
+import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer.Materialized;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -61,8 +64,6 @@ public final class SkillMaterializer {
 
     private static final int JAR_URL_PREFIX_LEN = "jar:".length();
 
-    // --- Size caps for download and extraction (issue #1072) ---
-
     /**
      * All four resource limits for a single materializer operation, grouped so tests can inject
      * small thresholds without touching production defaults and so future config wiring has a
@@ -96,10 +97,6 @@ public final class SkillMaterializer {
          * #1072 values to limit disk consumption per materialization, especially when multiple
          * skills are materialized concurrently. Deployments that need larger archives should raise
          * them explicitly via a {@code Limits} instance.
-         *
-         * <p>TODO: wire these through {@code AgentConfigOptions} / {@code SkillMaterializerOptions}
-         * so deployments can override them from the YAML config without code changes (follow-up
-         * PR).
          */
         public static final Limits DEFAULT =
                 new Limits(
@@ -129,35 +126,23 @@ public final class SkillMaterializer {
             this.maxExtractTotalBytes = maxExtractTotalBytes;
             this.maxExtractEntries = maxExtractEntries;
         }
+
+        /**
+         * Build a {@code Limits} from a {@link ReadableConfiguration}, falling back to {@link
+         * #DEFAULT} values for any option not explicitly set. If {@code config} is {@code null},
+         * returns {@link #DEFAULT}.
+         */
+        public static Limits fromConfig(@javax.annotation.Nullable ReadableConfiguration config) {
+            if (config == null) {
+                return DEFAULT;
+            }
+            return new Limits(
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES),
+                    config.get(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES));
+        }
     }
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxDownloadBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_DOWNLOAD_BYTES = Limits.DEFAULT.maxDownloadBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntryBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_EXTRACT_ENTRY_BYTES = Limits.DEFAULT.maxExtractEntryBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractTotalBytes}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final long MAX_EXTRACT_TOTAL_BYTES = Limits.DEFAULT.maxExtractTotalBytes;
-
-    /**
-     * Backward-compatible alias for {@link Limits#DEFAULT#maxExtractEntries}.
-     *
-     * @deprecated Use {@link Limits#DEFAULT} or inject a {@link Limits} instance.
-     */
-    public static final int MAX_EXTRACT_ENTRIES = Limits.DEFAULT.maxExtractEntries;
 
     private SkillMaterializer() {}
 
@@ -226,9 +211,9 @@ public final class SkillMaterializer {
      *
      * <ul>
      *   <li>Validates every entry against zip-slip before any extraction begins.
-     *   <li>Rejects archives with more than {@link #MAX_EXTRACT_ENTRIES} entries.
-     *   <li>Enforces {@link #MAX_EXTRACT_ENTRY_BYTES} per entry and {@link
-     *       #MAX_EXTRACT_TOTAL_BYTES} cumulatively, measured against actual decompressed bytes
+     *   <li>Rejects archives with more than {@link Limits#maxExtractEntries} entries.
+     *   <li>Enforces {@link Limits#maxExtractEntryBytes} per entry and {@link
+     *       Limits#maxExtractTotalBytes} cumulatively, measured against actual decompressed bytes
      *       written — not against the declared sizes in the zip central directory, which are
      *       attacker-controlled.
      *   <li>Eagerly deletes the extraction directory on any failure, in addition to the JVM
@@ -405,6 +390,13 @@ public final class SkillMaterializer {
      * Rejects entries that would resolve outside the extraction directory (zip-slip). Registers a
      * single JVM shutdown hook for the merged temp directory (avoiding the per-jar hook
      * accumulation pattern fixed under review #10).
+     *
+     * <p><b>Size limits:</b> This method does <em>not</em> enforce the download/extraction size
+     * caps from {@link Limits}. Classpath resources are bundled with the job JAR at build time and
+     * are therefore trusted — they are not downloaded from attacker-controlled URLs at runtime. The
+     * {@link Limits} system is designed to protect against zip-bomb and download-bomb attacks on
+     * externally fetched archives (the {@code "url"} source scheme); it does not apply to
+     * classpath-packaged skills.
      */
     public static Materialized extractClasspathFromJars(List<URL> jarUrls, String resourcePrefix)
             throws IOException {
@@ -513,11 +505,11 @@ public final class SkillMaterializer {
      * <p>Security properties:
      *
      * <ul>
-     *   <li>Rejects a declared {@code Content-Length} that exceeds {@link #MAX_DOWNLOAD_BYTES}
+     *   <li>Rejects a declared {@code Content-Length} that exceeds {@link Limits#maxDownloadBytes}
      *       before reading any body bytes.
      *   <li>Independently counts bytes as they arrive and rejects the download when the counter
-     *       exceeds {@link #MAX_DOWNLOAD_BYTES}, so a missing or understated {@code Content-Length}
-     *       cannot bypass the limit.
+     *       exceeds {@link Limits#maxDownloadBytes}, so a missing or understated {@code
+     *       Content-Length} cannot bypass the limit.
      *   <li>Deletes the temp file on any failure.
      * </ul>
      *
@@ -536,7 +528,7 @@ public final class SkillMaterializer {
      * MiB of data. Production callers should use {@link #downloadToTempFile(String, int)} or {@link
      * #downloadToTempFile(String, int, boolean)}.
      *
-     * <p>Security properties: (same as before, but references {@code limits.maxDownloadBytes}).
+     * <p>Security properties: same as {@link #downloadToTempFile(String, int, boolean)}.
      *
      * @throws IOException on connect / read failures, HTTP error responses, or size cap exceeded.
      */

@@ -26,8 +26,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
     Materialized,
     extract_zip_safely,
+    limits_from_config,
 )
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
@@ -41,7 +43,12 @@ class FileSystemSkillRepository(MaterializedSkillRepository):
     ``SKILL.md``, or a ``.zip`` that extracts into such a layout.
     """
 
-    def __init__(self, base_dir: Path | str) -> None:
+    def __init__(
+    self,
+    base_dir: str | Path | None,
+    *,
+    config: object | None = None,
+) -> None:
         """Open a directory or ``.zip`` of skills.
 
         Raises:
@@ -58,10 +65,11 @@ class FileSystemSkillRepository(MaterializedSkillRepository):
             msg = f"Path does not exist: {path}"
             raise ValueError(msg)
 
+        limits = limits_from_config(config) if config is not None else DEFAULT_LIMITS
         if path.is_dir():
             materialization = Materialized.borrowed(path)
         elif path.is_file() and path.suffix.lower() == ".zip":
-            materialization = extract_zip_safely(path)
+            materialization = extract_zip_safely(path, limits=limits)
         else:
             msg = f"Path must be a directory or a .zip file: {path}"
             raise ValueError(msg)

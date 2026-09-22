@@ -241,6 +241,29 @@ class AgentConfigOptions:
         config_type=list,
         default=None,
     )
+    SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES = ConfigOption(
+        key="skill.source.url.max-download-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES = ConfigOption(
+        key="skill.source.url.max-extract-entry-bytes",
+        config_type=int,
+        default=64 * 1024 * 1024,
+    )
+
+    SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES = ConfigOption(
+        key="skill.source.url.max-extract-total-bytes",
+        config_type=int,
+        default=256 * 1024 * 1024,
+    )
+
+    SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES = ConfigOption(
+        key="skill.source.url.max-extract-entries",
+        config_type=int,
+        default=1_000,
+    )
 
 
 class MemoryEventOptions:

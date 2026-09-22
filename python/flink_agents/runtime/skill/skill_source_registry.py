@@ -58,7 +58,7 @@ class SkillSourceHandler:
     ladder ``SkillManager`` would otherwise need.
     """
 
-    open: Callable[[Mapping[str, str]], SkillRepository]
+    open: Callable[[Mapping[str, str], object], SkillRepository]
     describe_location: Callable[[Mapping[str, str]], str] = field(
         default=lambda params: str(dict(params)),
     )
@@ -111,22 +111,25 @@ def _require(params: Mapping[str, str], scheme: str, key: str) -> str:
 
 register(
     "local",
-    lambda params: FileSystemSkillRepository(_require(params, "local", "path")),
+    lambda params, cfg: FileSystemSkillRepository(
+        _require(params, "local", "path"), config=cfg
+    ),
     lambda params: params.get("path", ""),
 )
 register(
     "url",
-    lambda params: URLSkillRepository(
+    lambda params, cfg: URLSkillRepository(
         _require(params, "url", "url"),
         sha256=params.get("sha256"),
         allow_insecure_http=params.get("allow_insecure_http", "false").lower()
         == "true",
+        config=cfg,
     ),
     lambda params: redact_skill_url(params.get("url", "")),
 )
 register(
     "package",
-    lambda params: PackageSkillRepository(
+    lambda params, cfg: PackageSkillRepository(
         _require(params, "package", "package"),
         _require(params, "package", "resource"),
     ),

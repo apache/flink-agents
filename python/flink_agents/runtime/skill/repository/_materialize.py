@@ -20,14 +20,12 @@
 from __future__ import annotations
 
 import atexit
-import io
 import logging
 import os
 import shutil
-import struct
 import tempfile
 import zipfile
-import zlib
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urljoin
@@ -76,27 +74,35 @@ class MaterializerLimits:
             ("max_extract_entries", max_extract_entries),
         ):
             if not isinstance(value, int) or value <= 0:
-                msg = f"MaterializerLimits.{name} must be a strictly positive int, got {value!r}"
-                raise ValueError(msg)
+                message = f"MaterializerLimits.{name} must be a strictly positive int"
+                raise ValueError(message)
         self.max_download_bytes = max_download_bytes
         self.max_extract_entry_bytes = max_extract_entry_bytes
         self.max_extract_total_bytes = max_extract_total_bytes
         self.max_extract_entries = max_extract_entries
 
 
-#: Production defaults — kept at the original values from issue #1072.
 DEFAULT_LIMITS = MaterializerLimits(
-    max_download_bytes=64 * 1024 * 1024,       # 64 MiB
-    max_extract_entry_bytes=64 * 1024 * 1024, # 64 MiB
-    max_extract_total_bytes=256 * 1024 * 1024, # 256 MiB
+    max_download_bytes=64 * 1024 * 1024,
+    max_extract_entry_bytes=64 * 1024 * 1024,
+    max_extract_total_bytes=256 * 1024 * 1024,
     max_extract_entries=1_000,
 )
 
-# Backward-compatible module-level aliases.
-MAX_DOWNLOAD_BYTES: int = DEFAULT_LIMITS.max_download_bytes
-MAX_EXTRACT_ENTRY_BYTES: int = DEFAULT_LIMITS.max_extract_entry_bytes
-MAX_EXTRACT_TOTAL_BYTES: int = DEFAULT_LIMITS.max_extract_total_bytes
-MAX_EXTRACT_ENTRIES: int = DEFAULT_LIMITS.max_extract_entries
+
+def limits_from_config(config: object) -> MaterializerLimits:
+    from flink_agents.api.core_options import AgentConfigOptions as _opts
+
+    return MaterializerLimits(
+        max_download_bytes=config.get(_opts.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES),
+        max_extract_entry_bytes=config.get(
+            _opts.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES
+        ),
+        max_extract_total_bytes=config.get(
+            _opts.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES
+        ),
+        max_extract_entries=config.get(_opts.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES),
+    )
 
 
 class _SameProtocolRedirectHandler(HTTPRedirectHandler):
@@ -250,21 +256,24 @@ def extract_zip_safely(
         raise
     return materialized
 
+
 def _validate_zip_members(
-    members: list, extract_dir: Path, limits: MaterializerLimits
+    members: list[zipfile.ZipInfo],
+    extract_dir: Path,
+    limits: MaterializerLimits,
 ) -> None:
     if len(members) > limits.max_extract_entries:
-        msg = (
+        message = (
             f"Skill archive contains {len(members)} entries, "
             f"exceeding the limit of {limits.max_extract_entries}"
         )
-        raise ValueError(msg)
+        raise ValueError(message)
 
     for member in members:
         target = (extract_dir / member.filename).resolve()
         if not target.is_relative_to(extract_dir):
-            msg = f"Unsafe zip entry: {member.filename}"
-            raise ValueError(msg)
+            message = f"Unsafe zip entry: {member.filename}"
+            raise ValueError(message)
 
     total_declared = 0
     for member in members:
@@ -272,102 +281,97 @@ def _validate_zip_members(
             continue
         declared = member.file_size
         if declared > limits.max_extract_entry_bytes:
-            msg = (
+            message = (
                 f"Skill archive entry '{member.filename}' declared size {declared} "
-                f"exceeds the per-entry limit of {limits.max_extract_entry_bytes} bytes"
+                f"exceeds the per-entry limit of "
+                f"{limits.max_extract_entry_bytes} bytes"
             )
-            raise ValueError(msg)
+            raise ValueError(message)
         if declared > 0:
             total_declared += declared
+
     if total_declared > limits.max_extract_total_bytes:
-        msg = (
+        message = (
             f"Skill archive declared total uncompressed size {total_declared} "
             f"exceeds the limit of {limits.max_extract_total_bytes} bytes"
         )
-        raise ValueError(msg)
-
-def _open_entry_stream(zip_path: Path, member: zipfile.ZipInfo) -> io.RawIOBase:
-    with zip_path.open("rb") as f:
-        f.seek(member.header_offset)
-        f.read(4)  # local file header signature
-        f.read(2)  # version needed
-        f.read(2)  # general purpose bit flag
-        f.read(2)  # compression method
-        f.read(2)  # last mod file time
-        f.read(2)  # last mod file date
-        f.read(4)  # crc-32
-        f.read(4)  # compressed size
-        f.read(4)  # uncompressed size
-        fn_len = struct.unpack("<H", f.read(2))[0]
-        ex_len = struct.unpack("<H", f.read(2))[0]
-        f.read(fn_len + ex_len)  # filename + extra field
-        compressed = f.read(member.compress_size)
-
-        if member.compress_type == zipfile.ZIP_STORED:
-            return io.BytesIO(compressed)
-        if member.compress_type == zipfile.ZIP_DEFLATED:
-            return io.BytesIO(zlib.decompress(compressed, -15))
-        msg = (
-            f"Unsupported ZIP compression method {member.compress_type} "
-            f"in '{member.filename}'"
-        )
-        raise NotImplementedError(msg)
+        raise ValueError(message)
 
 def _extract_zip_to_dir(
-    zip_path: Path, extract_dir: Path, limits: MaterializerLimits
+    zip_path: Path,
+    extract_dir: Path,
+    limits: MaterializerLimits,
 ) -> None:
-    with zipfile.ZipFile(zip_path) as zf:
+    total_written = 0
+    with zipfile.ZipFile(zip_path, "r") as zf:
         members = zf.infolist()
         _validate_zip_members(members, extract_dir, limits)
-        buf = bytearray(65536)
-        total_written = 0
         for member in members:
-            target = (extract_dir / member.filename).resolve()
             if member.is_dir():
-                target.mkdir(parents=True, exist_ok=True)
                 continue
+            target = extract_dir / member.filename
             target.parent.mkdir(parents=True, exist_ok=True)
             per_entry_written = 0
-            limit_error: ValueError | None = None
-            with _open_entry_stream(zip_path, member) as src, target.open("xb") as dst:
-                while True:
-                    n = src.readinto(buf)
-                    if not n:
-                        break
-                    try:
-                        _check_entry_size(member.filename, per_entry_written, n, limits)
-                        _check_total_size(total_written, n, limits)
-                    except ValueError as exc:
-                        limit_error = exc
-                        break
-                    dst.write(buf[:n])
-                    per_entry_written += n
-                    total_written += n
-            if limit_error is not None:
-                raise limit_error
+            try:
+                src = zf.open(member)
+                try:
+                    with target.open("xb") as dst:
+                        while True:
+                            chunk = src.read(65536)
+                            if not chunk:
+                                break
+                            n = len(chunk)
+                            _check_entry_size(
+                                member.filename, per_entry_written, n, limits
+                            )
+                            _check_total_size(total_written, n, limits)
+                            dst.write(chunk)
+                            per_entry_written += n
+                            total_written += n
+                except ValueError:
+                    with suppress(zipfile.BadZipFile):
+                        src.close()
+                    raise
+                else:
+                    src.close()  # CRC validated here
+            except zipfile.BadZipFile as exc:
+                message = (
+                    f"Skill archive entry '{member.filename}' failed integrity check "
+                    f"(bad CRC-32 or truncated data)"
+                )
+                raise ValueError(message) from exc
+
 
 def _check_entry_size(
-    filename: str, already_written: int, chunk: int, limits: MaterializerLimits
+    filename: str,
+    already_written: int,
+    chunk: int,
+    limits: MaterializerLimits,
 ) -> None:
     if already_written + chunk > limits.max_extract_entry_bytes:
-        msg = (
+        message = (
             f"Skill archive entry '{filename}' exceeds the "
             f"per-entry limit of {limits.max_extract_entry_bytes} bytes"
         )
-        raise ValueError(msg)
+        raise ValueError(message)
+
 
 def _check_total_size(
-    already_written: int, chunk: int, limits: MaterializerLimits
+    already_written: int,
+    chunk: int,
+    limits: MaterializerLimits,
 ) -> None:
     if already_written + chunk > limits.max_extract_total_bytes:
-        msg = (
+        message = (
             f"Skill archive total extracted size exceeds the limit of "
             f"{limits.max_extract_total_bytes} bytes"
         )
-        raise ValueError(msg)
+        raise ValueError(message)
+
 
 def _check_declared_download_size(
-    content_length: int | None, limits: MaterializerLimits
+    content_length: int | None,
+    limits: MaterializerLimits,
 ) -> None:
     if content_length is not None and content_length > limits.max_download_bytes:
         msg = (
@@ -376,18 +380,20 @@ def _check_declared_download_size(
         )
         raise ValueError(msg)
 
+
 def _check_download_size(
-    already_written: int, chunk: int, limits: MaterializerLimits
+    already_written: int,
+    chunk: int,
+    limits: MaterializerLimits,
 ) -> None:
     if already_written + chunk > limits.max_download_bytes:
         msg = f"Skill archive download exceeded the limit of {limits.max_download_bytes} bytes"
         raise ValueError(msg)
 
 
-
 def download_to_tempfile(
     url: str,
-    timeout: int = 90,
+    timeout: int | float = 90,
     *,
     allow_insecure_http: bool = False,
     limits: MaterializerLimits = DEFAULT_LIMITS,

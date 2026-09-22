@@ -80,7 +80,7 @@ class SkillSourceRegistryTest {
     void customSchemeCanBeRegistered() throws Exception {
         SkillSourceRegistry.register(
                 "fake-scheme-for-test",
-                (params, cl) ->
+                (params, cl, cfg) ->
                         new SkillRepository() {
                             @Override
                             public org.apache.flink.agents.runtime.skill.AgentSkill getSkill(
@@ -101,7 +101,7 @@ class SkillSourceRegistryTest {
                         });
         assertNotNull(SkillSourceRegistry.get("fake-scheme-for-test"));
         // Idempotent re-registration:
-        SkillSourceRegistry.register("fake-scheme-for-test", (params, cl) -> null);
+        SkillSourceRegistry.register("fake-scheme-for-test", (params, cl, cfg) -> null);
         assertNotNull(SkillSourceRegistry.get("fake-scheme-for-test"));
     }
 }

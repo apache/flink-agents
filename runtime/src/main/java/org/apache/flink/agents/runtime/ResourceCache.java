@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
@@ -64,7 +65,8 @@ public class ResourceCache implements AutoCloseable {
      */
     public ResourceCache(
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
-            ClassLoader classLoader) {
+            ClassLoader classLoader,
+            ReadableConfiguration agentConfig) {
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
@@ -81,12 +83,18 @@ public class ResourceCache implements AutoCloseable {
                                 throw new RuntimeException(e);
                             }
                         },
-                        classLoader);
+                        classLoader,
+                        agentConfig);
     }
 
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader) {
+        this(resourceProviders, classLoader, null);
+    }
     /** Convenience overload that uses the current thread's context class loader. */
     public ResourceCache(Map<ResourceType, Map<String, ResourceProvider>> resourceProviders) {
-        this(resourceProviders, Thread.currentThread().getContextClassLoader());
+        this(resourceProviders, Thread.currentThread().getContextClassLoader(), null);
     }
 
     void setPythonResourceAdapter(PythonResourceAdapter adapter) {

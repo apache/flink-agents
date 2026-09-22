@@ -56,7 +56,7 @@ class SkillManager:
     - Execution: Load resources/scripts only when needed
     """
 
-    def __init__(self, skills_config: Skills) -> None:
+    def __init__(self, skills_config: Skills, *, agent_config: object = None) -> None:
         """Initialize the SkillManager from a Skills configuration."""
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
@@ -65,6 +65,7 @@ class SkillManager:
         # reference, so close() iterates this list (id-deduped) instead.
         self._opened_repos: List[SkillRepository] = []
         self._config = skills_config
+        self._agent_config = agent_config
         self._load_skills()
 
     @property
@@ -144,7 +145,7 @@ class SkillManager:
                 try:
                     origin = _origin_of(spec)
                     handler = skill_source_registry.get(spec.scheme)
-                    repo = handler.open(spec.params)
+                    repo = handler.open(spec.params, self._agent_config)
                     self._opened_repos.append(repo)
                 except (OSError, ValueError) as e:
                     source_identity = (

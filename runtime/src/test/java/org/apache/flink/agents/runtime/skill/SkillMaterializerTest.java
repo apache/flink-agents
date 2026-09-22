@@ -19,6 +19,8 @@
 package org.apache.flink.agents.runtime.skill;
 
 import com.sun.net.httpserver.HttpServer;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.runtime.skill.repository.SkillMaterializer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
@@ -788,7 +790,7 @@ class SkillMaterializerTest {
      * #acceptsBodyExactlyAtDownloadCap()} to prove the boundary is enforced at exactly the right
      * byte.
      *
-     * <p>The server intentionally omits {@code Content-Length} so the pre-f;ight check cannot fire;
+     * <p>The server intentionally omits {@code Content-Length} so the pre-flight check cannot fire;
      * only the streaming counter can reject the download. this isolates the counter under test.
      */
     @Test
@@ -797,9 +799,6 @@ class SkillMaterializerTest {
         SkillMaterializer.Limits limits =
                 new SkillMaterializer.Limits(cap, cap * 10, cap * 100, 1_000);
 
-        // byte[] body = new byte[(int) cap + 1];
-        // Arrays.fill(body, (byte) 'z');
-        // HttpServer server = startServer(200, body);
         long actualBytes = cap + 1;
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext(
@@ -940,7 +939,7 @@ class SkillMaterializerTest {
         }
 
         byte[] bytes = Files.readAllBytes(zip);
-
+        // Patch LFH entries
         byte[] lfhSig = {'P', 'K', 3, 4};
         int pos = 0;
         while (pos <= bytes.length - 30) {
@@ -956,7 +955,7 @@ class SkillMaterializerTest {
                 pos++;
             }
         }
-
+        // Patch CDH entries
         byte[] cdhSig = {'P', 'K', 1, 2};
         pos = 0;
         while (pos <= bytes.length - 46) {
@@ -973,7 +972,6 @@ class SkillMaterializerTest {
                 pos++;
             }
         }
-
         Files.write(zip, bytes);
     }
 
@@ -1149,7 +1147,7 @@ class SkillMaterializerTest {
         // Write an archive with too many entries to trigger failure cheaply.
         Path zip = tempDir.resolve("many.zip");
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
-            for (int i = 0; i <= SkillMaterializer.MAX_EXTRACT_ENTRIES; i++) {
+            for (int i = 0; i <= SkillMaterializer.Limits.DEFAULT.maxExtractEntries; i++) {
                 zos.putNextEntry(new ZipEntry("e" + i + ".txt"));
                 zos.write(new byte[0]);
                 zos.closeEntry();
@@ -1242,5 +1240,84 @@ class SkillMaterializerTest {
             assertTrue(Files.isRegularFile(m.getDir().resolve("skill-a/SKILL.md")));
             assertTrue(Files.isRegularFile(m.getDir().resolve("skill-b/SKILL.md")));
         }
+    }
+
+    /**
+     * {@link SkillMaterializer.Limits#fromConfig} must read all four YAML keys from a real {@link
+     * org.apache.flink.agents.api.configuration.ReadableConfiguration} and produce a {@code Limits}
+     * whose fields match the configured values. This test validates the YAML key strings in {@link
+     * AgentConfigOptions} are correct end-to-end — a typo in any key would cause {@code fromConfig}
+     * to silently fall back to the default value and this assertion would fail.
+     */
+    @Test
+    void limitsFromConfigReadsAllFourKeys() {
+        AgentConfiguration cfg = new AgentConfiguration();
+        cfg.set(AgentConfigOptions.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES, 11L);
+        cfg.set(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES, 22L);
+        cfg.set(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES, 33L);
+        cfg.set(AgentConfigOptions.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES, 44);
+
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(cfg);
+
+        assertEquals(
+                11L,
+                limits.maxDownloadBytes,
+                "fromConfig must read skill.source.url.max-download-bytes");
+        assertEquals(
+                22L,
+                limits.maxExtractEntryBytes,
+                "fromConfig must read skill.source.url.max-extract-entry-bytes");
+        assertEquals(
+                33L,
+                limits.maxExtractTotalBytes,
+                "fromConfig must read skill.source.url.max-extract-total-bytes");
+        assertEquals(
+                44,
+                limits.maxExtractEntries,
+                "fromConfig must read skill.source.url.max-extract-entries");
+    }
+
+    /**
+     * {@link SkillMaterializer.Limits#fromConfig} with a {@code null} config must return {@link
+     * SkillMaterializer.Limits#DEFAULT} without throwing.
+     */
+    @Test
+    void limitsFromConfigNullReturnsDefault() {
+        SkillMaterializer.Limits limits = SkillMaterializer.Limits.fromConfig(null);
+        assertEquals(SkillMaterializer.Limits.DEFAULT.maxDownloadBytes, limits.maxDownloadBytes);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractEntryBytes, limits.maxExtractEntryBytes);
+        assertEquals(
+                SkillMaterializer.Limits.DEFAULT.maxExtractTotalBytes, limits.maxExtractTotalBytes);
+        assertEquals(SkillMaterializer.Limits.DEFAULT.maxExtractEntries, limits.maxExtractEntries);
+    }
+
+    /**
+     * A zip entry whose name contains a NUL byte ({@code \u0000}) triggers an {@link
+     * java.nio.file.InvalidPathException} inside {@link java.nio.file.Path#resolve}. {@link
+     * SkillMaterializer#extractZipSafely} must wrap this as an {@link IOException} (so callers see
+     * a consistent checked exception) while preserving the original cause.
+     */
+    @Test
+    void rejectsNulByteInZipEntryName(@TempDir Path tempDir) throws IOException {
+        Path zip = tempDir.resolve("nul.zip");
+        // Write a zip with a NUL byte in the entry name. ZipOutputStream accepts it;
+        // Path.resolve() will reject it with InvalidPathException on extraction.
+        try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
+            zos.putNextEntry(new ZipEntry("evil\u0000.txt"));
+            zos.write("pwn".getBytes(StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        IOException ex =
+                assertThrows(
+                        IOException.class,
+                        () -> SkillMaterializer.extractZipSafely(zip),
+                        "NUL byte in entry name must throw IOException");
+        // The original InvalidPathException must be preserved as the cause so
+        // diagnostics are not lost.
+        assertTrue(
+                ex.getCause() instanceof java.nio.file.InvalidPathException,
+                "cause must be InvalidPathException, got: " + ex.getCause());
     }
 }

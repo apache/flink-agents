@@ -430,10 +430,10 @@ class SkillManagerTest {
         // constructor must release the first repo before propagating the failure, so the caller
         // (which never receives a SkillManager reference) doesn't leak its temp dir / hook.
         FakeRepo first = new FakeRepo("alpha");
-        SkillSourceRegistry.register("test-leak-ok", (params, cl) -> first);
+        SkillSourceRegistry.register("test-leak-ok", (params, cl, cfg) -> first);
         SkillSourceRegistry.register(
                 "test-leak-fail",
-                (params, cl) -> {
+                (params, cl, cfg) -> {
                     throw new IOException("boom");
                 });
 
@@ -456,10 +456,10 @@ class SkillManagerTest {
         // suppressed so neither is lost.
         RuntimeException cleanupBoom = new RuntimeException("cleanup-boom");
         FakeRepo bad = new FakeRepo("alpha", cleanupBoom);
-        SkillSourceRegistry.register("test-leak-ok-then-cleanup-fail", (params, cl) -> bad);
+        SkillSourceRegistry.register("test-leak-ok-then-cleanup-fail", (params, cl, cfg) -> bad);
         SkillSourceRegistry.register(
                 "test-leak-fail-after-bad",
-                (params, cl) -> {
+                (params, cl, cfg) -> {
                     throw new IOException("primary-boom");
                 });
 
@@ -488,8 +488,8 @@ class SkillManagerTest {
         RuntimeException cleanupBoom = new RuntimeException("cleanup-boom");
         FakeRepo first = new FakeRepo("alpha", cleanupBoom);
         FakeRepo failing = new FakeRepo("beta", null, registrationBoom);
-        SkillSourceRegistry.register("test-register-boom-ok", (params, cl) -> first);
-        SkillSourceRegistry.register("test-register-boom-fail", (params, cl) -> failing);
+        SkillSourceRegistry.register("test-register-boom-ok", (params, cl, cfg) -> first);
+        SkillSourceRegistry.register("test-register-boom-fail", (params, cl, cfg) -> failing);
 
         Skills config =
                 new Skills(
@@ -520,7 +520,7 @@ class SkillManagerTest {
         Error registrationBoom = new Error("registration-error");
         Error closeBoom = new Error("close-error");
         FakeRepo repo = new FakeRepo("alpha", closeBoom, registrationBoom);
-        SkillSourceRegistry.register("test-error-fail", (params, cl) -> repo);
+        SkillSourceRegistry.register("test-error-fail", (params, cl, cfg) -> repo);
 
         Skills config = new Skills(List.of(new SkillSourceSpec("test-error-fail", Map.of())));
 
@@ -545,7 +545,7 @@ class SkillManagerTest {
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(good1, bad, good2);
         SkillSourceRegistry.register(
-                "test-close-rethrow", (params, cl) -> ordered.get(seq.getAndIncrement()));
+                "test-close-rethrow", (params, cl, cfg) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(
@@ -588,7 +588,7 @@ class SkillManagerTest {
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(first, second);
         SkillSourceRegistry.register(
-                "test-close-error", (params, cl) -> ordered.get(seq.getAndIncrement()));
+                "test-close-error", (params, cl, cfg) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(
@@ -621,7 +621,7 @@ class SkillManagerTest {
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(first, second);
         SkillSourceRegistry.register(
-                "test-dup-close", (params, cl) -> ordered.get(seq.getAndIncrement()));
+                "test-dup-close", (params, cl, cfg) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(

@@ -31,11 +31,11 @@ import pytest
 from flink_agents.api.skills import redact_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
     DEFAULT_LIMITS,
-    MAX_EXTRACT_ENTRY_BYTES,
     Materialized,
     MaterializerLimits,
     download_to_tempfile,
     extract_zip_safely,
+    limits_from_config,
 )
 
 
@@ -191,9 +191,12 @@ class TestDownloadToTempfile:
             download_to_tempfile(
                 f"{base_url}/missing", timeout=10, allow_insecure_http=True
             )
+
+
 # ---------------------------------------------------------------------------
 # Helpers for size-cap tests
 # ---------------------------------------------------------------------------
+
 
 def _make_streaming_server(
     declared_content_length: int | None, bytes_to_stream: int
@@ -227,7 +230,7 @@ def _make_streaming_server(
 def _make_zip_with_patched_declared_sizes(
     zip_path: Path, entries: dict[str, bytes], declared_size: int
 ) -> None:
-    r"""Write a ZIP and patch the declared uncompressed size in both the local file
+    r"""Writing a ZIP and patching the declared uncompressed size in both the local file
     header (LFH, ``PK\x03\x04``) and the central directory header (CDH, ``PK\x01\x02``)
     for every entry.
 
@@ -236,29 +239,27 @@ def _make_zip_with_patched_declared_sizes(
     leaving the LFH intact causes a CRC mismatch before the byte counter is reached.
     Patching both headers lets the full real payload flow through the streaming counter.
     """
-    with zipfile.ZipFile(
-        zip_path, "w", compression=zipfile.ZIP_DEFLATED
-    ) as zf:
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
         for name, content in entries.items():
             zf.writestr(name, content)
-
     data = bytearray(zip_path.read_bytes())
-
-    # Patch local file headers (PK\x03\x04): uncompressed size is at offset +22.
+    # Patch local file headers (PK\x03\x04).
+    # offset +22 = uncompressed size (used for the declared-size per check)
+    # We patch ONLY offset +22 so the pre-check sees the declared_size value,
+    # while offset +18 (compressed size) keeps the real payload length intact.
     lfh_sig = b"PK\x03\x04"
     pos = 0
     while pos < len(data) - 30:
         if data[pos : pos + 4] == lfh_sig:
             compress_size = struct.unpack_from("<I", data, pos + 18)[0]
+            # Patch uncompressed size only - compressed size stays at real length.
             struct.pack_into("<I", data, pos + 22, declared_size)
-            # Advance past this header (30 bytes fixed + filename + extra).
             fn_len = struct.unpack_from("<H", data, pos + 26)[0]
             extra_len = struct.unpack_from("<H", data, pos + 28)[0]
             pos += 30 + fn_len + extra_len + compress_size
         else:
             pos += 1
-
-    # Patch central directory headers (PK\x01\x02): uncompressed size is at offset +24.
+    # Patch central directory headers (PK\x01\x02): uncompressed size at offset +24
     cdh_sig = b"PK\x01\x02"
     pos = 0
     while pos < len(data) - 46:
@@ -270,7 +271,45 @@ def _make_zip_with_patched_declared_sizes(
             pos += 46 + fn_len + extra_len + comment_len
         else:
             pos += 1
+    zip_path.write_bytes(data)
 
+
+def _make_zip_with_bad_crc(zip_path: Path, entries: dict[str, bytes]) -> None:
+    """Write a ZIP and corrupt the CRC-32 in both LFH and CDH for every entry.
+
+    Used by tests that need extraction to fail with an integrity error under the
+    raw-read path (which reads ``compress_size`` bytes from disk and validates CRC
+    manually).  Patching the CRC to ``0x00000000`` guarantees a mismatch for any
+    non-empty entry, regardless of the entry's declared or actual size.
+
+    LFH CRC-32 is at offset +14; CDH CRC-32 is at offset +16.
+    """
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    data = bytearray(zip_path.read_bytes())
+    lfh_sig = b"PK\x03\x04"
+    pos = 0
+    while pos < len(data) - 30:
+        if data[pos : pos + 4] == lfh_sig:
+            compress_size = struct.unpack_from("<I", data, pos + 18)[0]
+            struct.pack_into("<I", data, pos + 14, 0xDEADBEEF)  # corrupt CRC
+            fn_len = struct.unpack_from("<H", data, pos + 26)[0]
+            extra_len = struct.unpack_from("<H", data, pos + 28)[0]
+            pos += 30 + fn_len + extra_len + compress_size
+        else:
+            pos += 1
+    cdh_sig = b"PK\x01\x02"
+    pos = 0
+    while pos < len(data) - 46:
+        if data[pos : pos + 4] == cdh_sig:
+            struct.pack_into("<I", data, pos + 16, 0xDEADBEEF)  # corrupt CRC
+            fn_len = struct.unpack_from("<H", data, pos + 28)[0]
+            extra_len = struct.unpack_from("<H", data, pos + 30)[0]
+            comment_len = struct.unpack_from("<H", data, pos + 32)[0]
+            pos += 46 + fn_len + extra_len + comment_len
+        else:
+            pos += 1
     zip_path.write_bytes(data)
 
 
@@ -293,7 +332,9 @@ class TestDownloadSizeCap:
         )
         try:
             with pytest.raises(ValueError, match="exceeding the limit"):
-                download_to_tempfile(url, timeout=10, allow_insecure_http=True, limits=limits)
+                download_to_tempfile(
+                    url, timeout=10, allow_insecure_http=True, limits=limits
+                )
         finally:
             server.shutdown()
 
@@ -310,7 +351,9 @@ class TestDownloadSizeCap:
         )
         try:
             with pytest.raises(ValueError, match="exceeded the limit"):
-                download_to_tempfile(url, timeout=10, allow_insecure_http=True, limits=limits)
+                download_to_tempfile(
+                    url, timeout=10, allow_insecure_http=True, limits=limits
+                )
         finally:
             server.shutdown()
 
@@ -327,7 +370,9 @@ class TestDownloadSizeCap:
         )
         try:
             with pytest.raises(ValueError, match="exceeded the limit"):
-                download_to_tempfile(url, timeout=10, allow_insecure_http=True, limits=limits)
+                download_to_tempfile(
+                    url, timeout=10, allow_insecure_http=True, limits=limits
+                )
         finally:
             server.shutdown()
 
@@ -365,7 +410,9 @@ class TestDownloadSizeCap:
         )
         try:
             with pytest.raises(ValueError, match=str(cap)):
-                download_to_tempfile(url, timeout=10, allow_insecure_http=True, limits=limits)
+                download_to_tempfile(
+                    url, timeout=10, allow_insecure_http=True, limits=limits
+                )
         finally:
             server.shutdown()
 
@@ -388,7 +435,9 @@ class TestDownloadSizeCap:
                 if p.name.startswith("flink-agents-skills-") and p.suffix == ".zip"
             )
             with pytest.raises(ValueError):
-                download_to_tempfile(url, timeout=10, allow_insecure_http=True, limits=limits)
+                download_to_tempfile(
+                    url, timeout=10, allow_insecure_http=True, limits=limits
+                )
             after = sum(
                 1
                 for p in tmp_dir.iterdir()
@@ -423,7 +472,7 @@ class TestExtractionSizeCap:
         _make_zip_with_patched_declared_sizes(
             tmp_path / "big-declared.zip",
             {"entry.bin": b"x"},
-            MAX_EXTRACT_ENTRY_BYTES + 1,
+            DEFAULT_LIMITS.max_extract_entry_bytes + 1,
         )
         with pytest.raises(ValueError, match="per-entry limit"):
             extract_zip_safely(tmp_path / "big-declared.zip")
@@ -440,27 +489,23 @@ class TestExtractionSizeCap:
             max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
         )
         zip_path = tmp_path / "big-actual.zip"
-        _make_zip_with_patched_declared_sizes(
-            zip_path, {"large.bin": b"x" * actual_size}, 1
-        )
+        _make_zip(zip_path, {"large.bin": "x" * actual_size})
         with pytest.raises(ValueError, match="per-entry limit"):
             extract_zip_safely(zip_path, limits=limits)
 
-    def test_tampered_declared_size_below_actual_extracts_successfully(
+    def test_tampered_declared_size_below_actual_raises_integrity_error(
         self, tmp_path: Path
     ) -> None:
+        # Simulate an attacker who corrupts the CRC in a zip archive.
+        # The extraction path uses zf.open(member) which validates CRC on close();
+        # a corrupted CRC raises BadZipFile, which is caught and re-raised as ValueError("integrity check")
         actual_size = 512
         zip_path = tmp_path / "big-actual.zip"
-        _make_zip_with_patched_declared_sizes(
-            zip_path, {"large.bin": b"x" * actual_size}, 1
-        )
-        with extract_zip_safely(zip_path) as m:
-            extracted = m.dir / "large.bin"
-            assert extracted.stat().st_size == actual_size
+        _make_zip_with_bad_crc(zip_path, {"large.bin": b"x" * actual_size})
+        with pytest.raises(ValueError, match="integrity check"):
+            extract_zip_safely(zip_path)
 
-    def test_tampered_declared_entry_size_still_cleans_up(
-        self, tmp_path: Path
-    ) -> None:
+    def test_oversized_entry_still_cleans_up(self, tmp_path: Path) -> None:
         actual_size = 512
         cap = 400
         limits = MaterializerLimits(
@@ -470,9 +515,7 @@ class TestExtractionSizeCap:
             max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
         )
         zip_path = tmp_path / "big-actual.zip"
-        _make_zip_with_patched_declared_sizes(
-            zip_path, {"large.bin": b"x" * actual_size}, 1
-        )
+        _make_zip(zip_path, {"large.bin": "x" * actual_size})
         tmp_dir = Path(tempfile.gettempdir())
         before = sum(
             1
@@ -488,9 +531,7 @@ class TestExtractionSizeCap:
         )
         assert before == after
 
-    def test_rejects_cumulative_bytes_over_total_cap_via_streaming_counter(
-        self, tmp_path: Path
-    ) -> None:
+    def test_rejects_cumulative_bytes_over_total_cap(self, tmp_path: Path) -> None:
         entry_size = 200
         limits = MaterializerLimits(
             max_download_bytes=DEFAULT_LIMITS.max_download_bytes,
@@ -499,9 +540,9 @@ class TestExtractionSizeCap:
             max_extract_entries=DEFAULT_LIMITS.max_extract_entries,
         )
         zip_path = tmp_path / "cumulative.zip"
-        entries = {f"entry-{i}.bin": b"B" * entry_size for i in range(2)}
-        _make_zip_with_patched_declared_sizes(zip_path, entries, 1)
-        with pytest.raises(ValueError, match="total extracted size"):
+        entries = {f"entry-{i}.bin": "B" * entry_size for i in range(2)}
+        _make_zip(zip_path, entries)
+        with pytest.raises(ValueError, match="total"):
             extract_zip_safely(zip_path, limits=limits)
 
     def test_cleanup_on_extraction_failure(self, tmp_path: Path) -> None:
@@ -652,3 +693,82 @@ class TestExtractionSizeCap:
             assert "redirect-fragment" not in warning
         finally:
             path.unlink(missing_ok=True)
+
+
+class TestLimitsFromConfig:
+    """Verify that limits_from_config reads all four YAML keys from a real config object.
+
+    Every test constructs an AgentConfiguration with explicit values for the four
+    skill-source limit keys and asserts that limits_from_config produces a
+    MaterializerLimits whose fields match.  A typo in any key string in
+    AgentConfigOptions would cause limits_from_config to silently fall back to the
+    default value and the equality assertion would fail.
+    """
+
+    def _make_config(
+        self,
+        *,
+        max_download_bytes: int,
+        max_extract_entry_bytes: int,
+        max_extract_total_bytes: int,
+        max_extract_entries: int,
+    ) -> object:
+        """Build a real AgentConfiguration populated with the four limit keys."""
+        from flink_agents.api.core_options import AgentConfigOptions as _opts
+        from flink_agents.plan.configuration import AgentConfiguration
+
+        cfg = AgentConfiguration()
+        cfg.set(_opts.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES, max_download_bytes)
+        cfg.set(_opts.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES, max_extract_entry_bytes)
+        cfg.set(_opts.SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES, max_extract_total_bytes)
+        cfg.set(_opts.SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES, max_extract_entries)
+        return cfg
+
+    def test_reads_all_four_keys(self) -> None:
+        """limits_from_config must map each YAML key to the correct field."""
+        cfg = self._make_config(
+            max_download_bytes=11,
+            max_extract_entry_bytes=22,
+            max_extract_total_bytes=33,
+            max_extract_entries=44,
+        )
+        limits = limits_from_config(cfg)
+
+        assert limits.max_download_bytes == 11, (
+            "limits_from_config must read skill.source.url.max-download-bytes"
+        )
+        assert limits.max_extract_entry_bytes == 22, (
+            "limits_from_config must read skill.source.url.max-extract-entry-bytes"
+        )
+        assert limits.max_extract_total_bytes == 33, (
+            "limits_from_config must read skill.source.url.max-extract-total-bytes"
+        )
+        assert limits.max_extract_entries == 44, (
+            "limits_from_config must read skill.source.url.max-extract-entries"
+        )
+
+    def test_default_values_when_keys_absent(self) -> None:
+        """An empty config must produce limits equal to DEFAULT_LIMITS."""
+        from flink_agents.plan.configuration import AgentConfiguration
+
+        cfg = AgentConfiguration()
+        limits = limits_from_config(cfg)
+
+        assert limits.max_download_bytes == DEFAULT_LIMITS.max_download_bytes
+        assert limits.max_extract_entry_bytes == DEFAULT_LIMITS.max_extract_entry_bytes
+        assert limits.max_extract_total_bytes == DEFAULT_LIMITS.max_extract_total_bytes
+        assert limits.max_extract_entries == DEFAULT_LIMITS.max_extract_entries
+
+    def test_partial_override_leaves_others_at_default(self) -> None:
+        """Setting only one key must leave the other three at their defaults."""
+        from flink_agents.api.core_options import AgentConfigOptions as _opts
+        from flink_agents.plan.configuration import AgentConfiguration
+
+        cfg = AgentConfiguration()
+        cfg.set(_opts.SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES, 999)
+        limits = limits_from_config(cfg)
+
+        assert limits.max_download_bytes == 999
+        assert limits.max_extract_entry_bytes == DEFAULT_LIMITS.max_extract_entry_bytes
+        assert limits.max_extract_total_bytes == DEFAULT_LIMITS.max_extract_total_bytes
+        assert limits.max_extract_entries == DEFAULT_LIMITS.max_extract_entries

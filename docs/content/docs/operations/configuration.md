@@ -199,3 +199,15 @@ Here are the configuration options for Fluss-based Action State Store.
 | `flussSaslJaasConfig`        | (none)           | String  | The JAAS configuration string for Fluss SASL authentication.                             |
 | `flussSaslUsername`          | (none)           | String  | The username for Fluss SASL authentication.                                              |
 | `flussSaslPassword`          | (none)           | String  | The password for Fluss SASL authentication.                                              |
+
+### URL Skill Source Options
+
+These options control resource limits when downloading and extracting skill archives from HTTPS URLs
+(skill source scheme `url`). All four values must be strictly positive; there is no "unlimited" setting.
+
+| Key | Default | Type | Description |
+|-----|---------|------|-------------|
+| `skill.source.url.max-download-bytes` | 67108864 (64 MiB) | Long | Maximum bytes to download for a skill archive. The streaming byte counter is the real enforcement; the Content-Length header check is a fast early-exit only. |
+| `skill.source.url.max-extract-entry-bytes` | 67108864 (64 MiB) | Long | Maximum uncompressed bytes per entry when extracting a skill archive. Enforced against actual bytes written. |
+| `skill.source.url.max-extract-total-bytes` | 268435456 (256 MiB) | Long | Maximum total uncompressed bytes across all entries when extracting a skill archive. Enforced against actual bytes written. |
+| `skill.source.url.max-extract-entries` | 1000 | Integer | Maximum number of entries to extract from a skill archive. Checked against the ZIP central-directory entry count. |
