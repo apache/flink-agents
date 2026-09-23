@@ -58,12 +58,20 @@ public final class MemoryRef implements Serializable {
     }
 
     /**
-     * Creates a new MemoryRef instance with the given path.
+     * Creates a reference to the slot at {@code path} in the memory of the given type.
      *
-     * @param path The absolute path of the data in memory.
+     * @param type The memory the referenced data lives in.
+     * @param path The absolute path of the data in that memory.
      * @return A new MemoryRef instance.
+     * @throws IllegalArgumentException if {@code type} or {@code path} is null
      */
     public static MemoryRef create(MemoryObject.MemoryType type, String path) {
+        if (type == null) {
+            throw new IllegalArgumentException("MemoryRef requires a memory type.");
+        }
+        if (path == null) {
+            throw new IllegalArgumentException("MemoryRef requires a path.");
+        }
         return new MemoryRef(type, path);
     }
 
@@ -142,16 +150,18 @@ public final class MemoryRef implements Serializable {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         MemoryRef memoryRef = (MemoryRef) o;
-        return path.equals(memoryRef.path);
+        // A reference names a slot in one memory: the same path in sensory and short-term memory
+        // is two different slots.
+        return type == memoryRef.type && path.equals(memoryRef.path);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(path);
+        return Objects.hash(type, path);
     }
 
     @Override
     public String toString() {
-        return "MemoryRef{" + "path='" + path + '\'' + '}';
+        return "MemoryRef{type=" + type + ", path='" + path + '\'' + '}';
     }
 }
