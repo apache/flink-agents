@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -38,10 +39,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class AgentPlanRoutingBackstopTest {
 
     private static ResourceDescriptor descriptor(String clazz) {
-        // Router descriptors must declare a strategy (validated at plan construction), so the
-        // hand-built minimal descriptor carries an empty rules strategy.
+        // Router descriptors must declare a strategy and at least one candidate (both validated
+        // at plan construction), so the hand-built minimal descriptor carries an empty rules
+        // strategy over one candidate.
         return new ResourceDescriptor(
-                clazz, Map.of("strategy_type", "rule_based", "strategy_args", Map.of()));
+                clazz,
+                Map.of(
+                        "candidates",
+                        List.of("small"),
+                        "strategy_type",
+                        "rule_based",
+                        "strategy_args",
+                        Map.of()));
     }
 
     @Test
