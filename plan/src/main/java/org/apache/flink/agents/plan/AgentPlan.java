@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingCandidateValidator;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
@@ -798,6 +799,13 @@ public class AgentPlan implements Serializable {
             // shape guard applies to all of them — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
             validateCandidatesShape(provider.getName(), candidates);
+            // The constructor's own candidate rules (non-empty, no duplicates, default model is a
+            // candidate), applied here so a descriptor that skipped the builder fails at plan
+            // construction rather than per routed request on the TaskManager.
+            RoutingCandidateValidator.validate(
+                    String.format("Model router '%s'", provider.getName()),
+                    (List<?>) candidates,
+                    descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
             switch (strategy.getType()) {
                 case LLM_JUDGE:
                     validateJudge(provider.getName(), strategy, chatModels);
@@ -825,8 +833,8 @@ public class AgentPlan implements Serializable {
      */
     /**
      * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
-     * 'candidates' value into a raw ClassCastException inside the durable call. A missing argument
-     * is left to the constructor's own message ("requires at least one candidate").
+     * 'candidates' value into a raw ClassCastException inside the durable call. A missing or empty
+     * list is rejected next by {@link RoutingCandidateValidator}.
      */
     private static void validateCandidatesShape(String routerName, Object candidates) {
         if (candidates != null && !(candidates instanceof List)) {
@@ -842,9 +850,6 @@ public class AgentPlan implements Serializable {
 
     private static void validateRuleKeys(
             String routerName, RoutingStrategy strategy, Object candidates) {
-        if (candidates == null) {
-            return;
-        }
         Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
         if (!(rules instanceof Map)) {
             return;

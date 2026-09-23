@@ -27,11 +27,9 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 
 /**
  * A framework resource that <b>selects</b> a concrete chat model for a request. It does not call
@@ -63,6 +61,9 @@ public class ModelRouter extends Resource {
     /** Descriptor key carrying the custom executor class name ({@code CUSTOM} only). */
     public static final String STRATEGY_EXECUTOR_CLASS_KEY = "strategy_executor_class";
 
+    /** Descriptor argument naming the candidate the router lands on when the strategy abstains. */
+    public static final String DEFAULT_MODEL_KEY = "default_model";
+
     private final List<RoutingCandidate> candidates;
     private final String defaultModel;
     private final boolean fallbackEnabled;
@@ -72,28 +73,16 @@ public class ModelRouter extends Resource {
             throws Exception {
         super(descriptor, resourceContext);
         List<String> names = descriptor.getArgument(CANDIDATES_KEY);
-        if (names == null || names.isEmpty()) {
-            throw new IllegalArgumentException("ModelRouter requires at least one candidate.");
-        }
+        String defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
+        RoutingCandidateValidator.validate("ModelRouter", names, defaultModel);
         Map<String, String> descriptions =
                 descriptor.getArgument("candidate_descriptions", Collections.emptyMap());
         List<RoutingCandidate> parsed = new ArrayList<>();
-        Set<String> uniqueNames = new LinkedHashSet<>();
         for (String name : names) {
-            if (!uniqueNames.add(name)) {
-                throw new IllegalArgumentException(
-                        String.format("ModelRouter candidate '%s' is duplicated.", name));
-            }
             parsed.add(new RoutingCandidate(name, descriptions.get(name)));
         }
         this.candidates = Collections.unmodifiableList(parsed);
-        this.defaultModel = descriptor.getArgument("default_model");
-        if (this.defaultModel != null && !isCandidate(this.defaultModel)) {
-            throw new IllegalArgumentException(
-                    String.format(
-                            "ModelRouter default model '%s' is not one of the candidates %s.",
-                            this.defaultModel, getCandidateNames()));
-        }
+        this.defaultModel = defaultModel;
         this.fallbackEnabled =
                 Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
         String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);
@@ -208,10 +197,21 @@ public class ModelRouter extends Resource {
             return this;
         }
 
+        /**
+         * Builds the descriptor to register after checking the declaration.
+         *
+         * @throws IllegalStateException if no strategy was set
+         * @throws IllegalArgumentException if the candidate list is empty, a candidate name is
+         *     empty or duplicated, the default model is not a candidate, or a rule key is not a
+         *     candidate
+         */
         public ResourceDescriptor build() {
             if (strategy == null) {
                 throw new IllegalStateException("ModelRouter requires a strategy(...).");
             }
+            // Same check as the constructor: a duplicate or blank candidate, or a default model
+            // that is not a candidate, fails at the registration call site.
+            RoutingCandidateValidator.validate("ModelRouter", candidates, defaultModel);
             // Rule shape/pattern validation ran in the RoutingStrategy constructor (the single
             // declaration-validation path). build() additionally checks rule keys against the
             // candidate set so a typo fails at the registration call site; descriptors that skip
@@ -237,7 +237,7 @@ public class ModelRouter extends Resource {
                 args.put("candidate_descriptions", new HashMap<>(descriptions));
             }
             if (defaultModel != null) {
-                args.put("default_model", defaultModel);
+                args.put(DEFAULT_MODEL_KEY, defaultModel);
             }
             args.put("fallback", fallback);
             args.put(STRATEGY_TYPE_KEY, strategy.getType().tag());

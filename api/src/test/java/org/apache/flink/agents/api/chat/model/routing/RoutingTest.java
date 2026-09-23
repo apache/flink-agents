@@ -429,4 +429,63 @@ class RoutingTest {
         // The copy re-normalizes through the constructor, so strategies see an empty list.
         assertEquals(0, ctx.getMessages().get(0).getToolCalls().size());
     }
+
+    /**
+     * The builder is the registration call site: a duplicate candidate, a blank one, or a default
+     * model that is not a candidate must fail here, not in the router constructor on the
+     * TaskManager (the constructor runs inside the durable call, per routed request).
+     */
+    @Test
+    void builderRejectsDuplicateCandidate() {
+        IllegalArgumentException e =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                ModelRouter.of("small", "small")
+                                        .strategy(Strategies.rules(Map.of()))
+                                        .build());
+        assertTrue(e.getMessage().contains("duplicated"), e.getMessage());
+    }
+
+    @Test
+    void builderRejectsDefaultModelThatIsNotACandidate() {
+        IllegalArgumentException e =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                                ModelRouter.of("small", "big")
+                                        .strategy(Strategies.rules(Map.of()))
+                                        .defaultModel("huge")
+                                        .build());
+        assertTrue(e.getMessage().contains("huge"), e.getMessage());
+    }
+
+    @Test
+    void builderRequiresAtLeastOneCandidate() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ModelRouter.of().strategy(Strategies.rules(Map.of())).build());
+    }
+
+    @Test
+    void builderRejectsBlankCandidateName() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ModelRouter.of("small", "").strategy(Strategies.rules(Map.of())).build());
+    }
+
+    @Test
+    void routerConstructionRejectsBlankCandidateName() {
+        // A descriptor built outside the builder (e.g. deserialized) meets the same candidate
+        // check in the constructor.
+        Map<String, Object> args = new HashMap<>();
+        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", ""));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, Map.of()));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
+    }
 }
