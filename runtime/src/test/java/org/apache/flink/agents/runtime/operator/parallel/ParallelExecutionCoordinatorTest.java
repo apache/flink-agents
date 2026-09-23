@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator.parallel;
 
+import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -79,6 +80,35 @@ class ParallelExecutionCoordinatorTest {
             // finished on the mailbox thread; finishGroup receives the just-committed work as last.
             assertThat(events).containsExactly("execute-A", "restore-A", "commit-A", "finish-A->A");
             assertThat(coordinator.hasOutstanding(KEY)).isFalse();
+        }
+    }
+
+    @Test
+    @Timeout(15)
+    void workerRunsAsManagedAsyncExecutorThread() throws Exception {
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
+        List<String> events = Collections.synchronizedList(new ArrayList<>());
+        Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
+        AtomicBoolean managedWorker = new AtomicBoolean();
+
+        try (ParallelExecutionCoordinator coordinator = newCoordinator(lock, mails, works::poll)) {
+            works.add(
+                    FakeWork.blocking(
+                            "A",
+                            events,
+                            () ->
+                                    managedWorker.set(
+                                            AsyncExecutorThreadFactory.isAsyncExecutorThread())));
+            lock.acquireByMain();
+            coordinator.addTask(KEY);
+            lock.release();
+
+            runOneMail(mails);
+
+            assertThat(managedWorker)
+                    .as("parallel action workers must participate in managed-worker lifecycle")
+                    .isTrue();
         }
     }
 
@@ -568,8 +598,9 @@ class ParallelExecutionCoordinatorTest {
         CountDownLatch cStarted = new CountDownLatch(1);
         CountDownLatch dStarted = new CountDownLatch(1);
         CountDownLatch allowSecond = new CountDownLatch(1);
+        CountDownLatch idleWorkerCleanedUp = new CountDownLatch(1);
         try (ParallelExecutionCoordinator coordinator =
-                newCoordinator(2, 150L, lock, mails, works::poll)) {
+                newCoordinator(2, 150L, lock, mails, works::poll, idleWorkerCleanedUp::countDown)) {
             // Grow to the cap of 2.
             works.add(
                     FakeWork.blockingAsync(
@@ -606,6 +637,9 @@ class ParallelExecutionCoordinatorTest {
             // With nothing to do, the surplus thread times out and exits; the core thread does
             // not, even across several keep-alive periods.
             waitUntilPoolSize(coordinator, 1);
+            assertThat(idleWorkerCleanedUp.await(5, TimeUnit.SECONDS))
+                    .as("idle worker must run its exit cleanup before retiring")
+                    .isTrue();
             Thread.sleep(500L);
             assertThat(coordinator.getWorkerPoolSizeForTesting()).isEqualTo(1);
 
@@ -669,10 +703,22 @@ class ParallelExecutionCoordinatorTest {
             ParallelExecutionLock lock,
             BlockingQueue<ThrowingRunnable<? extends Exception>> mails,
             Supplier<ParallelExecutionTask> workFactory) {
+        return newCoordinator(
+                maxWorkers, workerIdleTimeoutMillis, lock, mails, workFactory, () -> {});
+    }
+
+    private static ParallelExecutionCoordinator newCoordinator(
+            int maxWorkers,
+            long workerIdleTimeoutMillis,
+            ParallelExecutionLock lock,
+            BlockingQueue<ThrowingRunnable<? extends Exception>> mails,
+            Supplier<ParallelExecutionTask> workFactory,
+            Runnable threadCleanup) {
         return new ParallelExecutionCoordinator(
                 lock,
                 (mail, description) -> mails.add(mail),
                 workFactory,
+                threadCleanup,
                 maxWorkers,
                 workerIdleTimeoutMillis);
     }

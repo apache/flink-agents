@@ -309,7 +309,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
         durableExecManager.initializeKeyedStates(getRuntimeContext());
 
-        // init context manager for runner context creation and memory contexts
         int numAsyncThreads = agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS);
         checkArgument(
                 numAsyncThreads > 0,
@@ -330,13 +329,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         agentPlan, ContinuationActionExecutor.isContinuationSupported());
         if (parallelExecutionWithoutCoroutineEnabled) {
             parallelExecutionLock = new ParallelExecutionLock();
-            executionCoordinator =
-                    new ParallelExecutionCoordinator(
-                            parallelExecutionLock,
-                            mailboxExecutor::execute,
-                            Work::new,
-                            numAsyncThreads,
-                            WORKER_IDLE_TIMEOUT_MS);
         } else {
             // JDK21 cooperative-continuation path: there is no worker pool and no lock. All
             // engine-shared sections (waitInFlightEventsFinished) must guard on the null lock.
@@ -360,6 +352,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         : this::checkMailboxThread,
                 jobIdentifier,
                 getRuntimeContext().getUserCodeClassLoader());
+
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            executionCoordinator =
+                    new ParallelExecutionCoordinator(
+                            parallelExecutionLock,
+                            mailboxExecutor::execute,
+                            Work::new,
+                            pythonBridge::releaseCurrentThreadInterpreter,
+                            numAsyncThreads,
+                            WORKER_IDLE_TIMEOUT_MS);
+        }
 
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
@@ -691,7 +694,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         eventRouter.processEligibleWatermarks(super::processWatermark);
         builtInMetrics.markInputRunCompleted(
                 lastCommitted.actionTask.getTraceContext().getInputRunId());
-        Event pendingInputEvent = stateManager.pollNextPendingInputEvent();
+        Event pendingInputEvent = pollNextPendingInputEvent();
         if (pendingInputEvent != null) {
             processInputEvent(key, pendingInputEvent);
         }
@@ -1334,7 +1337,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Nullable
     private ActionTask pollNextActionTask() throws Exception {
         ActionTask actionTask = stateManager.pollNextActionTask();
-        if (actionTask != null) {
+        if (actionTask != null && !isInternalNoopInputAction(actionTask.action)) {
             builtInMetrics.markActionTaskDequeued(
                     actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
         }
@@ -1462,7 +1465,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // taskIndex keeps the (taskIndex, task) binding correct across concurrent workers.
                 // createAndSetRunnerContext already binds the context on this thread.
                 setCurrentKey(key);
-                ActionTask task = stateManager.pollNextActionTask();
+                ActionTask task = pollNextActionTask();
                 checkState(task != null, "Action task queue was empty.");
 
                 contextManager.createAndSetRunnerContext(

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.runtime.operator.parallel;
 
+import org.apache.flink.agents.runtime.async.AsyncExecutorThreadFactory;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
@@ -50,6 +51,7 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
 
     private final ParallelExecutionTaskQueue schedule;
     private final ParallelExecutionLock parallelExecutionLock;
+    private final AsyncExecutorThreadFactory workerThreadFactory;
     private final ThreadPoolExecutor workerExecutor;
     private final MailboxDispatcher mailboxDispatcher;
 
@@ -75,19 +77,23 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
 
     /**
      * Creates a coordinator with an elastic worker pool: one resident thread, on-demand growth up
-     * to {@code maxWorkers}, and idle retirement after {@code workerIdleTimeoutMillis}. Admission
-     * is not gated here; the operator bounds outstanding work via input-record backpressure.
+     * to {@code maxWorkers}, and idle retirement after {@code workerIdleTimeoutMillis}. Every
+     * worker participates in the managed async lifecycle and runs {@code threadCleanup} when it
+     * retires or the pool shuts down. Admission is not gated here; the operator bounds outstanding
+     * work via input-record backpressure.
      */
     public ParallelExecutionCoordinator(
             ParallelExecutionLock parallelExecutionLock,
             MailboxDispatcher mailboxDispatcher,
             Supplier<ParallelExecutionTask> workFactory,
+            Runnable threadCleanup,
             int maxWorkers,
             long workerIdleTimeoutMillis) {
         this.parallelExecutionLock = checkNotNull(parallelExecutionLock);
         this.schedule = new ParallelExecutionTaskQueue(parallelExecutionLock);
         this.mailboxDispatcher = checkNotNull(mailboxDispatcher);
         this.workFactory = checkNotNull(workFactory);
+        this.workerThreadFactory = new AsyncExecutorThreadFactory(checkNotNull(threadCleanup));
         DispatchQueue dispatchQueue = new DispatchQueue();
         this.workerExecutor =
                 new ThreadPoolExecutor(
@@ -96,6 +102,7 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                         workerIdleTimeoutMillis,
                         TimeUnit.MILLISECONDS,
                         dispatchQueue,
+                        workerThreadFactory,
                         (permit, pool) -> {
                             // Only reachable when offer() returned false to grow the pool but the
                             // addWorker race was lost (already at max), or during shutdown.
@@ -245,8 +252,9 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
         // Wait for in-flight workers to terminate before the caller releases resources they may
         // still be using. Interrupts are re-issued each round: a worker may block on the lock
         // (e.g. a sticky main-grant nobody consumes while the mailbox waits here) only AFTER the
-        // first interrupt was delivered, so a single shutdownNow is not enough. Bounded: workers
-        // running user code may ignore the interrupt.
+        // first interrupt was delivered, so a single shutdownNow is not enough. Waiting for worker
+        // execution is bounded because user code may ignore the interrupt; once the executor has
+        // terminated, wait for every worker's exit cleanup before returning.
         long deadlineNanos =
                 System.nanoTime() + TimeUnit.SECONDS.toNanos(WORKER_TERMINATION_TIMEOUT_SECONDS);
         try {
@@ -254,7 +262,12 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 workerExecutor.shutdownNow();
             } while (!workerExecutor.awaitTermination(1, TimeUnit.SECONDS)
                     && System.nanoTime() < deadlineNanos);
-            if (!workerExecutor.isTerminated()) {
+            if (workerExecutor.isTerminated()) {
+                // ThreadPoolExecutor may signal termination before the ThreadFactory wrapper has
+                // run its exit cleanup. Join the already-terminating workers before resources used
+                // by that cleanup are closed by the operator.
+                workerThreadFactory.awaitThreadExit();
+            } else {
                 LOG.warn(
                         "Worker pool did not terminate within {}s; proceeding with close.",
                         WORKER_TERMINATION_TIMEOUT_SECONDS);
