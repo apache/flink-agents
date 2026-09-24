@@ -35,6 +35,7 @@ class ExecutionEntityTypes:
     LLM = "llm"
     PARSER = "parser"
     TOOL = "tool"
+    SUBAGENT = "subagent"
 
 
 class ExecutionProblemCategories:

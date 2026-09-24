@@ -36,6 +36,7 @@ public interface ExecutionReporter {
         public static final String LLM = "llm";
         public static final String PARSER = "parser";
         public static final String TOOL = "tool";
+        public static final String SUBAGENT = "subagent";
 
         private EntityTypes() {}
     }
