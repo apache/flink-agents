@@ -314,7 +314,8 @@ async def _execute_parallel(
     try:
         futures = [
             ctx.durable_execute_async(
-                execution.func, *execution.args, **execution.kwargs
+                execution.func, *execution.args, **execution.kwargs,
+                durable_id="tool-call:" + execution.id,
             )
             for execution in tool_executions
         ]
@@ -358,12 +359,14 @@ async def _execute_sequentially(
                     execution.func,
                     *execution.args,
                     **execution.kwargs,
+                    durable_id="tool-call:" + execution.id,
                 )
             else:
                 response = ctx.durable_execute(
                     execution.func,
                     *execution.args,
                     **execution.kwargs,
+                    durable_id="tool-call:" + execution.id,
                 )
             result_observed_at = datetime.now(timezone.utc)
             outcome = Outcome.success(response)
