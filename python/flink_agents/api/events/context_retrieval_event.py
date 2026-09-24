@@ -43,7 +43,21 @@ class ContextRetrievalRequestEvent(Event):
     EVENT_TYPE: ClassVar[str] = "_context_retrieval_request_event"
 
     def __init__(self, query: str, vector_store: str, max_results: int = 3) -> None:
-        """Create a ContextRetrievalRequestEvent."""
+        """Create a ContextRetrievalRequestEvent.
+
+        Args:
+        ----
+        query: The search query text to find relevant context for.
+        vector_store: Name of the vector store setup resource to use.
+        max_results: Maximum number of results to return (default: 3). Must be positive.
+
+        Raises:
+        ------
+        ValueError: If `max_results` is not positive.
+        """
+        if max_results <= 0:
+            msg = f"`max_results` must be positive, but was {max_results}."
+            raise ValueError(msg)
         super().__init__(
             type=ContextRetrievalRequestEvent.EVENT_TYPE,
             attributes={

@@ -37,8 +37,20 @@ public class ContextRetrievalRequestEvent extends Event {
         this(query, vectorStore, DEFAULT_MAX_RESULTS);
     }
 
+    /**
+     * Creates a new context retrieval request event.
+     *
+     * @param query the search query text
+     * @param vectorStore the name of the vector store to query
+     * @param maxResults the maximum number of results to return; must be positive
+     * @throws IllegalArgumentException if {@code maxResults} is non-positive
+     */
     public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
         super(EVENT_TYPE);
+        if (maxResults <= 0) {
+            throw new IllegalArgumentException(
+                    String.format("`max_results` must be positive, but was %d.", maxResults));
+        }
         setAttr("query", query);
         setAttr("vector_store", vectorStore);
         setAttr("max_results", maxResults);
