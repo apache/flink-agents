@@ -68,7 +68,7 @@ def _expected_durable_function_id(
     tenant_id: str = "tenant-1",
 ) -> str:
     tool = _query_order_tool()
-    function_id, _ = durable_identity_for_call(
+    function_id = durable_identity_for_call(
         tool.call,
         (),
         {"order_id": order_id, "tenant_id": tenant_id},
@@ -138,10 +138,12 @@ class _Context:
 
     def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_calls.append((func, args, kwargs))
+        kwargs.pop("durable_id", None)
         return func(*args, **kwargs)
 
     def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_async_calls.append((func, args, kwargs))
+        kwargs.pop("durable_id", None)
 
         async def execute() -> Any:
             return func(*args, **kwargs)
@@ -402,13 +404,12 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     }
     assert response.success == {"call-1": True, "call-2": True}
     assert len(ctx.gather_calls) == 1
-    expected_id = _expected_durable_function_id("order-call-1")
     assert [
-        durable_identity_for_call(func, args, kwargs)[0]
+        durable_identity_for_call(func, args, kwargs)
         for func, args, kwargs in ctx.gather_calls[0]
     ] == [
-        expected_id,
-        expected_id,
+        _expected_durable_function_id("order-call-1"),
+        _expected_durable_function_id("order-call-2"),
     ]
     assert len(ctx.durable_execute_async_calls) == 2
 

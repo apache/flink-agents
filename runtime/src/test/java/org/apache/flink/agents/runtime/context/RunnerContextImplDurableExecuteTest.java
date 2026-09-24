@@ -107,7 +107,7 @@ class RunnerContextImplDurableExecuteTest {
     @Test
     void testDurableExecuteCompletionOnlyReExecutesPendingSlotDoesNotPersistInterruption() {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        actionState.addCallResult(CallResult.pending("tool-call"));
         RunnerContextImpl context = createContext(actionState);
         TestDurableCallable<String> callable =
                 new TestDurableCallable<>(
@@ -246,7 +246,7 @@ class RunnerContextImplDurableExecuteTest {
     void testDurableExecuteReconcilableReplaySuccess() throws Exception {
         ActionState actionState = new ActionState(null);
         actionState.addCallResult(
-                new CallResult("recon-call", "", OBJECT_MAPPER.writeValueAsBytes("cached")));
+                new CallResult("recon-call", OBJECT_MAPPER.writeValueAsBytes("cached")));
         RunnerContextImpl context = createContext(actionState);
         TestReconcilableCallable<String> callable =
                 new TestReconcilableCallable<>(
@@ -270,7 +270,6 @@ class RunnerContextImplDurableExecuteTest {
         actionState.addCallResult(
                 new CallResult(
                         "recon-call",
-                        "",
                         null,
                         OBJECT_MAPPER.writeValueAsBytes(
                                 RunnerContextImpl.DurableExecutionException.fromException(
@@ -296,7 +295,7 @@ class RunnerContextImplDurableExecuteTest {
     @Test
     void testDurableExecuteReconcilableReconcileSuccess() throws Exception {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("recon-call", ""));
+        actionState.addCallResult(CallResult.pending("recon-call"));
         RunnerContextImpl context = createContext(actionState);
         TestReconcilableCallable<String> callable =
                 new TestReconcilableCallable<>(
@@ -320,7 +319,7 @@ class RunnerContextImplDurableExecuteTest {
     @Test
     void testDurableExecuteReconcilableReconcileExceptionPersistsFailure() throws Exception {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("recon-call", ""));
+        actionState.addCallResult(CallResult.pending("recon-call"));
         RunnerContextImpl context = createContext(actionState);
         IllegalStateException failure = new IllegalStateException("reconcile unavailable");
         TestReconcilableCallable<String> callable =
@@ -348,7 +347,7 @@ class RunnerContextImplDurableExecuteTest {
     @Test
     void testDurableExecuteCompletionOnlyReExecutesPendingSlot() throws Exception {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        actionState.addCallResult(CallResult.pending("tool-call"));
         RunnerContextImpl context = createContext(actionState);
         TestDurableCallable<String> callable =
                 new TestDurableCallable<>("tool-call", String.class, () -> "recovered");
@@ -369,8 +368,8 @@ class RunnerContextImplDurableExecuteTest {
     void testDurableExecuteCompletionOnlyReExecutesPendingSlotAfterBatchReservation()
             throws Exception {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("tool-call", ""));
-        actionState.addCallResult(CallResult.pending("tool-call", ""));
+        actionState.addCallResult(CallResult.pending("tool-call"));
+        actionState.addCallResult(CallResult.pending("tool-call"));
         RunnerContextImpl context = createContext(actionState);
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("tool-call", String.class, () -> "one");
@@ -402,7 +401,7 @@ class RunnerContextImplDurableExecuteTest {
     @Test
     void testDurableExecuteReconcilableMismatchStartsNewCall() throws Exception {
         ActionState actionState = new ActionState(null);
-        actionState.addCallResult(CallResult.pending("stale-call", ""));
+        actionState.addCallResult(CallResult.pending("stale-call"));
         RunnerContextImpl context = createContext(actionState);
         TestReconcilableCallable<String> callable =
                 new TestReconcilableCallable<>(

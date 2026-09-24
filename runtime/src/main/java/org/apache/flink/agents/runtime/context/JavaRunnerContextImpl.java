@@ -94,21 +94,20 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             return executeAllWithoutDurableState(callables);
         }
 
-        String argsDigest = "";
         int base = durableExecutionContext.getCurrentCallIndex();
-        BatchExecutionPlan<T> plan = buildBatchExecutionPlan(callables, base, argsDigest);
+        BatchExecutionPlan<T> plan = buildBatchExecutionPlan(callables, base);
 
-        reservePendingBatchIfNeeded(callables, argsDigest, plan);
+        reservePendingBatchIfNeeded(callables, plan);
 
         BatchExecutionResult<T> executed = executeOutcomeSuppliers(plan.suppliers);
-        finalizeExecutedOutcomes(callables, base, argsDigest, plan, executed);
+        finalizeExecutedOutcomes(callables, base, plan, executed);
 
         advanceCallIndexBy(callables.size());
         return plan.outcomes;
     }
 
     private <T> BatchExecutionPlan<T> buildBatchExecutionPlan(
-            List<DurableCallable<T>> callables, int base, String argsDigest) throws Exception {
+            List<DurableCallable<T>> callables, int base) throws Exception {
         BatchExecutionPlan<T> plan = new BatchExecutionPlan<>(callables.size());
         for (int i = 0; i < callables.size(); i++) {
             DurableCallable<T> callable = callables.get(i);
@@ -118,7 +117,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                 addExecutableCall(plan, i, callable::call);
                 continue;
             }
-            if (!current.matches(callable.getId(), argsDigest)) {
+            if (!current.matches(callable.getId())) {
                 clearCallResultsFromAndPersist(base + i);
                 plan.needsReservation = true;
                 plan.executionStart = i;
@@ -134,7 +133,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             } else {
                 plan.outcomes.add(
                         readTerminalOutcomeAt(
-                                base + i, callable.getId(), argsDigest, callable.getResultClass()));
+                                base + i, callable.getId(), callable.getResultClass()));
             }
         }
         return plan;
@@ -163,24 +162,21 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     private <T> void reservePendingBatchIfNeeded(
-            List<DurableCallable<T>> callables, String argsDigest, BatchExecutionPlan<T> plan) {
+            List<DurableCallable<T>> callables, BatchExecutionPlan<T> plan) {
         if (!plan.needsReservation) {
             return;
         }
         List<String> ids = new ArrayList<>();
-        List<String> argsDigests = new ArrayList<>();
         for (DurableCallable<T> callable :
                 callables.subList(plan.executionStart, callables.size())) {
             ids.add(callable.getId());
-            argsDigests.add(argsDigest);
         }
-        reservePendingBatch(ids, argsDigests);
+        reservePendingBatch(ids);
     }
 
     private <T> void finalizeExecutedOutcomes(
             List<DurableCallable<T>> callables,
             int base,
-            String argsDigest,
             BatchExecutionPlan<T> plan,
             BatchExecutionResult<T> executed)
             throws Exception {
@@ -205,7 +201,6 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
                 finalizeCallAt(
                         base + callIndex,
                         callable.getId(),
-                        argsDigest,
                         serializeDurableResult(outcome.getValue()),
                         serializeDurableException(outcome.getError()));
             } catch (Exception e) {

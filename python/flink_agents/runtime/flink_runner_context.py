@@ -46,8 +46,6 @@ from flink_agents.api.runner_context import (
 )
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.runtime.durable_execution import (
-    _compute_args_digest,
-    _compute_function_id,
     _validate_reconciler_callable,
     durable_identity_for_call,
     with_durable_id,
@@ -118,7 +116,6 @@ class _AsyncExecutionResult:
 @dataclass(frozen=True)
 class _PersistedCallResult:
     function_id: str
-    args_digest: str
     status: str
     result_payload: bytes | None
     exception_payload: bytes | None
@@ -892,12 +889,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             A tuple of (is_hit, result_or_exception). If is_hit is True,
             the second element is the cached result or an exception to re-raise.
         """
-        function_id, args_digest = durable_identity_for_call(func, args, kwargs)
+        function_id = durable_identity_for_call(func, args, kwargs)
 
         cached_exception: BaseException | None = None
         try:
             cached = self._j_runner_context.matchNextOrClearSubsequentCallResult(
-                function_id, args_digest
+                function_id
             )
             if cached is not None:
                 is_hit, result_payload, exception_payload = cached
@@ -945,14 +942,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception : BaseException | None
             The exception raised by the function (None if successful).
         """
-        function_id, args_digest = durable_identity_for_call(func, args, kwargs)
+        function_id = durable_identity_for_call(func, args, kwargs)
 
         try:
             result_payload = None if exception else cloudpickle.dumps(result)
             exception_payload = cloudpickle.dumps(exception) if exception else None
 
             self._j_runner_context.recordCallCompletion(
-                function_id, args_digest, result_payload, exception_payload
+                function_id, result_payload, exception_payload
             )
         except Exception as e:
             # If Java method doesn't exist, silently ignore
@@ -973,10 +970,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         if current is None:
             return None
 
-        function_id, args_digest, status, result_payload, exception_payload = current
+        function_id, status, result_payload, exception_payload = current
         return _PersistedCallResult(
             function_id=function_id,
-            args_digest=args_digest,
             status=status,
             result_payload=bytes(result_payload)
             if result_payload is not None
@@ -991,10 +987,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         if current is None:
             return None
 
-        function_id, args_digest, status, result_payload, exception_payload = current
+        function_id, status, result_payload, exception_payload = current
         return _PersistedCallResult(
             function_id=function_id,
-            args_digest=args_digest,
             status=status,
             result_payload=bytes(result_payload)
             if result_payload is not None
@@ -1006,8 +1001,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def _append_pending_call(self, func: Callable, args: tuple, kwargs: dict) -> None:
         self._j_runner_context.appendPendingCall(
-            _compute_function_id(func),
-            _compute_args_digest(args, kwargs),
+            durable_identity_for_call(func, args, kwargs),
         )
 
     def _finalize_current_call(
@@ -1018,14 +1012,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         result: Any,
         exception: BaseException | None,
     ) -> None:
-        function_id, args_digest = durable_identity_for_call(func, args, kwargs)
+        function_id = durable_identity_for_call(func, args, kwargs)
         result_payload, exception_payload = self._serialize_call_payloads(
             result,
             exception,
         )
         self._j_runner_context.finalizeCurrentCall(
             function_id,
-            args_digest,
             result_payload,
             exception_payload,
         )
@@ -1047,7 +1040,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         reconciler: Callable[[], Any],
         kwargs: dict,
     ) -> _ReconcilerExecutionPlan:
-        function_id, args_digest = durable_identity_for_call(func, args, kwargs)
+        function_id = durable_identity_for_call(func, args, kwargs)
         current = self._peek_current_call_result()
         durable_call = partial(func, *args, **kwargs)
 
@@ -1058,7 +1051,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                 needs_append_pending=True,
             )
 
-        if current.function_id != function_id or current.args_digest != args_digest:
+        if current.function_id != function_id:
             return _ReconcilerExecutionPlan(
                 "execute",
                 callable=durable_call,
@@ -1092,12 +1085,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         args: tuple,
         kwargs: dict,
     ) -> bool:
-        function_id, args_digest = durable_identity_for_call(func, args, kwargs)
+        function_id = durable_identity_for_call(func, args, kwargs)
         current = self._peek_current_call_result()
         return (
             current is not None
             and current.function_id == function_id
-            and current.args_digest == args_digest
             and current.status == "PENDING"
         )
 
@@ -1199,14 +1191,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
         return wrapped_func
 
-    def _durable_identity(self, call: _DurableCall) -> tuple[str, str]:
+    def _durable_identity(self, call: _DurableCall) -> str:
         return durable_identity_for_call(call.func, call.args, call.kwargs)
 
     def _call_matches(
         self, current: _PersistedCallResult, call: _DurableCall
     ) -> bool:
-        function_id, args_digest = self._durable_identity(call)
-        return current.function_id == function_id and current.args_digest == args_digest
+        function_id = self._durable_identity(call)
+        return current.function_id == function_id
 
     def _read_terminal_outcome(self, current: _PersistedCallResult) -> Outcome:
         try:
@@ -1230,7 +1222,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         execution_start = -1
 
         for index, call in enumerate(calls):
-            function_id, args_digest = self._durable_identity(call)
+            function_id = self._durable_identity(call)
             current = self._read_call_result_at(base + index)
             if current is None:
                 needs_reservation = True
@@ -1269,12 +1261,10 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
         if needs_reservation:
             function_ids = []
-            args_digests = []
             for call in calls[execution_start:]:
-                function_id, args_digest = self._durable_identity(call)
+                function_id = self._durable_identity(call)
                 function_ids.append(function_id)
-                args_digests.append(args_digest)
-            self._j_runner_context.reservePendingBatch(function_ids, args_digests)
+            self._j_runner_context.reservePendingBatch(function_ids)
 
         return _BatchExecutionPlan(
             outcomes=outcomes,
@@ -1296,7 +1286,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             zip(plan.suppliers, executed, strict=True)
         ):
             call = calls[call_index]
-            function_id, args_digest = self._durable_identity(call)
+            function_id = self._durable_identity(call)
             if not started[i]:
                 outcomes[call_index] = outcome
                 continue
@@ -1308,7 +1298,6 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                 self._j_runner_context.finalizeCallAt(
                     base + call_index,
                     function_id,
-                    args_digest,
                     result_payload,
                     exception_payload,
                 )

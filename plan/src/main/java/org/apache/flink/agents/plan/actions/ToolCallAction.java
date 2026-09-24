@@ -61,7 +61,7 @@ import java.util.concurrent.CompletionException;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
-    static final String TOOL_CALL_DURABLE_ID = "tool-call";
+    static final String TOOL_CALL_DURABLE_ID = "tool-call:";
     private static final Logger LOG = LoggerFactory.getLogger(ToolCallAction.class);
 
     public static Action getToolCallAction() throws Exception {
@@ -214,7 +214,7 @@ public class ToolCallAction {
                     new DurableCallable<>() {
                         @Override
                         public String getId() {
-                            return TOOL_CALL_DURABLE_ID;
+                            return TOOL_CALL_DURABLE_ID + id;
                         }
 
                         @Override

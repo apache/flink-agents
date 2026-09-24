@@ -201,9 +201,8 @@ public class ActionStateSerdeTest {
         ActionState originalState = new ActionState(inputEvent);
 
         // Add call results
-        CallResult result1 = new CallResult("module.func1", "digest1", "result1".getBytes());
-        CallResult result2 =
-                new CallResult("module.func2", "digest2", null, "exception".getBytes());
+        CallResult result1 = new CallResult("module.func1", "result1".getBytes());
+        CallResult result2 = new CallResult("module.func2", null, "exception".getBytes());
         originalState.addCallResult(result1);
         originalState.addCallResult(result2);
 
@@ -216,14 +215,12 @@ public class ActionStateSerdeTest {
 
         CallResult deserializedResult1 = deserializedState.getCallResult(0);
         assertEquals("module.func1", deserializedResult1.getFunctionId());
-        assertEquals("digest1", deserializedResult1.getArgsDigest());
         assertArrayEquals("result1".getBytes(), deserializedResult1.getResultPayload());
         assertNull(deserializedResult1.getExceptionPayload());
         assertTrue(deserializedResult1.isSuccess());
 
         CallResult deserializedResult2 = deserializedState.getCallResult(1);
         assertEquals("module.func2", deserializedResult2.getFunctionId());
-        assertEquals("digest2", deserializedResult2.getArgsDigest());
         assertNull(deserializedResult2.getResultPayload());
         assertArrayEquals("exception".getBytes(), deserializedResult2.getExceptionPayload());
         assertTrue(deserializedResult2.isFailure());
@@ -233,7 +230,7 @@ public class ActionStateSerdeTest {
     public void testActionStateWithPendingCallResult() throws Exception {
         InputEvent inputEvent = new InputEvent("test input");
         ActionState originalState = new ActionState(inputEvent);
-        originalState.addCallResult(CallResult.pending("module.func", "digest"));
+        originalState.addCallResult(CallResult.pending("module.func"));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
         ActionState deserializedState = ActionStateSerde.deserialize(serialized);
@@ -280,8 +277,8 @@ public class ActionStateSerdeTest {
         // Create in-progress ActionState with call results (simulating partial execution)
         InputEvent inputEvent = new InputEvent("test input");
         List<CallResult> callResults = new ArrayList<>();
-        callResults.add(new CallResult("func1", "hash1", "result1".getBytes()));
-        callResults.add(new CallResult("func2", "hash2", "result2".getBytes()));
+        callResults.add(new CallResult("func1", "result1".getBytes()));
+        callResults.add(new CallResult("func2", "result2".getBytes()));
 
         ActionState originalState =
                 new ActionState(inputEvent, null, null, null, callResults, false);
@@ -293,8 +290,8 @@ public class ActionStateSerdeTest {
         // Verify state
         assertFalse(deserializedState.isCompleted());
         assertEquals(2, deserializedState.getCallResultCount());
-        assertTrue(deserializedState.getCallResult(0).matches("func1", "hash1"));
-        assertTrue(deserializedState.getCallResult(1).matches("func2", "hash2"));
+        assertTrue(deserializedState.getCallResult(0).matches("func1"));
+        assertTrue(deserializedState.getCallResult(1).matches("func2"));
     }
 
     @Test
@@ -302,7 +299,7 @@ public class ActionStateSerdeTest {
         // Test CallResult with null payloads
         InputEvent inputEvent = new InputEvent("test");
         ActionState originalState = new ActionState(inputEvent);
-        originalState.addCallResult(new CallResult("func", "digest", null, null));
+        originalState.addCallResult(new CallResult("func", null, null));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
         ActionState deserializedState = ActionStateSerde.deserialize(serialized);
@@ -310,7 +307,6 @@ public class ActionStateSerdeTest {
         assertEquals(1, deserializedState.getCallResultCount());
         CallResult result = deserializedState.getCallResult(0);
         assertEquals("func", result.getFunctionId());
-        assertEquals("digest", result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
         assertTrue(result.isSuccess());
@@ -333,7 +329,6 @@ public class ActionStateSerdeTest {
                         + "\"callResults\":["
                         + "{"
                         + "\"functionId\":\"legacy.success\","
-                        + "\"argsDigest\":\"digest-success\","
                         + "\"resultPayload\":\""
                         + legacySuccessPayload
                         + "\","
@@ -341,7 +336,6 @@ public class ActionStateSerdeTest {
                         + "},"
                         + "{"
                         + "\"functionId\":\"legacy.failure\","
-                        + "\"argsDigest\":\"digest-failure\","
                         + "\"resultPayload\":null,"
                         + "\"exceptionPayload\":\""
                         + legacyFailurePayload
