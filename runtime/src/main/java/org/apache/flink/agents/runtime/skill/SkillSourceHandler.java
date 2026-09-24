@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.runtime.skill;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+
 import java.io.IOException;
 import java.util.Map;
 
@@ -34,7 +36,9 @@ import java.util.Map;
 @FunctionalInterface
 public interface SkillSourceHandler {
 
-    SkillRepository open(Map<String, String> params, ClassLoader classLoader) throws IOException;
+    SkillRepository open(
+            Map<String, String> params, ClassLoader classLoader, ReadableConfiguration config)
+            throws IOException;
 
     /**
      * Human-readable description of the source location, embedded in {@link SkillOrigin} for

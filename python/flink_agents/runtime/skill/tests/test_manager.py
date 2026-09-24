@@ -339,7 +339,7 @@ class TestSkillManagerMixedSources:
 
         counter = {"n": 0}
 
-        def opener(params) -> SkillRepository:
+        def opener(params, cfg=None) -> SkillRepository:
             counter["n"] += 1
             return FakeRepo(counter["n"])
 
@@ -389,7 +389,7 @@ class TestSkillManagerMixedSources:
 
         counter = {"n": 0}
 
-        def opener(params) -> SkillRepository:
+        def opener(params, cfg=None) -> SkillRepository:
             counter["n"] += 1
             if counter["n"] == 2:
                 msg = "boom"
@@ -439,7 +439,7 @@ class TestSkillManagerMixedSources:
 
         counter = {"n": 0}
 
-        def opener(params) -> SkillRepository:
+        def opener(params, cfg=None) -> SkillRepository:
             counter["n"] += 1
             if counter["n"] == 2:
                 msg = "corrupt archive"
@@ -495,7 +495,7 @@ class TestSkillManagerMixedSources:
 
         counter = {"n": 0}
 
-        def opener(params) -> SkillRepository:
+        def opener(params, cfg=None) -> SkillRepository:
             counter["n"] += 1
             return FakeRepo(f"skill-{counter['n']}", boom=counter["n"] == 2)
 

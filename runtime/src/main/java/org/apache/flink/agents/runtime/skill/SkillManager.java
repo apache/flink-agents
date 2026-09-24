@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.skill;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.util.ExceptionUtils;
@@ -52,6 +53,7 @@ public class SkillManager implements AutoCloseable {
 
     private final Skills config;
     private final ClassLoader classLoader;
+    private final ReadableConfiguration agentConfig;
     private final Map<String, AgentSkill> skills = new LinkedHashMap<>();
     private final Map<String, SkillRepository> repos = new HashMap<>();
 
@@ -70,8 +72,13 @@ public class SkillManager implements AutoCloseable {
      * {@link #SkillManager(Skills)}.
      */
     public SkillManager(Skills config, ClassLoader classLoader) {
+        this(config, classLoader, null);
+    }
+
+    public SkillManager(Skills config, ClassLoader classLoader, ReadableConfiguration agentConfig) {
         this.config = config;
         this.classLoader = classLoader;
+        this.agentConfig = agentConfig;
         loadAll();
     }
 
@@ -82,7 +89,7 @@ public class SkillManager implements AutoCloseable {
      * the user-code loader (e.g. Python interpreter or async-pool threads).
      */
     public SkillManager(Skills config) {
-        this(config, Thread.currentThread().getContextClassLoader());
+        this(config, Thread.currentThread().getContextClassLoader(), null);
     }
 
     public int size() {
@@ -167,7 +174,7 @@ public class SkillManager implements AutoCloseable {
                     origin = originOf(spec);
                     SkillRepository repo =
                             SkillSourceRegistry.get(spec.getScheme())
-                                    .open(spec.getParams(), classLoader);
+                                    .open(spec.getParams(), classLoader, agentConfig);
                     openedRepos.add(repo);
                     registerRepo(repo, origin);
                 } catch (IOException | IllegalArgumentException e) {

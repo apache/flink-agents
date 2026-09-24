@@ -180,4 +180,23 @@ public class AgentConfigOptions {
     @SuppressWarnings({"unchecked", "rawtypes"})
     public static final ConfigOption<List<String>> EVENT_LISTENERS =
             (ConfigOption) new ConfigOption<>("event-listeners", List.class, null);
+
+    /** Maximum bytes to download for a skill archive. */
+    public static final ConfigOption<Long> SKILL_SOURCE_URL_MAX_DOWNLOAD_BYTES =
+            new ConfigOption<>(
+                    "skill.source.url.max-download-bytes", Long.class, 64L * 1024 * 1024);
+
+    /** Maximum uncompressed bytes per entry when extracting a skill archive. */
+    public static final ConfigOption<Long> SKILL_SOURCE_URL_MAX_EXTRACT_ENTRY_BYTES =
+            new ConfigOption<>(
+                    "skill.source.url.max-extract-entry-bytes", Long.class, 64L * 1024 * 1024);
+
+    /** Maximum total uncompressed bytes when extracting a skill archive. */
+    public static final ConfigOption<Long> SKILL_SOURCE_URL_MAX_EXTRACT_TOTAL_BYTES =
+            new ConfigOption<>(
+                    "skill.source.url.max-extract-total-bytes", Long.class, 256L * 1024 * 1024);
+
+    /** Maximum number of entries to extract from a skill archive. */
+    public static final ConfigOption<Integer> SKILL_SOURCE_URL_MAX_EXTRACT_ENTRIES =
+            new ConfigOption<>("skill.source.url.max-extract-entries", Integer.class, 1_000);
 }

@@ -209,7 +209,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         resourceCache =
                 new ResourceCache(
                         agentPlan.getResourceProviders(),
-                        getRuntimeContext().getUserCodeClassLoader());
+                        getRuntimeContext().getUserCodeClassLoader(),
+                        agentPlan.getConfig());
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics =

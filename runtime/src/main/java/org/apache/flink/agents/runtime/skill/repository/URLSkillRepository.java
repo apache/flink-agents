@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.skill.repository;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.skills.SkillUrlUtils;
 
 import javax.annotation.Nullable;
@@ -54,7 +55,22 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
 
     public URLSkillRepository(String url, @Nullable String sha256, boolean allowInsecureHttp)
             throws IOException {
-        super(materialize(url, sha256, allowInsecureHttp));
+        super(materialize(url, sha256, allowInsecureHttp, SkillMaterializer.Limits.DEFAULT));
+        this.url = url;
+    }
+
+    public URLSkillRepository(
+            String url,
+            @Nullable String sha256,
+            boolean allowInsecureHttp,
+            ReadableConfiguration config)
+            throws IOException {
+        super(
+                materialize(
+                        url,
+                        sha256,
+                        allowInsecureHttp,
+                        SkillMaterializer.Limits.fromConfig(config)));
         this.url = url;
     }
 
@@ -63,7 +79,11 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
     }
 
     private static SkillMaterializer.Materialized materialize(
-            String url, @Nullable String sha256, boolean allowInsecureHttp) throws IOException {
+            String url,
+            @Nullable String sha256,
+            boolean allowInsecureHttp,
+            SkillMaterializer.Limits limits)
+            throws IOException {
         SkillUrlUtils.validate(url, allowInsecureHttp);
         String normalizedSha256 = sha256 == null ? null : sha256.toLowerCase(Locale.ROOT);
         if (normalizedSha256 != null && !SHA256_PATTERN.matcher(normalizedSha256).matches()) {
@@ -71,7 +91,8 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
                     "sha256 must contain exactly 64 hexadecimal characters");
         }
         Path tmpZip =
-                SkillMaterializer.downloadToTempFile(url, REQUEST_TIMEOUT_MS, allowInsecureHttp);
+                SkillMaterializer.downloadToTempFile(
+                        url, REQUEST_TIMEOUT_MS, allowInsecureHttp, limits);
         try {
             if (normalizedSha256 != null) {
                 String actual = sha256(tmpZip);
@@ -85,7 +106,7 @@ public final class URLSkillRepository extends AbstractMaterializedSkillRepositor
                                     + actual);
                 }
             }
-            return SkillMaterializer.extractZipSafely(tmpZip);
+            return SkillMaterializer.extractZipSafely(tmpZip, limits);
         } finally {
             Files.deleteIfExists(tmpZip);
         }

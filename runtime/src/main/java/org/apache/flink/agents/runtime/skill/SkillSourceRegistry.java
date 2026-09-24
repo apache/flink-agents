@@ -18,11 +18,14 @@
 
 package org.apache.flink.agents.runtime.skill;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
 
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeSet;
@@ -44,20 +47,29 @@ public final class SkillSourceRegistry {
     static {
         register(
                 "local",
-                (params, cl) -> new FileSystemSkillRepository(require(params, "local", "path")),
+                (params, cl, cfg) ->
+                        new FileSystemSkillRepository(
+                                Path.of(require(params, "local", "path")), cfg),
                 params -> params.getOrDefault("path", ""));
         register(
                 "url",
-                (params, cl) ->
+                (params, cl, cfg) ->
                         new URLSkillRepository(
                                 require(params, "url", "url"),
                                 params.get("sha256"),
                                 Boolean.parseBoolean(
-                                        params.getOrDefault("allow_insecure_http", "false"))),
+                                        params.getOrDefault("allow_insecure_http", "false")),
+                                cfg),
                 params -> SkillUrlUtils.redact(params.get("url")));
+        // Note: cfg is intentionally not forwarded to ClasspathSkillRepository.
+        // Classpath resources are bundled with the job JAR at build time and are
+        // therefore trusted — they are not downloaded from attacker-controlled URLs
+        // at runtime. The URL-source size limits (Limits.fromConfig) are designed
+        // to protect against zip-bomb / download-bomb attacks on externally fetched
+        // archives; they do not apply to classpath-packaged skills.
         register(
                 "classpath",
-                (params, cl) ->
+                (params, cl, cfg) ->
                         new ClasspathSkillRepository(require(params, "classpath", "resource"), cl),
                 params -> params.getOrDefault("resource", ""));
     }
@@ -89,9 +101,12 @@ public final class SkillSourceRegistry {
                 scheme,
                 new SkillSourceHandler() {
                     @Override
-                    public SkillRepository open(Map<String, String> params, ClassLoader cl)
-                            throws java.io.IOException {
-                        return handler.open(params, cl);
+                    public SkillRepository open(
+                            Map<String, String> params,
+                            ClassLoader cl,
+                            ReadableConfiguration config)
+                            throws IOException {
+                        return handler.open(params, cl, config);
                     }
 
                     @Override

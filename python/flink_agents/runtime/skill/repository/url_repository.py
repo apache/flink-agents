@@ -28,8 +28,10 @@ import re
 
 from flink_agents.api.skills import redact_skill_url, validate_skill_url
 from flink_agents.runtime.skill.repository._materialize import (
+    DEFAULT_LIMITS,
     download_to_tempfile,
     extract_zip_safely,
+    limits_from_config,
 )
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
@@ -53,6 +55,7 @@ class URLSkillRepository(MaterializedSkillRepository):
         *,
         sha256: str | None = None,
         allow_insecure_http: bool = False,
+        config: object = None,
     ) -> None:
         """Download and extract the zip at ``url``.
 
@@ -71,11 +74,13 @@ class URLSkillRepository(MaterializedSkillRepository):
             msg = "sha256 must contain exactly 64 hexadecimal characters"
             raise ValueError(msg)
 
+        limits = limits_from_config(config) if config is not None else DEFAULT_LIMITS
         self._url = url
         tmp_zip = download_to_tempfile(
             url,
             timeout=_REQUEST_TIMEOUT_SEC,
             allow_insecure_http=allow_insecure_http,
+            limits=limits,
         )
         try:
             if normalized_sha256 is not None:
@@ -91,7 +96,7 @@ class URLSkillRepository(MaterializedSkillRepository):
                         f"{normalized_sha256}, got {actual}"
                     )
                     raise ValueError(msg)
-            materialization = extract_zip_safely(tmp_zip)
+            materialization = extract_zip_safely(tmp_zip, limits=limits)
         finally:
             tmp_zip.unlink(missing_ok=True)
         super().__init__(materialization)

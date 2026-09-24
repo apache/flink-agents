@@ -422,7 +422,7 @@ public class ResourceCacheTest {
         List<RecordingRepo> ordered = List.of(failing, surviving);
         SkillSourceRegistry.register(
                 "test-resource-cache-close-error",
-                (params, cl) -> ordered.get(seq.getAndIncrement()));
+                (params, cl, cfg) -> ordered.get(seq.getAndIncrement()));
         Skills skills =
                 new Skills(
                         List.of(
