@@ -94,6 +94,17 @@ public class AgentConfigOptions {
     public static final ConfigOption<Boolean> KAFKA_ACTION_STATE_TOMBSTONE_ENABLED =
             new ConfigOption<>("kafkaActionStateTombstoneEnabled", Boolean.class, false);
 
+    /**
+     * The separate, single-partition Kafka topic that stores committed checkpoint-aligned cleanup
+     * boundaries. It must use {@code cleanup.policy=compact} without delete retention. Setting this
+     * option enables boundary enforcement during recovery. It must not be the action-state data
+     * topic, and it must be dedicated to one job's recovery history. The action-state data topic
+     * must use {@code cleanup.policy=compact,delete}, {@code retention.ms=-1}, and {@code
+     * retention.bytes=-1} so only reviewed cleanup plans advance its prefix.
+     */
+    public static final ConfigOption<String> KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC =
+            new ConfigOption<>("kafkaActionStateCleanupControlTopic", String.class, null);
+
     /** The config parameter specifies the Fluss bootstrap servers. */
     public static final ConfigOption<String> FLUSS_BOOTSTRAP_SERVERS =
             new ConfigOption<>("flussBootstrapServers", String.class, "localhost:9123");
