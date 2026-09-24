@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
@@ -497,6 +498,17 @@ class ToolCallActionSubagentTest {
                                 Map.of("name", secondTool, "arguments", Map.of("q", "y")))));
     }
 
+    /**
+     * Builds a metadata-only descriptor naming {@code concreteClass}, so each in-process double
+     * carries a descriptor naming its own type as the {@link SubagentSetup} constructor requires.
+     */
+    private static ResourceDescriptor subagentDescriptor(
+            Class<?> concreteClass, String description) {
+        return ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                .addInitialArgument(SubagentSetup.FIELD_DESCRIPTION, description)
+                .build();
+    }
+
     /** Captures every prompt it is handed and resolves to a preset outcome. */
     private static class RecordingSubagentSetup extends SubagentSetup {
         private final SubagentResult outcome;
@@ -504,7 +516,11 @@ class ToolCallActionSubagentTest {
         private Exception submitFailure;
 
         RecordingSubagentSetup(SubagentResult outcome) {
-            super("Reviews a diff.");
+            this(subagentDescriptor(RecordingSubagentSetup.class, "Reviews a diff."), outcome);
+        }
+
+        RecordingSubagentSetup(ResourceDescriptor descriptor, SubagentResult outcome) {
+            super(descriptor, null);
             this.outcome = outcome;
         }
 
@@ -534,7 +550,9 @@ class ToolCallActionSubagentTest {
     /** Declares a result type, so its result is read through it. */
     private static class TypedRecordingSubagentSetup extends RecordingSubagentSetup {
         TypedRecordingSubagentSetup(SubagentResult outcome) {
-            super(outcome);
+            super(
+                    subagentDescriptor(TypedRecordingSubagentSetup.class, "Reviews a diff."),
+                    outcome);
         }
 
         @Override
@@ -602,7 +620,7 @@ class ToolCallActionSubagentTest {
         private final List<String> ops;
 
         OrderRecordingSubagentSetup(String label, List<String> ops) {
-            super("Orders a diff.");
+            super(subagentDescriptor(OrderRecordingSubagentSetup.class, "Orders a diff."), null);
             this.label = label;
             this.ops = ops;
         }
@@ -664,7 +682,9 @@ class ToolCallActionSubagentTest {
         private final List<String> ops;
 
         InterruptingSubagentSetup(String label, List<String> ops) {
-            super("Interrupts on await.");
+            super(
+                    subagentDescriptor(InterruptingSubagentSetup.class, "Interrupts on await."),
+                    null);
             this.label = label;
             this.ops = ops;
         }
@@ -723,7 +743,7 @@ class ToolCallActionSubagentTest {
     /** Its await overflows the stack, to drive the {@link StackOverflowError} absorption path. */
     private static class OverflowingSubagentSetup extends SubagentSetup {
         OverflowingSubagentSetup() {
-            super("Overflows on await.");
+            super(subagentDescriptor(OverflowingSubagentSetup.class, "Overflows on await."), null);
         }
 
         @Override

@@ -138,11 +138,30 @@ class BaseChatModelSetupSubagentTest {
         private static final long serialVersionUID = 1L;
 
         StubSubagentSetup(String description) {
-            super(description);
+            this(description, null);
         }
 
         StubSubagentSetup(String description, String inputSchema) {
-            super(description, inputSchema);
+            this(metadataDescriptor(StubSubagentSetup.class, description, inputSchema), null);
+        }
+
+        StubSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        /**
+         * Builds the metadata-only descriptor naming {@code concreteClass}, so a subclass that adds
+         * no configuration of its own still carries a descriptor naming its own concrete type.
+         */
+        static ResourceDescriptor metadataDescriptor(
+                Class<?> concreteClass, String description, String inputSchema) {
+            ResourceDescriptor.Builder builder =
+                    ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                            .addInitialArgument(FIELD_DESCRIPTION, description);
+            if (inputSchema != null) {
+                builder.addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema);
+            }
+            return builder.build();
         }
 
         @Override
@@ -168,7 +187,7 @@ class BaseChatModelSetupSubagentTest {
         private static final long serialVersionUID = 1L;
 
         TypedStubSubagentSetup(String description) {
-            super(description);
+            super(metadataDescriptor(TypedStubSubagentSetup.class, description, null), null);
         }
 
         @Override
