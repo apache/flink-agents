@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.plan.actions;
 
-import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
@@ -75,7 +74,6 @@ class ChatModelInvokerTest {
                                 Map.of(),
                                 null,
                                 ctx,
-                                Agent.ErrorHandlingStrategy.RETRY,
                                 3,
                                 0));
 
@@ -83,6 +81,79 @@ class ChatModelInvokerTest {
         // after a cancellation interrupts the call.
         verify(ctx, times(1)).durableExecute(any());
         assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
+    }
+
+    @Test
+    void durableInfrastructureFailureIsNotRetriedOrConverted() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+        IllegalStateException failure = new IllegalStateException("state persistence failed");
+        when(ctx.durableExecute(any())).thenThrow(failure);
+        org.junit.jupiter.api.Assertions.assertSame(
+                failure,
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(),
+                                        Map.of(),
+                                        null,
+                                        ctx,
+                                        3,
+                                        0)));
+        verify(ctx, times(1)).durableExecute(any());
+    }
+
+    @Test
+    void providerFailureReplaysFromSerializedOutcome() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+        when(model.chat(any(), any(), any()))
+                .thenThrow(new IllegalArgumentException("invalid model"));
+        com.fasterxml.jackson.databind.ObjectMapper mapper =
+                new com.fasterxml.jackson.databind.ObjectMapper();
+        byte[][] stored = new byte[1][];
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        inv -> {
+                            org.apache.flink.agents.api.context.DurableCallable<?> callable =
+                                    inv.getArgument(0);
+                            if (stored[0] == null) {
+                                stored[0] = mapper.writeValueAsBytes(callable.call());
+                            }
+                            return mapper.readValue(stored[0], callable.getResultClass());
+                        });
+        for (int replay = 0; replay < 2; replay++) {
+            ChatModelInvoker.ChatAttemptFailed failure =
+                    assertThrows(
+                            ChatModelInvoker.ChatAttemptFailed.class,
+                            () ->
+                                    ChatModelInvoker.chatWithRetries(
+                                            UUID.randomUUID(),
+                                            "test-model",
+                                            "chat",
+                                            List.of(),
+                                            Map.of(),
+                                            null,
+                                            ctx,
+                                            0,
+                                            0));
+            assertTrue(
+                    ChatModelInvoker.errorText(failure.error)
+                            .contains("IllegalArgumentException: invalid model"));
+        }
+        verify(model, times(1)).chat(any(), any(), any());
     }
 
     @Test
@@ -100,7 +171,8 @@ class ChatModelInvokerTest {
                 .thenAnswer(
                         invocation -> {
                             Thread.currentThread().interrupt();
-                            throw new RuntimeException("transient failure");
+                            return new ChatModelInvoker.InvocationOutcome(
+                                    null, "transient failure");
                         });
 
         assertThrows(
@@ -114,7 +186,6 @@ class ChatModelInvokerTest {
                                 Map.of(),
                                 null,
                                 ctx,
-                                Agent.ErrorHandlingStrategy.RETRY,
                                 1,
                                 1));
 
@@ -137,7 +208,8 @@ class ChatModelInvokerTest {
         when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
         when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
-        when(ctx.durableExecute(any())).thenThrow(new RuntimeException("transient failure"));
+        when(ctx.durableExecute(any()))
+                .thenReturn(new ChatModelInvoker.InvocationOutcome(null, "transient failure"));
 
         assertThrows(
                 ChatModelInvoker.ChatAttemptFailed.class,
@@ -150,7 +222,6 @@ class ChatModelInvokerTest {
                                 Map.of(),
                                 null,
                                 ctx,
-                                Agent.ErrorHandlingStrategy.RETRY,
                                 2,
                                 0));
 

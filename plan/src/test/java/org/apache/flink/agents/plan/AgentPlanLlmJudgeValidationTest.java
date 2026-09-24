@@ -312,8 +312,7 @@ public class AgentPlanLlmJudgeValidationTest {
     /**
      * Rule keys are validated at plan construction for descriptor-built plans too (review: only the
      * fluent builder checked them, so a deserialized descriptor with a typo'd rule key passed plan
-     * construction and failed per record at request time — where IGNORE silently drops every
-     * matching record).
+     * construction and produced failed responses per matching record at request time).
      */
     @Test
     void ruleKeyNamingNonCandidateFailsAtPlanConstruction() {

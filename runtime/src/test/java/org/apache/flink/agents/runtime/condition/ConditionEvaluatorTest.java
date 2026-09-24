@@ -172,7 +172,8 @@ class ConditionEvaluatorTest {
     @Test
     void typedEventAttributesMatchJsonRoundTrip() throws Exception {
         UUID requestId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
-        ChatResponseEvent typed = new ChatResponseEvent(requestId, ChatMessage.assistant("hello"));
+        ChatResponseEvent typed =
+                ChatResponseEvent.success(requestId, ChatMessage.assistant("hello"));
         Event jsonShaped = Event.fromJson(JSON_MAPPER.writeValueAsString(typed));
         List<String> sources =
                 List.of(

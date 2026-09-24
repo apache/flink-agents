@@ -21,14 +21,9 @@ package org.apache.flink.agents.api.agents;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 
 public class AgentExecutionOptions {
-    public static final ConfigOption<Agent.ErrorHandlingStrategy> ERROR_HANDLING_STRATEGY =
-            new ConfigOption<>(
-                    "error-handling-strategy",
-                    Agent.ErrorHandlingStrategy.class,
-                    Agent.ErrorHandlingStrategy.FAIL);
 
     public static final ConfigOption<Integer> MAX_RETRIES =
-            new ConfigOption<>("max-retries", Integer.class, 3);
+            new ConfigOption<>("max-retries", Integer.class, 0);
 
     public static final ConfigOption<Integer> RETRY_WAIT_INTERVAL =
             new ConfigOption<>("retry-wait-interval", Integer.class, 1);

@@ -26,25 +26,55 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 
 public class ChatResponseEvent extends Event {
 
     public static final String EVENT_TYPE = "_chat_response_event";
+    public static final String SUCCESS = "SUCCESS";
+    public static final String FAILED = "FAILED";
+
+    private static final String REQUEST_ID = "request_id";
+    private static final String STATUS = "status";
+    private static final String RESPONSE = "response";
+    private static final String ERROR = "error";
+    private static final String RETRY_COUNT = "retry_count";
+    private static final String TOTAL_RETRY_WAIT_SEC = "total_retry_wait_sec";
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public ChatResponseEvent(UUID requestId, ChatMessage response) {
-        this(requestId, response, 0, 0);
+    public static ChatResponseEvent success(UUID requestId, ChatMessage response) {
+        return success(requestId, response, 0, 0);
     }
 
-    public ChatResponseEvent(
+    public static ChatResponseEvent success(
             UUID requestId, ChatMessage response, int retryCount, int totalRetryWaitSec) {
+        return new ChatResponseEvent(
+                requestId, SUCCESS, response, null, retryCount, totalRetryWaitSec);
+    }
+
+    public static ChatResponseEvent failed(
+            UUID requestId, String error, int retryCount, int totalRetryWaitSec) {
+        return new ChatResponseEvent(requestId, FAILED, null, error, retryCount, totalRetryWaitSec);
+    }
+
+    private ChatResponseEvent(
+            UUID requestId,
+            String status,
+            ChatMessage response,
+            String error,
+            int retryCount,
+            int totalRetryWaitSec) {
         super(EVENT_TYPE);
-        setAttr("request_id", requestId);
-        setAttr("response", response);
-        setAttr("retry_count", retryCount);
-        setAttr("total_retry_wait_sec", totalRetryWaitSec);
+        Objects.requireNonNull(requestId, REQUEST_ID);
+        validate(status, response, error);
+        setAttr(REQUEST_ID, requestId);
+        setAttr(STATUS, status);
+        setAttr(RESPONSE, response);
+        setAttr(ERROR, error);
+        setAttr(RETRY_COUNT, retryCount);
+        setAttr(TOTAL_RETRY_WAIT_SEC, totalRetryWaitSec);
     }
 
     @JsonCreator
@@ -56,15 +86,71 @@ public class ChatResponseEvent extends Event {
 
     /** Converts nested attributes back to their typed forms. */
     private static Map<String, Object> normalizeAttributes(Map<String, Object> attributes) {
-        Object rawId = attributes.get("request_id");
+        Objects.requireNonNull(attributes.get(REQUEST_ID), REQUEST_ID);
+        Object rawId = attributes.get(REQUEST_ID);
         if (rawId instanceof String) {
-            attributes.put("request_id", UUID.fromString((String) rawId));
+            attributes.put(REQUEST_ID, UUID.fromString((String) rawId));
         }
-        Object rawResponse = attributes.get("response");
+        Object rawResponse = attributes.get(RESPONSE);
         if (rawResponse instanceof Map) {
-            attributes.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
+            attributes.put(RESPONSE, MAPPER.convertValue(rawResponse, ChatMessage.class));
         }
+        if (!(attributes.get(REQUEST_ID) instanceof UUID)) {
+            throw new IllegalArgumentException("request_id must be a UUID");
+        }
+        validate(attributes.get(STATUS), attributes.get(RESPONSE), attributes.get(ERROR));
         return attributes;
+    }
+
+    private static void validate(Object status, Object response, Object error) {
+        if (SUCCESS.equals(status) && response instanceof ChatMessage && error == null) {
+            return;
+        }
+        if (FAILED.equals(status)
+                && response == null
+                && error instanceof String
+                && !((String) error).isEmpty()) {
+            return;
+        }
+        throw new IllegalArgumentException(
+                "Chat response requires SUCCESS with response or FAILED with error.");
+    }
+
+    @JsonIgnore
+    public String getStatus() {
+        return (String) getAttr(STATUS);
+    }
+
+    @JsonIgnore
+    public boolean isSuccess() {
+        return SUCCESS.equals(getStatus());
+    }
+
+    @JsonIgnore
+    public boolean isFailed() {
+        return FAILED.equals(getStatus());
+    }
+
+    @JsonIgnore
+    public String getError() {
+        if (!isFailed()) {
+            throw new IllegalStateException("A successful chat response has no error.");
+        }
+        return (String) getAttr(ERROR);
+    }
+
+    /** Failure received from a chat request; the original exception is stored as text only. */
+    public static class ChatResponseException extends RuntimeException {
+        private final UUID requestId;
+
+        public ChatResponseException(UUID requestId, String error) {
+            super(error);
+            this.requestId = requestId;
+        }
+
+        public UUID getRequestId() {
+            return requestId;
+        }
     }
 
     /**
@@ -79,7 +165,7 @@ public class ChatResponseEvent extends Event {
 
     @JsonIgnore
     public UUID getRequestId() {
-        Object val = getAttr("request_id");
+        Object val = getAttr(REQUEST_ID);
         if (val instanceof String) {
             return UUID.fromString((String) val);
         }
@@ -88,16 +174,19 @@ public class ChatResponseEvent extends Event {
 
     @JsonIgnore
     public ChatMessage getResponse() {
-        return (ChatMessage) getAttr("response");
+        if (isFailed()) {
+            throw new ChatResponseException(getRequestId(), getError());
+        }
+        return (ChatMessage) getAttr(RESPONSE);
     }
 
     @JsonIgnore
     public int getRetryCount() {
-        return ((Number) getAttr("retry_count")).intValue();
+        return ((Number) getAttr(RETRY_COUNT)).intValue();
     }
 
     @JsonIgnore
     public int getTotalRetryWaitSec() {
-        return ((Number) getAttr("total_retry_wait_sec")).intValue();
+        return ((Number) getAttr(TOTAL_RETRY_WAIT_SEC)).intValue();
     }
 }

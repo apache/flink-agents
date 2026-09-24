@@ -82,6 +82,30 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
+    void failedChatOutcomeReplaysThroughRuntimeState() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome outcome =
+                new org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome();
+        outcome.error = "IllegalArgumentException: invalid model";
+        TestDurableCallable<org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome>
+                callable =
+                        new TestDurableCallable<>(
+                                "chat:model",
+                                org.apache.flink.agents.plan.actions.ChatModelInvoker
+                                        .InvocationOutcome.class,
+                                () -> outcome);
+        context.durableExecute(callable);
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        RunnerContextImpl replay = createContext(restored);
+        assertEquals(outcome.error, replay.durableExecute(callable).error);
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, persistCallCount.get());
+    }
+
+    @Test
     void testDurableExecuteCompletionOnlyDoesNotPersistInterruption() {
         RunnerContextImpl context = createContext(new ActionState(null));
         TestDurableCallable<String> callable =

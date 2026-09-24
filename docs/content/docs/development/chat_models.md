@@ -1655,6 +1655,16 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 ## Built-in Events and Actions
 
+`ChatResponseEvent` represents a terminal `SUCCESS` or `FAILED` result. A success carries a `ChatMessage` in `response`; a failure carries an `error` string containing the exception type and message. The two payloads are mutually exclusive. Error text is diagnostic information, not a stable error code; exception objects and stack traces are not stored in the event.
+
+Check `event.is_failed` (Python) or `event.isFailed()` (Java) to handle a failed request. Reading `event.response` or `event.getResponse()` on a failed event raises `ChatResponseError` or `ChatResponseEvent.ChatResponseException`, respectively, with the original request ID and error text. Reading `error` on a successful event also raises. Serialization and event logging do not invoke these accessors. The built-in ReAct agent reads the response directly, so an unhandled failed response propagates from its consumer Action; applications that want to recover should handle the failed event explicitly.
+
+Ordinary provider, resource-resolution, response-validation and structured-output errors produce a failed response after configured retries and routing fallbacks are exhausted. `max-retries` controls the number of additional attempts (default: 0), and `retry-wait-interval` controls exponential backoff. These settings also apply to routing judge calls. A judge call failure fails the request rather than selecting the default model; a normal abstaining verdict still selects the default. Intermediate attempts and Tool rounds do not emit terminal responses, and the final response always refers to the initial request ID.
+
+Cancellation, interruption and fatal errors propagate. Durable persistence/recovery, required Tool context, and event-delivery failures also propagate to Flink rather than becoming Chat failures. A response cannot be guaranteed during cancellation or an unrecoverable runtime failure. Recovery may replay physical events; consumers must correlate by request ID and complete idempotently.
+
+Create results with `ChatResponseEvent.success(...)` or `ChatResponseEvent.failed(...)`. This is a breaking event and durable-call format change: `status` is mandatory, and old events and old persisted Chat/routing call results are not supported. Update custom producers, consumers, and stored fixtures together.
+
 The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action sends a `ChatResponseEvent`.
 
 If the model asks to call tools, `chat_model_action` sends a `ToolRequestEvent` instead of a final `ChatResponseEvent`. After the tools finish, it receives the matching `ToolResponseEvent`, appends the tool results to the chat history, and calls the model again. This loop continues until the model returns a final response. For details on how tools are executed, see [Built-in Events and Actions in Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}). When the request names a model router, `chat_model_action` selects the model first and emits a `ModelRoutingEvent`; see [Model Routing]({{< ref "docs/development/model_routing#observability" >}}).

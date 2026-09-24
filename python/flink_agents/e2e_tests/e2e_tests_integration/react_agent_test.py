@@ -32,7 +32,6 @@ from flink_agents.api.agents.react_agent import (
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
-    ErrorHandlingStrategy,
 )
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
@@ -93,10 +92,6 @@ def test_react_agent_on_remote_runner(
 
     env = AgentsExecutionEnvironment.get_execution_environment(
         env=stream_env, t_env=t_env
-    )
-
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
@@ -217,10 +212,6 @@ def test_react_agent_no_output_schema_on_remote_runner(
 
     env = AgentsExecutionEnvironment.get_execution_environment(
         env=stream_env, t_env=t_env
-    )
-
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
     )
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)

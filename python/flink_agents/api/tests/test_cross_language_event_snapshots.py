@@ -204,7 +204,7 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
 
 
 def _build_chat_response_event() -> ChatResponseEvent:
-    event = ChatResponseEvent(
+    event = ChatResponseEvent.success(
         request_id=_FIXED_REQUEST_ID,
         response=ChatMessage(role=MessageRole.ASSISTANT, content="hi there"),
     )
@@ -221,6 +221,39 @@ def test_chat_response_event_python_snapshot_is_stable() -> None:
     _assert_python_snapshot_stable(
         "chat_response_event.json", _build_chat_response_event()
     )
+
+
+def _build_failed_chat_response_event() -> Event:
+    return _force_id(
+        ChatResponseEvent.failed(_FIXED_REQUEST_ID, "TimeoutError: timed out", 2, 3),
+        _FIXED_EVENT_ID,
+    )
+
+
+def test_regenerate_failed_chat_response_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "chat_response_failed_event.json", _build_failed_chat_response_event()
+    )
+
+
+def test_failed_chat_response_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "chat_response_failed_event.json", _build_failed_chat_response_event()
+    )
+
+
+def test_python_can_deserialize_failed_chat_response_from_java_snapshot() -> None:
+    typed = ChatResponseEvent.from_event(
+        _read_java_snapshot("chat_response_failed_event.json")
+    )
+    assert typed.request_id == _FIXED_REQUEST_ID
+    assert typed.is_failed
+    assert typed.error == "TimeoutError: timed out"
+    assert typed.retry_count == 2
+    with pytest.raises(RuntimeError, match="TimeoutError: timed out"):
+        _ = typed.response
 
 
 def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None:

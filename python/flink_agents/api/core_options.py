@@ -21,17 +21,6 @@ from enum import Enum
 from flink_agents.api.configuration import ConfigOption
 
 
-class ErrorHandlingStrategy(Enum):
-    """Error handling strategy for Agent.
-
-    Currently, only works for chat action.
-    """
-
-    RETRY = "retry"
-    FAIL = "fail"
-    IGNORE = "ignore"
-
-
 class ShortTermMemoryTtlUpdate(Enum):
     """Update policy for short-term memory TTL."""
 
@@ -279,16 +268,10 @@ class MemoryEventOptions:
 class AgentExecutionOptions:
     """Execution options for Flink Agents."""
 
-    ERROR_HANDLING_STRATEGY = ConfigOption(
-        key="error-handling-strategy",
-        config_type=ErrorHandlingStrategy,
-        default=ErrorHandlingStrategy.FAIL,
-    )
-
     MAX_RETRIES = ConfigOption(
         key="max-retries",
         config_type=int,
-        default=3,
+        default=0,
     )
 
     RETRY_WAIT_INTERVAL = ConfigOption(

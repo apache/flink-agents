@@ -19,6 +19,8 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import CancelledError
+from functools import wraps
 from typing import TYPE_CHECKING, Dict, List, cast
 from uuid import UUID
 
@@ -32,7 +34,6 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.java_chat_model import JavaChatModelSetup
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
-    ErrorHandlingStrategy,
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event
@@ -62,6 +63,58 @@ _TRUNCATED_FINISH_REASON = "length"
 _CONTENT_FILTERED_FINISH_REASON = "content_filter"
 
 _logger = logging.getLogger(__name__)
+
+
+class _InvocationFailure(Exception):
+    """Textual provider failure recovered from durable execution."""
+
+
+def _require_invocation_response(
+    response: ChatMessage | None, error: str | None
+) -> ChatMessage:
+    if error is not None:
+        raise _InvocationFailure(error)
+    return _require_model_response(response)
+
+
+def _error_text(error: Exception) -> str:
+    return (
+        str(error)
+        if isinstance(error, _InvocationFailure)
+        else f"{type(error).__name__}: {error}"
+    )
+
+
+def _invoke_chat(
+    chat_model: "BaseChatModelSetup", messages: List[ChatMessage], prompt_args: Dict
+) -> tuple[ChatMessage | None, str | None]:
+    try:
+        return chat_model.chat(messages, prompt_args=prompt_args), None
+    except (CancelledError, InterruptedError):
+        raise
+    except Exception as error:
+        _logger.debug("Chat provider failed", exc_info=True)
+        return None, _error_text(error)
+
+
+def _send_failure(request_id: UUID, error: Exception, ctx: RunnerContext) -> None:
+    stats = _get_retry_stats(ctx.sensory_memory, request_id)
+    _clear_request_context(ctx.sensory_memory, request_id)
+    ctx.send_event(
+        ChatResponseEvent.failed(
+            request_id,
+            _error_text(error),
+            stats["total_retry_count"],
+            stats["total_retry_wait_sec"],
+        )
+    )
+
+
+def _clear_request_context(memory: MemoryObject, request_id: UUID) -> None:
+    for key in (_TOOL_CALL_CONTEXT, _RETRY_STATS_CONTEXT):
+        context = dict(memory.get(key) or {})
+        if context.pop(str(request_id), None) is not None:
+            memory.set(key, context)
 
 
 # ============================================================================
@@ -132,8 +185,9 @@ def _get_tool_request_event_context(
     sensory_memory: MemoryObject, request_id: UUID
 ) -> Dict:
     """Get and remove the context for a specific tool request event."""
-    context = sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {}
+    context = dict(sensory_memory.get(_TOOL_REQUEST_EVENT_CONTEXT) or {})
     removed_context = context.pop(str(request_id), {})
+    sensory_memory.set(_TOOL_REQUEST_EVENT_CONTEXT, context)
     if removed_context:
         removed_context["initial_request_id"] = UUID(
             removed_context["initial_request_id"]
@@ -363,9 +417,15 @@ async def chat(
     otherwise, we generate tool request event according to the tool calls in chat model
     response, and save the request and response messages in tool call context.
     """
-    chat_model = cast(
-        "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
-    )
+    try:
+        chat_model = cast(
+            "BaseChatModelSetup", ctx.get_resource(model, ResourceType.CHAT_MODEL)
+        )
+    except (CancelledError, InterruptedError):
+        raise
+    except Exception as error:
+        _send_failure(initial_request_id, error, ctx)
+        return
     request_metric_group = ctx.action_metric_group
 
     chat_async = ctx.config.get(AgentExecutionOptions.CHAT_ASYNC)
@@ -373,41 +433,40 @@ async def chat(
     if isinstance(chat_model, JavaChatModelSetup) and not support_async():
         chat_async = False
 
-    error_handling_strategy = ctx.config.get(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY
+    num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
+    retry_wait_interval_sec = max(
+        0, ctx.config.get(AgentExecutionOptions.RETRY_WAIT_INTERVAL)
     )
-    num_retries = 0
-    retry_wait_interval_sec = 0
-    if error_handling_strategy == ErrorHandlingStrategy.RETRY:
-        num_retries = max(0, ctx.config.get(AgentExecutionOptions.MAX_RETRIES))
-        retry_wait_interval_config = ctx.config.get(
-            AgentExecutionOptions.RETRY_WAIT_INTERVAL
-        )
-        retry_wait_interval_sec = (
-            max(0, retry_wait_interval_config) if retry_wait_interval_config else 0
-        )
 
     response = None
     actual_retry_count = 0
     total_wait_time_sec = 0
     llm_metadata = {LLMExecutionMetadataKeys.MODEL: chat_model.model}
+    final_error = None
+
+    @wraps(chat_model.chat)
+    def invoke(
+        messages: List[ChatMessage], prompt_args: Dict
+    ) -> tuple[ChatMessage | None, str | None]:
+        return _invoke_chat(chat_model, messages, prompt_args)
 
     try:
         for attempt in range(num_retries + 1):
-            try:
-                ExecutionReporters.started(
-                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            ExecutionReporters.started(
+                ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+            )
+            # Persistence/recovery failures must escape the request-failure boundary.
+            if chat_async:
+                response, failure = await ctx.durable_execute_async(
+                    invoke, messages, prompt_args=prompt_args
                 )
+            else:
+                response, failure = ctx.durable_execute(
+                    invoke, messages, prompt_args=prompt_args
+                )
+            try:
                 try:
-                    if chat_async:
-                        response = await ctx.durable_execute_async(
-                            chat_model.chat, messages, prompt_args=prompt_args
-                        )
-                    else:
-                        response = ctx.durable_execute(
-                            chat_model.chat, messages, prompt_args=prompt_args
-                        )
-                    response = _require_model_response(response)
+                    response = _require_invocation_response(response, failure)
                 except Exception as model_error:
                     ExecutionReporters.failed(
                         ctx,
@@ -443,32 +502,24 @@ async def chat(
                         ctx, response, output_schema
                     )
                 break
+            except (CancelledError, InterruptedError):
+                raise
             except Exception as e:
-                if error_handling_strategy == ErrorHandlingStrategy.IGNORE:
-                    _logger.warning(
-                        f"Chat request {initial_request_id} failed with error: {e}, ignored."
-                    )
-                    return
-                elif error_handling_strategy == ErrorHandlingStrategy.RETRY:
-                    if attempt == num_retries:
-                        raise
-                    actual_retry_count = attempt + 1
-                    current_wait_sec = retry_wait_interval_sec * (
-                        1 << (actual_retry_count - 1)
-                    )
-                    _logger.warning(
-                        f"Chat request {initial_request_id} failed with error: {e}, "
-                        f"retrying {actual_retry_count} / {num_retries}, "
-                        f"waiting {current_wait_sec} s."
-                    )
-                    if current_wait_sec > 0:
-                        time.sleep(current_wait_sec)
-                        total_wait_time_sec += current_wait_sec
-                else:
-                    _logger.debug(
-                        f"Chat request {initial_request_id} failed, the input chat messages are {messages}."
-                    )
-                    raise
+                if attempt == num_retries:
+                    final_error = e
+                    break
+                actual_retry_count = attempt + 1
+                current_wait_sec = retry_wait_interval_sec * (
+                    1 << (actual_retry_count - 1)
+                )
+                _logger.warning(
+                    f"Chat request {initial_request_id} failed with error: {e}, "
+                    f"retrying {actual_retry_count} / {num_retries}, "
+                    f"waiting {current_wait_sec} s."
+                )
+                if current_wait_sec > 0:
+                    time.sleep(current_wait_sec)
+                    total_wait_time_sec += current_wait_sec
     finally:
         _record_retry_metrics(ctx, model, actual_retry_count, total_wait_time_sec)
 
@@ -479,6 +530,10 @@ async def chat(
             actual_retry_count,
             total_wait_time_sec,
         )
+
+    if final_error is not None:
+        _send_failure(initial_request_id, final_error, ctx)
+        return
 
     if (
         len(response.tool_calls) > 0
@@ -497,9 +552,9 @@ async def chat(
         retry_stats = _get_retry_stats(ctx.sensory_memory, initial_request_id)
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_sec = retry_stats["total_retry_wait_sec"]
-
+        _clear_request_context(ctx.sensory_memory, initial_request_id)
         ctx.send_event(
-            ChatResponseEvent(
+            ChatResponseEvent.success(
                 request_id=initial_request_id,
                 response=response,
                 retry_count=total_retry_count,

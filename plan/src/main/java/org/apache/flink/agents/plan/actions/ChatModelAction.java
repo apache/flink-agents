@@ -20,8 +20,6 @@ package org.apache.flink.agents.plan.actions;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.agents.Agent;
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -172,8 +170,12 @@ public class ChatModelAction {
     private static Map<String, Object> getToolRequestEventContext(
             MemoryObject sensoryMem, UUID requestId) throws Exception {
         Map<UUID, Object> toolRequestEventContext =
-                (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue();
-        return (Map<String, Object>) toolRequestEventContext.remove(requestId);
+                new HashMap<>(
+                        (Map<UUID, Object>) sensoryMem.get(TOOL_REQUEST_EVENT_CONTEXT).getValue());
+        Map<String, Object> result =
+                (Map<String, Object>) toolRequestEventContext.remove(requestId);
+        sensoryMem.set(TOOL_REQUEST_EVENT_CONTEXT, toolRequestEventContext);
+        return Objects.requireNonNull(result, "Missing tool request context");
     }
 
     @SuppressWarnings("unchecked")
@@ -383,10 +385,8 @@ public class ChatModelAction {
             @Nullable Object outputSchema,
             RunnerContext ctx)
             throws Exception {
-        Agent.ErrorHandlingStrategy strategy =
-                ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
-        int numRetries = ChatModelInvoker.configuredRetries(ctx, strategy);
-        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx, strategy);
+        int numRetries = ChatModelInvoker.configuredRetries(ctx);
+        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx);
 
         List<String> triedModels = new ArrayList<>();
         Exception lastError = null;
@@ -402,7 +402,6 @@ public class ChatModelAction {
                                 promptArgs,
                                 outputSchema,
                                 ctx,
-                                strategy,
                                 numRetries,
                                 retryWaitIntervalSec);
                 recordAttemptRetryStats(
@@ -466,9 +465,9 @@ public class ChatModelAction {
                             getRetryStats(ctx.getSensoryMemory(), initialRequestId);
                     int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
                     int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
-
+                    clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
                     ctx.sendEvent(
-                            new ChatResponseEvent(
+                            ChatResponseEvent.success(
                                     initialRequestId,
                                     result.response,
                                     totalRetryCount,
@@ -502,14 +501,35 @@ public class ChatModelAction {
                     lastError == null ? null : lastError.toString());
         }
         // The reasoning loop is over; a routed loop that dies mid-way must not leak its
-        // parked metadata (matters under IGNORE, where the job keeps running).
+        // parked metadata before completing the failed logical request.
         takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
-        if (strategy == Agent.ErrorHandlingStrategy.IGNORE) {
-            LOG.warn(
-                    "Chat request {} failed with error: {}, ignored.", initialRequestId, lastError);
-            return;
+        sendFailure(initialRequestId, Objects.requireNonNull(lastError), ctx);
+    }
+
+    private static void sendFailure(UUID requestId, Exception error, RunnerContext ctx)
+            throws Exception {
+        LOG.warn("Chat request {} failed", requestId, error);
+        Map<String, Long> stats = getRetryStats(ctx.getSensoryMemory(), requestId);
+        clearRequestContext(ctx.getSensoryMemory(), requestId);
+        ctx.sendEvent(
+                ChatResponseEvent.failed(
+                        requestId,
+                        ChatModelInvoker.errorText(error),
+                        stats.get(TOTAL_RETRY_COUNT).intValue(),
+                        stats.get(TOTAL_RETRY_WAIT_SEC).intValue()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void clearRequestContext(MemoryObject memory, UUID requestId) throws Exception {
+        for (String key : List.of(TOOL_CALL_CONTEXT, RETRY_STATS_CONTEXT)) {
+            if (memory.isExist(key)) {
+                Map<UUID, Object> context =
+                        new HashMap<>((Map<UUID, Object>) memory.get(key).getValue());
+                if (context.remove(requestId) != null) {
+                    memory.set(key, context);
+                }
+            }
         }
-        throw Objects.requireNonNull(lastError);
     }
 
     /**
@@ -625,28 +645,9 @@ public class ChatModelAction {
                             event.getMessages(),
                             event.getPromptArgs(),
                             ctx);
-        } catch (Exception e) {
-            // Cancellation is never a routing failure to ignore: isCancellation consults the
-            // thread's interrupt flag first (the judge path re-sets it before rethrowing) and
-            // the explicit cancellation types (a blocking custom executor surfaces a raw
-            // InterruptedException). Let the action loop stop instead of dropping the request.
-            if (ModelRoutingResolver.isCancellation(e)) {
-                throw e;
-            }
-            // A routing-strategy failure honors the same error-handling strategy as the chat
-            // call itself: under IGNORE the request is dropped with a warning instead of killing
-            // the job. (Retries are not applied to the decision; strategies that perform I/O are
-            // expected to absorb their own transient failures.)
-            if (ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY)
-                    == Agent.ErrorHandlingStrategy.IGNORE) {
-                LOG.warn(
-                        "Routing for chat request {} (model '{}') failed with error: {}, ignored.",
-                        event.getId(),
-                        event.getModel(),
-                        e.toString());
-                return;
-            }
-            throw e;
+        } catch (ModelRoutingResolver.RoutingFailure e) {
+            sendFailure(event.getId(), e, ctx);
+            return;
         }
         chat(
                 event.getId(),

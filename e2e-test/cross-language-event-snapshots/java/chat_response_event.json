@@ -1,15 +1,17 @@
 {
   "id" : "00000000-0000-0000-0000-000000000001",
   "attributes" : {
-    "request_id" : "00000000-0000-0000-0000-000000000002",
     "response" : {
       "role" : "assistant",
       "content" : "hi there",
       "tool_calls" : [ ],
       "extra_args" : { }
     },
+    "total_retry_wait_sec" : 0,
     "retry_count" : 0,
-    "total_retry_wait_sec" : 0
+    "error" : null,
+    "request_id" : "00000000-0000-0000-0000-000000000002",
+    "status" : "SUCCESS"
   },
   "attachments" : { },
   "type" : "_chat_response_event"

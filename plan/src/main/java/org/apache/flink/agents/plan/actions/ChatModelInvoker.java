@@ -17,7 +17,6 @@
  */
 package org.apache.flink.agents.plan.actions;
 
-import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -29,6 +28,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,13 +45,46 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  * Invokes one concrete chat model with the engine's durable-call and retry machinery. One call =
  * one candidate attempt: success returns a {@link ChatAttemptResult}; failure (including an
  * unresolvable model resource) surfaces as {@link ChatAttemptFailed} so the caller's fallback loop
- * and error-handling strategy see every attempt uniformly.
+ * sees every attempt uniformly.
  */
 public final class ChatModelInvoker {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelInvoker.class);
 
     private ChatModelInvoker() {}
+
+    /** JSON-serializable result of provider execution, including ordinary failures. */
+    public static final class InvocationOutcome {
+        public ChatMessage response;
+        public String error;
+
+        public InvocationOutcome() {}
+
+        InvocationOutcome(ChatMessage response, String error) {
+            this.response = response;
+            this.error = error;
+        }
+    }
+
+    /** Text already formatted at the provider boundary; do not add a wrapper type to it. */
+    public static final class InvocationFailure extends Exception {
+        public InvocationFailure(String error) {
+            super(error);
+        }
+    }
+
+    public static String errorText(Exception error) {
+        while ((error instanceof java.lang.reflect.InvocationTargetException
+                        || error instanceof java.util.concurrent.ExecutionException
+                        || error instanceof java.util.concurrent.CompletionException)
+                && error.getCause() instanceof Exception) {
+            error = (Exception) error.getCause();
+        }
+        return error instanceof InvocationFailure
+                        || error instanceof ModelRoutingResolver.RoutingFailure
+                ? error.getMessage()
+                : error.getClass().getName() + ": " + String.valueOf(error.getMessage());
+    }
 
     public static final class ChatAttemptResult {
         public final String model;
@@ -96,20 +129,13 @@ public final class ChatModelInvoker {
         }
     }
 
-    /** The request-level retry budget: honored only under {@code RETRY}. */
-    public static int configuredRetries(RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
-        if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
-            return 0;
-        }
+    /** The request-level retry budget. */
+    public static int configuredRetries(RunnerContext ctx) {
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.MAX_RETRIES), 0);
     }
 
-    /** The request-level retry backoff: honored only under {@code RETRY}. */
-    public static int configuredRetryWaitSec(
-            RunnerContext ctx, Agent.ErrorHandlingStrategy strategy) {
-        if (strategy != Agent.ErrorHandlingStrategy.RETRY) {
-            return 0;
-        }
+    /** The request-level retry backoff. */
+    public static int configuredRetryWaitSec(RunnerContext ctx) {
         return Math.max(ctx.getConfig().get(AgentExecutionOptions.RETRY_WAIT_INTERVAL), 0);
     }
 
@@ -121,7 +147,6 @@ public final class ChatModelInvoker {
             Map<String, Object> promptArgs,
             @Nullable Object outputSchema,
             RunnerContext ctx,
-            Agent.ErrorHandlingStrategy strategy,
             int numRetries,
             int retryWaitIntervalSec)
             throws ChatAttemptFailed, Exception {
@@ -129,8 +154,14 @@ public final class ChatModelInvoker {
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
         } catch (Exception e) {
+            if (ModelRoutingResolver.isCancellation(e)) {
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
             // An unresolvable candidate (e.g. a typo in the router's candidate list) counts as
-            // that candidate failing, so the fallback loop and the error-handling strategy see
+            // that candidate failing, so the fallback loop sees
             // it like any other attempt failure instead of it escaping chat() raw and discarding
             // the previous candidate's real error.
             throw new ChatAttemptFailed(model, null, e, 0, 0);
@@ -147,7 +178,7 @@ public final class ChatModelInvoker {
         int totalWaitTimeSec = 0;
         ChatMessage response;
 
-        DurableCallable<ChatMessage> callable =
+        DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
                     @Override
                     public String getId() {
@@ -155,13 +186,25 @@ public final class ChatModelInvoker {
                     }
 
                     @Override
-                    public Class<ChatMessage> getResultClass() {
-                        return ChatMessage.class;
+                    public Class<InvocationOutcome> getResultClass() {
+                        return InvocationOutcome.class;
                     }
 
                     @Override
-                    public ChatMessage call() throws Exception {
-                        return chatModel.chat(messages, promptArgs, Map.of());
+                    public InvocationOutcome call() throws Exception {
+                        try {
+                            return new InvocationOutcome(
+                                    chatModel.chat(messages, promptArgs, Map.of()), null);
+                        } catch (Exception e) {
+                            if (ModelRoutingResolver.isCancellation(e)) {
+                                if (e instanceof InterruptedException) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                throw e;
+                            }
+                            LOG.debug("Chat provider failed", e);
+                            return new InvocationOutcome(null, errorText(e));
+                        }
                     }
                 };
         Map<String, Object> llmMetadata =
@@ -170,14 +213,24 @@ public final class ChatModelInvoker {
                         : Map.of(LLMExecutionMetadataKeys.MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
+            ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+            // Keep persistence and recovery failures outside the request-failure catch.
+            InvocationOutcome outcome;
             try {
-                ExecutionReporters.started(
-                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+                outcome =
+                        chatAsync
+                                ? ctx.durableExecuteAsync(callable).await()
+                                : ctx.durableExecute(callable);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
+            }
+            try {
                 try {
-                    response =
-                            chatAsync
-                                    ? ctx.durableExecuteAsync(callable).await()
-                                    : ctx.durableExecute(callable);
+                    if (outcome.error != null) {
+                        throw new InvocationFailure(outcome.error);
+                    }
+                    response = outcome.response;
                     Objects.requireNonNull(response, "ChatModel returned a null response.");
                 } catch (Throwable modelError) {
                     throw ChatModelAction.reportFailedAndPropagate(
@@ -205,11 +258,17 @@ public final class ChatModelInvoker {
             } catch (InterruptedException e) {
                 // A cancellation signal, not a model failure: restore the interrupt status and
                 // propagate immediately so task shutdown isn't delayed by retry backoff or an
-                // extra model call, regardless of the configured error-handling strategy.
+                // extra model call, regardless of the configured retry budget.
                 Thread.currentThread().interrupt();
                 throw e;
             } catch (Exception e) {
-                if (strategy == Agent.ErrorHandlingStrategy.RETRY && attempt < numRetries) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new InterruptedException("Chat execution interrupted");
+                }
+                if (ModelRoutingResolver.isCancellation(e)) {
+                    throw e;
+                }
+                if (attempt < numRetries) {
                     actualRetryCount = attempt + 1;
                     int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(

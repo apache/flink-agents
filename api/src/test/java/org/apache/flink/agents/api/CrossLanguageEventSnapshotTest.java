@@ -256,6 +256,8 @@ class CrossLanguageEventSnapshotTest {
 
     private static ChatResponseEvent buildChatResponseEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("status", ChatResponseEvent.SUCCESS);
+        attrs.put("error", null);
         attrs.put("request_id", FIXED_REQUEST_ID);
         attrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
         attrs.put("retry_count", 0);
@@ -272,6 +274,35 @@ class CrossLanguageEventSnapshotTest {
     @Test
     void chatResponseEventJavaSnapshotIsStable() throws Exception {
         assertJavaSnapshotStable("chat_response_event.json", buildChatResponseEvent());
+    }
+
+    private static ChatResponseEvent buildFailedChatResponseEvent() {
+        ChatResponseEvent failed =
+                ChatResponseEvent.failed(FIXED_REQUEST_ID, "TimeoutError: timed out", 2, 3);
+        return new ChatResponseEvent(FIXED_EVENT_ID, failed.getAttributes());
+    }
+
+    @Test
+    void regenerateFailedChatResponseEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("chat_response_failed_event.json", buildFailedChatResponseEvent());
+    }
+
+    @Test
+    void failedChatResponseEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("chat_response_failed_event.json", buildFailedChatResponseEvent());
+    }
+
+    @Test
+    void javaCanDeserializeFailedChatResponseFromPythonSnapshot() throws Exception {
+        ChatResponseEvent typed =
+                ChatResponseEvent.fromEvent(readPythonSnapshot("chat_response_failed_event.json"));
+        assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
+        assertTrue(typed.isFailed());
+        assertEquals("TimeoutError: timed out", typed.getError());
+        assertEquals(2, typed.getRetryCount());
+        org.junit.jupiter.api.Assertions.assertThrows(
+                ChatResponseEvent.ChatResponseException.class, typed::getResponse);
     }
 
     @Test

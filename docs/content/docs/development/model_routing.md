@@ -127,7 +127,7 @@ Resources can equally be registered on the execution environment with `agentsEnv
 
 ## Routing Strategies
 
-A strategy is declared with a `Strategies` factory and travels with the agent plan. Every strategy either selects a candidate or abstains. A rule or custom strategy that selects a name that is not a candidate is an error: the request fails, or is dropped under `IGNORE`, and never falls back to the default. The LLM judge is the exception, because its reply is untrusted model output: a verdict naming a non-candidate abstains.
+A strategy is declared with a `Strategies` factory and travels with the agent plan. Every strategy either selects a candidate or abstains. A rule or custom strategy that selects a name that is not a candidate is an error: the request produces a failed `ChatResponseEvent`, and never falls back to the default. The LLM judge is the exception, because its reply is untrusted model output: a verdict naming a non-candidate abstains.
 
 ### Rules
 
@@ -191,7 +191,7 @@ public ModelRoutingAgent() {
 - **Input**: The judge receives a system message listing the candidates with their descriptions and the verdict format, and a user message with the request rendered as one `ROLE: content` line per message. When the default candidate binds a prompt template, the judge sees the request rendered through it.
 - **Verdict**: The reply is accepted when it contains `"model": "<candidate name>"`, or when the whole trimmed reply is exactly a candidate name. Matching is case-sensitive. Names that are not candidates are ignored, so instructions hidden in the user's request cannot steer routing outside the declared candidates.
 - **Abstain**: A reply that names no candidate, or several different candidates, abstains to the default.
-- **Failure**: A failed judge call follows the job's error-handling strategy: `FAIL` fails the request, `RETRY` retries the judge call, `IGNORE` abstains to the default with the cause recorded in the routing event.
+- **Failure**: A failed judge call is retried according to `max-retries` and `retry-wait-interval`; exhausting the retry budget produces a failed `ChatResponseEvent`, not an abstention.
 - **Custom prompt**: `Strategies.llm(judgeModel, promptTemplate)` replaces the system message. Include `{candidates}` in the template; it is replaced with one `- name: description` line per candidate. The template also owns the verdict instructions.
 - **Context budget**: `withMaxContextChars(int)` on an LLM judge declaration limits the conversation history the judge sees, in characters. System messages, rendered prompt messages, and the newest message are always kept; older messages fill the remaining budget newest-first, and dropped messages are flagged in the decision metadata. Because rendered prompt messages are retained, this is not a hard limit on the judge's total input.
 
@@ -238,7 +238,7 @@ ModelRouter.of("small", "big")
 
 {{< /tabs >}}
 
-`RoutingContext` is a read-only view of the request: the messages, prompt arguments, last and first user message, the candidates with their descriptions, the default model, the router name, and the request ID. Put tenant or workload attributes in the prompt arguments when an executor should route on them. `RoutingDecision.of(name)` selects a candidate, `RoutingDecision.builder(name)` adds a reason, score, and metadata that appear on the routing event and the response, and `RoutingDecision.abstain()` defers to the default. An exception thrown by `route()` fails the request, or drops it under `IGNORE`; the strategy itself is not retried.
+`RoutingContext` is a read-only view of the request: the messages, prompt arguments, last and first user message, the candidates with their descriptions, the default model, the router name, and the request ID. Put tenant or workload attributes in the prompt arguments when an executor should route on them. `RoutingDecision.of(name)` selects a candidate, `RoutingDecision.builder(name)` adds a reason, score, and metadata that appear on the routing event and the response, and `RoutingDecision.abstain()` defers to the default. An exception thrown by `route()` produces a failed `ChatResponseEvent`; the strategy itself is not retried.
 
 Custom executors must only select. The context exposes no chat API; when the decision should come from a model, use `Strategies.llm(...)` so the call gets the framework's retries, metrics, and events. Keep constructors free of side effects: an executor may be constructed more than once, for example after recovery.
 
@@ -248,15 +248,9 @@ When the strategy abstains, the router selects `defaultModel`, or the first cand
 
 An attempt fails when the model call throws, when the candidate does not resolve to a registered chat model, when the model returns no response, when the connection reports the reply as truncated or content-filtered, or when a requested output schema cannot be parsed. Empty content with tool calls is a normal response.
 
-Retries happen only under `RETRY`; `FAIL` and `IGNORE` make one attempt per candidate. Fallback is a separate setting and applies under every strategy.
+Each candidate and the routing judge have up to `1 + max-retries` attempts, with exponential backoff from `retry-wait-interval`. The default retry budget is 0. Candidate fallback is independent of retries.
 
-| Error-handling strategy | Attempts per candidate | Judge call fails | Rule or custom strategy throws, or selects a non-candidate | Every candidate attempt fails |
-|-------------------------|------------------------|------------------|------------------------------------------------------------|-------------------------------|
-| `FAIL` | 1 | Request fails | Request fails | Request fails |
-| `RETRY` | 1 + `max-retries` for every candidate, with exponential backoff from `retry-wait-interval` | Retried, then request fails | Request fails, no retry | Request fails after each candidate's retries |
-| `IGNORE` | 1 | Router abstains to the default model, cause recorded | Request dropped with a warning | Request dropped with a warning |
-
-A dropped request produces no `ChatResponseEvent`. When the request fails, the error raised is the last candidate's, with the earlier errors attached as suppressed exceptions. The retry settings are the job-level options in [Configuration]({{< ref "docs/operations/configuration#core-options" >}}).
+A judge call that exhausts its retries, a throwing rule/custom strategy, or a strategy selecting a non-candidate produces a failed `ChatResponseEvent`; these failures do not count as abstention. A normal abstaining verdict still selects the default model. If all attempted candidates fail, the terminal failed response contains the last candidate's exception type and message. Earlier failures remain available in diagnostics. The retry settings are the job-level options in [Configuration]({{< ref "docs/operations/configuration#core-options" >}}).
 
 ## Observability
 
@@ -295,7 +289,7 @@ Decision latency is recorded as the `action.chat_model_action.routingDecisionLat
 
 ## Advanced
 
-**Validation.** Declaration mistakes such as an invalid rule pattern, an unknown candidate in a rule or description, or a missing strategy fail at the builder calls. Whether the judge is a plain chat model and whether a custom executor class can be loaded is checked when the plan is built, before any record is processed. Whether the default model is a candidate is only checked on the TaskManager, when the router first handles a request; an invalid router configuration then fails every routed request, and under `IGNORE` each is dropped with a warning, so verify a new router under `FAIL` first. Whether a candidate resolves to a registered chat model is checked per attempt: an unresolvable candidate is a failed attempt, which fallback may recover from.
+**Validation.** Declaration mistakes such as an invalid rule pattern, an unknown candidate in a rule or description, or a missing strategy fail at the builder calls. Whether the judge is a plain chat model and whether a custom executor class can be loaded is checked when the plan is built, before any record is processed. Whether the default model is a candidate is only checked on the TaskManager, when the router first handles a request; an invalid router configuration then produces a failed `ChatResponseEvent` for each routed request. Whether a candidate resolves to a registered chat model is checked per attempt: an unresolvable candidate is a failed attempt, which fallback may recover from.
 
 **Recovery.** Routing runs once per request. When an [action state store]({{< ref "docs/operations/configuration#action-state-store" >}}) is configured, the routing decision, the judge call, and each candidate attempt of the initial request are persisted and replayed on recovery, so a custom executor or judge is not run again for a request that already has a decision. Without a store, which is the default, the decision is recomputed on recovery, and a non-deterministic strategy may pick a different model the second time. The request ID is regenerated in that case too, so a hash-based split in a custom executor can land on the other arm.
 

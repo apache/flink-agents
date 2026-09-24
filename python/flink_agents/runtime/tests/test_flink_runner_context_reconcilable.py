@@ -225,6 +225,39 @@ def _close_runner_context(ctx: FlinkRunnerContext) -> None:
     ctx.executor.shutdown(wait=True)
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_chat_failure_outcome_replays_without_provider_call(asynchronous: bool) -> None:
+    from flink_agents.plan.actions.chat_model_action import _invoke_chat
+
+    calls = []
+
+    class FailingModel:
+        def chat(self, messages: list, prompt_args: dict) -> None:
+            calls.append(1)
+            msg = "provider unavailable"
+            raise ValueError(msg)
+
+    def invoke() -> tuple:
+        return _invoke_chat(FailingModel(), [], {})
+
+    store = _FakeJavaRunnerContext()
+    for _ in range(2):
+        store.current_call_index = 0
+        ctx = _create_runner_context(store)
+        try:
+            outcome = (
+                _run_async(ctx.durable_execute_async(invoke))
+                if asynchronous
+                else ctx.durable_execute(invoke)
+            )
+            assert outcome == (None, "ValueError: provider unavailable")
+        finally:
+            _close_runner_context(ctx)
+    assert len(calls) == 1
+    assert len(store.call_results) == 1
+    assert store.call_results[0].exception_payload is None
+
+
 def _run_async(result: Any) -> object:
     iterator = result.__await__()
     value = None

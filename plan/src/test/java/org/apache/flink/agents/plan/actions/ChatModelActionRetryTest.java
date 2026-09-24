@@ -53,7 +53,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
@@ -220,8 +219,7 @@ class ChatModelActionRetryTest {
     void chatRetriesStructuredOutputParseErrorWithoutFailingLlm() throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
-        when(reportingCtx.getConfig())
-                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.RETRY, 1, 0));
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
                         new ChatMessage(MessageRole.ASSISTANT, "not-json"),
@@ -264,8 +262,7 @@ class ChatModelActionRetryTest {
     void chatReportsEachRetriedModelInvocation() throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
-        when(reportingCtx.getConfig())
-                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.RETRY, 1, 0));
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(new RuntimeException("transient error"))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "success"));
@@ -287,7 +284,7 @@ class ChatModelActionRetryTest {
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
                         eq(LLM_METADATA),
-                        any(RuntimeException.class),
+                        any(ChatModelInvoker.InvocationFailure.class),
                         eq(ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED));
         verify(reporter)
                 .reportExecutionSucceeded(
@@ -337,7 +334,7 @@ class ChatModelActionRetryTest {
     }
 
     @Test
-    void chatExhaustsRetriesAndThrows() {
+    void chatExhaustsRetriesAndReturnsFailure() throws Exception {
         configureRetryStrategy(2, 0);
 
         when(mockChatModel.chat(any(), any(), any()))
@@ -345,19 +342,20 @@ class ChatModelActionRetryTest {
 
         UUID requestId = UUID.randomUUID();
 
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.chat(
-                                        requestId,
-                                        "test-model",
-                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
-                                        Map.of(),
-                                        null,
-                                        mockCtx))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessage("persistent error");
+        ChatModelAction.chat(
+                requestId,
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                mockCtx);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError())
+                .contains("persistent error");
 
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
         verify(mockActionMetricGroup).getSubGroup("model_resource", "test-model");
         verify(mockRetryCountCounter).inc(2);
         verify(mockRetryWaitSecCounter).inc(0);
@@ -367,7 +365,7 @@ class ChatModelActionRetryTest {
     void chatResponseEventDefaultConstructorHasZeroRetryInfo() {
         UUID requestId = UUID.randomUUID();
         ChatMessage msg = new ChatMessage(MessageRole.ASSISTANT, "test");
-        ChatResponseEvent event = new ChatResponseEvent(requestId, msg);
+        ChatResponseEvent event = ChatResponseEvent.success(requestId, msg);
 
         assertThat(event.getRetryCount()).isEqualTo(0);
         assertThat(event.getTotalRetryWaitSec()).isEqualTo(0);
@@ -378,7 +376,7 @@ class ChatModelActionRetryTest {
     void chatResponseEventFullConstructorCarriesRetryInfo() {
         UUID requestId = UUID.randomUUID();
         ChatMessage msg = new ChatMessage(MessageRole.ASSISTANT, "test");
-        ChatResponseEvent event = new ChatResponseEvent(requestId, msg, 5, 31);
+        ChatResponseEvent event = ChatResponseEvent.success(requestId, msg, 5, 31);
 
         assertThat(event.getRetryCount()).isEqualTo(5);
         assertThat(event.getTotalRetryWaitSec()).isEqualTo(31);
@@ -446,20 +444,20 @@ class ChatModelActionRetryTest {
                                 "partial answ",
                                 Map.of("finish_reason", "length")));
 
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.chat(
-                                        UUID.randomUUID(),
-                                        "test-model",
-                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
-                                        Map.of(),
-                                        null,
-                                        reportingCtx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("truncated")
-                .hasMessageContaining("token");
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError()).contains("truncated");
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError()).contains("token");
 
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
 
     @Test
@@ -476,20 +474,21 @@ class ChatModelActionRetryTest {
         // Both rejection messages interpolate the finish reason, so the literal
         // content_filter appears in either one and cannot tell them apart. These
         // match prose unique to the filtering message.
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.chat(
-                                        UUID.randomUUID(),
-                                        "test-model",
-                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
-                                        Map.of(),
-                                        null,
-                                        reportingCtx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("withheld")
-                .hasMessageContaining("content filter");
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError()).contains("withheld");
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError())
+                .contains("content filter");
 
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
 
     @Test
@@ -509,21 +508,21 @@ class ChatModelActionRetryTest {
                                                 Map.of("name", "f", "arguments", ""))),
                                 Map.of("finish_reason", "length")));
 
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.chat(
-                                        UUID.randomUUID(),
-                                        "test-model",
-                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
-                                        Map.of(),
-                                        null,
-                                        reportingCtx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("truncated");
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getError()).contains("truncated");
 
         // A truncated tool call carries arguments the model never finished writing,
         // so no ToolRequestEvent may leave the action.
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
 
     @ParameterizedTest
@@ -546,16 +545,15 @@ class ChatModelActionRetryTest {
                                         "completionTokens",
                                         50L)));
 
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.chat(
-                                        UUID.randomUUID(),
-                                        "test-model",
-                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
-                                        Map.of(),
-                                        Map.class,
-                                        reportingCtx))
-                .isInstanceOf(IllegalStateException.class);
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
 
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         // The model call itself succeeded and spent its full token budget, so both
@@ -575,15 +573,15 @@ class ChatModelActionRetryTest {
                         eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
         verify(reporter, never())
                 .reportExecutionFailed(anyString(), anyString(), any(), any(), any());
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
 
     @Test
-    void chatIgnoreStrategyDropsRejectedResponseWithoutEvent() throws Exception {
+    void chatWithoutRetriesReturnsFailedResponse() throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
-        when(reportingCtx.getConfig())
-                .thenReturn(readableConfig(Agent.ErrorHandlingStrategy.IGNORE));
+        when(reportingCtx.getConfig()).thenReturn(readableConfig());
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
                         new ChatMessage(
@@ -591,8 +589,7 @@ class ChatModelActionRetryTest {
                                 "partial answ",
                                 Map.of("finish_reason", "length")));
 
-        // Under IGNORE the record is dropped: the rejection does not propagate and no
-        // event carries the truncated content downstream.
+        // A zero retry budget produces a failed event without forwarding the truncated content.
         ChatModelAction.chat(
                 UUID.randomUUID(),
                 "test-model",
@@ -601,7 +598,8 @@ class ChatModelActionRetryTest {
                 null,
                 reportingCtx);
 
-        assertThat(sentEvents).isEmpty();
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
 
     private static Stream<Map<String, Object>> acceptedFinishReasons() {
@@ -648,9 +646,6 @@ class ChatModelActionRetryTest {
                                 public <T> T get(
                                         org.apache.flink.agents.api.configuration.ConfigOption<T>
                                                 option) {
-                                    if (option == AgentExecutionOptions.ERROR_HANDLING_STRATEGY) {
-                                        return (T) Agent.ErrorHandlingStrategy.RETRY;
-                                    }
                                     if (option == AgentExecutionOptions.MAX_RETRIES) {
                                         return (T) Integer.valueOf(maxRetries);
                                     }
@@ -714,26 +709,20 @@ class ChatModelActionRetryTest {
         when(reportingCtx.<ChatMessage>durableExecute(any()))
                 .thenAnswer(inv -> inv.<DurableCallable<ChatMessage>>getArgument(0).call());
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(reportingCtx).sendEvent(any());
-        when(reportingCtx.getConfig()).thenReturn(readableConfig(Agent.ErrorHandlingStrategy.FAIL));
+        when(reportingCtx.getConfig()).thenReturn(readableConfig());
         return chatModel;
     }
 
-    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig(
-            Agent.ErrorHandlingStrategy errorHandlingStrategy) {
-        return readableConfig(errorHandlingStrategy, 0, 0);
+    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig() {
+        return readableConfig(0, 0);
     }
 
     private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig(
-            Agent.ErrorHandlingStrategy errorHandlingStrategy,
-            int maxRetries,
-            int retryWaitIntervalSec) {
+            int maxRetries, int retryWaitIntervalSec) {
         return new org.apache.flink.agents.api.configuration.ReadableConfiguration() {
             @Override
             @SuppressWarnings("unchecked")
             public <T> T get(org.apache.flink.agents.api.configuration.ConfigOption<T> option) {
-                if (option == AgentExecutionOptions.ERROR_HANDLING_STRATEGY) {
-                    return (T) errorHandlingStrategy;
-                }
                 if (option == AgentExecutionOptions.MAX_RETRIES) {
                     return (T) Integer.valueOf(maxRetries);
                 }

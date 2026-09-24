@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.actions.ChatModelInvoker;
 
 import java.util.List;
 import java.util.Map;
@@ -56,6 +57,37 @@ public final class ModelRoutingResolver {
 
     private ModelRoutingResolver() {}
 
+    /** An ordinary routing failure captured at the strategy boundary. */
+    public static final class RoutingFailure extends RuntimeException {
+        public RoutingFailure(String message) {
+            super(message);
+        }
+    }
+
+    public static final class RoutingOutcome {
+        public RoutingDecision decision;
+        public String error;
+
+        public RoutingOutcome() {}
+
+        RoutingDecision unwrap() {
+            if (error != null) {
+                throw new RoutingFailure(error);
+            }
+            return decision;
+        }
+    }
+
+    private static RoutingFailure failure(Exception e) throws Exception {
+        if (isCancellation(e)) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            throw e;
+        }
+        return new RoutingFailure(ChatModelInvoker.errorText(e));
+    }
+
     /**
      * If {@code model} names a {@link ModelRouter}, execute its declared strategy (persisted under
      * the durable {@code "route"} call so the decision replays deterministically on recovery),
@@ -75,10 +107,20 @@ public final class ModelRoutingResolver {
             Map<String, Object> promptArgs,
             RunnerContext ctx)
             throws Exception {
-        if (!ctx.hasResource(model, ResourceType.MODEL_ROUTER)) {
-            return ResolvedModelRoute.direct(model);
+        ModelRouter router;
+        RoutingStrategy strategy;
+        RoutingExecutor executor;
+        try {
+            if (!ctx.hasResource(model, ResourceType.MODEL_ROUTER)) {
+                return ResolvedModelRoute.direct(model);
+            }
+            router = (ModelRouter) ctx.getResource(model, ResourceType.MODEL_ROUTER);
+            strategy = router.getStrategy();
+            executor = RoutingExecutors.forType(strategy.getType());
+            executor.prepare(strategy, ctx);
+        } catch (Exception e) {
+            throw failure(e);
         }
-        ModelRouter router = (ModelRouter) ctx.getResource(model, ResourceType.MODEL_ROUTER);
         RoutingContext routingContext =
                 new RoutingContext(
                         requestId,
@@ -87,12 +129,6 @@ public final class ModelRoutingResolver {
                         promptArgs,
                         router.getCandidates(),
                         router.getDefaultModel().orElse(null));
-        RoutingStrategy strategy = router.getStrategy();
-        RoutingExecutor executor = RoutingExecutors.forType(strategy.getType());
-
-        // Outside the persistence boundary: a transiently failing preparation (e.g. a custom
-        // executor's constructor) must throw fresh per request, never persist as the decision.
-        executor.prepare(strategy, ctx);
 
         RoutingDecision decision =
                 executor.usesDurableExecutionInternally()
@@ -116,25 +152,28 @@ public final class ModelRoutingResolver {
             RunnerContext ctx)
             throws Exception {
         return ctx.durableExecute(
-                routeDecisionCallable(
-                        model,
-                        () -> {
-                            // Timed inside the durable call so the latency is persisted with the
-                            // decision: a replayed run reports the original strategy wall time —
-                            // and the strategy is never re-executed on replay.
-                            long start = System.nanoTime();
-                            RoutingDecision decision =
-                                    executor.route(strategy, routingContext, ctx);
-                            return decision.withDecisionMs(
-                                    (System.nanoTime() - start) / 1_000_000.0);
-                        }));
+                        routeDecisionCallable(
+                                model,
+                                () -> {
+                                    // Timed inside the durable call so the latency is persisted
+                                    // with the
+                                    // decision: a replayed run reports the original strategy wall
+                                    // time —
+                                    // and the strategy is never re-executed on replay.
+                                    long start = System.nanoTime();
+                                    RoutingDecision decision =
+                                            executor.route(strategy, routingContext, ctx);
+                                    return decision.withDecisionMs(
+                                            (System.nanoTime() - start) / 1_000_000.0);
+                                }))
+                .unwrap();
     }
 
     /**
      * The single definition of the {@code route:<router>} persistence record — both execution
      * shapes persist through this callable, so the id scheme and result class cannot diverge.
      */
-    private static DurableCallable<RoutingDecision> routeDecisionCallable(
+    private static DurableCallable<RoutingOutcome> routeDecisionCallable(
             String model, java.util.concurrent.Callable<RoutingDecision> body) {
         return new DurableCallable<>() {
             @Override
@@ -148,13 +187,19 @@ public final class ModelRoutingResolver {
             }
 
             @Override
-            public Class<RoutingDecision> getResultClass() {
-                return RoutingDecision.class;
+            public Class<RoutingOutcome> getResultClass() {
+                return RoutingOutcome.class;
             }
 
             @Override
-            public RoutingDecision call() throws Exception {
-                return body.call();
+            public RoutingOutcome call() throws Exception {
+                RoutingOutcome outcome = new RoutingOutcome();
+                try {
+                    outcome.decision = body.call();
+                } catch (Exception e) {
+                    outcome.error = failure(e).getMessage();
+                }
+                return outcome;
             }
         };
     }
@@ -174,10 +219,15 @@ public final class ModelRoutingResolver {
             RunnerContext ctx)
             throws Exception {
         long start = System.nanoTime();
-        RoutingDecision computed = executor.route(strategy, routingContext, ctx);
+        RoutingDecision computed;
+        try {
+            computed = executor.route(strategy, routingContext, ctx);
+        } catch (ChatModelInvoker.ChatAttemptFailed e) {
+            throw failure(e.error);
+        }
         final RoutingDecision toStore =
                 computed.withDecisionMs((System.nanoTime() - start) / 1_000_000.0);
-        return ctx.durableExecute(routeDecisionCallable(model, () -> toStore));
+        return ctx.durableExecute(routeDecisionCallable(model, () -> toStore)).unwrap();
     }
 
     /**
@@ -201,7 +251,7 @@ public final class ModelRoutingResolver {
         } else {
             selectedModel = decision.getSelectedModel();
             if (!router.isCandidate(selectedModel)) {
-                throw new IllegalStateException(
+                throw new RoutingFailure(
                         String.format(
                                 "Routing decision for router '%s' selected non-candidate model '%s'; candidates are %s.",
                                 model, selectedModel, router.getCandidateNames()));

@@ -56,7 +56,7 @@ config.set_int("kafkaActionStateTopicNumPartitions", 128)
 
 # Set framework-level configuration using a predefined ConfigOption class
 # This ensures type safety and better integration with the framework.
-config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY)
+config.set(AgentExecutionOptions.MAX_RETRIES, 3)
 ```
 
 {{< /tab >}}
@@ -77,13 +77,15 @@ config.setInt("kafkaActionStateTopicNumPartitions", 128);  // Kafka topic partit
 config.set(AgentConfigOptions.EVENT_LISTENERS, List.of(MyCustomListener.class.getName()));
 
 // Set framework configuration using ConfigOption (predefined option class)
-config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY);
+config.set(AgentExecutionOptions.MAX_RETRIES, 3);
 ```
 
 {{< /tab >}}
 {{< /tabs >}}
 
 ### Setting via the Flink YAML configuration file
+
+The former `ErrorHandlingStrategy` API and `error-handling-strategy` option have been removed. To enable retries, set `max-retries` to a positive number (for example, 3 to retain the former `RETRY` mode's default budget). Its default is now 0, preserving the previous default behavior of making no retries. Terminal Chat failures are reported through failed `ChatResponseEvent` events instead of a `FAIL` or `IGNORE` policy.
 
 Flink Agents allows reading configurations from the Flink YAML configuration file.
 
@@ -94,7 +96,7 @@ As part of the Flink configuration file, the flink agents configuration must fol
 ```yaml
 agent:
   # Agent-specific configurations
-  error-handling-strategy: retry
+  max-retries: 3
   chat:
     async: true
 ```
@@ -128,9 +130,8 @@ Here is the list of all built-in core configuration options.
 | `prettyPrint`             | false                      | boolean               | Whether to enable pretty-printed JSON format for event logs. When set to `true`, each event is written as formatted multi-line JSON instead of JSONL (JSON Lines) format. {{< hint info >}}Note: enabling this option makes the log file no longer valid JSONL format.  {{< /hint >}} |
 | `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
 | `action.trigger-condition.evaluate-failure-strategy` | `WARN_AND_SKIP` | ConditionEvaluationFailureStrategy | Handles event-time failures while preparing variables for or evaluating a compiled condition, including a dynamic non-Boolean result. <br/><ul><li>`WARN_AND_SKIP` (default): log a warning, treat that condition as false, and continue with later OR conditions.</li><li>`FAIL`: throw `IllegalStateException` and fail the Flink task; recovery follows the job's restart configuration.</li></ul> Plan-validation failures and runtime compilation or static type-check failures occur during initialization and are not handled by this option. |
-| `error-handling-strategy` | ErrorHandlingStrategy.FAIL | ErrorHandlingStrategy | Strategy for handling errors during model requests, include timeout and unexpected output schema. <br/>The option value could be:<br/> <ul><li>`ErrorHandlingStrategy.FAIL`</li> <li>`ErrorHandlingStrategy.RETRY`</li> <li>`ErrorHandlingStrategy.IGNORE`</li> |
-| `max-retries`             | 3                          | int                   | Number of retries when using `ErrorHandlingStrategy.RETRY`.                                                                                                                                                                                                     |
-| `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries when using `ErrorHandlingStrategy.RETRY`. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. Retry count and total wait time are reported in `ChatResponseEvent` and recorded as metrics (`retryCount`, `retryWaitSec`) under the configured ChatModel resource name. |
+| `max-retries`             | 0                          | int                   | Number of additional attempts per model call, including routing judge calls. Defaults to 0 (no retries).                                                                                                                                                                                                     |
+| `retry-wait-interval`     | 1                          | int                   | Base wait interval in seconds between retries. Uses exponential backoff: the actual wait time for the Nth retry is `retry-wait-interval * 2^(N-1)` seconds. For example, with default 1s, waits are 1s, 2s, 4s, etc. Retry count and total wait time are reported in `ChatResponseEvent` and recorded as metrics (`retryCount`, `retryWaitSec`) under the configured ChatModel resource name. |
 | `chat.async`              | true                       | boolean               | Whether chat asynchronously for built-in chat action.                                                                                                                                                                                                           |
 | `tool-call.async`         | true                       | boolean               | Whether the built-in tool-call action runs each tool via durable async execution.                                                                                                                                                                               |
 | `tool-call.parallelism`   | os cpu count               | int                   | In-flight concurrency for tool calls from one `ToolRequestEvent` batch when `tool-call.async` is enabled. `1` runs tools serially; values greater than `1` run a parallel durable batch with a sliding window of at most that many concurrent tool calls. On **Java**, concurrent in-batch execution requires **JDK 21+** (Continuation API); below JDK 21 the batch still runs but tool calls execute serially. **Python** uses the shared async `ThreadPoolExecutor` and runs batches concurrently regardless of JDK version. Increases in-flight external calls; after failover, unfinished tools may be submitted again — side-effecting tools should be idempotent or provide a reconciler. {{< hint warning >}}**Default is parallel** (`os cpu count`). Chat, RAG, and tool batches share one `num-async-threads` pool **per operator subtask** (all keys on that subtask). Built-in actions for a single key run one at a time, so chat and a tool batch on the **same key** do not overlap in the usual chat → tool path; delay shows up mainly **across keys** on the same subtask. With defaults (`num-async-threads = 2× cores`, `tool-call.parallelism = cores`), one batch can use up to half the pool; several busy keys can still saturate it. Lower this value or increase `num-async-threads` on hot subtasks. {{< /hint >}} |
