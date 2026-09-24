@@ -30,6 +30,11 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -42,6 +47,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -810,6 +816,159 @@ class WatsonxChatModelConnectionTest {
         ObjectNode payload = payloadFor(nonClassSchema);
 
         assertThat(payload.has("response_format")).isFalse();
+    }
+
+    /** Minimal tool carrying only metadata; never invoked in these tests. */
+    private static final class SchemaOnlyTool extends Tool {
+        SchemaOnlyTool() {
+            super(new ToolMetadata("add", "Add two numbers.", "{\"type\":\"object\"}"));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new UnsupportedOperationException("not invoked in this test");
+        }
+    }
+
+    /** A connection that records what the feasibility query answered on each payload it built. */
+    private static WatsonxChatModelConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        return new WatsonxChatModelConnection(
+                descriptor("https://us-south.ml.cloud.ibm.com", "test-key", "test-project"),
+                NOOP,
+                NO_ENVIRONMENT) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("The feasibility query answers exactly what the native branch decides")
+    void feasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the payload ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. This connection
+        // reports every model capable, so the schema form is the only thing that moves.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        WatsonxChatModelConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
+                answered.set(null);
+
+                ObjectNode payload =
+                        connection.buildPayload(
+                                List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                                tools,
+                                Map.of("model", MODEL),
+                                schema);
+
+                // A null here means the branch never consulted the query at all, which is the
+                // drift this test exists to catch. The value assertion below would fail too, but
+                // on a null comparison that does not say why.
+                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
+                assertThat(answered.get())
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(payload.has("response_format"));
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools do not make a POJO schema infeasible here")
+    void feasibilityQueryIgnoresBoundTools() {
+        // watsonx's native branch imposes no empty-tools precondition, unlike Gemini's. Pinning the
+        // answer keeps an override from acquiring one by being copied from a connection that does.
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(new SchemaOnlyTool()),
+                                        Map.of("model", MODEL)))
+                .isTrue();
+    }
+
+    @Test
+    @DisplayName("A caller response format does not make a POJO schema infeasible")
+    void feasibilityQueryIgnoresACallerResponseFormat() {
+        // The conflict between a caller response_format and a derived schema is raised by the
+        // branch rather than being reported as infeasible, so the query has to keep answering
+        // true here. Reporting false instead would silently turn that error into a skipped branch.
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class, List.of(), callerFormatInModelParams()))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class, List.of(), callerFormatInAdditionalKwargs()))
+                .isTrue();
+    }
+
+    /** A connection reporting no model capable, so capability and feasibility can disagree. */
+    private static WatsonxChatModelConnection incapableConnection() {
+        return new WatsonxChatModelConnection(
+                descriptor("https://us-south.ml.cloud.ibm.com", "test-key", "test-project"),
+                NOOP,
+                NO_ENVIRONMENT) {
+            @Override
+            protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                return false;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("Feasibility is answered without consulting the capability predicate")
+    void feasibilityQueryExcludesModelCapability() {
+        // WatsonxChatModelConnection reports every model capable, so no model name can separate
+        // the two answers. A subclass that reports nothing capable can: the query must still
+        // answer true, which fails the moment a capability conjunct is folded into the override.
+        // That folding is invisible to feasibilityQueryAgreesWithTheNativeBranch, which moves
+        // both sides at once. The payload stays unconstrained meanwhile, which is the branch's
+        // own conjunct doing the work the query does not.
+        WatsonxChatModelConnection connection = incapableConnection();
+
+        assertThat(
+                        connection.canApplyNativeStructuredOutput(
+                                Report.class, List.of(), Map.of("model", MODEL)))
+                .isTrue();
+
+        ObjectNode payload =
+                connection.buildPayload(
+                        List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                        List.of(),
+                        Map.of("model", MODEL),
+                        Report.class);
+
+        assertThat(payload.has("response_format")).isFalse();
+    }
+
+    @Test
+    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
+    void feasibilityQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the payload the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool());
+        Map<String, Object> modelParams = Map.of("model", MODEL);
+
+        connection().canApplyNativeStructuredOutput(Report.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", MODEL));
     }
 
     @Test

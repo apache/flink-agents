@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Sequence
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
+from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -28,7 +29,7 @@ from flink_agents.api.chat_models.chat_model import (
     StructuredOutputStrategy,
 )
 from flink_agents.api.prompts.prompt import Prompt
-from flink_agents.api.tools.tool import Tool
+from flink_agents.api.tools.tool import Tool, ToolType
 
 
 class _MinimalChatModelSetup(BaseChatModelSetup):
@@ -47,6 +48,17 @@ class _Answer(BaseModel):
     """A representative BaseModel output schema."""
 
     text: str
+
+
+class _StubTool(Tool):
+    """Minimal tool stub; only its presence in the tools list matters."""
+
+    @classmethod
+    def tool_type(cls) -> ToolType:
+        return ToolType.FUNCTION
+
+    def call(self, *args: Any, **kwargs: Any) -> None:
+        return None
 
 
 class _RecordingConnection(BaseChatModelConnection):
@@ -326,3 +338,83 @@ def test_effective_model_for_does_not_consume_the_params() -> None:
     connection.effective_model_for(model_kwargs)
 
     assert model_kwargs == {"model": "gpt-4o", "temperature": 0.5}
+
+
+def test_default_feasibility_predicate_is_false() -> None:
+    """A connection reports no schema applicable to any request by default."""
+    connection = _RecordingConnection()
+    model_kwargs = {"model": "gpt-4o"}
+
+    # Both forms an OutputSchema wraps: a BaseModel subclass, which a connection with
+    # a native branch could translate, and a RowTypeInfo, which none translates.
+    assert (
+        connection.can_apply_native_structured_output(
+            OutputSchema(output_schema=_Answer), [], model_kwargs
+        )
+        is False
+    )
+    assert (
+        connection.can_apply_native_structured_output(
+            OutputSchema(
+                output_schema=RowTypeInfo(
+                    field_types=[BasicTypeInfo.STRING_TYPE_INFO()],
+                    field_names=["name"],
+                )
+            ),
+            [],
+            model_kwargs,
+        )
+        is False
+    )
+
+
+def test_feasibility_predicate_accepts_a_missing_schema_tools_and_kwargs() -> None:
+    """A missing schema, missing tools or missing parameters must not raise.
+
+    Each is an ordinary request to answer about rather than a misuse: an unconstrained
+    request carries no schema, a request binding no tools may reach a builder as None
+    rather than as an empty list, and a builder handed no parameters asks with the same
+    None it was handed.
+    """
+    connection = _RecordingConnection()
+
+    assert connection.can_apply_native_structured_output(None, None, None) is False
+    assert (
+        connection.can_apply_native_structured_output(
+            OutputSchema(output_schema=_Answer), None, None
+        )
+        is False
+    )
+
+
+def test_feasibility_predicate_does_not_consume_the_model_kwargs() -> None:
+    """Answering leaves the mapping able to build the request it answered about.
+
+    An override copying a request builder's ``pop`` idiom would hand that builder a
+    mapping with the key already removed, so the contract is pinned on the default too.
+    """
+    connection = _RecordingConnection()
+    model_kwargs = {"model": "gpt-4o", "temperature": 0.5}
+
+    connection.can_apply_native_structured_output(
+        OutputSchema(output_schema=_Answer), [], model_kwargs
+    )
+
+    assert model_kwargs == {"model": "gpt-4o", "temperature": 0.5}
+
+
+def test_feasibility_predicate_does_not_consume_the_tools() -> None:
+    """The same tools go on to bind the request the answer was about.
+
+    A connection whose native branch turns on whether any tool is bound would answer
+    about one request and build another if answering emptied the list.
+    """
+    connection = _RecordingConnection()
+    tool = _StubTool()
+    tools = [tool]
+
+    connection.can_apply_native_structured_output(
+        OutputSchema(output_schema=_Answer), tools, {"model": "gpt-4o"}
+    )
+
+    assert tools == [tool]

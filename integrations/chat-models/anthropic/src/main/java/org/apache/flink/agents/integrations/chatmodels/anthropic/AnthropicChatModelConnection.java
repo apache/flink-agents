@@ -196,6 +196,47 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         return modelName;
     }
 
+    /**
+     * Whether a request built from these inputs would carry a derived {@code output_config}, the
+     * effective model's capability aside.
+     *
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
+     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And a
+     * caller-supplied {@code output_config} wins: it is the caller being explicit about the exact
+     * parameter the native branch writes, so the schema falls back to prompt engineering rather
+     * than the two competing on one request.
+     *
+     * <p>The tools are not read; a bound tool does not stop this connection sending a schema.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read
+     * @param modelParams read for a caller-supplied {@code output_config} under {@code
+     *     additional_kwargs}. These must be the parameters as they arrived: {@code buildRequest}
+     *     removes that key from its own copy before the native branch runs, so the stripped copy
+     *     would report every caller's {@code output_config} absent
+     * @return true if {@code outputSchema} is a POJO {@link Class} and the caller supplied no
+     *     {@code output_config} of its own
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams) {
+        return outputSchema instanceof Class && !carriesCallerOutputConfig(modelParams);
+    }
+
+    /**
+     * Whether the caller set an {@code output_config} of its own under {@code additional_kwargs}.
+     *
+     * <p>Shared by the feasibility query and the JSON prefill decision so the two cannot disagree
+     * about what the caller supplied. Reads the parameters as they arrived.
+     */
+    private static boolean carriesCallerOutputConfig(Map<String, Object> modelParams) {
+        Object additionalKwargs = modelParams == null ? null : modelParams.get("additional_kwargs");
+        return additionalKwargs instanceof Map
+                && ((Map<?, ?>) additionalKwargs).containsKey("output_config");
+    }
+
     // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
     // https://platform.claude.com/docs/en/build-with-claude/working-with-messages#putting-words-in-claudes-mouth
     //
@@ -522,11 +563,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             applyAdditionalKwargs(builder, additionalKwargs, modelName);
         }
 
-        // Read here rather than inside the native structured-output branch below because it governs
-        // the JSON prefill too, and a caller can supply an output_config without supplying any
-        // output schema for that branch to look at.
-        boolean callerSuppliedOutputConfig =
-                additionalKwargs != null && additionalKwargs.containsKey("output_config");
+        // Read from the parameters as they arrived, because the local copy no longer carries
+        // additional_kwargs by this point. It governs the JSON prefill too, and a caller can supply
+        // an output_config without supplying any output schema for the native branch to look at.
+        boolean callerSuppliedOutputConfig = carriesCallerOutputConfig(rawModelParams);
 
         // Native structured output applies only for a POJO Class schema on a model Anthropic
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
@@ -534,15 +574,11 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // explicit about the exact parameter this branch writes, so it wins and the schema falls
         // back to prompt engineering rather than the two competing on the same request.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a model this predicate rejects therefore degrades silently to the
-        // prompt-engineering fallback instead of getting an error. Once strategy resolution is
-        // wired up, NATIVE must either bypass this capability re-check or fail explicitly.
+        // The schema form and the caller's output_config are asked rather than restated, so a
+        // caller asking the same question gets the answer this branch acts on.
         boolean nativeSchemaApplied = false;
-        if (outputSchema instanceof Class
-                && supportsNativeStructuredOutput(modelName)
-                && !callerSuppliedOutputConfig) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && supportsNativeStructuredOutput(modelName)) {
             builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
             nativeSchemaApplied = true;
         }
