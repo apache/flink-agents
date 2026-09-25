@@ -33,7 +33,8 @@ import java.util.Set;
  * <p>This is the single check behind every declaration path: {@link ModelRouter.Builder#build()} at
  * the registration call site, plan construction for descriptors that never went through the
  * builder, and the {@link ModelRouter} constructor itself. A typo therefore fails with one message
- * wherever it is caught, rather than per routed request inside the durable call on the TaskManager.
+ * wherever it is caught, rather than per routed request on the TaskManager, when the router is
+ * resolved.
  *
  * <p>Internal contract shared with the plan module; not a stable public API.
  */

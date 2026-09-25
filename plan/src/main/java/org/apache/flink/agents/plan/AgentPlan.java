@@ -826,15 +826,15 @@ public class AgentPlan implements Serializable {
      * Rule declarations are static constraints like the judge checks above: the fluent builder
      * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
      * hand-built) never went through the builder. Without this arm they would surface only per
-     * record at request time — inside the durable call — where the IGNORE error policy silently
+     * record at request time — when the router is resolved — where the IGNORE error policy silently
      * drops every matching record. Rule shape, value types and pattern validity were already
      * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
      * the key-vs-candidate check here mirrors build().
      */
     /**
      * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
-     * 'candidates' value into a raw ClassCastException inside the durable call. A missing or empty
-     * list is rejected next by {@link RoutingCandidateValidator}.
+     * 'candidates' value into a raw ClassCastException when the router is resolved. A missing or
+     * empty list is rejected next by {@link RoutingCandidateValidator}.
      */
     private static void validateCandidatesShape(String routerName, Object candidates) {
         if (candidates != null && !(candidates instanceof List)) {

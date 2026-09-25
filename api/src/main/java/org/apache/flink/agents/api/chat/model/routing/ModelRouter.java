@@ -73,7 +73,9 @@ public class ModelRouter extends Resource {
             throws Exception {
         super(descriptor, resourceContext);
         List<String> names = descriptor.getArgument(CANDIDATES_KEY);
-        String defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
+        // Read as Object so a deserialized non-String default model is rejected by the validator
+        // with the candidate message instead of failing the cast here.
+        Object defaultModel = descriptor.getArgument(DEFAULT_MODEL_KEY);
         RoutingCandidateValidator.validate("ModelRouter", names, defaultModel);
         Map<String, String> descriptions =
                 descriptor.getArgument("candidate_descriptions", Collections.emptyMap());
@@ -82,7 +84,7 @@ public class ModelRouter extends Resource {
             parsed.add(new RoutingCandidate(name, descriptions.get(name)));
         }
         this.candidates = Collections.unmodifiableList(parsed);
-        this.defaultModel = defaultModel;
+        this.defaultModel = (String) defaultModel;
         this.fallbackEnabled =
                 Boolean.TRUE.equals(descriptor.getArgument("fallback", Boolean.FALSE));
         String typeTag = descriptor.getArgument(STRATEGY_TYPE_KEY);

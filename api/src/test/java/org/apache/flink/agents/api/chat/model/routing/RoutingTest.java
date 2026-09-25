@@ -139,15 +139,37 @@ class RoutingTest {
 
     @Test
     void defaultModelMustBeCandidate() {
+        // A descriptor built outside the builder (e.g. deserialized) meets the same default-model
+        // check in the constructor; going through build() would throw before the constructor runs.
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
                         new ModelRouter(
-                                ModelRouter.of("small", "big")
-                                        .strategy(Strategies.rules(Map.of()))
-                                        .defaultModel("huge")
-                                        .build(),
+                                new ResourceDescriptor(
+                                        ModelRouter.class.getName(), routerArgs("huge")),
                                 null));
+    }
+
+    @Test
+    void routerConstructionRejectsNonStringDefaultModel() {
+        Map<String, Object> args = routerArgs(null);
+        args.put(ModelRouter.DEFAULT_MODEL_KEY, 123);
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new ModelRouter(
+                                new ResourceDescriptor(ModelRouter.class.getName(), args), null));
+    }
+
+    private static Map<String, Object> routerArgs(String defaultModel) {
+        Map<String, Object> args = new HashMap<>();
+        args.put(ModelRouter.CANDIDATES_KEY, List.of("small", "big"));
+        args.put(ModelRouter.STRATEGY_TYPE_KEY, "rule_based");
+        args.put(ModelRouter.STRATEGY_ARGS_KEY, Map.of(RoutingStrategy.ARG_RULES, Map.of()));
+        if (defaultModel != null) {
+            args.put(ModelRouter.DEFAULT_MODEL_KEY, defaultModel);
+        }
+        return args;
     }
 
     @Test
@@ -433,7 +455,8 @@ class RoutingTest {
     /**
      * The builder is the registration call site: a duplicate candidate, a blank one, or a default
      * model that is not a candidate must fail here, not in the router constructor on the
-     * TaskManager (the constructor runs inside the durable call, per routed request).
+     * TaskManager (the constructor runs when the router is resolved, per routed request, before the
+     * durable routing call).
      */
     @Test
     void builderRejectsDuplicateCandidate() {

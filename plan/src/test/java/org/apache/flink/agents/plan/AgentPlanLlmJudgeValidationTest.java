@@ -356,7 +356,7 @@ public class AgentPlanLlmJudgeValidationTest {
     /**
      * Mis-shaped 'candidates' with VALID rules also fails at plan construction (review): the router
      * constructor's unchecked read would otherwise turn it into a raw per-record ClassCastException
-     * inside the durable call.
+     * when the router is resolved on the TaskManager.
      */
     @Test
     void misShapedCandidatesFailAtPlanConstruction() {
@@ -401,7 +401,8 @@ public class AgentPlanLlmJudgeValidationTest {
     /**
      * A default model that is not a candidate is a static declaration error like a typo'd rule key:
      * the builder catches it, but a descriptor-built plan only met it in the router constructor —
-     * inside the durable call, per routed request, where IGNORE drops every record.
+     * when the router is resolved on the TaskManager, per routed request, where IGNORE drops every
+     * record.
      */
     @Test
     void defaultModelNamingNonCandidateFailsAtPlanConstruction() {
