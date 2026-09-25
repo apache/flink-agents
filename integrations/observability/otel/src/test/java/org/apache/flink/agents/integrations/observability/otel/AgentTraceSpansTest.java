@@ -40,6 +40,11 @@ class AgentTraceSpansTest {
     private static final String LLM = "llm-2222";
     private static final String TOOL = "tool-3333";
 
+    // The metadata ToolCallAction records: framework call id, provider call id, and tool type.
+    private static final String TOOL_METADATA =
+            "\"entityMetadata\":{\"toolCallId\":\"fa-call-1\",\"externalId\":\"call_abc\","
+                    + "\"toolType\":\"function\"},";
+
     private static TraceRecord record(String json) {
         try {
             return MAPPER.readValue(json, TraceRecord.class);
@@ -67,7 +72,8 @@ class AgentTraceSpansTest {
                                 + "\",\"parentExecutionId\":\""
                                 + ACTION
                                 + "\","
-                                + "\"entityType\":\"llm\",\"entityName\":\"qwen-max\","
+                                + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
+                                + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
                                 + "\"eventType\":\"_execution_started_event\",\"status\":\"started\"}"),
                 record(
                         "{\"timestamp\":\"2026-01-15T10:30:03Z\",\"inputRunId\":\""
@@ -76,7 +82,8 @@ class AgentTraceSpansTest {
                                 + LLM
                                 + "\",\"parentExecutionId\":\""
                                 + ACTION
-                                + "\",\"entityType\":\"llm\",\"entityName\":\"qwen-max\","
+                                + "\",\"entityType\":\"llm\",\"entityName\":\"chatModel\","
+                                + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
                                 + "\"eventType\":\"_execution_finished_event\",\"status\":\"success\","
                                 + "\"eventAttributes\":{\"promptTokens\":120,\"completionTokens\":45}}"),
                 record(
@@ -87,6 +94,7 @@ class AgentTraceSpansTest {
                                 + "\",\"parentExecutionId\":\""
                                 + ACTION
                                 + "\",\"entityType\":\"tool\",\"entityName\":\"get_weather\","
+                                + TOOL_METADATA
                                 + "\"eventType\":\"_execution_started_event\",\"status\":\"started\"}"),
                 record(
                         "{\"timestamp\":\"2026-01-15T10:30:05Z\",\"inputRunId\":\""
@@ -96,10 +104,11 @@ class AgentTraceSpansTest {
                                 + "\",\"parentExecutionId\":\""
                                 + ACTION
                                 + "\",\"entityType\":\"tool\",\"entityName\":\"get_weather\","
+                                + TOOL_METADATA
                                 + "\"eventType\":\"_execution_failed_event\",\"status\":\"failed\","
-                                + "\"errorType\":\"java.io.IOException\","
-                                + "\"errorMessage\":\"connection refused\","
-                                + "\"problemCategory\":\"tool_call_failed\"}"),
+                                + "\"problemCategory\":\"tool_call_failed\","
+                                + "\"eventAttributes\":{\"errorType\":\"java.io.IOException\","
+                                + "\"errorMessage\":\"connection refused\"}}"),
                 record(
                         "{\"timestamp\":\"2026-01-15T10:30:06Z\",\"inputRunId\":\""
                                 + RUN
@@ -194,6 +203,93 @@ class AgentTraceSpansTest {
                 .isEqualTo("java.io.IOException");
         assertThat(tool.getAttributes().get(AgentTraceSpans.GEN_AI_TOOL_NAME))
                 .isEqualTo("get_weather");
+        // The provider-issued id wins over the framework-assigned one.
+        assertThat(tool.getAttributes().get(AgentTraceSpans.GEN_AI_TOOL_CALL_ID))
+                .isEqualTo("call_abc");
+        assertThat(tool.getAttributes().get(AgentTraceSpans.GEN_AI_TOOL_TYPE))
+                .isEqualTo("function");
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_TOOL_TYPE)).isEqualTo("function");
+    }
+
+    @Test
+    @DisplayName("Chat span without a recorded model is named 'chat' and sets no request model")
+    void testChatWithoutModel() {
+        List<SpanData> spans =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        record(
+                                                "{\"timestamp\":\"2026-01-15T10:30:01Z\","
+                                                        + "\"inputRunId\":\"r\",\"executionId\":\"l\","
+                                                        + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
+                                                        + "\"eventType\":\"_execution_finished_event\","
+                                                        + "\"status\":\"success\"}")));
+
+        SpanData llm = spanNamed(spans, "chat");
+        assertThat(llm.getAttributes().get(AgentTraceSpans.GEN_AI_REQUEST_MODEL)).isNull();
+    }
+
+    @Test
+    @DisplayName("Tool type maps onto gen_ai.tool.type well-known values, raw value always kept")
+    void testToolTypeMapping() {
+        assertThat(toolSpan("{\"toolCallId\":\"c\",\"toolType\":\"mcp\"}").getAttributes())
+                .satisfies(
+                        a -> {
+                            assertThat(a.get(AgentTraceSpans.GEN_AI_TOOL_TYPE))
+                                    .isEqualTo("extension");
+                            assertThat(a.get(AgentTraceSpans.FA_TOOL_TYPE)).isEqualTo("mcp");
+                            // Without a provider id, the framework call id is used.
+                            assertThat(a.get(AgentTraceSpans.GEN_AI_TOOL_CALL_ID)).isEqualTo("c");
+                        });
+        assertThat(toolSpan("{\"toolType\":\"remote_function\"}").getAttributes())
+                .satisfies(
+                        a ->
+                                assertThat(a.get(AgentTraceSpans.GEN_AI_TOOL_TYPE))
+                                        .isEqualTo("extension"));
+        assertThat(toolSpan("{\"toolType\":\"model_built_in\"}").getAttributes())
+                .satisfies(
+                        a -> {
+                            assertThat(a.get(AgentTraceSpans.GEN_AI_TOOL_TYPE)).isNull();
+                            assertThat(a.get(AgentTraceSpans.FA_TOOL_TYPE))
+                                    .isEqualTo("model_built_in");
+                        });
+    }
+
+    @Test
+    @DisplayName("error.type falls back to problemCategory when no error type is recorded")
+    void testErrorTypeFallsBackToProblemCategory() {
+        List<SpanData> spans =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        record(
+                                                "{\"timestamp\":\"2026-01-15T10:30:05Z\","
+                                                        + "\"inputRunId\":\"r\",\"executionId\":\"t\","
+                                                        + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
+                                                        + "\"eventType\":\"_execution_failed_event\","
+                                                        + "\"status\":\"failed\","
+                                                        + "\"problemCategory\":\"tool_call_failed\"}")));
+
+        SpanData tool = spanNamed(spans, "execute_tool lookup");
+        assertThat(tool.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+        assertThat(tool.getAttributes().get(AgentTraceSpans.ERROR_TYPE))
+                .isEqualTo("tool_call_failed");
+    }
+
+    private static SpanData toolSpan(String entityMetadataJson) {
+        List<SpanData> spans =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        record(
+                                                "{\"timestamp\":\"2026-01-15T10:30:05Z\","
+                                                        + "\"inputRunId\":\"r\",\"executionId\":\"t\","
+                                                        + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
+                                                        + "\"entityMetadata\":"
+                                                        + entityMetadataJson
+                                                        + ",\"eventType\":\"_execution_finished_event\","
+                                                        + "\"status\":\"success\"}")));
+        return spanNamed(spans, "execute_tool lookup");
     }
 
     @Test
@@ -257,7 +353,8 @@ class AgentTraceSpansTest {
                                                         + "\"executionId\":\""
                                                         + LLM
                                                         + "\","
-                                                        + "\"entityType\":\"llm\",\"entityName\":\"qwen-max\","
+                                                        + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
+                                                        + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
                                                         + "\"eventType\":\"_execution_started_event\","
                                                         + "\"status\":\"started\"}")));
 
@@ -285,7 +382,8 @@ class AgentTraceSpansTest {
                                                         + "\"executionId\":\""
                                                         + LLM
                                                         + "\","
-                                                        + "\"entityType\":\"llm\",\"entityName\":\"qwen-max\","
+                                                        + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
+                                                        + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
                                                         + "\"eventType\":\"_execution_started_event\","
                                                         + "\"status\":\"started\"}"),
                                         record(
