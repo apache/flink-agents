@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from dataclasses import dataclass
 from typing import Callable, Type
 
 from flink_agents.api.function import Function, JavaFunction, PythonFunction
@@ -25,25 +26,63 @@ from flink_agents.api.tools.tool_parameter_injection import (
 )
 
 
-def _validate_target(target: Function, owner: str) -> None:
-    """Reject targets with empty required identifiers, attributed to ``owner``."""
-    if isinstance(target, PythonFunction):
-        if not target.module or not target.qualname:
-            msg = (
-                f"PythonFunction target on '{owner}' must set both module and qualname"
-            )
+@dataclass(frozen=True)
+class ActionDeclaration:
+    """Immutable action declaration produced by applying ``action`` to a descriptor.
+
+    Applying ``action`` to a cross-language :class:`Function` descriptor returns
+    this wrapper instead of mutating the descriptor, so a descriptor shared by
+    multiple declarations keeps each declaration's trigger conditions and name
+    separate.
+
+    Attributes:
+    ----------
+    trigger_conditions : tuple[str, ...]
+        Raw event-type names or Boolean condition expressions.
+    func : Function
+        The api-layer executable descriptor dispatched for this action.
+    name : str | None
+        Optional action name override; ``None`` means use the attribute name.
+    """
+
+    trigger_conditions: tuple
+    func: Function
+    name: str | None = None
+
+
+def _validate_descriptor(descriptor: Function, owner: str) -> None:
+    """Reject descriptors with empty required identifiers, attributed to ``owner``."""
+    if isinstance(descriptor, PythonFunction):
+        if not descriptor.module or not descriptor.qualname:
+            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
             raise ValueError(msg)
-    elif isinstance(target, JavaFunction):
-        if not target.qualname or not target.method_name:
-            msg = f"JavaFunction target on '{owner}' must set both qualname and method_name"
+    elif isinstance(descriptor, JavaFunction):
+        if not descriptor.qualname or not descriptor.method_name:
+            msg = (
+                f"JavaFunction target on '{owner}' must set both qualname and method_name"
+            )
             raise ValueError(msg)
 
 
 def action(
     *trigger_conditions: str,
-    target: Function | None = None,
+    name: str | None = None,
 ) -> Callable:
-    """Decorator for marking a function as an agent action.
+    """Mark a function or a cross-language descriptor as an agent action.
+
+    Two declaration forms, mirroring Java's ``@Action`` on a method or a field:
+
+    * Native — decorate a callable; the decorated function is the action body::
+
+          @action(EventType.InputEvent)
+          @staticmethod
+          def handle(event: Event, ctx: RunnerContext) -> None: ...
+
+    * Cross-language — apply to a :class:`Function` descriptor; the decorated
+      attribute is the executable target, so no placeholder body is needed::
+
+          handle = action(EventType.InputEvent)(
+              JavaFunction.for_action("com.example.Handlers", "handle"))
 
     Each trigger condition is an event-type name or Boolean condition
     expression. Multiple conditions combine with OR semantics. To combine an
@@ -55,40 +94,54 @@ def action(
     ----------
     trigger_conditions : str
         Raw event-type names or Boolean condition expressions.
-    target : Function, optional
-        Cross-language function descriptor dispatched instead of the
-        decorated body. The body becomes a stub — raise
-        ``NotImplementedError`` so direct calls fail loud.
+    name : str, optional
+        Action name override. An empty string or ``None`` falls back to the
+        decorated member's attribute name (mirroring Java's ``@Action.name``).
 
     Returns:
     -------
     Callable
-        Decorator function that marks the target function with trigger conditions.
+        Decorator that, for a callable target, returns the tagged function, and
+        for a :class:`Function` descriptor target, returns an immutable
+        :class:`ActionDeclaration`.
 
     Raises:
     ------
     TypeError
-        If an entry is not a string, or ``target`` is not a
-        :class:`Function` descriptor.
+        If a trigger condition is not a string, or the decorated object is
+        neither a callable nor an api-layer :class:`Function` descriptor.
+    ValueError
+        If a cross-language descriptor is missing required identifiers.
     """
     for entry in trigger_conditions:
         if not isinstance(entry, str):
             msg = f"action trigger condition must be a string, got {entry!r}"
             raise TypeError(msg)
 
-    if target is not None and not isinstance(target, Function):
-        msg = (
-            f"action(target=...) must be an api-layer Function descriptor, "
-            f"got {type(target).__name__}"
-        )
-        raise TypeError(msg)
+    # Mirror Java's resolveActionName: an empty-string override means "no
+    # override" (a Java annotation cannot distinguish its "" default from an
+    # explicit ""), so the action falls back to its attribute name.
+    if name == "":
+        name = None
 
-    def decorator(func: Callable) -> Callable:
-        if target is not None:
-            _validate_target(target, func.__qualname__)
-            func._target = target
-        func._trigger_conditions = trigger_conditions
-        return func
+    def decorator(target: Callable | Function) -> Callable | ActionDeclaration:
+        if isinstance(target, Function):
+            _validate_descriptor(target, name or type(target).__name__)
+            return ActionDeclaration(
+                trigger_conditions=trigger_conditions,
+                func=target,
+                name=name,
+            )
+        if not callable(target):
+            msg = (
+                f"action() must decorate a callable or an api-layer Function "
+                f"descriptor, got {type(target).__name__}"
+            )
+            raise TypeError(msg)
+        target._trigger_conditions = trigger_conditions
+        if name is not None:
+            target._action_name = name
+        return target
 
     return decorator
 

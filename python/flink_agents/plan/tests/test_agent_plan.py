@@ -183,25 +183,73 @@ _JAVA_HANDLER_QUALNAME = (
 )
 
 
-class AgentWithCrossLanguageDecoratedAction(Agent):
-    @action(
-        EventType.InputEvent,
-        target=JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput"),
+class AgentWithCrossLanguageDescriptorAction(Agent):
+    handle = action(EventType.InputEvent)(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
     )
-    @staticmethod
-    def handle(event: Event, ctx: RunnerContext) -> None:
-        msg = "cross-language stub"
-        raise NotImplementedError(msg)
 
 
-def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
+def test_descriptor_action_compiles_to_plan_java_function() -> None:
     plan = AgentPlan.from_agent(
-        AgentWithCrossLanguageDecoratedAction(), AgentConfiguration()
+        AgentWithCrossLanguageDescriptorAction(), AgentConfiguration()
     )
     action = plan.actions["handle"]
     assert action.exec.qualname == _JAVA_HANDLER_QUALNAME
     assert action.exec.method_name == "handleInput"
     assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+class _BaseAgentWithInheritedDescriptorAction(Agent):
+    """Base with a cross-language descriptor @action — verifies the inheritance
+    guard also covers ``ActionDeclaration`` members, not just native callables.
+    """
+
+    shared = action(EventType.InputEvent)(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+class _ConcreteAgentInheritingDescriptorAction(_BaseAgentWithInheritedDescriptorAction):
+    """Concrete agent inheriting the descriptor ``shared`` action."""
+
+
+def test_descriptor_action_inherited_from_parent_agent_class_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Inherited @action") as exc:
+        AgentPlan.from_agent(
+            _ConcreteAgentInheritingDescriptorAction(), AgentConfiguration()
+        )
+    assert "shared" in str(exc.value)
+    assert "_BaseAgentWithInheritedDescriptorAction" in str(exc.value)
+
+
+class AgentWithDuplicateActionName(Agent):
+    """Two members whose ``name`` overrides collide — must fail fast."""
+
+    first = action(EventType.InputEvent, name="dup")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+    second = action(EventType.InputEvent, name="dup")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+def test_duplicate_action_name_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Duplicate action name"):
+        AgentPlan.from_agent(AgentWithDuplicateActionName(), AgentConfiguration())
+
+
+class AgentWithEmptyNameOverride(Agent):
+    """An empty ``name`` override falls back to the attribute name (Java parity)."""
+
+    handle = action(EventType.InputEvent, name="")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+def test_empty_name_override_falls_back_to_attribute_name() -> None:
+    plan = AgentPlan.from_agent(AgentWithEmptyNameOverride(), AgentConfiguration())
+    assert "handle" in plan.actions
+    assert "" not in plan.actions
 
 
 class MyEvent(Event):

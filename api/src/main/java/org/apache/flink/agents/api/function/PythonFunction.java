@@ -48,6 +48,15 @@ public final class PythonFunction implements Function, Serializable {
         this.qualName = Objects.requireNonNull(qualName, "qualName");
     }
 
+    /**
+     * Convenience factory for a Python cross-language target, mirroring {@code
+     * JavaFunction.forAction}. Reads naturally in the annotated-field form: {@code
+     * PythonFunction.of( "my_pkg.handlers", "handle_input")}.
+     */
+    public static PythonFunction of(String module, String qualName) {
+        return new PythonFunction(module, qualName);
+    }
+
     public String getModule() {
         return module;
     }
