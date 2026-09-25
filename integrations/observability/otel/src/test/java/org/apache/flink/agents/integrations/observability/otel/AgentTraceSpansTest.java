@@ -25,6 +25,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -309,6 +310,54 @@ class AgentTraceSpansTest {
                                 .collect(Collectors.toList()));
         assertThat(first.get(0).getSpanContext().getTraceId())
                 .isEqualTo(second.get(0).getSpanContext().getTraceId());
+    }
+
+    @Test
+    @DisplayName("Record order does not affect the assembled spans")
+    void testRecordOrderDoesNotMatter() {
+        AgentTraceSpans assembler = new AgentTraceSpans("test-service");
+        List<TraceRecord> reversed = new ArrayList<>(sampleRun());
+        Collections.reverse(reversed);
+
+        assertThat(spanShapes(assembler.assemble(reversed)))
+                .containsExactlyInAnyOrderElementsOf(spanShapes(assembler.assemble(sampleRun())));
+    }
+
+    private static List<String> spanShapes(List<SpanData> spans) {
+        return spans.stream()
+                .map(
+                        s ->
+                                s.getName()
+                                        + "|"
+                                        + s.getSpanContext().getSpanId()
+                                        + "|"
+                                        + s.getParentSpanContext().getSpanId()
+                                        + "|"
+                                        + s.getStartEpochNanos()
+                                        + "|"
+                                        + s.getEndEpochNanos()
+                                        + "|"
+                                        + s.getStatus().getStatusCode()
+                                        + "|"
+                                        + s.getAttributes())
+                .collect(Collectors.toList());
+    }
+
+    @Test
+    @DisplayName("Every execution span carries the framework correlation attributes")
+    void testCorrelationAttributes() {
+        SpanData tool =
+                spanNamed(
+                        new AgentTraceSpans("test-service").assemble(sampleRun()),
+                        "execute_tool get_weather");
+
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_INPUT_RUN_ID)).isEqualTo(RUN);
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_ID)).isEqualTo(TOOL);
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_ENTITY_TYPE)).isEqualTo("tool");
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_ENTITY_NAME))
+                .isEqualTo("get_weather");
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_STATUS))
+                .isEqualTo("failed");
     }
 
     @Test
