@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.chat.messages;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -30,9 +31,29 @@ public final class TextBlock extends ContentBlock {
 
     private final String text;
 
+    public TextBlock(String text) {
+        if (text == null) {
+            throw new IllegalArgumentException("A text block requires non-null text.");
+        }
+        this.text = text;
+    }
+
+    /**
+     * Wire-format construction, matching the Python model: an omitted {@code text} defaults to the
+     * empty string, while an explicit {@code null} or a non-string value is rejected. The parameter
+     * is a {@link JsonNode} because a {@code String} parameter cannot tell those two cases apart —
+     * Jackson passes {@code null} for both.
+     */
     @JsonCreator
-    public TextBlock(@JsonProperty("text") String text) {
-        this.text = text != null ? text : "";
+    static TextBlock fromJson(@JsonProperty("text") JsonNode text) {
+        if (text == null) {
+            return new TextBlock("");
+        }
+        if (!text.isTextual()) {
+            throw new IllegalArgumentException(
+                    "A text block's text must be a string, got " + text.getNodeType() + ".");
+        }
+        return new TextBlock(text.textValue());
     }
 
     public static TextBlock of(String text) {

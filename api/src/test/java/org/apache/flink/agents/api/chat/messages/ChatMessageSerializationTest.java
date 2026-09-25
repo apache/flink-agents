@@ -181,12 +181,24 @@ class ChatMessageSerializationTest {
                     + "\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"},\"caption\":\"x\"}",
             // Unknown field on a text block.
             "{\"type\":\"text\",\"text\":\"hi\",\"caption\":\"x\"}",
+            // Explicit null text.
+            "{\"type\":\"text\",\"text\":null}",
+            // Non-string text.
+            "{\"type\":\"text\",\"text\":5}",
         };
         for (String json : invalid) {
             assertThatThrownBy(() -> MAPPER.readValue(json, ContentBlock.class))
                     .as(json)
                     .isInstanceOf(JsonMappingException.class);
         }
+    }
+
+    @Test
+    @DisplayName("An omitted text defaults to empty, as in Python; null text is rejected")
+    void testTextBlockNullContract() throws Exception {
+        TextBlock omitted = (TextBlock) MAPPER.readValue("{\"type\":\"text\"}", ContentBlock.class);
+        assertThat(omitted.getText()).isEmpty();
+        assertThatThrownBy(() -> TextBlock.of(null)).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

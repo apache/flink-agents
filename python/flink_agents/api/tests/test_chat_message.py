@@ -169,6 +169,10 @@ _INVALID_WIRE_PAYLOADS = [
     },
     # Unknown field on a text block.
     {"type": "text", "text": "hi", "caption": "x"},
+    # Explicit null text.
+    {"type": "text", "text": None},
+    # Non-string text.
+    {"type": "text", "text": 5},
 ]
 
 
@@ -177,6 +181,14 @@ def test_invalid_wire_payloads_rejected(payload: dict) -> None:
     """The wire path rejects exactly the payloads Java rejects."""
     with pytest.raises(ValidationError):
         ChatMessage.model_validate({"role": "user", "blocks": [payload]})
+
+
+def test_text_block_null_contract() -> None:
+    """An omitted text defaults to empty, as in Java; None text is rejected."""
+    message = ChatMessage.model_validate({"role": "user", "blocks": [{"type": "text"}]})
+    assert message.blocks[0] == TextBlock(text="")
+    with pytest.raises(ValidationError):
+        TextBlock(text=None)
 
 
 def test_media_type_must_not_be_empty() -> None:
