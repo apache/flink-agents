@@ -289,7 +289,15 @@ public class EventLogOTelExporter implements AutoCloseable {
         Builder builder = builder();
         List<Path> files = new ArrayList<>();
         for (int i = 0; i < args.length; i++) {
-            switch (args[i]) {
+            String arg = args[i];
+            boolean isFlag =
+                    arg.equals("--endpoint")
+                            || arg.equals("--protocol")
+                            || arg.equals("--service-name");
+            if (isFlag && i + 1 >= args.length) {
+                exitWithUsage("Missing value for " + arg + ".");
+            }
+            switch (arg) {
                 case "--endpoint":
                     builder.setEndpoint(args[++i]);
                     break;
@@ -300,14 +308,11 @@ public class EventLogOTelExporter implements AutoCloseable {
                     builder.setServiceName(args[++i]);
                     break;
                 default:
-                    files.add(Path.of(args[i]));
+                    files.add(Path.of(arg));
             }
         }
         if (files.isEmpty()) {
-            System.err.println(
-                    "Usage: EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]"
-                            + " [--service-name NAME] eventLogFile...");
-            System.exit(2);
+            exitWithUsage("No Event Log file or directory given.");
         }
         try (EventLogOTelExporter exporter = builder.build()) {
             ExportSummary summary = exporter.exportFiles(files);
@@ -316,5 +321,13 @@ public class EventLogOTelExporter implements AutoCloseable {
                 System.err.println(diagnostic);
             }
         }
+    }
+
+    private static void exitWithUsage(String problem) {
+        System.err.println(problem);
+        System.err.println(
+                "Usage: EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]"
+                        + " [--service-name NAME] eventLogFile...");
+        System.exit(2);
     }
 }
