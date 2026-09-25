@@ -170,6 +170,17 @@ class ChatMessageSerializationTest {
             // Empty media type.
             "{\"type\":\"image\",\"media_type\":\"\","
                     + "\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"}}",
+            // Unknown field on a base64 source.
+            "{\"type\":\"image\",\"media_type\":\"image/png\",\"source\":"
+                    + "{\"type\":\"base64\",\"data\":\"aGk=\",\"url\":\"https://example.org/x\"}}",
+            // Unknown field on a URL source.
+            "{\"type\":\"image\",\"media_type\":\"image/png\",\"source\":"
+                    + "{\"type\":\"url\",\"url\":\"https://example.org/x\",\"data\":\"aGk=\"}}",
+            // Unknown field on a media block.
+            "{\"type\":\"image\",\"media_type\":\"image/png\","
+                    + "\"source\":{\"type\":\"base64\",\"data\":\"aGk=\"},\"caption\":\"x\"}",
+            // Unknown field on a text block.
+            "{\"type\":\"text\",\"text\":\"hi\",\"caption\":\"x\"}",
         };
         for (String json : invalid) {
             assertThatThrownBy(() -> MAPPER.readValue(json, ContentBlock.class))

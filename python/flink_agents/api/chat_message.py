@@ -47,7 +47,7 @@ class MessageRole(str, Enum):
 class TextBlock(BaseModel):
     """A plain-text, immutable part of a ChatMessage."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["text"] = "text"
     text: str = ""
@@ -59,7 +59,7 @@ class TextBlock(BaseModel):
 class Base64Source(BaseModel):
     """An inline media payload, carried as base64 text."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["base64"] = "base64"
     data: str = Field(min_length=1)
@@ -81,7 +81,7 @@ class UrlSource(BaseModel):
     the model provider, and may be invalid after recovery from a checkpoint.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     type: Literal["url"] = "url"
     url: str = Field(min_length=1)
@@ -115,7 +115,10 @@ class MediaBlock(BaseModel):
 
     # Frozen keeps sharing a block (e.g. across a routing context copy) safe,
     # and matches the validated immutable construction on the Java side.
-    model_config = ConfigDict(frozen=True)
+    # extra="forbid" is set on every nested model because ChatMessage's own
+    # setting does not propagate: an unknown field must fail here, as it does
+    # in Java, rather than being silently dropped.
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
     # min_length mirrors the Java constructor: both languages reject an empty
     # media type, so a block valid here is valid after crossing the bridge.
