@@ -283,7 +283,7 @@ public final class AgentTraceSpans {
                             "Execution has a start record but no terminal record; exported as a"
                                     + " zero-duration span with status UNSET.",
                             null));
-        } else if (execution.started == null && !reused) {
+        } else if (execution.start() == null && !reused) {
             // A terminal with no start (reused executions are single-record by design).
             attributes.put(FA_EXECUTION_INCOMPLETE, true);
             diagnostics.add(
@@ -295,9 +295,10 @@ public final class AgentTraceSpans {
                             null));
         }
 
+        TraceRecord start = execution.start();
         long startNanos =
-                execution.started != null
-                        ? epochNanos(execution.started.getTimestamp())
+                start != null
+                        ? epochNanos(start.getTimestamp())
                         : epochNanos(terminal.getTimestamp());
         long endNanos = terminal != null ? epochNanos(terminal.getTimestamp()) : startNanos;
 
@@ -372,12 +373,15 @@ public final class AgentTraceSpans {
 
     /** Started/terminal record pair for one execution id. */
     private static final class ExecutionSpanBuilder {
+        private TraceRecord created;
         private TraceRecord started;
         private TraceRecord terminal;
 
         void accept(TraceRecord record) {
-            if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(
-                    record.getEventType())) {
+            String eventType = record.getEventType();
+            if (ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE.equals(eventType)) {
+                created = record;
+            } else if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(eventType)) {
                 started = record;
             } else {
                 // finished / failed / reused all terminate the execution. A reused execution has
@@ -386,8 +390,18 @@ public final class AgentTraceSpans {
             }
         }
 
+        /**
+         * Where the span starts: the started record, else the created record. A created record
+         * without a started one is a Tool that was queued but never reported starting, including
+         * one whose preparation failed; the created record is never a terminal.
+         */
+        TraceRecord start() {
+            return started != null ? started : created;
+        }
+
         TraceRecord anyRecord() {
-            return started != null ? started : terminal;
+            TraceRecord start = start();
+            return start != null ? start : terminal;
         }
     }
 

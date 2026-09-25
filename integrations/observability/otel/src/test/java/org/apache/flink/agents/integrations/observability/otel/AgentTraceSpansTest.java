@@ -360,6 +360,133 @@ class AgentTraceSpansTest {
                 .isEqualTo("failed");
     }
 
+    private static TraceRecord toolRecord(String timestamp, String eventType, String status) {
+        return toolRecord(timestamp, eventType, status, "");
+    }
+
+    private static TraceRecord toolRecord(
+            String timestamp, String eventType, String status, String extraJson) {
+        return record(
+                "{\"timestamp\":\""
+                        + timestamp
+                        + "\",\"inputRunId\":\"r\",\"executionId\":\"t\","
+                        + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
+                        + "\"eventType\":\""
+                        + eventType
+                        + "\",\"status\":\""
+                        + status
+                        + "\""
+                        + extraJson
+                        + "}");
+    }
+
+    @Test
+    @DisplayName("created -> started -> failed spans started..failed in any record order")
+    void testCreatedStartedTerminal() {
+        List<TraceRecord> records =
+                new ArrayList<>(
+                        List.of(
+                                toolRecord(
+                                        "2026-01-15T10:30:00Z",
+                                        "_execution_created_event",
+                                        "created"),
+                                toolRecord(
+                                        "2026-01-15T10:30:01Z",
+                                        "_execution_started_event",
+                                        "started"),
+                                toolRecord(
+                                        "2026-01-15T10:30:03Z",
+                                        "_execution_failed_event",
+                                        "failed",
+                                        ",\"problemCategory\":\"tool_call_failed\"")));
+        for (int pass = 0; pass < 2; pass++) {
+            List<ConverterDiagnostic> diagnostics = new ArrayList<>();
+            SpanData tool =
+                    spanNamed(
+                            new AgentTraceSpans("test-service").assemble(records, diagnostics),
+                            "execute_tool lookup");
+
+            assertThat(tool.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+            assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_STATUS))
+                    .isEqualTo("failed");
+            assertThat(tool.getEndEpochNanos() - tool.getStartEpochNanos())
+                    .isEqualTo(2_000_000_000L);
+            assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_INCOMPLETE)).isNull();
+            assertThat(diagnostics).isEmpty();
+            Collections.reverse(records);
+        }
+    }
+
+    @Test
+    @DisplayName("A created-only execution is incomplete, not a terminal without a start")
+    void testCreatedOnly() {
+        List<ConverterDiagnostic> diagnostics = new ArrayList<>();
+        SpanData tool =
+                spanNamed(
+                        new AgentTraceSpans("test-service")
+                                .assemble(
+                                        List.of(
+                                                toolRecord(
+                                                        "2026-01-15T10:30:00Z",
+                                                        "_execution_created_event",
+                                                        "created")),
+                                        diagnostics),
+                        "execute_tool lookup");
+
+        assertThat(tool.getStatus().getStatusCode()).isEqualTo(StatusCode.UNSET);
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_INCOMPLETE)).isTrue();
+        assertThat(tool.getStartEpochNanos()).isEqualTo(tool.getEndEpochNanos());
+        assertThat(diagnostics)
+                .extracting(ConverterDiagnostic::getCode)
+                .containsExactly(ConverterDiagnostic.INCOMPLETE_EXECUTION);
+    }
+
+    @Test
+    @DisplayName("created -> failed without a start (preparation failure) spans created..failed")
+    void testCreatedThenFailedWithoutStart() {
+        List<ConverterDiagnostic> diagnostics = new ArrayList<>();
+        SpanData tool =
+                spanNamed(
+                        new AgentTraceSpans("test-service")
+                                .assemble(
+                                        List.of(
+                                                toolRecord(
+                                                        "2026-01-15T10:30:00Z",
+                                                        "_execution_created_event",
+                                                        "created"),
+                                                toolRecord(
+                                                        "2026-01-15T10:30:00.500Z",
+                                                        "_execution_failed_event",
+                                                        "failed")),
+                                        diagnostics),
+                        "execute_tool lookup");
+
+        assertThat(tool.getStatus().getStatusCode()).isEqualTo(StatusCode.ERROR);
+        assertThat(tool.getEndEpochNanos() - tool.getStartEpochNanos()).isEqualTo(500_000_000L);
+        assertThat(diagnostics).isEmpty();
+    }
+
+    @Test
+    @DisplayName("A STANDARD-level truncated error message still becomes the status description")
+    void testTruncatedErrorMessage() {
+        SpanData tool =
+                spanNamed(
+                        new AgentTraceSpans("test-service")
+                                .assemble(
+                                        List.of(
+                                                toolRecord(
+                                                        "2026-01-15T10:30:00Z",
+                                                        "_execution_failed_event",
+                                                        "failed",
+                                                        ",\"eventAttributes\":{\"errorType\":\"x.Boom\","
+                                                                + "\"errorMessage\":{\"truncatedString\":"
+                                                                + "\"long message...\",\"omittedChars\":42}}"))),
+                        "execute_tool lookup");
+
+        assertThat(tool.getStatus().getDescription()).isEqualTo("long message...");
+        assertThat(tool.getAttributes().get(AgentTraceSpans.ERROR_TYPE)).isEqualTo("x.Boom");
+    }
+
     @Test
     @DisplayName("A reused execution becomes a point-in-time span with status attribute 'reused'")
     void testReusedExecution() {
