@@ -356,7 +356,7 @@ public class AgentPlanLlmJudgeValidationTest {
     /**
      * Mis-shaped 'candidates' with VALID rules also fails at plan construction (review): the router
      * constructor's unchecked read would otherwise turn it into a raw per-record ClassCastException
-     * inside the durable call.
+     * when the router is resolved on the TaskManager.
      */
     @Test
     void misShapedCandidatesFailAtPlanConstruction() {
@@ -396,5 +396,46 @@ public class AgentPlanLlmJudgeValidationTest {
     @Test
     void registeredJudgeModelPassesValidation() {
         assertThatCode(() -> new AgentPlan(Map.of(), providers(true))).doesNotThrowAnyException();
+    }
+
+    /**
+     * A default model that is not a candidate is a static declaration error like a typo'd rule key:
+     * the builder catches it, but a descriptor-built plan only met it in the router constructor —
+     * when the router is resolved on the TaskManager, per routed request, where IGNORE drops every
+     * record.
+     */
+    @Test
+    void defaultModelNamingNonCandidateFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = ruleBasedRouterArgs(List.of("small", "big"), Map.of());
+        args.put("default_model", "huge");
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("default model")
+                .hasMessageContaining("huge")
+                .hasMessageContaining("router");
+    }
+
+    @Test
+    void duplicateCandidateFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers =
+                ruleBasedProviders(List.of("small", "small"), Map.of());
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("duplicated")
+                .hasMessageContaining("router");
+    }
+
+    @Test
+    void emptyCandidateListFailsAtPlanConstruction() {
+        Map<ResourceType, Map<String, ResourceProvider>> providers = providers(true);
+        Map<String, Object> args = ruleBasedRouterArgs(List.of(), Map.of());
+        args.remove("default_model");
+        setRouter(providers, new ResourceDescriptor(ModelRouter.class.getName(), args));
+        assertThatThrownBy(() -> new AgentPlan(Map.of(), providers))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("candidate")
+                .hasMessageContaining("router");
     }
 }

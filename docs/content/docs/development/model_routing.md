@@ -118,12 +118,12 @@ Resources can equally be registered on the execution environment with `agentsEnv
 
 | Method | Description |
 |--------|-------------|
-| `of(String... candidates)` | Start a router over the given chat model names. |
+| `of(String... candidates)` | Start a router over the given chat model names. At least one, each non-empty and unique. |
 | `strategy(RoutingStrategy)` | Required. One of the `Strategies` factories below. |
 | `describe(candidate, description)` | Describe a candidate. Descriptions are the criteria the [LLM judge](#llm-judge) reads. The name must be a candidate. |
 | `defaultModel(String)` | Where the router lands when the strategy abstains. Optional; without it the first candidate is the default. Must be a candidate. |
 | `fallback(boolean)` | Try the remaining candidates, in declaration order, after the selected model fails. Off by default. |
-| `build()` | Produces the `ResourceDescriptor` to register. |
+| `build()` | Produces the `ResourceDescriptor` to register. Fails on a duplicate or empty candidate, a default model that is not a candidate, or a rule key that is not a candidate. |
 
 ## Routing Strategies
 

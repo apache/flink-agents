@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingCandidateValidator;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
@@ -816,6 +817,13 @@ public class AgentPlan implements Serializable {
             // shape guard applies to all of them — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
             validateCandidatesShape(provider.getName(), candidates);
+            // The constructor's own candidate rules (non-empty, no duplicates, default model is a
+            // candidate), applied here so a descriptor that skipped the builder fails at plan
+            // construction rather than per routed request on the TaskManager.
+            RoutingCandidateValidator.validate(
+                    String.format("Model router '%s'", provider.getName()),
+                    (List<?>) candidates,
+                    descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
             switch (strategy.getType()) {
                 case LLM_JUDGE:
                     validateJudge(provider.getName(), strategy, chatModels);
@@ -836,15 +844,15 @@ public class AgentPlan implements Serializable {
      * Rule declarations are static constraints like the judge checks above: the fluent builder
      * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
      * hand-built) never went through the builder. Without this arm they would surface only per
-     * record at request time — inside the durable call — where the IGNORE error policy silently
+     * record at request time — when the router is resolved — where the IGNORE error policy silently
      * drops every matching record. Rule shape, value types and pattern validity were already
      * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
      * the key-vs-candidate check here mirrors build().
      */
     /**
      * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
-     * 'candidates' value into a raw ClassCastException inside the durable call. A missing argument
-     * is left to the constructor's own message ("requires at least one candidate").
+     * 'candidates' value into a raw ClassCastException when the router is resolved. A missing or
+     * empty list is rejected next by {@link RoutingCandidateValidator}.
      */
     private static void validateCandidatesShape(String routerName, Object candidates) {
         if (candidates != null && !(candidates instanceof List)) {
@@ -860,9 +868,6 @@ public class AgentPlan implements Serializable {
 
     private static void validateRuleKeys(
             String routerName, RoutingStrategy strategy, Object candidates) {
-        if (candidates == null) {
-            return;
-        }
         Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
         if (!(rules instanceof Map)) {
             return;
