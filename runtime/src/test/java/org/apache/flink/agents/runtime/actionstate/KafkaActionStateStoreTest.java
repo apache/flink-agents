@@ -234,6 +234,87 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testRebuildStateKeepsPendingResultBeforeRecoveryMarker() throws Exception {
+        ActionState pendingState = new ActionState(testEvent);
+        actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, pendingState);
+
+        ProducerRecord<String, ActionState> persisted = mockProducer.history().get(0);
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        1L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        1L));
+
+        Object recoveryMarker = actionStateStore.getRecoveryMarker();
+        int recoveryPartition =
+                ((Map<Integer, Long>) recoveryMarker)
+                        .entrySet().stream()
+                                .filter(entry -> entry.getValue() == 0L)
+                                .map(Map.Entry::getKey)
+                                .findFirst()
+                                .orElse(0);
+        TopicPartition topicPartition = new TopicPartition(TEST_TOPIC, recoveryPartition);
+
+        MockConsumer<String, ActionState> recoveryConsumer = new MockConsumer<>(EARLIEST.name());
+        recoveryConsumer.assign(List.of(topicPartition));
+        recoveryConsumer.updateBeginningOffsets(Map.of(topicPartition, 0L));
+        recoveryConsumer.addRecord(
+                new ConsumerRecord<>(
+                        TEST_TOPIC, recoveryPartition, 0L, persisted.key(), persisted.value()));
+
+        Map<String, ActionState> recoveredStates = new HashMap<>();
+        try (KafkaActionStateStore recoveredStore =
+                new KafkaActionStateStore(
+                        recoveredStates,
+                        new AgentConfiguration(),
+                        null,
+                        recoveryConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM))) {
+            recoveredStore.rebuildState(List.of(recoveryMarker));
+            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent))
+                    .as("Recovery must reuse the saved pending result instead of skipping it")
+                    .isEqualTo(pendingState);
+        }
+    }
+
+    @Test
+    void testRecoveryMarkerSkipsCheckpointedSequenceAndKeepsLaterPendingSequence()
+            throws Exception {
+        ActionState completedState = new ActionState(testEvent);
+        completedState.markCompleted();
+        ActionState pendingState = new ActionState(new InputEvent("pending"));
+
+        actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, completedState);
+        actionStateStore.put(TEST_KEY, 2L, testAction, testEvent, pendingState);
+        actionStateStore.markCheckpointedSequence(TEST_KEY, 1L);
+
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        2L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        2L));
+
+        @SuppressWarnings("unchecked")
+        Map<Integer, Long> recoveryMarker =
+                (Map<Integer, Long>) actionStateStore.getRecoveryMarker();
+
+        assertThat(recoveryMarker.values()).contains(1L).doesNotContain(0L);
+    }
+
+    @Test
     void testPruneState() throws Exception {
         // Arrange
         actionStates.put(
