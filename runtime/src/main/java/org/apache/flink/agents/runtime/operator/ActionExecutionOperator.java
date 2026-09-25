@@ -632,7 +632,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             notifyRecordFinished(key);
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
-            durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
+            durableExecManager.updateLastCompletedSequenceNumber(key, sequenceNumber);
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.

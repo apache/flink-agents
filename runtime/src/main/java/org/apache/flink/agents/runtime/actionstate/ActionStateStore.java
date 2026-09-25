@@ -117,6 +117,12 @@ public interface ActionStateStore extends AutoCloseable {
     default void setOwnershipFilter(IntPredicate ownershipFilter) {}
 
     /**
+     * Records the highest sequence number for {@code key} whose effects are already reflected in
+     * the current Flink checkpoint state.
+     */
+    default void markCheckpointedSequence(Object key, long seqNum) throws Exception {}
+
+    /**
      * Get a marker object representing the current recovery point in the state store.
      *
      * @return a marker object, or null if not supported
