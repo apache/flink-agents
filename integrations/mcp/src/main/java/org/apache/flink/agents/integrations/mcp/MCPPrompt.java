@@ -154,7 +154,7 @@ public class MCPPrompt extends Prompt {
     public String formatString(Map<String, String> arguments) {
         List<ChatMessage> messages = formatMessages(MessageRole.SYSTEM, arguments);
         return messages.stream()
-                .map(msg -> msg.getRole().getValue() + ": " + msg.getContent())
+                .map(msg -> msg.getRole().getValue() + ": " + msg.getText())
                 .collect(Collectors.joining("\n"));
     }
 

@@ -330,10 +330,10 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
             # emitted content, which is where the assertion can reach it. It is
             # wrapped as a JSON object because the caller parses this round against
             # the output schema; the joined text survives verbatim inside the field.
-            content = "\n".join(message.content for message in messages)
-            return ChatMessage(
-                role=MessageRole.ASSISTANT,
-                content=json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
+            content = "\n".join(message.text for message in messages)
+            return ChatMessage.of(
+                MessageRole.ASSISTANT,
+                json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
             )
 
         # Validate the tool was bound before the model was invoked.
@@ -344,9 +344,9 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
             "type": ToolType.FUNCTION,
             "function": {"name": BLOCKING_TOOL_NAME, "arguments": {}},
         }
-        return ChatMessage(
-            role=MessageRole.ASSISTANT,
-            content=_ROUND_ONE_MARKER,
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            _ROUND_ONE_MARKER,
             tool_calls=[tool_call],
         )
 
@@ -443,9 +443,7 @@ class CheckpointRecoveryAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="recovery_chat_model",
-                messages=[
-                    ChatMessage(role=MessageRole.USER, content=input_data.content)
-                ],
+                messages=[ChatMessage.of(MessageRole.USER, input_data.content)],
                 prompt_args={"task": input_data.content},
                 # Set once, on the only request this agent issues. The framework
                 # persists it with the tool-call context and re-reads the restored
@@ -507,7 +505,7 @@ class CheckpointRecoveryAgent(Agent):
             "transcript": transcript,
             # The unparsed response alongside the unpacked transcript, so a payload
             # that failed to unpack is diagnosable from this file alone.
-            "response_content": chat_response.content,
+            "response_content": chat_response.text,
         }
         verdict = json.dumps(record, sort_keys=True)
         _atomic_write(

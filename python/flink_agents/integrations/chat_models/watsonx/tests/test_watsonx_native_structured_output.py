@@ -121,7 +121,7 @@ def _sent_params(
     """The params dict one chat call hands to the provider."""
     connection, provider_model = _mocked_connection(monkeypatch)
     connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")],
+        [ChatMessage.of(role=MessageRole.USER, content="Hello!")],
         output_schema=output_schema,
         **kwargs,
     )
@@ -186,7 +186,7 @@ def test_row_type_info_schema_returns_and_sends_no_response_format(
     connection, provider_model = _mocked_connection(monkeypatch)
 
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")],
+        [ChatMessage.of(role=MessageRole.USER, content="Hello!")],
         output_schema=schema,
         temperature=0.5,
     )
@@ -340,7 +340,7 @@ def test_chat_with_output_schema() -> None:
     """
     response = WatsonxChatModelConnection().chat(
         [
-            ChatMessage(
+            ChatMessage.of(
                 role=MessageRole.USER,
                 content='Rate the sentence "the build is green" and report a verdict'
                 " and a score.",
@@ -351,9 +351,8 @@ def test_chat_with_output_schema() -> None:
         max_tokens=200,
     )
 
-    assert response.content is not None
-    assert response.content.strip() != ""
-    parsed = json.loads(response.content)
+    assert response.text.strip() != ""
+    parsed = json.loads(response.text)
     assert set(parsed) == {"verdict", "score"}
     assert Answer(**parsed).verdict is not None
 
@@ -445,7 +444,7 @@ def test_effective_model_for_names_the_model_the_request_judges(
 
     named = connection.effective_model_for(model_kwargs)
     connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")],
+        [ChatMessage.of(role=MessageRole.USER, content="Hello!")],
         output_schema=OutputSchema(output_schema=Answer),
         **model_kwargs,
     )

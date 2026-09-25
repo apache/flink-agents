@@ -117,7 +117,7 @@ public class ReviewAnalysisAgent extends Agent {
         // the handling that fits your pipeline: raise to fail the input (as below), emit an
         // OutputEvent carrying an error sentinel, or send a custom error event so downstream
         // operators can detect the failure.
-        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getContent());
+        JsonNode jsonNode = MAPPER.readTree(chatResponse.getResponse().getText());
         JsonNode scoreNode = jsonNode.findValue("score");
         JsonNode reasonsNode = jsonNode.findValue("reasons");
         if (scoreNode == null || reasonsNode == null) {

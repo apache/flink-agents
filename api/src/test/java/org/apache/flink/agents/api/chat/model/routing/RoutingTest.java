@@ -20,7 +20,9 @@ package org.apache.flink.agents.api.chat.model.routing;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
@@ -394,8 +396,34 @@ class RoutingTest {
                 new RoutingContext(
                         UUID.randomUUID(), "router", List.of(original), Map.of(), List.of());
         // A strategy mutating what it sees must not rewrite the message actually sent.
-        ctx.getMessages().get(0).setContent("REWRITTEN BY STRATEGY");
-        assertEquals("original prompt", original.getContent());
+        ctx.getMessages().get(0).setText("REWRITTEN BY STRATEGY");
+        assertEquals("original prompt", original.getText());
+    }
+
+    @Test
+    void routingContextBlocksCannotBeMutatedThroughAliasing() {
+        // Blocks are shared between the context copy and the original message; the isolation
+        // relies on ContentBlock immutability plus the message's unmodifiable list snapshot,
+        // so a strategy can neither edit a shared block nor splice its own into the request.
+        ChatMessage original =
+                new ChatMessage(
+                        MessageRole.USER,
+                        List.of(
+                                TextBlock.of("look at this"),
+                                ImageBlock.fromUrl("image/png", "https://example.org/cat.png")));
+        RoutingContext ctx =
+                new RoutingContext(
+                        UUID.randomUUID(), "router", List.of(original), Map.of(), List.of());
+
+        List<?> seenBlocks = ctx.getMessages().get(0).getBlocks();
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> ctx.getMessages().get(0).getBlocks().add(TextBlock.of("INJECTED")));
+        assertThrows(UnsupportedOperationException.class, () -> seenBlocks.remove(0));
+        // Replacing the copied message's whole content stays local to the copy.
+        ctx.getMessages().get(0).setBlocks(List.of(TextBlock.of("REWRITTEN")));
+        assertEquals("look at this", original.getText());
+        assertEquals(2, original.getBlocks().size());
     }
 
     @Test
@@ -425,7 +453,7 @@ class RoutingTest {
                 new RoutingContext(
                         UUID.randomUUID(), "router", List.of(fromJson), Map.of(), List.of());
         assertEquals(1, ctx.getMessages().size());
-        assertEquals("hello", ctx.getMessages().get(0).getContent());
+        assertEquals("hello", ctx.getMessages().get(0).getText());
         // The copy re-normalizes through the constructor, so strategies see an empty list.
         assertEquals(0, ctx.getMessages().get(0).getToolCalls().size());
     }

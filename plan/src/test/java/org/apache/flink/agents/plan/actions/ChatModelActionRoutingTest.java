@@ -700,7 +700,7 @@ public class ChatModelActionRoutingTest {
 
         // the selected model's retry budget is consumed BEFORE fallback: big's retry
         // succeeds and small is never resolved — the ordering the class javadoc guarantees
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("recovered on retry");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("recovered on retry");
         assertThat(ctx.resolvedChatModels).containsExactly("big");
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
         verify(actionMetricGroup).getSubGroup("model_resource", "big");
@@ -746,7 +746,7 @@ public class ChatModelActionRoutingTest {
                 .containsExactly("route:router", "chat:router:big", "chat:router:small");
         ChatResponseEvent response = ctx.chatResponse();
         assertThat(response).isNotNull();
-        assertThat(response.getResponse().getContent()).isEqualTo("ok from small");
+        assertThat(response.getResponse().getText()).isEqualTo("ok from small");
         Map<String, Object> routing =
                 (Map<String, Object>) response.getResponse().getExtraArgs().get("model_routing");
         assertThat(routing.get("final_model")).isEqualTo("small");
@@ -987,7 +987,7 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
         assertThat(ctx.resolvedChatModels).containsExactly("big", "big");
         assertThat(ctx.chatResponse()).isNotNull();
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("final answer");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final answer");
 
         // the routing metadata from the initial decision is carried onto the final response
         @SuppressWarnings("unchecked")
@@ -1357,7 +1357,7 @@ public class ChatModelActionRoutingTest {
                 ctx);
 
         assertThat(judge.lastMessages).hasSize(2);
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: You review Java concurrency code");
         assertThat(judgeInput).contains("USER: Focus on race conditions");
         assertThat(judgeInput).contains("USER: synchronized void transfer()");
@@ -1388,7 +1388,7 @@ public class ChatModelActionRoutingTest {
                         null),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput)
                 .contains("Review this SQL for performance issues: SELECT * FROM orders");
     }
@@ -1423,7 +1423,7 @@ public class ChatModelActionRoutingTest {
                                 new ChatMessage(MessageRole.USER, "current question"))),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: task framing");
         assertThat(judgeInput).contains("USER: current question");
         assertThat(judgeInput).doesNotContain(oldTurn);

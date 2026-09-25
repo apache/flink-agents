@@ -43,7 +43,7 @@ class TestChatModelSetup(BaseChatModelSetup):
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Simple test implementation."""
-        return ChatMessage(role=MessageRole.ASSISTANT, content="Test response")
+        return ChatMessage.of(MessageRole.ASSISTANT, "Test response")
 
     def test_record_token_metrics(
         self,

@@ -630,7 +630,7 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         assertThat(sentEvents).hasSize(1);
-        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getResponse().getContent())
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getResponse().getText())
                 .isEqualTo("hello");
     }
 

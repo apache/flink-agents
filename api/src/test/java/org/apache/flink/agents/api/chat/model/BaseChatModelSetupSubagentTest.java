@@ -341,7 +341,7 @@ class BaseChatModelSetupSubagentTest {
                                 new ChatMessage(MessageRole.USER, "review it"))));
 
         assertThat(connection.capturedMessages).hasSize(2);
-        assertThat(connection.capturedMessages.get(0).getContent()).isEqualTo("You are helpful.");
+        assertThat(connection.capturedMessages.get(0).getText()).isEqualTo("You are helpful.");
         assertThat(connection.capturedTools).hasSize(2);
     }
 
@@ -360,9 +360,8 @@ class BaseChatModelSetupSubagentTest {
         setup.chat(new ArrayList<>(List.of(new ChatMessage(MessageRole.USER, "review it"))));
 
         assertThat(connection.capturedMessages).hasSize(2);
-        assertThat(connection.capturedMessages.get(0).getContent())
-                .startsWith("<available_skills>");
-        assertThat(connection.capturedMessages.get(1).getContent()).isEqualTo("review it");
+        assertThat(connection.capturedMessages.get(0).getText()).startsWith("<available_skills>");
+        assertThat(connection.capturedMessages.get(1).getText()).isEqualTo("review it");
     }
 
     @Test

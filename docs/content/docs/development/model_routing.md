@@ -106,7 +106,7 @@ public class ModelRoutingAgent extends Agent {
     /** Emit the model's answer as output. */
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-        ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(event.getResponse().getText()));
     }
 }
 ```
@@ -284,7 +284,7 @@ public static void onChatResponse(ChatResponseEvent event, RunnerContext ctx) {
         Object finalModel = ((Map<?, ?>) routing).get("final_model");
         LOG.info("answered by {}", finalModel);
     }
-    ctx.sendEvent(new OutputEvent(event.getResponse().getContent()));
+    ctx.sendEvent(new OutputEvent(event.getResponse().getText()));
 }
 ```
 {{< /tab >}}

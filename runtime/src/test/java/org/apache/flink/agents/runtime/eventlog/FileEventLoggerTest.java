@@ -25,7 +25,13 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -417,6 +423,63 @@ class FileEventLoggerTest {
                 "String should be preserved at VERBOSE level");
         assertEquals(
                 "this is a very long string that exceeds 10", attrsNode.get("customData").asText());
+    }
+
+    @Test
+    void testMediaPayloadsNeverReachTheLogAtStandard() throws Exception {
+        assertMediaPayloadsSanitizedAt("STANDARD");
+    }
+
+    @Test
+    void testMediaPayloadsNeverReachTheLogAtVerbose() throws Exception {
+        // VERBOSE lifts truncation, not sanitization: payload bytes and raw URLs stay out.
+        assertMediaPayloadsSanitizedAt("VERBOSE");
+    }
+
+    private void assertMediaPayloadsSanitizedAt(String level) throws Exception {
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", level);
+
+        config = buildConfig(agentConfig);
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+        String signedUrl = "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+        ChatMessage message =
+                ChatMessage.user(
+                        List.of(
+                                TextBlock.of("what is in this picture?"),
+                                ImageBlock.fromBase64("image/png", payload),
+                                new DocumentBlock(
+                                        "application/pdf",
+                                        new UrlSource(signedUrl),
+                                        "cat.pdf",
+                                        42L,
+                                        null)));
+        ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
+
+        append(logger, event, null);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        String line = Files.readAllLines(logFile).get(0);
+        assertFalse(line.contains(payload), "Inline payload bytes must never be logged");
+        assertFalse(line.contains("secret"), "URL credentials must never be logged");
+        assertFalse(line.contains("X-Amz-Signature"), "URL query strings must never be logged");
+
+        JsonNode logged = objectMapper.readTree(line).get("eventAttributes").get("messages").get(0);
+        assertEquals("what is in this picture?", logged.get("blocks").get(0).get("text").asText());
+        JsonNode image = logged.get("blocks").get(1);
+        assertEquals("image/png", image.get("media_type").asText());
+        assertEquals("base64", image.get("source").get("type").asText());
+        assertFalse(image.get("source").has("data"), "Inline data is dropped, not masked");
+        assertTrue(image.get("size_bytes").isNumber(), "Derived size metadata should be logged");
+        JsonNode document = logged.get("blocks").get(2);
+        assertEquals(
+                "https://example.org/media/cat.png", document.get("source").get("url").asText());
+        assertEquals("cat.pdf", document.get("name").asText());
+        assertEquals(42L, document.get("size_bytes").asLong());
     }
 
     @Test
