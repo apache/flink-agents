@@ -181,9 +181,10 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      *
      * @param sequenceNum the per-key sequence number that just finished processing.
      */
-    void updateLastCompletedSequenceNumber(long sequenceNum) throws Exception {
+    void updateLastCompletedSequenceNumber(Object key, long sequenceNum) throws Exception {
         if (actionStateStore != null) {
             lastCompletedSequenceNumberKState.update(sequenceNum);
+            actionStateStore.markCheckpointedSequence(key, sequenceNum);
         }
     }
 
