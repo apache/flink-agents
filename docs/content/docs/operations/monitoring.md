@@ -517,3 +517,54 @@ Other per-type levels from `config.yaml` are preserved — the `-D` flag only ov
 - **Python Event IDs now identify occurrences.** Python previously generated a deterministic UUID from Event content and regenerated it when the content changed. It now assigns a UUID4 to each Event occurrence, matching the identity semantics used by Agent Trace. Consumers must not rely on equal Event payloads producing equal IDs for deduplication.
 - **Existing pending ActionTask state is not compatible with the new schema.** Agent Trace adds execution identity and Action lifecycle state to pending `ActionTask` state. Restoring savepoints containing that state from before this change would require a versioned `ActionTask` state serializer, which is not included in this feature.
 - **Event Log write failures are now best-effort.** Earlier versions propagated `append` or `flush` failures into Event processing. Write failures now leave the job running and are reported through the `eventLogWriteFailures` metric and a first-failure `WARN` log.
+
+## Exporting Agent Traces to OpenTelemetry
+
+The `flink-agents-integrations-observability-otel` module converts Agent Trace Event Logs into [OpenTelemetry](https://opentelemetry.io) traces following the [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/), so agent runs can be visualized and analyzed in any OTLP-compatible backend (Jaeger, Grafana Tempo, vendor APMs, …) without Flink Agents shipping its own visualization stack.
+
+The exporter runs **out of band**: it reads the Event Log written by the File or SLF4J event loggers (requires `event-log.trace.enabled: true`) and pushes spans over OTLP. It has zero impact on the running Flink job and works retroactively on logs from finished runs.
+
+### Mapping
+
+| Agent Trace | OpenTelemetry |
+|---|---|
+| Input run (`inputRunId`) | Trace, with a synthesized `invoke_agent` root span |
+| Execution (`executionId` / `parentExecutionId`) | Span / parent Span |
+| `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), `gen_ai.usage.*` token attributes when recorded. `gen_ai.provider.name` is not set: the record does not carry the provider |
+| `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` (the provider-issued `entityMetadata.externalId`, else the framework `toolCallId`), `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`) |
+| `action` execution | `action {name}` span, kind INTERNAL |
+| `parser` execution | `parse {name}` span, `gen_ai.operation.name=parse` (custom low-cardinality value), kind INTERNAL |
+| `businessKey` | `gen_ai.conversation.id` |
+| failed execution | span status `ERROR` with the recorded error message, `error.type` from the recorded error type, else `problemCategory` |
+
+Trace and span ids are derived **deterministically** from `inputRunId` / `executionId` (SHA-256 truncation), so exporting the same log twice is idempotent to deduplicating backends (delivery itself is at-least-once). The framework-native ids are always attached under `flink_agents.*` attributes for correlation with the raw Event Log. The GenAI semantic conventions are still at development stability; the exported attribute set is pinned per Flink Agents release.
+
+**Input contract.** The converter consumes the flat JSON record stream, not a file-naming convention: file arguments are read as-is (records collected from any Event Log sink work, including SLF4J records whose extra `jobId`/`taskName`/`subtaskId` fields are ignored), and a directory argument is expanded to the `events-*.log` files it contains — the FileEventLogger naming contract, matching `trace_tree.py`. Completeness of a multi-subtask file set is the caller's responsibility under the batch contract; the summary reports what was read.
+
+**Incomplete executions.** An execution with a start record but no terminal record (a crash, a dropped best-effort Event Log write, or recovery discarding the transient start/terminal pairing — indistinguishable after the fact) is still exported: as a zero-duration span closed at the observed timestamp, with span status UNSET and the `flink_agents.execution.incomplete` attribute, plus a machine-readable `INCOMPLETE_EXECUTION` diagnostic in the converter summary (`MISSING_START` for the mirror case). Reused executions are single-record by design and are exported as zero-duration spans with `flink_agents.execution.status=reused`, without a diagnostic. The diagnostic model (`code` + id + message + file location, including `MALFORMED_RECORD` for undecodable input) follows `trace_tree.py`'s warning vocabulary.
+
+### Usage
+
+Command line:
+
+```bash
+java -cp flink-agents-integrations-observability-otel-{{< version >}}.jar \
+  org.apache.flink.agents.integrations.observability.otel.EventLogOTelExporter \
+  --endpoint http://localhost:4317 --protocol grpc --service-name my-agent-job \
+  /tmp/flink-agents/events-<jobId>-<taskName>-<subtaskId>.log
+```
+
+Programmatic:
+
+```java
+try (EventLogOTelExporter exporter =
+        EventLogOTelExporter.builder()
+                .setEndpoint("http://localhost:4317")
+                .setProtocol("grpc")
+                .setServiceName("my-agent-job")
+                .build()) {
+    exporter.exportFiles(List.of(Path.of("/tmp/flink-agents/events-....log")));
+}
+```
+
+Current scope: spans only. Prompt/response content capture and richer usage metrics are follow-up work; see the Agent Trace design discussions for the roadmap.
