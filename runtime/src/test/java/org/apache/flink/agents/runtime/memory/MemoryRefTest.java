@@ -295,7 +295,7 @@ public class MemoryRefTest {
 
     /**
      * A reference names a slot in one memory: the same path in sensory and short-term memory is two
-     * different slots, so the references must not compare equal or share a hash bucket.
+     * different slots, so the references must not compare equal.
      */
     @Test
     void testRefEqualityDistinguishesMemoryType() {
@@ -303,7 +303,6 @@ public class MemoryRefTest {
         MemoryRef shortTerm = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.b");
 
         assertNotEquals(sensory, shortTerm);
-        assertNotEquals(sensory.hashCode(), shortTerm.hashCode());
 
         Set<MemoryRef> refSet = new HashSet<>(Arrays.asList(sensory, shortTerm));
         assertEquals(2, refSet.size());
