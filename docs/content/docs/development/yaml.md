@@ -599,6 +599,7 @@ Vector-store aliases:
 | `opensearch`    | —              | OpenSearch      |
 | `s3_vectors`    | —              | S3 Vectors      |
 | `milvus`        | —              | Milvus          |
+| `pgvector`      | —              | PostgreSQL pgvector |
 
 The full alias tables live in `flink_agents.api.yaml.aliases` (Python) and `org.apache.flink.agents.api.yaml.Aliases` (Java).
 
