@@ -292,4 +292,36 @@ public class MemoryRefTest {
         assertTrue(refSet.contains(ref1));
         assertTrue(refSet.contains(ref3));
     }
+
+    /**
+     * A reference names a slot in one memory: the same path in sensory and short-term memory is two
+     * different slots, so the references must not compare equal.
+     */
+    @Test
+    void testRefEqualityDistinguishesMemoryType() {
+        MemoryRef sensory = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "a.b");
+        MemoryRef shortTerm = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.b");
+
+        assertNotEquals(sensory, shortTerm);
+
+        Set<MemoryRef> refSet = new HashSet<>(Arrays.asList(sensory, shortTerm));
+        assertEquals(2, refSet.size());
+        assertTrue(refSet.contains(sensory));
+        assertTrue(refSet.contains(shortTerm));
+    }
+
+    @Test
+    void testToStringNamesMemoryType() {
+        MemoryRef ref = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "a.b");
+        assertTrue(ref.toString().contains("SENSORY"), ref.toString());
+        assertTrue(ref.toString().contains("a.b"), ref.toString());
+    }
+
+    @Test
+    void testCreateRejectsNullTypeOrPath() {
+        assertThrows(IllegalArgumentException.class, () -> MemoryRef.create(null, "a.b"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MemoryRef.create(MemoryObject.MemoryType.SENSORY, null));
+    }
 }
