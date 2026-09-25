@@ -530,12 +530,12 @@ The exporter runs **out of band**: it reads the Event Log written by the File or
 |---|---|
 | Input run (`inputRunId`) | Trace, with a synthesized `invoke_agent` root span |
 | Execution (`executionId` / `parentExecutionId`) | Span / parent Span |
-| `llm` execution | `chat {model}` span: `gen_ai.operation.name=chat`, `gen_ai.request.model`, `gen_ai.usage.*` token attributes when recorded |
-| `tool` execution | `execute_tool {tool}` span: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name` (kind INTERNAL: the record cannot distinguish an in-process function tool from a remote MCP tool) |
+| `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), `gen_ai.usage.*` token attributes when recorded. `gen_ai.provider.name` is not set: the record does not carry the provider |
+| `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` (the provider-issued `entityMetadata.externalId`, else the framework `toolCallId`), `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`) |
 | `action` execution | `action {name}` span, kind INTERNAL |
 | `parser` execution | `parse {name}` span, `gen_ai.operation.name=parse` (custom low-cardinality value), kind INTERNAL |
 | `businessKey` | `gen_ai.conversation.id` |
-| failed execution | span status `ERROR` + `error.type` |
+| failed execution | span status `ERROR` with the recorded error message, `error.type` from the recorded error type, else `problemCategory` |
 
 Trace and span ids are derived **deterministically** from `inputRunId` / `executionId` (SHA-256 truncation), so exporting the same log twice is idempotent to deduplicating backends (delivery itself is at-least-once). The framework-native ids are always attached under `flink_agents.*` attributes for correlation with the raw Event Log. The GenAI semantic conventions are still at development stability; the exported attribute set is pinned per Flink Agents release.
 

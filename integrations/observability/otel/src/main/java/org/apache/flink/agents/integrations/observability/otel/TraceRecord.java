@@ -20,6 +20,7 @@ package org.apache.flink.agents.integrations.observability.otel;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.Collections;
 import java.util.Map;
 
 /**
@@ -69,11 +70,8 @@ public class TraceRecord {
     @JsonProperty("problemCategory")
     private String problemCategory;
 
-    @JsonProperty("errorType")
-    private String errorType;
-
-    @JsonProperty("errorMessage")
-    private String errorMessage;
+    @JsonProperty("entityMetadata")
+    private Map<String, Object> entityMetadata;
 
     @JsonProperty("eventAttributes")
     private Map<String, Object> eventAttributes;
@@ -126,12 +124,24 @@ public class TraceRecord {
         return problemCategory;
     }
 
-    public String getErrorType() {
-        return errorType;
+    /** Small structured metadata recorded with the execution, or an empty map when absent. */
+    public Map<String, Object> getEntityMetadata() {
+        return entityMetadata != null ? entityMetadata : Collections.emptyMap();
     }
 
+    /** The recorded error type of a failed execution, carried in its event attributes. */
+    public String getErrorType() {
+        return eventAttribute("errorType");
+    }
+
+    /** The recorded error message of a failed execution, carried in its event attributes. */
     public String getErrorMessage() {
-        return errorMessage;
+        return eventAttribute("errorMessage");
+    }
+
+    private String eventAttribute(String name) {
+        Object value = eventAttributes != null ? eventAttributes.get(name) : null;
+        return value instanceof String ? (String) value : null;
     }
 
     public Map<String, Object> getEventAttributes() {

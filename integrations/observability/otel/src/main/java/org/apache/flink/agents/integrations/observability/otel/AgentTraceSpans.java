@@ -31,6 +31,8 @@ import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.data.StatusData;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -66,6 +68,9 @@ public final class AgentTraceSpans {
     static final AttributeKey<String> GEN_AI_AGENT_NAME =
             AttributeKey.stringKey("gen_ai.agent.name");
     static final AttributeKey<String> GEN_AI_TOOL_NAME = AttributeKey.stringKey("gen_ai.tool.name");
+    static final AttributeKey<String> GEN_AI_TOOL_CALL_ID =
+            AttributeKey.stringKey("gen_ai.tool.call.id");
+    static final AttributeKey<String> GEN_AI_TOOL_TYPE = AttributeKey.stringKey("gen_ai.tool.type");
     static final AttributeKey<String> GEN_AI_REQUEST_MODEL =
             AttributeKey.stringKey("gen_ai.request.model");
     static final AttributeKey<String> GEN_AI_CONVERSATION_ID =
@@ -89,6 +94,8 @@ public final class AgentTraceSpans {
             AttributeKey.stringKey("flink_agents.execution.status");
     static final AttributeKey<Boolean> FA_EXECUTION_INCOMPLETE =
             AttributeKey.booleanKey("flink_agents.execution.incomplete");
+    static final AttributeKey<String> FA_TOOL_TYPE =
+            AttributeKey.stringKey("flink_agents.tool.type");
 
     static final String INSTRUMENTATION_SCOPE_NAME = "org.apache.flink.agents.otel";
 
@@ -189,20 +196,41 @@ public final class AgentTraceSpans {
 
         String name;
         SpanKind kind;
+        Map<String, Object> metadata = any.getEntityMetadata();
         if (ExecutionReporter.EntityTypes.LLM.equals(entityType)) {
-            name = "chat " + entityName;
+            // The entity name is the chat model resource; the requested model id travels in
+            // entityMetadata. gen_ai.provider.name stays unset: the record does not carry it.
+            String model = stringValue(metadata, LLMExecutionMetadataKeys.MODEL);
+            name = model != null ? "chat " + model : "chat";
             kind = SpanKind.CLIENT;
             attributes.put(GEN_AI_OPERATION_NAME, "chat");
-            attributes.put(GEN_AI_REQUEST_MODEL, entityName);
+            if (model != null) {
+                attributes.put(GEN_AI_REQUEST_MODEL, model);
+            }
         } else if (ExecutionReporter.EntityTypes.TOOL.equals(entityType)) {
             name = "execute_tool " + entityName;
-            // INTERNAL, not CLIENT: the record cannot distinguish an in-process function tool
-            // from a remote MCP tool, and CLIENT would assert remoteness we did not observe.
-            // Only the LLM call is unambiguously remote. When entityMetadata carries the tool
-            // transport, MCP-backed tools can upgrade to CLIENT.
+            // INTERNAL, as the GenAI conventions specify for execute_tool: the span measures
+            // the framework running the tool, whatever transport the tool itself uses.
             kind = SpanKind.INTERNAL;
             attributes.put(GEN_AI_OPERATION_NAME, "execute_tool");
             attributes.put(GEN_AI_TOOL_NAME, entityName);
+            // Prefer the provider-issued call id, which is what the model's tool-call request
+            // carries; the framework-assigned id is the fallback.
+            String callId = stringValue(metadata, ToolExecutionMetadataKeys.EXTERNAL_ID);
+            if (callId == null) {
+                callId = stringValue(metadata, ToolExecutionMetadataKeys.TOOL_CALL_ID);
+            }
+            if (callId != null) {
+                attributes.put(GEN_AI_TOOL_CALL_ID, callId);
+            }
+            String toolType = stringValue(metadata, ToolExecutionMetadataKeys.TOOL_TYPE);
+            if (toolType != null) {
+                attributes.put(FA_TOOL_TYPE, toolType);
+                String conventionType = conventionToolType(toolType);
+                if (conventionType != null) {
+                    attributes.put(GEN_AI_TOOL_TYPE, conventionType);
+                }
+            }
         } else if (ExecutionReporter.EntityTypes.ACTION.equals(entityType)) {
             name = "action " + entityName;
             kind = SpanKind.INTERNAL;
@@ -289,6 +317,29 @@ public final class AgentTraceSpans {
                 attributes.build(),
                 resource,
                 scope);
+    }
+
+    /**
+     * Maps the framework tool type onto the GenAI well-known {@code gen_ai.tool.type} values: a
+     * function the agent runs itself is {@code function}; remote functions and MCP tools call out
+     * to external systems, which is {@code extension}. Model built-in tools have no well-known
+     * counterpart and keep only the raw {@code flink_agents.tool.type}.
+     */
+    private static String conventionToolType(String toolType) {
+        switch (toolType) {
+            case "function":
+                return "function";
+            case "remote_function":
+            case "mcp":
+                return "extension";
+            default:
+                return null;
+        }
+    }
+
+    private static String stringValue(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value == null ? null : String.valueOf(value);
     }
 
     private static void putUsageIfPresent(
