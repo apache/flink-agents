@@ -141,6 +141,11 @@ public class TraceRecord {
 
     private String eventAttribute(String name) {
         Object value = eventAttributes != null ? eventAttributes.get(name) : null;
+        if (value instanceof Map) {
+            // At STANDARD level the Event Log replaces a long string with
+            // {"truncatedString": "<prefix>...", "omittedChars": N}; keep the prefix.
+            value = ((Map<?, ?>) value).get("truncatedString");
+        }
         return value instanceof String ? (String) value : null;
     }
 
