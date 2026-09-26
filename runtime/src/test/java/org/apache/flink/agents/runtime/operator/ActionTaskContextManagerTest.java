@@ -465,6 +465,7 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
+                /* subagentScope */ null,
                 componentListenerFactory);
     }
 
