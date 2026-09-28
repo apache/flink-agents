@@ -145,12 +145,8 @@ _AUDIO_FORMATS = {
 
 
 def _unsupported(block: ContentBlock, reason: str) -> UnsupportedContentBlockError:
-    """Name the block by type, media type and source type; never the payload or URL."""
-    description = f"{block.type} block"
-    if isinstance(block, MediaBlock):
-        description += f" ({block.media_type}, {block.source.type} source)"
-    return UnsupportedContentBlockError(
-        f"OpenAI Chat Completions cannot send a {description}: {reason}."
+    return UnsupportedContentBlockError.for_block(
+        "OpenAI Chat Completions", block, reason
     )
 
 

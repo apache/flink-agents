@@ -32,4 +32,20 @@ public class UnsupportedContentBlockException extends IllegalArgumentException {
     public UnsupportedContentBlockException(String message) {
         super(message);
     }
+
+    /**
+     * Creates the exception for a block {@code provider} cannot send, with a message of the form
+     * "{provider} cannot send a {type} block ({media type}, {source type} source): {reason}."
+     */
+    public static UnsupportedContentBlockException forBlock(
+            String provider, ContentBlock block, String reason) {
+        String description = block.getType() + " block";
+        if (block instanceof MediaBlock) {
+            MediaBlock media = (MediaBlock) block;
+            description +=
+                    " (" + media.getMediaType() + ", " + media.getSource().getType() + " source)";
+        }
+        return new UnsupportedContentBlockException(
+                provider + " cannot send a " + description + ": " + reason + ".");
+    }
 }

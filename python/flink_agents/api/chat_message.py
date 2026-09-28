@@ -186,6 +186,20 @@ class UnsupportedContentBlockError(ValueError):
     type only, never the media payload or URL.
     """
 
+    @classmethod
+    def for_block(
+        cls, provider: str, block: ContentBlock, reason: str
+    ) -> "UnsupportedContentBlockError":
+        """Create the error for a block the provider cannot send.
+
+        The message reads "{provider} cannot send a {type} block ({media type},
+        {source type} source): {reason}."
+        """
+        description = f"{block.type} block"
+        if isinstance(block, MediaBlock):
+            description += f" ({block.media_type}, {block.source.type} source)"
+        return cls(f"{provider} cannot send a {description}: {reason}.")
+
 
 def _blocks_of(text: str) -> List[ContentBlock]:
     """An empty text becomes an empty block list rather than an empty text block."""

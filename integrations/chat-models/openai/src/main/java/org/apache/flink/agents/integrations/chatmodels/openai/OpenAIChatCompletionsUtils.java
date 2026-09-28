@@ -345,16 +345,8 @@ final class OpenAIChatCompletionsUtils {
                 + ((Base64Source) block.getSource()).getData();
     }
 
-    /** Names the block by type, media type and source type; never the payload or URL. */
     private static UnsupportedContentBlockException unsupported(ContentBlock block, String reason) {
-        String description = block.getType() + " block";
-        if (block instanceof MediaBlock) {
-            MediaBlock media = (MediaBlock) block;
-            description +=
-                    " (" + media.getMediaType() + ", " + media.getSource().getType() + " source)";
-        }
-        return new UnsupportedContentBlockException(
-                "OpenAI Chat Completions cannot send a " + description + ": " + reason + ".");
+        return UnsupportedContentBlockException.forBlock("OpenAI Chat Completions", block, reason);
     }
 
     /**
