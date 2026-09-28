@@ -60,9 +60,10 @@ order you want them presented. Supported block types are `TextBlock`, `ImageBloc
 `AudioBlock`, `VideoBlock`, and `DocumentBlock`. For example, a message can contain
 a question followed by an image:
 
-**Provider support:** Built-in provider integrations currently send only the text
-portion of a message. These examples construct multimodal messages; sending their
-media to a model requires a provider integration that supports those block types.
+**Provider support:** The OpenAI, Azure OpenAI and vLLM integrations send media
+blocks to the model; see [Multimodal Input](#multimodal-input) for what each block
+becomes. The other built-in integrations currently send only the text portion of a
+message.
 
 {{< tabs "Message content blocks" >}}
 
