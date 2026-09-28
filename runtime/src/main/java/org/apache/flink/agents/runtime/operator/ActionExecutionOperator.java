@@ -62,6 +62,7 @@ import org.apache.flink.streaming.api.operators.BoundedOneInput;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
 import org.apache.flink.streaming.api.operators.Output;
+import org.apache.flink.streaming.api.operators.sorted.state.BatchExecutionKeyedStateBackend;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.runtime.tasks.ProcessingTimeService;
@@ -141,6 +142,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private transient TypeSerializer<Event> eventSerializer;
 
+    private transient boolean usesBatchExecutionKeyedStateBackend;
+
     // Each job can only have one identifier and this identifier must be consistent across restarts.
     // We cannot use job id as the identifier here because user may change job id by
     // creating a savepoint, stop the job and then resume from savepoint.
@@ -192,6 +195,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Override
     public void open() throws Exception {
         super.open();
+
+        usesBatchExecutionKeyedStateBackend =
+                getKeyedStateBackend() instanceof BatchExecutionKeyedStateBackend;
 
         eventSerializer =
                 TypeInformation.of(Event.class)
@@ -302,6 +308,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // incoming event should be queued and processed later. Therefore, we add it to
                 // pendingInputEventsState.
                 enqueuePendingInputEvent(inputEvent);
+                waitForCurrentInputInBatchMode();
                 return;
             }
         } catch (Exception e) {
@@ -312,6 +319,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Otherwise, the new event is processed immediately. Its failures are attributed to the
         // input run created by processInputEvent.
         processInputEvent(key, inputEvent);
+        waitForCurrentInputInBatchMode();
+    }
+
+    /**
+     * Completes the current input before Flink's batch keyed-state backend advances to another key.
+     *
+     * <p>The batch backend clears keyed state on every key switch because it assumes that an
+     * operator fully processes one key before returning to its input loop. Action execution
+     * normally spans mailbox continuations, so streaming backends deliberately keep multiple keys
+     * in flight. Under the batch backend, drain those continuations here to honor its processing
+     * contract without changing streaming concurrency.
+     */
+    private void waitForCurrentInputInBatchMode() throws Exception {
+        if (usesBatchExecutionKeyedStateBackend) {
+            waitInFlightEventsFinished();
+        }
     }
 
     /** Resolves one context key for an input and reuses it for the entire agent run. */
