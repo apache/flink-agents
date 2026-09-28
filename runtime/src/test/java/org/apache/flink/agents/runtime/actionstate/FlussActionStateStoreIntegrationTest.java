@@ -208,8 +208,8 @@ public class FlussActionStateStoreIntegrationTest {
             // that removes entries with higher seqNums (same as Kafka backend behavior).
             // Data written after the marker should be recovered
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
-            // Data written before the marker should NOT be in the rebuilt cache
-            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+            // A still-cached pending state is refreshed into the checkpoint's replay window.
+            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNotNull();
         } finally {
             recoveredStore.close();
             // Prevent double-close in tearDown
@@ -372,8 +372,8 @@ public class FlussActionStateStoreIntegrationTest {
             try {
                 recoveredStore.rebuildState(List.of(marker));
 
-                // Data written after marker should be recovered
-                for (int i = 10; i < 15; i++) {
+                // Both refreshed pre-checkpoint states and later writes must be recovered.
+                for (int i = 0; i < 15; i++) {
                     String key = "multi-key-" + i;
                     assertThat(recoveredStore.get(key, 1L, action1, testEvent)).isNotNull();
                 }
