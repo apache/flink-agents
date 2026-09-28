@@ -26,7 +26,11 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -395,6 +399,8 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("Anthropic", messages)
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [

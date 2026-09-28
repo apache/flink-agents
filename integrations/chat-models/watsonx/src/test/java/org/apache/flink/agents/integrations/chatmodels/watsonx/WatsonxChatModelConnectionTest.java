@@ -26,7 +26,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -42,6 +45,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -952,5 +956,22 @@ class WatsonxChatModelConnectionTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "IBM watsonx.ai cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

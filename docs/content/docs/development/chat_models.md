@@ -63,8 +63,10 @@ a question followed by an image:
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
 [Multimodal Input](#multimodal-input) for what each block becomes. Ollama sends
-Base64 images; see its section. The other built-in integrations, including the
-OpenAI Responses integration, currently send only the text portion of a message.
+Base64 images; see its section. The Anthropic, Gemini, Amazon Bedrock, IBM
+watsonx.ai, Tongyi and OpenAI Responses integrations do not send media yet: a
+message with a media block raises `UnsupportedContentBlockException` (Java) or
+`UnsupportedContentBlockError` (Python).
 
 {{< tabs "Message content blocks" >}}
 
@@ -288,7 +290,7 @@ Model availability varies by AWS region and requires explicit model access enabl
 {{< /hint >}}
 
 {{< hint warning >}}
-**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported.
+**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported; a message with a media block raises `UnsupportedContentBlockException`.
 {{< /hint >}}
 
 ### Anthropic
@@ -1022,6 +1024,8 @@ The Chat Completions connections (OpenAI, Azure OpenAI and vLLM) send the media 
 | `VideoBlock` | not supported |
 
 A user message with only text blocks is still sent as a plain string. Media in system, assistant or tool messages, audio or documents given by URL, other audio types, and video raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. Whether a model accepts a given part depends on the model and the server.
+
+The other built-in providers (Anthropic, Gemini, Amazon Bedrock, IBM watsonx.ai, Tongyi and the OpenAI Responses API) do not send media yet: a message with a media block raises the same error instead of being sent as its text.
 
 #### Responses API
 

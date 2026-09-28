@@ -36,6 +36,7 @@ import com.google.genai.types.Part;
 import com.google.genai.types.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -278,6 +279,8 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("Gemini", messages);
         Map<String, Object> args = arguments != null ? new HashMap<>(arguments) : new HashMap<>();
 
         Object modelObj = args.remove("model");

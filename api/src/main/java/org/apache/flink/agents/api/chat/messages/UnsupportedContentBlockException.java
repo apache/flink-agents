@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
+import java.util.List;
+
 /**
  * Thrown when a chat model integration cannot send a {@link ContentBlock} to its provider, such as
  * a media type the provider does not accept or a media block in a message role that only takes
@@ -49,5 +51,19 @@ public class UnsupportedContentBlockException extends IllegalArgumentException {
         }
         return new UnsupportedContentBlockException(
                 provider + " cannot send " + description + ": " + reason + ".");
+    }
+
+    /**
+     * Throws for the first media block in {@code messages}. For integrations that send text only,
+     * so that media fails explicitly rather than being dropped from the request.
+     */
+    public static void rejectMedia(String provider, List<ChatMessage> messages) {
+        for (ChatMessage message : messages) {
+            for (ContentBlock block : message.getBlocks()) {
+                if (block instanceof MediaBlock) {
+                    throw forBlock(provider, block, "this integration sends text only");
+                }
+            }
+        }
     }
 }
