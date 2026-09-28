@@ -28,8 +28,13 @@ import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.models.request.ThinkMode;
 import io.github.ollama4j.tools.OllamaToolCallsFunction;
 import io.github.ollama4j.tools.Tools;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -168,6 +173,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @param message the framework message
      * @return the corresponding Ollama message
      * @throws RuntimeException if the role cannot be mapped to an Ollama role
+     * @throws UnsupportedContentBlockException if the message has media Ollama cannot take
      */
     private OllamaChatMessage convertToOllamaChatMessages(ChatMessage message) {
         final MessageRole role = message.getRole();
@@ -180,6 +186,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             if (toolCalls != null && !toolCalls.isEmpty()) {
                 // Without the calls, the history shows tool results the model never requested.
                 ollamaMessage.setToolCalls(toOllamaToolCalls(toolCalls));
+            }
+            final List<byte[]> images = toOllamaImages(message);
+            if (!images.isEmpty()) {
+                ollamaMessage.setImages(images);
             }
             return ollamaMessage;
         } catch (RoleNotFoundException e) {
@@ -226,6 +236,45 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new IllegalArgumentException("Tool call arguments must be a JSON object.", e);
         }
+    }
+
+    /**
+     * The images of a user message, in block order. Ollama takes inline image data only, attached
+     * to the message rather than interleaved with its text; any other media fails explicitly.
+     */
+    private static List<byte[]> toOllamaImages(ChatMessage message) {
+        final List<byte[]> images = new ArrayList<>();
+        for (ContentBlock block : message.getBlocks()) {
+            if (!(block instanceof MediaBlock)) {
+                continue;
+            }
+            if (message.getRole() != MessageRole.USER) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama",
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+            if (!(block instanceof ImageBlock)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama accepts images only");
+            }
+            final ImageBlock image = (ImageBlock) block;
+            if (!(image.getSource() instanceof Base64Source)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama takes base64 image data, not a URL");
+            }
+            try {
+                // ollama4j base64-encodes the bytes again when it serializes the request.
+                images.add(
+                        Base64.getDecoder().decode(((Base64Source) image.getSource()).getData()));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "An image block's base64 data could not be decoded.", e);
+            }
+        }
+        return images;
     }
 
     /**

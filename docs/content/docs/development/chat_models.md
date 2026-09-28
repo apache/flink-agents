@@ -62,9 +62,9 @@ a question followed by an image:
 
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
-[Multimodal Input](#multimodal-input) for what each block becomes. The other
-built-in integrations, including the OpenAI Responses integration, currently send
-only the text portion of a message.
+[Multimodal Input](#multimodal-input) for what each block becomes. Ollama sends
+Base64 images; see its section. The other built-in integrations, including the
+OpenAI Responses integration, currently send only the text portion of a message.
 
 {{< tabs "Message content blocks" >}}
 
@@ -843,6 +843,8 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+
+**Multimodal input.** The `ImageBlock`s of a user message are sent as the message's `images`, in block order, next to its text; Ollama's API does not interleave images with text. The images must be Base64 data, and the model must support vision. Images given by URL, other media, and media in system, assistant or tool messages raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
 
 #### Available Models
 
