@@ -26,6 +26,7 @@ import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.models.request.ThinkMode;
+import io.github.ollama4j.tools.OllamaToolCallsFunction;
 import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -174,9 +175,57 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         try {
             final OllamaChatMessageRole ollamaRole =
                     OllamaChatMessageRole.getRole(role.name().toLowerCase());
-            return new OllamaChatMessage(ollamaRole, message.getText());
+            final OllamaChatMessage ollamaMessage =
+                    new OllamaChatMessage(ollamaRole, message.getText());
+            final List<Map<String, Object>> toolCalls = message.getToolCalls();
+            if (toolCalls != null && !toolCalls.isEmpty()) {
+                // Without the calls, the history shows tool results the model never requested.
+                ollamaMessage.setToolCalls(toOllamaToolCalls(toolCalls));
+            }
+            return ollamaMessage;
         } catch (RoleNotFoundException e) {
             throw new RuntimeException(e);
+        }
+    }
+
+    /**
+     * Converts framework tool calls back to Ollama's shape, the function name and its arguments as
+     * an object, as the Python connection does. The framework-assigned id is not sent.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<OllamaChatToolCalls> toOllamaToolCalls(
+            List<Map<String, Object>> toolCalls) {
+        final List<OllamaChatToolCalls> ollamaToolCalls = new ArrayList<>(toolCalls.size());
+        for (Map<String, Object> toolCall : toolCalls) {
+            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
+            if (function == null || function.get("name") == null) {
+                throw new IllegalArgumentException("A tool call must have a function name.");
+            }
+            ollamaToolCalls.add(
+                    new OllamaChatToolCalls(
+                            null,
+                            new OllamaToolCallsFunction(
+                                    String.valueOf(function.get("name")),
+                                    toArgumentsMap(function.get("arguments")))));
+        }
+        return ollamaToolCalls;
+    }
+
+    /** Ollama expects the arguments as an object; a JSON string is parsed into one. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> toArgumentsMap(Object arguments) {
+        if (arguments == null) {
+            return Collections.emptyMap();
+        }
+        if (arguments instanceof Map) {
+            return (Map<String, Object>) arguments;
+        }
+        try {
+            return new ObjectMapper()
+                    .readValue(
+                            String.valueOf(arguments), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Tool call arguments must be a JSON object.", e);
         }
     }
 
