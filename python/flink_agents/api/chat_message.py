@@ -192,13 +192,14 @@ class UnsupportedContentBlockError(ValueError):
     ) -> "UnsupportedContentBlockError":
         """Create the error for a block the provider cannot send.
 
-        The message reads "{provider} cannot send a {type} block ({media type},
+        The message reads "{provider} cannot send a(n) {type} block ({media type},
         {source type} source): {reason}."
         """
-        description = f"{block.type} block"
+        article = "an" if block.type[0] in "aeiou" else "a"
+        description = f"{article} {block.type} block"
         if isinstance(block, MediaBlock):
             description += f" ({block.media_type}, {block.source.type} source)"
-        return cls(f"{provider} cannot send a {description}: {reason}.")
+        return cls(f"{provider} cannot send {description}: {reason}.")
 
 
 def _blocks_of(text: str) -> List[ContentBlock]:
