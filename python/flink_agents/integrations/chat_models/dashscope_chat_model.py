@@ -26,7 +26,11 @@ from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -231,6 +235,8 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message.
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("DashScope", messages)
         dashscope_messages = self.__convert_to_dashscope_messages(messages)
 
         dashscope_tools: List[Dict[str, Any]] | None = (
