@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
 
 import openai
 from openai.types.chat import (
+    ChatCompletionContentPartParam,
     ChatCompletionMessage,
     ChatCompletionMessageParam,
     ChatCompletionMessageToolCallParam,
@@ -36,7 +37,19 @@ if TYPE_CHECKING:
     )
     from openai.types.chat.chat_completion_message_tool_call_param import Function
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    AudioBlock,
+    Base64Source,
+    ChatMessage,
+    ContentBlock,
+    DocumentBlock,
+    ImageBlock,
+    MediaBlock,
+    MessageRole,
+    TextBlock,
+    UnsupportedContentBlockError,
+    UrlSource,
+)
 
 DEFAULT_OPENAI_API_BASE_URL = "https://api.openai.com/v1"
 
@@ -121,6 +134,83 @@ def _convert_to_openai_tool_call(tool_call: dict) -> ChatCompletionMessageToolCa
     return openai_tool_call
 
 
+_AUDIO_FORMATS = {
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "audio/vnd.wave": "wav",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+}
+
+
+def _unsupported(block: ContentBlock, reason: str) -> UnsupportedContentBlockError:
+    """Name the block by type, media type and source type; never the payload or URL."""
+    description = f"{block.type} block"
+    if isinstance(block, MediaBlock):
+        description += f" ({block.media_type}, {block.source.type} source)"
+    return UnsupportedContentBlockError(
+        f"OpenAI Chat Completions cannot send a {description}: {reason}."
+    )
+
+
+def _data_uri(block: MediaBlock) -> str:
+    return f"data:{block.media_type};base64,{block.source.data}"
+
+
+def _to_content_part(block: ContentBlock) -> ChatCompletionContentPartParam:
+    if isinstance(block, TextBlock):
+        return {"type": "text", "text": block.text}
+    if isinstance(block, ImageBlock):
+        url = (
+            block.source.url
+            if isinstance(block.source, UrlSource)
+            else _data_uri(block)
+        )
+        return {"type": "image_url", "image_url": {"url": url}}
+    if isinstance(block, AudioBlock):
+        if not isinstance(block.source, Base64Source):
+            raise _unsupported(block, "audio input takes base64 data, not a URL")
+        audio_format = _AUDIO_FORMATS.get(
+            block.media_type.split(";", 1)[0].strip().lower()
+        )
+        if audio_format is None:
+            raise _unsupported(block, "audio input takes WAV or MP3 only")
+        return {
+            "type": "input_audio",
+            "input_audio": {"data": block.source.data, "format": audio_format},
+        }
+    if isinstance(block, DocumentBlock):
+        if not isinstance(block.source, Base64Source):
+            raise _unsupported(block, "file input takes base64 data, not a URL")
+        # OpenAI accepts PDF documents only; other types are left for the
+        # server to reject.
+        return {
+            "type": "file",
+            "file": {
+                "file_data": _data_uri(block),
+                "filename": block.name if block.name is not None else "document",
+            },
+        }
+    raise _unsupported(block, "there is no content part for it")
+
+
+def _user_content(message: ChatMessage) -> str | List[ChatCompletionContentPartParam]:
+    """Keep plain string content for text-only messages; media switches to parts."""
+    if not any(isinstance(block, MediaBlock) for block in message.blocks):
+        return message.text
+    return [_to_content_part(block) for block in message.blocks]
+
+
+def _require_text_only(message: ChatMessage) -> None:
+    for block in message.blocks:
+        if isinstance(block, MediaBlock):
+            reason = (
+                f"only user messages can carry media, not {message.role.value} messages"
+            )
+            raise _unsupported(block, reason)
+
+
 def convert_to_openai_messages(
     messages: Sequence[ChatMessage],
 ) -> List[ChatCompletionMessageParam]:
@@ -141,8 +231,14 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     extra_args are not forwarded as message fields, except that a tool
     message takes its tool_call_id from extra_args["external_id"], and an
     assistant message carries extra_args["refusal"] when that value is a str.
+
+    Only user messages can carry media. A media block in any other role, or
+    one the Chat Completions API has no content part for, raises
+    UnsupportedContentBlockError.
     """
     role = message.role
+    if role != MessageRole.USER:
+        _require_text_only(message)
 
     # Handle SYSTEM role messages
     if role == MessageRole.SYSTEM:
@@ -156,7 +252,7 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     elif role == MessageRole.USER:
         user_message: ChatCompletionUserMessageParam = {
             "role": "user",
-            "content": message.text,
+            "content": _user_content(message),
         }
         return user_message
     # Handle ASSISTANT role messages

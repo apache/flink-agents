@@ -594,6 +594,8 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+Azure OpenAI sends media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input).
+
 #### Available Models
 
 Azure OpenAI supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
@@ -1003,6 +1005,20 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+#### Multimodal Input
+
+The Chat Completions connections (OpenAI, Azure OpenAI and vLLM) send the media blocks of a user message as content parts, in block order:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | a `text` part |
+| `ImageBlock` | an `image_url` part: the URL, or a `data:` URI for Base64 data |
+| `AudioBlock` | an `input_audio` part, for Base64 data in `audio/wav` or `audio/mpeg` (WAV or MP3) |
+| `DocumentBlock` | a `file` part: the Base64 data as a `data:` URI, with the block's `name` as the file name (`document` when unset). OpenAI accepts PDF documents only |
+| `VideoBlock` | not supported |
+
+A user message with only text blocks is still sent as a plain string. Media in system, assistant or tool messages, audio or documents given by URL, other audio types, and video raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. Whether a model accepts a given part depends on the model and the server.
+
 #### Responses API
 
 {{< hint info >}}
@@ -1280,6 +1296,8 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+vLLM receives media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input). The model must be multimodal; see the [vLLM multimodal inputs docs](https://docs.vllm.ai/en/stable/features/multimodal_inputs/).
 
 #### Available Models
 

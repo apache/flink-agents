@@ -23,6 +23,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.core.JsonValue;
 import com.openai.core.Timeout;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
+import com.openai.models.chat.completions.ChatCompletionContentPart;
+import com.openai.models.chat.completions.ChatCompletionContentPartImage;
+import com.openai.models.chat.completions.ChatCompletionContentPartInputAudio;
+import com.openai.models.chat.completions.ChatCompletionContentPartText;
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.chat.completions.ChatCompletionMessageFunctionToolCall;
 import com.openai.models.chat.completions.ChatCompletionMessageParam;
@@ -30,8 +34,17 @@ import com.openai.models.chat.completions.ChatCompletionMessageToolCall;
 import com.openai.models.chat.completions.ChatCompletionSystemMessageParam;
 import com.openai.models.chat.completions.ChatCompletionToolMessageParam;
 import com.openai.models.chat.completions.ChatCompletionUserMessageParam;
+import org.apache.flink.agents.api.chat.messages.AudioBlock;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 
 import java.math.BigDecimal;
@@ -41,6 +54,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -167,18 +181,25 @@ final class OpenAIChatCompletionsUtils {
                 .collect(Collectors.toList());
     }
 
-    /** Convert a single Flink Agents ChatMessage to an OpenAI ChatCompletionMessageParam. */
+    /**
+     * Convert a single Flink Agents ChatMessage to an OpenAI ChatCompletionMessageParam.
+     *
+     * <p>Only user messages can carry media; a media block in any other role, or one the Chat
+     * Completions API has no content part for, throws {@link UnsupportedContentBlockException}.
+     */
     public static ChatCompletionMessageParam convertToOpenAIMessage(ChatMessage message) {
         MessageRole role = message.getRole();
         String content = Optional.ofNullable(message.getText()).orElse("");
+        if (role != MessageRole.USER) {
+            requireTextOnly(message);
+        }
 
         switch (role) {
             case SYSTEM:
                 return ChatCompletionMessageParam.ofSystem(
                         ChatCompletionSystemMessageParam.builder().content(content).build());
             case USER:
-                return ChatCompletionMessageParam.ofUser(
-                        ChatCompletionUserMessageParam.builder().content(content).build());
+                return ChatCompletionMessageParam.ofUser(convertUserMessage(message, content));
             case ASSISTANT:
                 ChatCompletionAssistantMessageParam.Builder assistantBuilder =
                         ChatCompletionAssistantMessageParam.builder();
@@ -207,6 +228,133 @@ final class OpenAIChatCompletionsUtils {
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
         }
+    }
+
+    /**
+     * A text-only user message keeps the plain string content, as before; a message with media is
+     * sent as content parts in block order.
+     */
+    private static ChatCompletionUserMessageParam convertUserMessage(
+            ChatMessage message, String text) {
+        List<ContentBlock> blocks = message.getBlocks();
+        if (blocks.stream().noneMatch(block -> block instanceof MediaBlock)) {
+            return ChatCompletionUserMessageParam.builder().content(text).build();
+        }
+        List<ChatCompletionContentPart> parts = new ArrayList<>(blocks.size());
+        for (ContentBlock block : blocks) {
+            parts.add(toContentPart(block));
+        }
+        return ChatCompletionUserMessageParam.builder().contentOfArrayOfContentParts(parts).build();
+    }
+
+    private static ChatCompletionContentPart toContentPart(ContentBlock block) {
+        if (block instanceof TextBlock) {
+            return ChatCompletionContentPart.ofText(
+                    ChatCompletionContentPartText.builder()
+                            .text(((TextBlock) block).getText())
+                            .build());
+        }
+        if (block instanceof ImageBlock) {
+            ImageBlock image = (ImageBlock) block;
+            String url =
+                    image.getSource() instanceof UrlSource
+                            ? ((UrlSource) image.getSource()).getUrl()
+                            : dataUri(image);
+            return ChatCompletionContentPart.ofImageUrl(
+                    ChatCompletionContentPartImage.builder()
+                            .imageUrl(
+                                    ChatCompletionContentPartImage.ImageUrl.builder()
+                                            .url(url)
+                                            .build())
+                            .build());
+        }
+        if (block instanceof AudioBlock) {
+            AudioBlock audio = (AudioBlock) block;
+            if (!(audio.getSource() instanceof Base64Source)) {
+                throw unsupported(block, "audio input takes base64 data, not a URL");
+            }
+            ChatCompletionContentPartInputAudio.InputAudio.Format format =
+                    audioFormat(audio.getMediaType());
+            if (format == null) {
+                throw unsupported(block, "audio input takes WAV or MP3 only");
+            }
+            return ChatCompletionContentPart.ofInputAudio(
+                    ChatCompletionContentPartInputAudio.builder()
+                            .inputAudio(
+                                    ChatCompletionContentPartInputAudio.InputAudio.builder()
+                                            .data(((Base64Source) audio.getSource()).getData())
+                                            .format(format)
+                                            .build())
+                            .build());
+        }
+        if (block instanceof DocumentBlock) {
+            DocumentBlock document = (DocumentBlock) block;
+            if (!(document.getSource() instanceof Base64Source)) {
+                throw unsupported(block, "file input takes base64 data, not a URL");
+            }
+            // OpenAI accepts PDF documents only; other types are left for the server to reject.
+            return ChatCompletionContentPart.ofFile(
+                    ChatCompletionContentPart.File.builder()
+                            .file(
+                                    ChatCompletionContentPart.File.FileObject.builder()
+                                            .fileData(dataUri(document))
+                                            .filename(
+                                                    document.getName() != null
+                                                            ? document.getName()
+                                                            : "document")
+                                            .build())
+                            .build());
+        }
+        throw unsupported(block, "there is no content part for it");
+    }
+
+    private static void requireTextOnly(ChatMessage message) {
+        for (ContentBlock block : message.getBlocks()) {
+            if (block instanceof MediaBlock) {
+                throw unsupported(
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+        }
+    }
+
+    /** Maps an audio media type onto the formats Chat Completions accepts, or null. */
+    private static ChatCompletionContentPartInputAudio.InputAudio.Format audioFormat(
+            String mediaType) {
+        String essence = mediaType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+        switch (essence) {
+            case "audio/wav":
+            case "audio/wave":
+            case "audio/x-wav":
+            case "audio/vnd.wave":
+                return ChatCompletionContentPartInputAudio.InputAudio.Format.WAV;
+            case "audio/mpeg":
+            case "audio/mp3":
+                return ChatCompletionContentPartInputAudio.InputAudio.Format.MP3;
+            default:
+                return null;
+        }
+    }
+
+    private static String dataUri(MediaBlock block) {
+        return "data:"
+                + block.getMediaType()
+                + ";base64,"
+                + ((Base64Source) block.getSource()).getData();
+    }
+
+    /** Names the block by type, media type and source type; never the payload or URL. */
+    private static UnsupportedContentBlockException unsupported(ContentBlock block, String reason) {
+        String description = block.getType() + " block";
+        if (block instanceof MediaBlock) {
+            MediaBlock media = (MediaBlock) block;
+            description +=
+                    " (" + media.getMediaType() + ", " + media.getSource().getType() + " source)";
+        }
+        return new UnsupportedContentBlockException(
+                "OpenAI Chat Completions cannot send a " + description + ": " + reason + ".");
     }
 
     /**
