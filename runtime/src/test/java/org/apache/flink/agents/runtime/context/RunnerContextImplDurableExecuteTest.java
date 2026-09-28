@@ -106,6 +106,26 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
+    void nullResultReplaysThroughRuntimeStateWithoutReExecution() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        TestDurableCallable<Void> callable =
+                new TestDurableCallable<>("void-call", Void.class, () -> null);
+        assertNull(context.durableExecute(callable));
+
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        RunnerContextImpl replay = createContext(restored);
+
+        assertNull(replay.durableExecute(callable));
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, persistCallCount.get());
+        assertEquals(1, replay.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(1, replay.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
     void testDurableExecuteCompletionOnlyDoesNotPersistInterruption() {
         RunnerContextImpl context = createContext(new ActionState(null));
         TestDurableCallable<String> callable =
@@ -286,6 +306,26 @@ class RunnerContextImplDurableExecuteTest {
         assertEquals(0, callable.getReconcileCount());
         assertEquals(0, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void testDurableExecuteReconcilableReplayNullSuccess() throws Exception {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(new CallResult("recon-call", "", null, null));
+        RunnerContextImpl context = createContext(actionState);
+        TestReconcilableCallable<String> callable =
+                new TestReconcilableCallable<>(
+                        "recon-call",
+                        String.class,
+                        () -> fail("call should not be re-executed"),
+                        () -> fail("reconcile should not be called for terminal slot"));
+
+        assertNull(context.durableExecute(callable));
+        assertEquals(0, callable.getCallCount());
+        assertEquals(0, callable.getReconcileCount());
+        assertEquals(0, persistCallCount.get());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
     }
 
     @Test

@@ -147,6 +147,27 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAsyncReconcilableReplayNullSuccess() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(new CallResult("recon-async", "", null, null));
+        JavaRunnerContextImpl context = createContext(actionState, executor);
+        TestReconcilableCallable<Void> callable =
+                new TestReconcilableCallable<>(
+                        "recon-async",
+                        Void.class,
+                        () -> fail("call should not be executed"),
+                        () -> fail("reconcile should not be called for terminal slot"));
+
+        assertNull(context.durableExecuteAsync(callable).await());
+        assertEquals(0, callable.getCallCount());
+        assertEquals(0, callable.getReconcileCount());
+        assertEquals(0, executor.getExecuteAsyncCallCount());
+        assertEquals(0, persistCallCount.get());
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
     void testDurableExecuteAsyncReconcilableReconcileSuccess() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         ActionState actionState = new ActionState(null);
