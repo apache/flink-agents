@@ -177,6 +177,16 @@ ContentBlock = Annotated[
 ]
 
 
+class UnsupportedContentBlockError(ValueError):
+    """A chat model integration cannot send a content block to its provider.
+
+    Raised for a media type the provider does not accept, or a media block in
+    a message role that only takes text, rather than silently dropping or
+    converting the block. Messages name the block type, media type and source
+    type only, never the media payload or URL.
+    """
+
+
 def _blocks_of(text: str) -> List[ContentBlock]:
     """An empty text becomes an empty block list rather than an empty text block."""
     return [TextBlock(text=text)] if text else []
