@@ -42,17 +42,26 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.fluss.client.Connection;
 import org.apache.fluss.client.ConnectionFactory;
 import org.apache.fluss.client.admin.Admin;
+import org.apache.fluss.client.table.writer.AppendWriter;
 import org.apache.fluss.metadata.TablePath;
+import org.apache.fluss.row.InternalRow;
 import org.apache.fluss.server.testutils.FlussClusterExtension;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.*;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /** Real Fluss writes and operator checkpoints must preserve pending durable results. */
 public class FlussActionStateRecoveryIntegrationTest {
@@ -66,18 +75,9 @@ public class FlussActionStateRecoveryIntegrationTest {
     @Test
     void pendingCallSurvivesRepeatedCheckpointRestoreAndCompletes() throws Exception {
         CALLS.set(0);
-        Action action =
-                new Action(
-                        "count",
-                        new JavaFunction(
-                                FlussActionStateRecoveryIntegrationTest.class,
-                                "runAction",
-                                new Class<?>[] {Event.class, RunnerContext.class}),
-                        List.of(InputEvent.EVENT_TYPE));
+        Action action = countingAction();
         AgentPlan plan = new AgentPlan(Map.of(action.getName(), action));
-        AgentConfiguration config = new AgentConfiguration();
-        config.set(FLUSS_BOOTSTRAP_SERVERS, FLUSS_CLUSTER.getBootstrapServers());
-        config.set(FLUSS_ACTION_STATE_DATABASE, "checkpoint_recovery");
+        AgentConfiguration config = configuration();
         config.set(FLUSS_ACTION_STATE_TABLE, "pending_results");
         config.set(FLUSS_ACTION_STATE_TABLE_BUCKETS, 2);
         OperatorSubtaskState snapshot;
@@ -85,14 +85,7 @@ public class FlussActionStateRecoveryIntegrationTest {
         try (FlussActionStateStore store = store(config);
                 KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
                         harness(plan, store)) {
-            try (Connection connection =
-                            ConnectionFactory.createConnection(FLUSS_CLUSTER.getClientConfig());
-                    Admin admin = connection.getAdmin()) {
-                FLUSS_CLUSTER.waitUntilTableReady(
-                        admin.getTableInfo(TablePath.of("checkpoint_recovery", "pending_results"))
-                                .get()
-                                .getTableId());
-            }
+            waitForTableReady(config);
             harness.open();
             harness.processElement(new StreamRecord<>(7L));
             ActionExecutionOperator<Long, Object> operator = operator(harness);
@@ -158,6 +151,91 @@ public class FlussActionStateRecoveryIntegrationTest {
         }
     }
 
+    @Test
+    void partialRefreshFailurePreservesPreviousCheckpoint() throws Exception {
+        CALLS.set(0);
+        Action action = countingAction();
+        AgentPlan plan = new AgentPlan(Map.of(action.getName(), action));
+        AgentConfiguration config = configuration();
+        config.set(FLUSS_ACTION_STATE_TABLE, "partial_refresh_failure");
+        config.set(FLUSS_ACTION_STATE_TABLE_BUCKETS, 2);
+        OperatorSubtaskState successfulCheckpoint;
+        try (FlussActionStateStore store = store(config);
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                        harness(plan, store)) {
+            waitForTableReady(config);
+            harness.open();
+            ActionExecutionOperator<Long, Object> operator = operator(harness);
+            // Queue both keys before yielding either task so neither continuation is resumed.
+            for (long key : List.of(7L, 8L)) {
+                harness.processElement(new StreamRecord<>(key));
+                operator.setCurrentKey(key);
+                ListState<ActionTask> tasks =
+                        operator.getRuntimeContext()
+                                .getListState(
+                                        new ListStateDescriptor<>(
+                                                "actionTasks",
+                                                TypeInformation.of(ActionTask.class)));
+                tasks.update(List.of(new CallThenYieldTask(tasks.get().iterator().next())));
+            }
+            harness.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
+            harness.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
+            assertThat(CALLS.get()).isEqualTo(2);
+            assertThat(harness.getRecordOutput()).isEmpty();
+            successfulCheckpoint = harness.snapshot(1L, 1L);
+            harness.notifyOfCompletedCheckpoint(1L);
+
+            // Inject a writer failure only for C2. The first refresh append reaches the real
+            // cluster and is acknowledged before the second append fails.
+            Field writerField = FlussActionStateStore.class.getDeclaredField("writer");
+            writerField.setAccessible(true);
+            AppendWriter realWriter = (AppendWriter) writerField.get(store);
+            AppendWriter failingWriter = mock(AppendWriter.class);
+            AtomicInteger refreshAttempts = new AtomicInteger();
+            AtomicInteger acknowledgedRefreshes = new AtomicInteger();
+            when(failingWriter.append(any(InternalRow.class)))
+                    .thenAnswer(
+                            invocation -> {
+                                if (refreshAttempts.incrementAndGet() == 1) {
+                                    Object result =
+                                            realWriter.append(invocation.getArgument(0)).get();
+                                    acknowledgedRefreshes.incrementAndGet();
+                                    return CompletableFuture.completedFuture(result);
+                                }
+                                return CompletableFuture.failedFuture(
+                                        new IOException("injected C2 refresh failure"));
+                            });
+            writerField.set(store, failingWriter);
+            try {
+                assertThatThrownBy(() -> harness.snapshot(2L, 2L))
+                        .hasRootCauseMessage("injected C2 refresh failure");
+                harness.getOperator().notifyCheckpointAborted(2L);
+                assertThat(refreshAttempts.get()).isEqualTo(2);
+                assertThat(acknowledgedRefreshes.get()).isEqualTo(1);
+            } finally {
+                writerField.set(store, realWriter);
+            }
+        }
+
+        try (FlussActionStateStore store = store(config);
+                KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                        harness(plan, store)) {
+            harness.initializeState(successfulCheckpoint);
+            harness.open();
+            operator(harness).waitInFlightEventsFinished();
+            assertThat(harness.getRecordOutput()).hasSize(2);
+            assertThat(harness.getRecordOutput())
+                    .allSatisfy(record -> assertThat(record.getValue()).isEqualTo(21L));
+            assertThat(CALLS.get())
+                    .as("neither durable call repeats after restoring C1")
+                    .isEqualTo(2);
+            harness.snapshot(3L, 3L);
+            harness.notifyOfCompletedCheckpoint(3L);
+            // Recovery must also leave checkpointing and normal completion/pruning usable.
+            assertThat(store.getRecoveryMarker()).isEqualTo(store.getRecoveryMarker());
+        }
+    }
+
     public static void runAction(Event event, RunnerContext context) throws Exception {
         context.sendEvent(new OutputEvent(context.durableExecute(new CountingCall())));
     }
@@ -198,6 +276,35 @@ public class FlussActionStateRecoveryIntegrationTest {
                     false,
                     List.of(),
                     new JavaActionTask(key, event, action, sequenceNumber, traceContext));
+        }
+    }
+
+    private static Action countingAction() throws Exception {
+        return new Action(
+                "count",
+                new JavaFunction(
+                        FlussActionStateRecoveryIntegrationTest.class,
+                        "runAction",
+                        new Class<?>[] {Event.class, RunnerContext.class}),
+                List.of(InputEvent.EVENT_TYPE));
+    }
+
+    private static AgentConfiguration configuration() {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(FLUSS_BOOTSTRAP_SERVERS, FLUSS_CLUSTER.getBootstrapServers());
+        config.set(FLUSS_ACTION_STATE_DATABASE, "checkpoint_recovery");
+        return config;
+    }
+
+    private static void waitForTableReady(AgentConfiguration config) throws Exception {
+        try (Connection connection =
+                        ConnectionFactory.createConnection(FLUSS_CLUSTER.getClientConfig());
+                Admin admin = connection.getAdmin()) {
+            TablePath path =
+                    TablePath.of(
+                            config.get(FLUSS_ACTION_STATE_DATABASE),
+                            config.get(FLUSS_ACTION_STATE_TABLE));
+            FLUSS_CLUSTER.waitUntilTableReady(admin.getTableInfo(path).get().getTableId());
         }
     }
 
