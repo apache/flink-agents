@@ -55,6 +55,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -243,6 +244,89 @@ public class KafkaActionStateStoreTest {
         assertNotNull(actionStateStore.get(TEST_KEY, 2L, testAction, testEvent));
         assertNull(actionStateStore.get(TEST_KEY, 3L, testAction, testEvent));
         assertNull(actionStateStore.get(TEST_KEY, 4L, testAction, testEvent));
+    }
+
+    @Test
+    void testPutRestoresInterruptFlagWhenSendIsInterrupted() throws Exception {
+        // Send finishes like a cancelled FutureTask: get() clears the thread's interrupt flag
+        // before throwing InterruptedException. put() must restore the flag.
+        MockProducer<String, ActionState> interruptingProducer =
+                new MockProducer<>(
+                        false,
+                        new ActionStateKeyPartitioner(),
+                        new StringSerializer(),
+                        new ActionStateKafkaSeder()) {
+                    @Override
+                    public Future<RecordMetadata> send(ProducerRecord<String, ActionState> record) {
+                        return new Future<>() {
+                            @Override
+                            public RecordMetadata get() throws InterruptedException {
+                                Thread.interrupted(); // clear the flag like FutureTask.get()
+                                throw new InterruptedException("simulated interruption");
+                            }
+
+                            @Override
+                            public RecordMetadata get(long timeout, TimeUnit unit)
+                                    throws InterruptedException {
+                                return get();
+                            }
+
+                            @Override
+                            public boolean cancel(boolean mayInterruptIfRunning) {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isCancelled() {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isDone() {
+                                return false;
+                            }
+                        };
+                    }
+                };
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        new HashMap<>(),
+                        new AgentConfiguration(),
+                        interruptingProducer,
+                        mockConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM));
+        try {
+            Thread.currentThread().interrupt();
+            Throwable thrown =
+                    catchThrowable(
+                            () -> store.put(TEST_KEY, 1L, testAction, testEvent, testActionState));
+            assertThat(thrown).isInstanceOf(InterruptedException.class);
+            assertThat(Thread.currentThread().isInterrupted())
+                    .as("The interrupt flag cleared by Future.get() must be restored")
+                    .isTrue();
+        } finally {
+            Thread.interrupted(); // clear the flag so the remaining tests run clean
+        }
+    }
+
+    @Test
+    void testPruneDropsCheckpointedBoundaryWhenNoLiveStateRemains() throws Exception {
+        String businessKeyIdentity =
+                ActionStateUtil.generateBusinessKeyIdentity(TEST_KEY, KEY_SERIALIZER);
+        actionStates.put(
+                generateKey(TEST_KEY, 6L, testAction, testEvent, MAX_PARALLELISM), testActionState);
+        actionStateStore.markCheckpointedSequence(TEST_KEY, 5L);
+        actionStateStore.pruneState(TEST_KEY, 5L);
+
+        // A later-sequence live state keeps the checkpointed boundary load-bearing.
+        assertThat(actionStateStore.getLatestKeySeqNum())
+                .containsEntry(businessKeyIdentity, 5L);
+
+        // Once the identity has no live state left, prune the boundary too, otherwise the map
+        // grows one entry per key for the whole job lifetime.
+        actionStateStore.pruneState(TEST_KEY, 6L);
+        assertThat(actionStateStore.getLatestKeySeqNum()).isEmpty();
     }
 
     @Test

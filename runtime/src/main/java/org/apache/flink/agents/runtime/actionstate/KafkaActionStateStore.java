@@ -535,6 +535,11 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.ownershipFilter = ownershipFilter;
     }
 
+    @VisibleForTesting
+    Map<String, Long> getLatestKeySeqNum() {
+        return latestKeySeqNum;
+    }
+
     @Override
     public void markCheckpointedSequence(Object key, long seqNum) {
         latestKeySeqNum.merge(keyEncoder.generateBusinessKeyIdentity(key), seqNum, Math::max);
