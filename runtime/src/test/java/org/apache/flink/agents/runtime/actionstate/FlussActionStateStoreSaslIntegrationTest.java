@@ -94,8 +94,10 @@ public class FlussActionStateStoreSaslIntegrationTest {
         Action testAction = new NoOpAction("sasl-recovery-action");
         InputEvent testEvent = new InputEvent("sasl-recovery-data");
 
-        // Write data and capture recovery marker
-        store.put(TEST_KEY, 1L, testAction, testEvent, new ActionState(testEvent));
+        // A durable call has completed, but its enclosing action is still pending at checkpoint.
+        ActionState pending = new ActionState(testEvent);
+        pending.addCallResult(new CallResult("durable-call", "", new byte[] {1, 2, 3}));
+        store.put(TEST_KEY, 1L, testAction, testEvent, pending);
         Object marker = store.getRecoveryMarker();
 
         // Write more data after marker
@@ -111,8 +113,19 @@ public class FlussActionStateStoreSaslIntegrationTest {
 
             // Data written after marker should be recovered
             assertThat(recoveredStore.get(TEST_KEY, 2L, testAction, testEvent)).isNotNull();
-            // Data written before marker should NOT be in the rebuilt cache
-            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent)).isNull();
+            // SASL must also preserve the pending result refreshed into the recovery window.
+            ActionState restored = recoveredStore.get(TEST_KEY, 1L, testAction, testEvent);
+            assertThat(restored).isNotNull();
+            assertThat(restored.isCompleted()).isFalse();
+            assertThat(restored.getCallResults())
+                    .singleElement()
+                    .satisfies(
+                            result -> {
+                                assertThat(result.matches("durable-call", "")).isTrue();
+                                assertThat(result.isSuccess()).isTrue();
+                                assertThat(result.getResultPayload())
+                                        .containsExactly((byte) 1, (byte) 2, (byte) 3);
+                            });
         } finally {
             recoveredStore.close();
             store = null;
