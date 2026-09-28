@@ -238,6 +238,11 @@ public class KafkaActionStateStore implements ActionStateStore {
                     "Stored action state to Kafka: key={}, isCompleted={}",
                     stateKey,
                     state.isCompleted());
+        } catch (InterruptedException e) {
+            // Future.get() clears the interrupt flag before it throws, so restore it here.
+            // Wrapping it would leave the caller with an error but no visible cancellation.
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to send action state to Kafka", e);
         }
@@ -585,6 +590,18 @@ public class KafkaActionStateStore implements ActionStateStore {
         // Remove from in-memory cache (always, regardless of tombstone success)
         actionStates.keySet().removeAll(keysToPrune);
         latestStateOffsets.keySet().removeAll(keysToPrune);
+
+        // Drop the checkpointed boundary once the identity has no live state left, otherwise a task
+        // over unbounded key cardinality accumulates one entry per key for the whole job lifetime.
+        // Losing it is harmless: any record that shows up for the identity afterwards is newer than
+        // the last completed sequence and has to be replayed either way.
+        if (actionStates.keySet().stream()
+                .noneMatch(
+                        cachedKey ->
+                                ActionStateUtil.matchesBusinessKeyIdentity(
+                                        cachedKey, businessKeyIdentity))) {
+            latestKeySeqNum.remove(businessKeyIdentity);
+        }
 
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }
