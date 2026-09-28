@@ -42,6 +42,7 @@ import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -135,7 +136,7 @@ public class KafkaActionStateStoreRecoveryTest {
                         new HashMap<>(),
                         new AgentConfiguration(),
                         producer,
-                        consumerWithPartition(3L),
+                        consumerWithLiveEndOffsets(producer),
                         TOPIC,
                         createKeyEncoder(MAX_PARALLELISM));
 
@@ -206,17 +207,34 @@ public class KafkaActionStateStoreRecoveryTest {
         }
     }
 
-    private static MockConsumer<String, ActionState> consumerWithPartition(long endOffset) {
-        MockConsumer<String, ActionState> consumer = new MockConsumer<>(EARLIEST.name());
-        consumer.updatePartitions(
-                TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
-        consumer.updateEndOffsets(Map.of(new TopicPartition(TOPIC, 0), endOffset));
-        return consumer;
+    /**
+     * Emulates a real Kafka broker: the store's consumer reads end offsets from the same topic the
+     * producer writes, so a marker taken mid-run reflects exactly the records already flushed.
+     */
+    private static MockConsumer<String, ActionState> consumerWithLiveEndOffsets(
+            MockProducer<String, ActionState> producer) {
+        return new MockConsumer<>(EARLIEST.name()) {
+            {
+                updatePartitions(
+                        TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
+            }
+            @Override
+            public synchronized Map<TopicPartition, Long> endOffsets(
+                    Collection<TopicPartition> partitions) {
+                Map<TopicPartition, Long> result = new HashMap<>();
+                for (TopicPartition topicPartition : partitions) {
+                    result.put(topicPartition, (long) producer.history().size());
+                }
+                return result;
+            }
+        };
     }
 
     private static MockConsumer<String, ActionState> recoveryConsumer(
             List<ProducerRecord<String, ActionState>> history) {
         MockConsumer<String, ActionState> consumer = new MockConsumer<>(EARLIEST.name());
+        consumer.updatePartitions(
+                TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
         consumer.assign(List.of(new TopicPartition(TOPIC, 0)));
         consumer.updateBeginningOffsets(Map.of(new TopicPartition(TOPIC, 0), 0L));
         consumer.updateEndOffsets(Map.of(new TopicPartition(TOPIC, 0), (long) history.size()));

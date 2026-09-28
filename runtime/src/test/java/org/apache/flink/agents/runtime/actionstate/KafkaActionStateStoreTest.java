@@ -392,19 +392,32 @@ public class KafkaActionStateStoreTest {
                         new TopicPartition(TEST_TOPIC, 1),
                         1L));
 
-        Object recoveryMarker = actionStateStore.getRecoveryMarker();
+        Object recoveryMarkerObj = actionStateStore.getRecoveryMarker();
+        KafkaActionStateRecoveryMarker recoveryMarker =
+                (KafkaActionStateRecoveryMarker) recoveryMarkerObj;
         int recoveryPartition =
-                ((Map<Integer, Long>) recoveryMarker)
-                        .entrySet().stream()
-                                .filter(entry -> entry.getValue() == 0L)
-                                .map(Map.Entry::getKey)
-                                .findFirst()
-                                .orElse(0);
+                recoveryMarker.getOffsets().entrySet().stream()
+                        .filter(entry -> entry.getValue() == 0L)
+                        .map(Map.Entry::getKey)
+                        .findFirst()
+                        .orElse(0);
         TopicPartition topicPartition = new TopicPartition(TEST_TOPIC, recoveryPartition);
 
         MockConsumer<String, ActionState> recoveryConsumer = new MockConsumer<>(EARLIEST.name());
+        recoveryConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
         recoveryConsumer.assign(List.of(topicPartition));
-        recoveryConsumer.updateBeginningOffsets(Map.of(topicPartition, 0L));
+        recoveryConsumer.updateBeginningOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0), 0L,
+                        new TopicPartition(TEST_TOPIC, 1), 0L));
+        recoveryConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0), 1L,
+                        new TopicPartition(TEST_TOPIC, 1), 1L));
         recoveryConsumer.addRecord(
                 new ConsumerRecord<>(
                         TEST_TOPIC, recoveryPartition, 0L, persisted.key(), persisted.value()));
@@ -448,11 +461,11 @@ public class KafkaActionStateStoreTest {
                         new TopicPartition(TEST_TOPIC, 1),
                         2L));
 
-        @SuppressWarnings("unchecked")
-        Map<Integer, Long> recoveryMarker =
-                (Map<Integer, Long>) actionStateStore.getRecoveryMarker();
+        Object recoveryMarkerObj = actionStateStore.getRecoveryMarker();
+        KafkaActionStateRecoveryMarker recoveryMarker =
+                (KafkaActionStateRecoveryMarker) recoveryMarkerObj;
 
-        assertThat(recoveryMarker.values()).contains(1L).doesNotContain(0L);
+        assertThat(recoveryMarker.getOffsets().values()).contains(1L).doesNotContain(0L);
     }
 
     @Test
