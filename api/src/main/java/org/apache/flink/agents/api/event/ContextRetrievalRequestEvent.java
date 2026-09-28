@@ -47,20 +47,39 @@ public class ContextRetrievalRequestEvent extends Event {
      */
     public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
         super(EVENT_TYPE);
-        if (maxResults <= 0) {
-            throw new IllegalArgumentException(
-                    String.format("`max_results` must be positive, but was %d.", maxResults));
-        }
+        validateMaxResults(maxResults);
         setAttr("query", query);
         setAttr("vector_store", vectorStore);
         setAttr("max_results", maxResults);
     }
 
+    /**
+     * Reconstructs a context retrieval request event from its serialized form.
+     *
+     * <p>The {@code max_results} attribute is validated here as well, so that reconstructed events
+     * are rejected the same way as directly constructed ones and stay consistent with the Python
+     * implementation.
+     *
+     * @param id the event id
+     * @param attributes the event attributes
+     * @throws IllegalArgumentException if {@code max_results} is present and non-positive
+     */
     @JsonCreator
     public ContextRetrievalRequestEvent(
             @JsonProperty("id") UUID id,
             @JsonProperty("attributes") Map<String, Object> attributes) {
         super(id, EVENT_TYPE, attributes);
+        Object maxResults = attributes == null ? null : attributes.get("max_results");
+        if (maxResults instanceof Number) {
+            validateMaxResults(((Number) maxResults).intValue());
+        }
+    }
+
+    private static void validateMaxResults(int maxResults) {
+        if (maxResults <= 0) {
+            throw new IllegalArgumentException(
+                    String.format("`max_results` must be positive, but was %d.", maxResults));
+        }
     }
 
     /**
