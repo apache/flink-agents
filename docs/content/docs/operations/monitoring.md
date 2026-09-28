@@ -530,18 +530,20 @@ The exporter runs **out of band**: it reads the Event Log written by the File or
 |---|---|
 | Input run (`inputRunId`) | Trace, with a synthesized `invoke_agent` root span |
 | Execution (`executionId` / `parentExecutionId`) | Span / parent Span |
-| `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), `gen_ai.usage.*` token attributes when recorded. `gen_ai.provider.name` is not set: the record does not carry the provider |
-| `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` (the provider-issued `entityMetadata.externalId`, else the framework `toolCallId`), `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`) |
+| `llm` execution | `chat {model}` span, kind CLIENT: `gen_ai.operation.name=chat`, `gen_ai.request.model` from `entityMetadata.model` (span name `chat` when absent), `gen_ai.usage.*` token attributes when the terminal record carries `promptTokens` / `completionTokens` in `eventAttributes`. The built-in reporters do not write these yet (token counts go to the Token Usage metrics), so logs they produce have no usage attributes. `gen_ai.provider.name` is not set: the record does not carry the provider |
+| `tool` execution | `execute_tool {tool}` span, kind INTERNAL: `gen_ai.operation.name=execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id` (the provider-issued `entityMetadata.externalId`, else the framework `toolCallId`), `gen_ai.tool.type` (`function` for function tools, `extension` for remote-function and MCP tools; the raw value is always in `flink_agents.tool.type`), `gen_ai.agent.name` when the tool's records carry `agentName` |
 | `action` execution | `action {name}` span, kind INTERNAL |
 | `parser` execution | `parse {name}` span, `gen_ai.operation.name=parse` (custom low-cardinality value), kind INTERNAL |
-| `businessKey` | `gen_ai.conversation.id` |
+| `businessKey` | `flink_agents.business_key`. It is the keyed-stream key, a conversation only in chat-style pipelines, so it is also reported as `gen_ai.conversation.id` only when enabled (`--business-key-as-conversation-id`, or `setBusinessKeyAsConversationId(true)`) |
 | failed execution | span status `ERROR` with the recorded error message, `error.type` from the recorded error type, else `problemCategory` |
 
 Trace and span ids are derived **deterministically** from `inputRunId` / `executionId` (SHA-256 truncation), so exporting the same log twice is idempotent to deduplicating backends (delivery itself is at-least-once). The framework-native ids are always attached under `flink_agents.*` attributes for correlation with the raw Event Log. The GenAI semantic conventions are still at development stability; the exported attribute set is pinned per Flink Agents release.
 
 **Input contract.** The converter consumes the flat JSON record stream, not a file-naming convention: file arguments are read as-is (records collected from any Event Log sink work, including SLF4J records whose extra `jobId`/`taskName`/`subtaskId` fields are ignored), and a directory argument is expanded to the `events-*.log` files it contains — the FileEventLogger naming contract, matching `trace_tree.py`. Completeness of a multi-subtask file set is the caller's responsibility under the batch contract; the summary reports what was read.
 
-**Incomplete executions.** An execution with a start record but no terminal record (a crash, a dropped best-effort Event Log write, or recovery discarding the transient start/terminal pairing — indistinguishable after the fact) is still exported: as a zero-duration span closed at the observed timestamp, with span status UNSET and the `flink_agents.execution.incomplete` attribute, plus a machine-readable `INCOMPLETE_EXECUTION` diagnostic in the converter summary (`MISSING_START` for the mirror case). Reused executions are single-record by design and are exported as zero-duration spans with `flink_agents.execution.status=reused`, without a diagnostic. The diagnostic model (`code` + id + message + file location, including `MALFORMED_RECORD` for undecodable input) follows `trace_tree.py`'s warning vocabulary.
+**Incomplete executions.** An execution with a start record but no terminal record (a crash, a dropped best-effort Event Log write, or recovery discarding the transient start/terminal pairing — indistinguishable after the fact) is still exported: as a zero-duration span closed at the observed timestamp, with span status UNSET and the `flink_agents.execution.incomplete` attribute, plus a machine-readable `INCOMPLETE_EXECUTION` diagnostic in the converter summary (`MISSING_START` for the mirror case). Reused executions are single-record by design and are exported as zero-duration spans with `flink_agents.execution.status=reused`, without a diagnostic. The diagnostic model (`code` + id + message + file location, including `MALFORMED_RECORD` for undecodable input and for a record whose timestamp cannot be parsed, which is skipped) follows `trace_tree.py`'s warning vocabulary.
+
+**Delivery.** Spans are sent in OTLP requests of at most 512 spans (`--batch-size`, or `setMaxExportBatchSize`), since each request must fit the receiver's size limit (4 MiB by default for gRPC). Each request may take up to 30 seconds. If a request fails or times out, the export stops with an `ExportFailedException` reporting how many spans the earlier requests delivered; re-running it is safe because the span ids are deterministic.
 
 ### Usage
 
@@ -551,6 +553,7 @@ Command line:
 java -cp flink-agents-integrations-observability-otel-{{< version >}}.jar \
   org.apache.flink.agents.integrations.observability.otel.EventLogOTelExporter \
   --endpoint http://localhost:4317 --protocol grpc --service-name my-agent-job \
+  [--batch-size 512] [--business-key-as-conversation-id] \
   /tmp/flink-agents/events-<jobId>-<taskName>-<subtaskId>.log
 ```
 
@@ -567,4 +570,4 @@ try (EventLogOTelExporter exporter =
 }
 ```
 
-Current scope: spans only. Prompt/response content capture and richer usage metrics are follow-up work; see the Agent Trace design discussions for the roadmap.
+Current scope: spans only. Prompt/response content capture, and token usage from the built-in reporters, are follow-up work; see the Agent Trace design discussions for the roadmap.

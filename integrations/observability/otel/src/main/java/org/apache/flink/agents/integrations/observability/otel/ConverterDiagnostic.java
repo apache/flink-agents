@@ -27,7 +27,8 @@ import java.util.Objects;
  * <p>Codes emitted by this converter:
  *
  * <ul>
- *   <li>{@link #MALFORMED_RECORD}: an input record could not be parsed; it was skipped.
+ *   <li>{@link #MALFORMED_RECORD}: an input record could not be parsed, or its timestamp could not;
+ *       it was skipped.
  *   <li>{@link #INCOMPLETE_EXECUTION}: a start record has no terminal record. The span is still
  *       exported, closed at the observed start timestamp (zero duration) with status UNSET and the
  *       {@code flink_agents.execution.incomplete} attribute — a missing terminal cannot be

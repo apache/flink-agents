@@ -73,12 +73,21 @@ public class EventLogOTelExporter implements AutoCloseable {
     /** Per-file cap on malformed-record diagnostics, guarding against a stuck parser. */
     private static final int MAX_MALFORMED_PER_FILE = 1000;
 
+    /** Default spans per OTLP request, matching the SDK {@code BatchSpanProcessor} default. */
+    static final int DEFAULT_MAX_EXPORT_BATCH_SIZE = 512;
+
+    /** How long each OTLP request may take before the export is reported as failed. */
+    private static final long BATCH_EXPORT_TIMEOUT_SECONDS = 30;
+
     private final AgentTraceSpans assembler;
     private final SpanExporter spanExporter;
+    private final int maxExportBatchSize;
 
-    EventLogOTelExporter(String serviceName, SpanExporter spanExporter) {
-        this.assembler = new AgentTraceSpans(serviceName);
+    EventLogOTelExporter(
+            AgentTraceSpans assembler, SpanExporter spanExporter, int maxExportBatchSize) {
+        this.assembler = assembler;
         this.spanExporter = spanExporter;
+        this.maxExportBatchSize = maxExportBatchSize;
     }
 
     public static Builder builder() {
@@ -165,20 +174,23 @@ public class EventLogOTelExporter implements AutoCloseable {
 
     private ExportSummary export(List<TraceRecord> records, List<ConverterDiagnostic> diagnostics) {
         List<SpanData> spans = assembler.assemble(records, diagnostics);
-        if (!spans.isEmpty()) {
-            CompletableResultCode result = spanExporter.export(spans);
-            result.join(30, TimeUnit.SECONDS);
-            if (!result.isSuccess()) {
-                throw new IllegalStateException(
-                        "OTLP export did not complete successfully for "
-                                + spans.size()
-                                + " spans.");
-            }
-        }
         for (ConverterDiagnostic diagnostic : diagnostics) {
             LOG.warn("{}", diagnostic);
         }
-        return new ExportSummary(records.size(), spans.size(), diagnostics);
+        // Each OTLP exporter marshals a whole collection into one request, and receivers cap the
+        // request size (4 MiB by default for gRPC), so the spans go out in bounded batches.
+        int exported = 0;
+        while (exported < spans.size()) {
+            List<SpanData> batch =
+                    spans.subList(exported, Math.min(exported + maxExportBatchSize, spans.size()));
+            CompletableResultCode result = spanExporter.export(batch);
+            result.join(BATCH_EXPORT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            if (!result.isSuccess()) {
+                throw new ExportFailedException(exported, spans.size());
+            }
+            exported += batch.size();
+        }
+        return new ExportSummary(records.size(), exported, diagnostics);
     }
 
     @Override
@@ -190,6 +202,37 @@ public class EventLogOTelExporter implements AutoCloseable {
     public void shutdown() {
         spanExporter.flush().join(10, TimeUnit.SECONDS);
         spanExporter.shutdown().join(10, TimeUnit.SECONDS);
+    }
+
+    /**
+     * Thrown when an OTLP request fails or times out. Earlier batches have already been delivered;
+     * re-running the export is safe because span and trace ids are deterministic.
+     */
+    public static final class ExportFailedException extends IllegalStateException {
+        private static final long serialVersionUID = 1L;
+
+        private final int spansExported;
+        private final int spansTotal;
+
+        ExportFailedException(int spansExported, int spansTotal) {
+            super(
+                    "OTLP export did not complete successfully: exported "
+                            + spansExported
+                            + " of "
+                            + spansTotal
+                            + " spans before a batch failed.");
+            this.spansExported = spansExported;
+            this.spansTotal = spansTotal;
+        }
+
+        /** Spans delivered by the batches that completed before the failure. */
+        public int getSpansExported() {
+            return spansExported;
+        }
+
+        public int getSpansTotal() {
+            return spansTotal;
+        }
     }
 
     /** Counters and diagnostics describing one export invocation. */
@@ -234,6 +277,8 @@ public class EventLogOTelExporter implements AutoCloseable {
         private String endpoint = "http://localhost:4317";
         private String protocol = "grpc";
         private String serviceName = "flink-agents";
+        private int maxExportBatchSize = DEFAULT_MAX_EXPORT_BATCH_SIZE;
+        private boolean businessKeyAsConversationId;
         private SpanExporter spanExporter;
 
         /** OTLP endpoint, e.g. {@code http://localhost:4317} (grpc) or {@code .../v1/traces}. */
@@ -251,6 +296,26 @@ public class EventLogOTelExporter implements AutoCloseable {
         /** Value of the {@code service.name} resource attribute; defaults to "flink-agents". */
         public Builder setServiceName(String serviceName) {
             this.serviceName = serviceName;
+            return this;
+        }
+
+        /** Maximum spans per OTLP request; defaults to 512. */
+        public Builder setMaxExportBatchSize(int maxExportBatchSize) {
+            if (maxExportBatchSize <= 0) {
+                throw new IllegalArgumentException(
+                        "The export batch size must be positive, got " + maxExportBatchSize + ".");
+            }
+            this.maxExportBatchSize = maxExportBatchSize;
+            return this;
+        }
+
+        /**
+         * Whether to also report {@code businessKey} as {@code gen_ai.conversation.id}, for
+         * pipelines keyed by conversation. Off by default; the key is always exported as {@code
+         * flink_agents.business_key}.
+         */
+        public Builder setBusinessKeyAsConversationId(boolean businessKeyAsConversationId) {
+            this.businessKeyAsConversationId = businessKeyAsConversationId;
             return this;
         }
 
@@ -275,7 +340,10 @@ public class EventLogOTelExporter implements AutoCloseable {
                                     + " (expected 'grpc' or 'http/protobuf').");
                 }
             }
-            return new EventLogOTelExporter(serviceName, exporter);
+            return new EventLogOTelExporter(
+                    new AgentTraceSpans(serviceName, businessKeyAsConversationId),
+                    exporter,
+                    maxExportBatchSize);
         }
     }
 
@@ -283,7 +351,7 @@ public class EventLogOTelExporter implements AutoCloseable {
      * Command-line entry point.
      *
      * <p>Usage: {@code EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]
-     * [--service-name NAME] eventLogFile...}
+     * [--service-name NAME] [--batch-size N] [--business-key-as-conversation-id] eventLogFile...}
      */
     public static void main(String[] args) throws IOException {
         Builder builder = builder();
@@ -293,7 +361,8 @@ public class EventLogOTelExporter implements AutoCloseable {
             boolean isFlag =
                     arg.equals("--endpoint")
                             || arg.equals("--protocol")
-                            || arg.equals("--service-name");
+                            || arg.equals("--service-name")
+                            || arg.equals("--batch-size");
             if (isFlag && i + 1 >= args.length) {
                 exitWithUsage("Missing value for " + arg + ".");
             }
@@ -306,6 +375,12 @@ public class EventLogOTelExporter implements AutoCloseable {
                     break;
                 case "--service-name":
                     builder.setServiceName(args[++i]);
+                    break;
+                case "--batch-size":
+                    builder.setMaxExportBatchSize(parseBatchSize(args[++i]));
+                    break;
+                case "--business-key-as-conversation-id":
+                    builder.setBusinessKeyAsConversationId(true);
                     break;
                 default:
                     files.add(Path.of(arg));
@@ -323,11 +398,25 @@ public class EventLogOTelExporter implements AutoCloseable {
         }
     }
 
+    private static int parseBatchSize(String value) {
+        try {
+            int batchSize = Integer.parseInt(value);
+            if (batchSize > 0) {
+                return batchSize;
+            }
+        } catch (NumberFormatException e) {
+            // Reported below.
+        }
+        exitWithUsage("--batch-size needs a positive integer, got '" + value + "'.");
+        return DEFAULT_MAX_EXPORT_BATCH_SIZE;
+    }
+
     private static void exitWithUsage(String problem) {
         System.err.println(problem);
         System.err.println(
                 "Usage: EventLogOTelExporter [--endpoint URL] [--protocol grpc|http/protobuf]"
-                        + " [--service-name NAME] eventLogFile...");
+                        + " [--service-name NAME] [--batch-size N]"
+                        + " [--business-key-as-conversation-id] eventLogFile...");
         System.exit(2);
     }
 }

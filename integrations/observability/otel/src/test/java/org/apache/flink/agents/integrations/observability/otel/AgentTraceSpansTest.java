@@ -149,7 +149,7 @@ class AgentTraceSpansTest {
                 .isEqualTo("invoke_agent");
         assertThat(root.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME))
                 .isEqualTo("ReActAgent");
-        assertThat(root.getAttributes().get(AgentTraceSpans.GEN_AI_CONVERSATION_ID))
+        assertThat(root.getAttributes().get(AgentTraceSpans.FA_BUSINESS_KEY))
                 .isEqualTo("order-1001");
         // Root covers the whole run.
         assertThat(root.getStartEpochNanos())
@@ -358,6 +358,85 @@ class AgentTraceSpansTest {
                 .isEqualTo("get_weather");
         assertThat(tool.getAttributes().get(AgentTraceSpans.FA_EXECUTION_STATUS))
                 .isEqualTo("failed");
+    }
+
+    @Test
+    @DisplayName("businessKey is always flink_agents.business_key; conversation id is opt-in")
+    void testBusinessKeyAsConversationIdIsOptIn() {
+        SpanData byDefault =
+                spanNamed(
+                        new AgentTraceSpans("test-service").assemble(sampleRun()),
+                        "invoke_agent ReActAgent");
+        assertThat(byDefault.getAttributes().get(AgentTraceSpans.FA_BUSINESS_KEY))
+                .isEqualTo("order-1001");
+        assertThat(byDefault.getAttributes().get(AgentTraceSpans.GEN_AI_CONVERSATION_ID)).isNull();
+
+        List<SpanData> optedIn = new AgentTraceSpans("test-service", true).assemble(sampleRun());
+        for (String name : List.of("invoke_agent ReActAgent", "chat qwen-max")) {
+            SpanData span = spanNamed(optedIn, name);
+            assertThat(span.getAttributes().get(AgentTraceSpans.FA_BUSINESS_KEY))
+                    .isEqualTo("order-1001");
+            assertThat(span.getAttributes().get(AgentTraceSpans.GEN_AI_CONVERSATION_ID))
+                    .isEqualTo("order-1001");
+        }
+    }
+
+    @Test
+    @DisplayName("Tool spans carry gen_ai.agent.name when their records have one")
+    void testToolSpanCarriesAgentName() {
+        SpanData named =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        toolRecord(
+                                                "2026-01-15T10:30:04Z",
+                                                "_execution_started_event",
+                                                "started",
+                                                ",\"agentName\":\"ReActAgent\""),
+                                        toolRecord(
+                                                "2026-01-15T10:30:05Z",
+                                                "_execution_finished_event",
+                                                "success")))
+                        .get(1);
+        assertThat(named.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME))
+                .isEqualTo("ReActAgent");
+
+        SpanData unnamed =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        toolRecord(
+                                                "2026-01-15T10:30:04Z",
+                                                "_execution_started_event",
+                                                "started")))
+                        .get(1);
+        assertThat(unnamed.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME)).isNull();
+    }
+
+    @Test
+    @DisplayName("A record with an invalid timestamp is skipped with a diagnostic")
+    void testInvalidTimestampIsSkippedWithDiagnostic() {
+        List<ConverterDiagnostic> diagnostics = new ArrayList<>();
+        List<SpanData> spans =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        toolRecord(
+                                                "yesterday", "_execution_started_event", "started"),
+                                        toolRecord(
+                                                "2026-01-15T10:30:05Z",
+                                                "_execution_finished_event",
+                                                "success")),
+                                diagnostics);
+
+        // The valid terminal record still becomes a span; the invalid start is reported.
+        assertThat(spans).hasSize(2);
+        assertThat(diagnostics)
+                .anySatisfy(
+                        d -> {
+                            assertThat(d.getCode()).isEqualTo(ConverterDiagnostic.MALFORMED_RECORD);
+                            assertThat(d.getMessage()).contains("yesterday");
+                        });
     }
 
     private static TraceRecord toolRecord(String timestamp, String eventType, String status) {

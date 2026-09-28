@@ -35,6 +35,7 @@ import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 
 import java.time.Instant;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -96,13 +97,30 @@ public final class AgentTraceSpans {
             AttributeKey.booleanKey("flink_agents.execution.incomplete");
     static final AttributeKey<String> FA_TOOL_TYPE =
             AttributeKey.stringKey("flink_agents.tool.type");
+    static final AttributeKey<String> FA_BUSINESS_KEY =
+            AttributeKey.stringKey("flink_agents.business_key");
 
     static final String INSTRUMENTATION_SCOPE_NAME = "org.apache.flink.agents.otel";
 
     private final Resource resource;
     private final InstrumentationScopeInfo scope;
+    private final boolean businessKeyAsConversationId;
 
     public AgentTraceSpans(String serviceName) {
+        this(serviceName, false);
+    }
+
+    /**
+     * Creates an assembler.
+     *
+     * @param serviceName the {@code service.name} resource attribute
+     * @param businessKeyAsConversationId whether to also report {@code businessKey} as {@code
+     *     gen_ai.conversation.id}. The business key is the keyed-stream key, which is a
+     *     conversation only in chat-style pipelines, so this is off by default; the key is always
+     *     attached as {@code flink_agents.business_key}.
+     */
+    public AgentTraceSpans(String serviceName, boolean businessKeyAsConversationId) {
+        this.businessKeyAsConversationId = businessKeyAsConversationId;
         this.resource =
                 Resource.getDefault().toBuilder()
                         .put(AttributeKey.stringKey("service.name"), serviceName)
@@ -117,7 +135,8 @@ public final class AgentTraceSpans {
 
     /**
      * Assembles spans and appends machine-readable {@link ConverterDiagnostic}s (incomplete
-     * executions, terminal records without a start) to the given collector.
+     * executions, terminal records without a start, records with an unparseable timestamp) to the
+     * given collector.
      */
     public List<SpanData> assemble(
             List<TraceRecord> records, List<ConverterDiagnostic> diagnostics) {
@@ -134,6 +153,18 @@ public final class AgentTraceSpans {
             if (record.getExecutionId() == null
                     || record.getInputRunId() == null
                     || record.getTimestamp() == null) {
+                continue;
+            }
+            if (!isValidTimestamp(record.getTimestamp())) {
+                // Skip just this record, as for an undecodable one, rather than failing the run.
+                diagnostics.add(
+                        new ConverterDiagnostic(
+                                ConverterDiagnostic.MALFORMED_RECORD,
+                                record.getExecutionId(),
+                                "Invalid timestamp '"
+                                        + record.getTimestamp()
+                                        + "'; the record was skipped.",
+                                null));
                 continue;
             }
             executions
@@ -159,9 +190,7 @@ public final class AgentTraceSpans {
         if (run.agentName != null) {
             attributes.put(GEN_AI_AGENT_NAME, run.agentName);
         }
-        if (run.businessKey != null) {
-            attributes.put(GEN_AI_CONVERSATION_ID, run.businessKey);
-        }
+        putBusinessKey(attributes, run.businessKey);
         String name = run.agentName != null ? "invoke_agent " + run.agentName : "invoke_agent";
         return new AgentTraceSpanData(
                 name,
@@ -190,9 +219,7 @@ public final class AgentTraceSpans {
             attributes.put(FA_ENTITY_TYPE, entityType);
         }
         attributes.put(FA_ENTITY_NAME, entityName);
-        if (any.getBusinessKey() != null) {
-            attributes.put(GEN_AI_CONVERSATION_ID, any.getBusinessKey());
-        }
+        putBusinessKey(attributes, any.getBusinessKey());
 
         String name;
         SpanKind kind;
@@ -214,6 +241,10 @@ public final class AgentTraceSpans {
             kind = SpanKind.INTERNAL;
             attributes.put(GEN_AI_OPERATION_NAME, "execute_tool");
             attributes.put(GEN_AI_TOOL_NAME, entityName);
+            String agentName = execution.agentName();
+            if (agentName != null) {
+                attributes.put(GEN_AI_AGENT_NAME, agentName);
+            }
             // Prefer the provider-issued call id, which is what the model's tool-call request
             // carries; the framework-assigned id is the fallback.
             String callId = stringValue(metadata, ToolExecutionMetadataKeys.EXTERNAL_ID);
@@ -338,6 +369,16 @@ public final class AgentTraceSpans {
         }
     }
 
+    private void putBusinessKey(AttributesBuilder attributes, String businessKey) {
+        if (businessKey == null) {
+            return;
+        }
+        attributes.put(FA_BUSINESS_KEY, businessKey);
+        if (businessKeyAsConversationId) {
+            attributes.put(GEN_AI_CONVERSATION_ID, businessKey);
+        }
+    }
+
     private static String stringValue(Map<String, Object> map, String key) {
         Object value = map.get(key);
         return value == null ? null : String.valueOf(value);
@@ -364,6 +405,15 @@ public final class AgentTraceSpans {
                 spanIdHex,
                 TraceFlags.getSampled(),
                 TraceState.getDefault());
+    }
+
+    private static boolean isValidTimestamp(String isoTimestamp) {
+        try {
+            Instant.parse(isoTimestamp);
+            return true;
+        } catch (DateTimeParseException e) {
+            return false;
+        }
     }
 
     private static long epochNanos(String isoTimestamp) {
@@ -402,6 +452,16 @@ public final class AgentTraceSpans {
         TraceRecord anyRecord() {
             TraceRecord start = start();
             return start != null ? start : terminal;
+        }
+
+        /** The agent name from whichever of this execution's records carries one. */
+        String agentName() {
+            for (TraceRecord record : new TraceRecord[] {started, created, terminal}) {
+                if (record != null && record.getAgentName() != null) {
+                    return record.getAgentName();
+                }
+            }
+            return null;
         }
     }
 

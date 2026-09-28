@@ -31,6 +31,7 @@ import java.util.Collection;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** End-to-end test: Event Log JSONL file in, spans out through an in-memory exporter. */
 class EventLogOTelExporterTest {
@@ -38,10 +39,17 @@ class EventLogOTelExporterTest {
     /** Collects exported spans in memory; no network involved. */
     private static final class CollectingSpanExporter implements SpanExporter {
         private final List<SpanData> spans = new ArrayList<>();
+        private final List<Integer> batchSizes = new ArrayList<>();
+        private int failingCall = -1;
         private boolean shutDown;
 
         @Override
         public CompletableResultCode export(Collection<SpanData> collection) {
+            if (batchSizes.size() == failingCall) {
+                batchSizes.add(collection.size());
+                return CompletableResultCode.ofFailure();
+            }
+            batchSizes.add(collection.size());
             spans.addAll(collection);
             return CompletableResultCode.ofSuccess();
         }
@@ -178,6 +186,78 @@ class EventLogOTelExporterTest {
         // Two runs, each with a root span and one (incomplete) action span.
         assertThat(summary.getSpansExported()).isEqualTo(4);
         exporter.shutdown();
+    }
+
+    /** Two runs, each with a finished action: four spans. */
+    private static Path twoRunLog(Path tempDir) throws Exception {
+        Path log = tempDir.resolve("events-job-task-0.log");
+        List<String> lines = new ArrayList<>();
+        for (String run : List.of("run-1", "run-2")) {
+            for (String event : List.of("started", "finished")) {
+                lines.add(
+                        "{\"timestamp\":\"2026-01-15T10:30:0"
+                                + (event.equals("started") ? "0" : "1")
+                                + "Z\",\"inputRunId\":\""
+                                + run
+                                + "\",\"executionId\":\"act-"
+                                + run
+                                + "\",\"entityType\":\"action\",\"entityName\":\"review\","
+                                + "\"eventType\":\"_execution_"
+                                + event
+                                + "_event\",\"status\":\""
+                                + (event.equals("started") ? "started" : "success")
+                                + "\"}");
+            }
+        }
+        Files.write(log, lines);
+        return log;
+    }
+
+    @Test
+    @DisplayName("Spans are exported in batches of at most the configured size")
+    void testExportsInBoundedBatches(@TempDir Path tempDir) throws Exception {
+        CollectingSpanExporter collector = new CollectingSpanExporter();
+        EventLogOTelExporter exporter =
+                EventLogOTelExporter.builder()
+                        .setSpanExporter(collector)
+                        .setMaxExportBatchSize(3)
+                        .build();
+
+        EventLogOTelExporter.ExportSummary summary =
+                exporter.exportFiles(List.of(twoRunLog(tempDir)));
+
+        assertThat(summary.getSpansExported()).isEqualTo(4);
+        assertThat(collector.batchSizes).containsExactly(3, 1);
+        exporter.shutdown();
+    }
+
+    @Test
+    @DisplayName("A failed batch reports how many spans the earlier batches delivered")
+    void testFailedBatchReportsPartialProgress(@TempDir Path tempDir) throws Exception {
+        CollectingSpanExporter collector = new CollectingSpanExporter();
+        collector.failingCall = 1;
+        EventLogOTelExporter exporter =
+                EventLogOTelExporter.builder()
+                        .setSpanExporter(collector)
+                        .setMaxExportBatchSize(3)
+                        .build();
+
+        assertThatThrownBy(() -> exporter.exportFiles(List.of(twoRunLog(tempDir))))
+                .isInstanceOfSatisfying(
+                        EventLogOTelExporter.ExportFailedException.class,
+                        e -> {
+                            assertThat(e.getSpansExported()).isEqualTo(3);
+                            assertThat(e.getSpansTotal()).isEqualTo(4);
+                        });
+        assertThat(collector.spans).hasSize(3);
+        exporter.shutdown();
+    }
+
+    @Test
+    @DisplayName("Rejects a non-positive export batch size")
+    void testRejectsNonPositiveBatchSize() {
+        assertThatThrownBy(() -> EventLogOTelExporter.builder().setMaxExportBatchSize(0))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
