@@ -49,6 +49,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Regression tests for Python resource use on parallel action workers. */
@@ -168,9 +170,11 @@ class ParallelExecutionPythonResourceTest {
         providers.put(ResourceType.CHAT_MODEL, Map.of("model", modelProvider));
         providers.put(ResourceType.CHAT_MODEL_CONNECTION, Map.of("connection", connectionProvider));
         ResourceCache resourceCache = new ResourceCache(providers);
+        ParallelExecutionLock lock = new ParallelExecutionLock();
 
         try (PythonInterpreterManager interpreterManager =
-                new PythonInterpreterManager(ownerInterpreter, () -> actionInterpreter, 1)) {
+                new PythonInterpreterManager(
+                        ownerInterpreter, () -> actionInterpreter, 1, lock::checkReentrant)) {
             PythonResourceAdapterImpl adapter =
                     new PythonResourceAdapterImpl(
                             resourceCache.getResourceContext(), interpreterManager, null);
@@ -179,7 +183,7 @@ class ParallelExecutionPythonResourceTest {
 
             Map<String, Object> createArguments = new HashMap<>();
             createArguments.put("resource_context", null);
-            when(actionInterpreter.invoke(
+            when(ownerInterpreter.invoke(
                             CREATE_RESOURCE, "test.module", "TestChatModel", createArguments))
                     .thenReturn(modelHandle);
             Map<String, Object> conversionArguments = new HashMap<>();
@@ -210,14 +214,29 @@ class ParallelExecutionPythonResourceTest {
                     .invoke("python_java_utils.call_method", modelHandle, "open", Map.of());
 
             runOnParallelWorker(
+                    lock,
                     () -> resourceCache.getResource("model", ResourceType.CHAT_MODEL),
                     interpreterManager::releaseCurrentThreadInterpreter);
+
+            verify(ownerInterpreter)
+                    .invoke(CREATE_RESOURCE, "test.module", "TestChatModel", createArguments);
+            verify(actionInterpreter, never())
+                    .invoke(CREATE_RESOURCE, "test.module", "TestChatModel", createArguments);
+            resourceCache.close();
+            verify(modelHandle).close();
         }
     }
 
     private static void runOnParallelWorker(
             ThrowingRunnable<? extends Exception> action, Runnable threadCleanup) throws Exception {
-        ParallelExecutionLock lock = new ParallelExecutionLock();
+        runOnParallelWorker(new ParallelExecutionLock(), action, threadCleanup);
+    }
+
+    private static void runOnParallelWorker(
+            ParallelExecutionLock lock,
+            ThrowingRunnable<? extends Exception> action,
+            Runnable threadCleanup)
+            throws Exception {
         BlockingQueue<ThrowingRunnable<? extends Exception>> mails = new LinkedBlockingQueue<>();
         Queue<ParallelExecutionTask> works = new ConcurrentLinkedQueue<>();
         works.add(new TestTask(action));
