@@ -189,3 +189,55 @@ def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
     setup = TongyiChatModelSetup(connection="conn")
     assert setup.model == DEFAULT_MODEL
+
+
+def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The DashScope call id reaches both the assistant call and the tool result."""
+    tool_call_response = SimpleNamespace(
+        status_code=200,
+        output={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_abc",
+                                "type": "function",
+                                "function": {
+                                    "name": "add",
+                                    "arguments": '{"a": 1, "b": 2}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+        usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+    )
+    mock_call = MagicMock(return_value=tool_call_response)
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        mock_call,
+    )
+    connection = TongyiChatModelConnection(api_key="fake-key")
+
+    response = connection.chat(
+        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")], model=test_model
+    )
+    # The tool call action reads this key into the tool result's external_id.
+    assert response.tool_calls[0]["original_id"] == "call_abc"
+
+    tool_result = ChatMessage.of(
+        MessageRole.TOOL, "3", extra_args={"external_id": "call_abc"}
+    )
+    connection.chat(
+        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?"), response, tool_result],
+        model=test_model,
+    )
+
+    sent = mock_call.call_args.kwargs["messages"]
+    assert sent[1]["tool_calls"][0]["id"] == "call_abc"
+    assert sent[2] == {"role": "tool", "content": "3", "tool_call_id": "call_abc"}
