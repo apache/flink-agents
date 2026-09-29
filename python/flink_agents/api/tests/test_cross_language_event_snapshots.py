@@ -47,6 +47,9 @@ _FIXED_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TOOL_CALL_ID = "call_aaaa"
 _FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb"
 _FIXED_TOOL_CALL_ID_BOOL = "call_cccc"
+_FIXED_TOOL_CALL_ID_FAILED = "call_dddd"
+_FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed."
+_FIXED_TOOL_ERROR = "ValueError: boom"
 
 
 def _regenerate_enabled() -> bool:
@@ -312,19 +315,30 @@ def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
 def _build_tool_response_event() -> ToolResponseEvent:
     # Mixed scalar value types pin the Python -> Java round-trip on the Java
     # ToolResponseEvent.fromEvent fall-through that wraps non-ToolResponse/Map
-    # values via ToolResponse.success(v).
+    # values via ToolResponse.success(v). The failed call is shaped the way
+    # ToolCallAction records a raised exception: the text shown to the model in
+    # `responses`, `success` False, and the diagnostic in `error`.
     event = ToolResponseEvent(
         request_id=_FIXED_REQUEST_ID,
         responses={
             _FIXED_TOOL_CALL_ID: "pong",
             _FIXED_TOOL_CALL_ID_NUMERIC: 42,
             _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_FAILURE_TEXT,
         },
         external_ids={
             _FIXED_TOOL_CALL_ID: None,
             _FIXED_TOOL_CALL_ID_NUMERIC: None,
             _FIXED_TOOL_CALL_ID_BOOL: None,
+            _FIXED_TOOL_CALL_ID_FAILED: None,
         },
+        success={
+            _FIXED_TOOL_CALL_ID: True,
+            _FIXED_TOOL_CALL_ID_NUMERIC: True,
+            _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: False,
+        },
+        error={_FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_ERROR},
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
