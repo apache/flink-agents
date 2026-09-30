@@ -18,7 +18,7 @@
 from dataclasses import dataclass
 from typing import Callable, Type
 
-from flink_agents.api.function import Function, JavaFunction, PythonFunction
+from flink_agents.api.function import Function
 from flink_agents.api.tools.tool_parameter_injection import (
     InjectedArg,
     normalize_injected_args,
@@ -48,20 +48,6 @@ class ActionDeclaration:
     trigger_conditions: tuple
     func: Function
     name: str | None = None
-
-
-def _validate_descriptor(descriptor: Function, owner: str) -> None:
-    """Reject descriptors with empty required identifiers, attributed to ``owner``."""
-    if isinstance(descriptor, PythonFunction):
-        if not descriptor.module or not descriptor.qualname:
-            msg = f"PythonFunction target on '{owner}' must set both module and qualname"
-            raise ValueError(msg)
-    elif isinstance(descriptor, JavaFunction):
-        if not descriptor.qualname or not descriptor.method_name:
-            msg = (
-                f"JavaFunction target on '{owner}' must set both qualname and method_name"
-            )
-            raise ValueError(msg)
 
 
 def action(
@@ -110,8 +96,6 @@ def action(
     TypeError
         If a trigger condition is not a string, or the decorated object is
         neither a callable nor an api-layer :class:`Function` descriptor.
-    ValueError
-        If a cross-language descriptor is missing required identifiers.
     """
     for entry in trigger_conditions:
         if not isinstance(entry, str):
@@ -126,7 +110,6 @@ def action(
 
     def decorator(target: Callable | Function) -> Callable | ActionDeclaration:
         if isinstance(target, Function):
-            _validate_descriptor(target, name or type(target).__name__)
             return ActionDeclaration(
                 trigger_conditions=trigger_conditions,
                 func=target,

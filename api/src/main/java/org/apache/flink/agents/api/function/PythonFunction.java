@@ -44,14 +44,26 @@ public final class PythonFunction implements Function, Serializable {
     public PythonFunction(
             @JsonProperty(FIELD_MODULE) String module,
             @JsonProperty(FIELD_QUAL_NAME) String qualName) {
-        this.module = Objects.requireNonNull(module, "module");
-        this.qualName = Objects.requireNonNull(qualName, "qualName");
+        this.module = requireNonEmpty(module, FIELD_MODULE);
+        this.qualName = requireNonEmpty(qualName, FIELD_QUAL_NAME);
     }
 
     /**
-     * Convenience factory for a Python cross-language target, mirroring {@code
-     * JavaFunction.forAction}. Reads naturally in the annotated-field form: {@code
-     * PythonFunction.of( "my_pkg.handlers", "handle_input")}.
+     * Rejects a null or empty identifier. A descriptor names a cross-language target, so an empty
+     * identifier can never resolve; failing here makes every construction path ({@link #of}, {@code
+     * new}, and Jackson deserialization) reject a partially specified target up front rather than
+     * deferring the failure to dispatch time.
+     */
+    private static String requireNonEmpty(String value, String name) {
+        if (Objects.requireNonNull(value, name).isEmpty()) {
+            throw new IllegalArgumentException(name + " must not be empty");
+        }
+        return value;
+    }
+
+    /**
+     * Convenience factory for a Python cross-language target. Reads naturally in the
+     * annotated-field form: {@code PythonFunction.of("my_pkg.handlers", "handle_input")}.
      */
     public static PythonFunction of(String module, String qualName) {
         return new PythonFunction(module, qualName);

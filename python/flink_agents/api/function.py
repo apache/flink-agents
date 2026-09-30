@@ -27,7 +27,7 @@ import inspect
 from abc import ABC
 from typing import Any, Callable, List, Tuple
 
-from pydantic import BaseModel, model_serializer
+from pydantic import BaseModel, ValidationInfo, field_validator, model_serializer
 
 #: Java parameter types of an action method. Action signatures are fixed
 #: ``(Event, RunnerContext)``, so callers never have to spell them out. A tuple
@@ -58,6 +58,15 @@ class PythonFunction(Function):
 
     module: str
     qualname: str
+
+    @field_validator("module", "qualname")
+    @classmethod
+    def _identifiers_must_not_be_empty(cls, value: str, info: ValidationInfo) -> str:
+        """Reject an empty identifier at construction so every path fails fast."""
+        if not value:
+            msg = f"{info.field_name} must not be empty"
+            raise ValueError(msg)
+        return value
 
     @model_serializer
     def __serialize(self) -> dict[str, Any]:
@@ -106,6 +115,15 @@ class JavaFunction(Function):
     qualname: str
     method_name: str
     parameter_types: List[str]
+
+    @field_validator("qualname", "method_name")
+    @classmethod
+    def _identifiers_must_not_be_empty(cls, value: str, info: ValidationInfo) -> str:
+        """Reject an empty identifier at construction so every path fails fast."""
+        if not value:
+            msg = f"{info.field_name} must not be empty"
+            raise ValueError(msg)
+        return value
 
     @classmethod
     def for_action(cls, qualname: str, method_name: str) -> "JavaFunction":

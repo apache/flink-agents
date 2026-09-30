@@ -18,6 +18,7 @@
 package org.apache.flink.agents.resource.test;
 
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.api.java.functions.KeySelector;
 
@@ -27,16 +28,15 @@ public class JavaAgentWithPythonActionAgent extends Agent {
             "flink_agents.e2e_tests.e2e_tests_resource_cross_language.python_action_handler";
     public static final String PYTHON_QUALNAME = "multiply_by_two";
 
-    public JavaAgentWithPythonActionAgent() {
-        addAction(
-                "multiply_by_two",
-                new String[] {
-                    "type == EventType.InputEvent && input > 1 && input < 7",
-                    "type == EventType.InputEvent && input > 3 && input < 9"
-                },
-                new PythonFunction(PYTHON_MODULE, PYTHON_QUALNAME),
-                null);
-    }
+    /** Cross-language action declared on the field that is its Python target. */
+    @Action(
+            value = {
+                "type == EventType.InputEvent && input > 1 && input < 7",
+                "type == EventType.InputEvent && input > 3 && input < 9"
+            },
+            name = "multiply_by_two")
+    private static final PythonFunction multiplyByTwo =
+            PythonFunction.of(PYTHON_MODULE, PYTHON_QUALNAME);
 
     public static class SingleKeySelector implements KeySelector<Long, Long> {
         @Override

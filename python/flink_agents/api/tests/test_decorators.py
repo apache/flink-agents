@@ -20,7 +20,7 @@ import pytest
 from flink_agents.api.decorators import ActionDeclaration, action, tool
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
-from flink_agents.api.function import JavaFunction, PythonFunction
+from flink_agents.api.function import JavaFunction
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools import InjectedArg
 
@@ -172,36 +172,6 @@ def test_empty_name_override_is_normalized_to_none() -> None:
 
     declaration = action(EventType.InputEvent, name="")(_java_target())
     assert declaration.name is None
-
-
-def test_action_rejects_java_descriptor_with_empty_qualname() -> None:
-    bad = JavaFunction(qualname="", method_name="handle", parameter_types=[])
-    with pytest.raises(ValueError, match="qualname"):
-        action(EventType.InputEvent)(bad)
-
-
-def test_action_rejects_java_descriptor_with_empty_method_name() -> None:
-    bad = JavaFunction(qualname="com.example.X", method_name="", parameter_types=[])
-    with pytest.raises(ValueError, match="method_name"):
-        action(EventType.InputEvent)(bad)
-
-
-def test_action_rejects_python_descriptor_with_empty_module() -> None:
-    bad = PythonFunction(module="", qualname="handle")
-    with pytest.raises(ValueError, match="module"):
-        action(EventType.InputEvent)(bad)
-
-
-def test_action_rejects_python_descriptor_with_empty_qualname() -> None:
-    bad = PythonFunction(module="pkg.mod", qualname="")
-    with pytest.raises(ValueError, match="qualname"):
-        action(EventType.InputEvent)(bad)
-
-
-def test_action_descriptor_error_names_override() -> None:
-    bad = PythonFunction(module="pkg.mod", qualname="")
-    with pytest.raises(ValueError, match="my_named_action"):
-        action(EventType.InputEvent, name="my_named_action")(bad)
 
 
 def test_tool_decorator_supports_injected_args() -> None:

@@ -24,6 +24,7 @@ import java.lang.reflect.Method;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class JavaFunctionTest {
 
@@ -74,5 +75,19 @@ class JavaFunctionTest {
         String json = m.writeValueAsString(fn);
         JavaFunction back = m.readValue(json, JavaFunction.class);
         assertThat(back).isEqualTo(fn);
+    }
+
+    @Test
+    void rejectsEmptyQualName() {
+        assertThatThrownBy(() -> new JavaFunction("", "add", List.of("int")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("qualName");
+    }
+
+    @Test
+    void rejectsEmptyMethodName() {
+        assertThatThrownBy(() -> new JavaFunction("com.example.X", "", List.of("int")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("methodName");
     }
 }
