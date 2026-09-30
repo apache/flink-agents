@@ -142,7 +142,10 @@ public class ReActAgent extends Agent {
         }
 
         List<ChatMessage> inputMessages = new ArrayList<>();
-        if (ClassUtils.isPrimitiveOrWrapper(input.getClass())) {
+        // A String is not a primitive wrapper, but the documented input contract covers it like
+        // one: without a prompt it becomes the user message, with a prompt it fills the {input}
+        // placeholder.
+        if (input instanceof String || ClassUtils.isPrimitiveOrWrapper(input.getClass())) {
             if (userPrompt != null) {
                 inputMessages =
                         userPrompt.formatMessages(
@@ -165,14 +168,27 @@ public class ReActAgent extends Agent {
                 for (String name : Objects.requireNonNull(userInput.getFieldNames(true))) {
                     fields.put(name, String.valueOf(userInput.getField(name)));
                 }
+            } else if (input instanceof Map) {
+                for (Map.Entry<?, ?> entry : ((Map<?, ?>) input).entrySet()) {
+                    fields.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                }
             } else { // regard as pojo
                 ObjectMapper objectMapper = new ObjectMapper();
                 try {
-                    fields = mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
+                    // A read into the raw Map.class ignores the declared String values, so JSON
+                    // numbers and booleans come back as Integer/Boolean. Stringify every value
+                    // like the Map branch above, otherwise Prompt#format fails with a bare
+                    // ClassCastException when it casts a placeholder value to String.
+                    Map<?, ?> pojoFields =
+                            mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
+                    for (Map.Entry<?, ?> entry : pojoFields.entrySet()) {
+                        fields.put(
+                                String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
+                    }
                 } catch (JsonProcessingException e) {
                     throw new RuntimeException(
                             String.format(
-                                    "Input must be primitive type, Row or Pojo, but is %s",
+                                    "Input must be primitive type, Row, Map or Pojo, but is %s",
                                     input.getClass()));
                 }
             }
