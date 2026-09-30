@@ -473,6 +473,7 @@ on how to setup and configure the external action state store.
 - Results may not be reused if call order or arguments change (non-deterministic actions), which clears subsequent cached results and re-executes.
 - If a failure happens after a function starts but before it completes and its result is persisted, the call will be re-executed. See the "With a reconciler" section below.
 - In Python async actions, if `ctx.durable_execute_async(...)` is not awaited, the result is not recorded and cannot be replayed.
+- In Python, a recorded failure is replayed as the original exception when it can be pickled and rebuilt. Otherwise it is replayed as a `RuntimeError` with the message `<class>: <message>`, so code that catches a specific exception type may take a different path during replay. A failure that cannot be pickled is recorded this way too, so the call is not executed again on recovery. Failures recorded by a version that stored only the pickled exception have no class name or message to fall back on, and a version without this format cannot read failures recorded with it.
 
 **With a reconciler:**
 

@@ -45,6 +45,12 @@ from flink_agents.api.runner_context import (
     RunnerContext,
 )
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.runtime.durable_exception import (
+    deserialize_durable_exception,
+    durable_exception_message,
+    is_java_interruption,
+    serialize_durable_exception,
+)
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
@@ -178,7 +184,7 @@ class _DurableExecutionException(Exception):
         exception: BaseException,
         record_callback: Callable,
     ) -> None:
-        super().__init__(str(exception))
+        super().__init__(durable_exception_message(exception))
         self.func = func
         self.args = args
         self.kwargs = kwargs
@@ -385,6 +391,10 @@ class _SingleDurableFuture(DurableFuture[Any]):
         self._ctx = ctx
         self._call = call
 
+    @override
+    def _is_cancellation(self, error: Exception) -> bool:
+        return is_java_interruption(error)
+
     def _resolve(self) -> Any:
         return (yield from self._ctx._resolve_durable_call(self._call).__await__())
 
@@ -396,6 +406,10 @@ class _GatherDurableFuture(DurableFuture[list[Outcome]]):
         super().__init__()
         self._ctx = ctx
         self._futures = futures
+
+    @override
+    def _is_cancellation(self, error: Exception) -> bool:
+        return is_java_interruption(error)
 
     def _resolve(self) -> Any:
         outcomes_by_index: dict[int, Outcome] = {}
@@ -904,7 +918,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
                 if is_hit:
                     if exception_payload is not None:
                         # Store cached exception to re-raise outside try block
-                        cached_exception = cloudpickle.loads(bytes(exception_payload))
+                        cached_exception = deserialize_durable_exception(
+                            exception_payload
+                        )
                     elif result_payload is not None:
                         return True, cloudpickle.loads(bytes(result_payload))
                     else:
@@ -945,11 +961,17 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception : BaseException | None
             The exception raised by the function (None if successful).
         """
+        if is_java_interruption(exception):
+            # The attempt was cancelled: record nothing, so recovery executes the
+            # call again instead of replaying the interruption.
+            return
+
         function_id, args_digest = durable_identity_for_call(func, args, kwargs)
 
         try:
-            result_payload = None if exception else cloudpickle.dumps(result)
-            exception_payload = cloudpickle.dumps(exception) if exception else None
+            result_payload, exception_payload = self._serialize_call_payloads(
+                result, exception
+            )
 
             self._j_runner_context.recordCallCompletion(
                 function_id, args_digest, result_payload, exception_payload
@@ -965,7 +987,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         exception: BaseException | None,
     ) -> tuple[bytes | None, bytes | None]:
         result_payload = None if exception else cloudpickle.dumps(result)
-        exception_payload = cloudpickle.dumps(exception) if exception else None
+        exception_payload = (
+            serialize_durable_exception(exception) if exception else None
+        )
         return result_payload, exception_payload
 
     def _read_call_result_at(self, index: int) -> _PersistedCallResult | None:
@@ -1018,6 +1042,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         result: Any,
         exception: BaseException | None,
     ) -> None:
+        if is_java_interruption(exception):
+            # The attempt was cancelled: leave the slot pending, so recovery
+            # executes or reconciles the call instead of replaying the interruption.
+            return
+
         function_id, args_digest = durable_identity_for_call(func, args, kwargs)
         result_payload, exception_payload = self._serialize_call_payloads(
             result,
@@ -1211,7 +1240,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     def _read_terminal_outcome(self, current: _PersistedCallResult) -> Outcome:
         try:
             if current.exception_payload is not None:
-                return Outcome.failure(cloudpickle.loads(current.exception_payload))
+                return Outcome.failure(
+                    deserialize_durable_exception(current.exception_payload)
+                )
             if current.result_payload is None:
                 return Outcome.success(None)
             return Outcome.success(cloudpickle.loads(current.result_payload))
@@ -1300,6 +1331,11 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             if not started[i]:
                 outcomes[call_index] = outcome
                 continue
+            if is_java_interruption(outcome.error):
+                # The attempt was cancelled: leave this slot and the ones after it
+                # pending and propagate, as the Java batch does. Slots finalized
+                # earlier in this loop keep their outcome.
+                raise outcome.error
             try:
                 result_payload, exception_payload = self._serialize_call_payloads(
                     outcome.value,

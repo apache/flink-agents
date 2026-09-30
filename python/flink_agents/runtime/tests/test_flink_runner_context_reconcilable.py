@@ -26,6 +26,7 @@ import cloudpickle
 import pytest
 
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.runtime.durable_exception import deserialize_durable_exception
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
     _compute_function_id,
@@ -366,7 +367,7 @@ def test_flink_runner_context_sync_reconciler_exception_persists_failure() -> No
     assert call_count == 0
     assert j_runner_context.operations == ["peek", "finalize"]
     assert j_runner_context.call_results[0].status == "FAILED"
-    persisted_exception = cloudpickle.loads(
+    persisted_exception = deserialize_durable_exception(
         j_runner_context.call_results[0].exception_payload
     )
     assert isinstance(persisted_exception, ValueError)
@@ -840,7 +841,7 @@ def test_flink_runner_context_async_reconciler_exception_persists_failure() -> N
     assert call_count == 0
     assert j_runner_context.operations == ["peek", "finalize"]
     assert j_runner_context.call_results[0].status == "FAILED"
-    persisted_exception = cloudpickle.loads(
+    persisted_exception = deserialize_durable_exception(
         j_runner_context.call_results[0].exception_payload
     )
     assert isinstance(persisted_exception, RuntimeError)
