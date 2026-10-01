@@ -100,6 +100,8 @@ class DurableFuture(ABC, Generic[T]):
             except Exception as error:
                 # Control-flow BaseExceptions leave the handle unresolved so a later
                 # await or gather cannot mistake cancellation for a durable outcome.
+                if self._is_cancellation(error):
+                    raise
                 self._error = error
                 self._done = True
                 raise
@@ -116,6 +118,12 @@ class DurableFuture(ABC, Generic[T]):
         self._value = outcome.value
         self._error = outcome.error
         self._done = True
+
+    def _is_cancellation(self, error: Exception) -> bool:
+        """Return whether ``error`` reports a cancelled attempt rather than the
+        outcome of the call. Such an error leaves the handle unresolved.
+        """
+        return False
 
     @abstractmethod
     def _resolve(self) -> Any:
