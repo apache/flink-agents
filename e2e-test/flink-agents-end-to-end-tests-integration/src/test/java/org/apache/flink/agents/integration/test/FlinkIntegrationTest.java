@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -179,6 +180,79 @@ public class FlinkIntegrationTest {
         CloseableIterator<Row> results = outputTable.execute().collect();
 
         checkResult(results, "test_from_datastream_to_table.txt");
+    }
+
+    @Test
+    public void testToDataStreamWithTypeInformation() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<Integer> inputStream = env.fromData(1, 2, 3);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        DataStream<FlinkIntegrationAgent.TypedOutput> outputStream =
+                agentsEnv
+                        .fromDataStream(inputStream)
+                        .apply(new FlinkIntegrationAgent.TypedOutputAgent())
+                        .toDataStream(TypeInformation.of(FlinkIntegrationAgent.TypedOutput.class));
+
+        CloseableIterator<FlinkIntegrationAgent.TypedOutput> results = outputStream.collectAsync();
+        agentsEnv.execute();
+
+        List<String> actual = new ArrayList<>();
+        while (results.hasNext()) {
+            actual.add(results.next().toString());
+        }
+        actual.sort(Comparator.naturalOrder());
+
+        List<String> expected =
+                new ArrayList<>(
+                        List.of(
+                                "TypedOutput{value=10, label='item-1'}",
+                                "TypedOutput{value=20, label='item-2'}",
+                                "TypedOutput{value=30, label='item-3'}"));
+        expected.sort(Comparator.naturalOrder());
+
+        Assertions.assertEquals(expected, actual);
+    }
+
+    @Test
+    public void testToTableWithTypeInformation() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<Integer> inputStream = env.fromData(1, 2, 3);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        Table outputTable =
+                agentsEnv
+                        .fromDataStream(inputStream)
+                        .apply(new FlinkIntegrationAgent.TypedOutputAgent())
+                        .toTable(TypeInformation.of(FlinkIntegrationAgent.TypedOutput.class));
+
+        // The schema is derived from the POJO type; locate columns by name.
+        List<String> columns = outputTable.getResolvedSchema().getColumnNames();
+        int valueIdx = columns.indexOf("value");
+        int labelIdx = columns.indexOf("label");
+        Assertions.assertTrue(valueIdx >= 0 && labelIdx >= 0, "expected value and label columns");
+
+        List<String> actual = collectValueLabel(outputTable, valueIdx, labelIdx);
+        Assertions.assertEquals(List.of("10:item-1", "20:item-2", "30:item-3"), actual);
+    }
+
+    private List<String> collectValueLabel(Table table, int valueIdx, int labelIdx)
+            throws Exception {
+        List<String> actual = new ArrayList<>();
+        try (CloseableIterator<Row> results = table.execute().collect()) {
+            while (results.hasNext()) {
+                Row row = results.next();
+                actual.add(row.getField(valueIdx) + ":" + row.getField(labelIdx));
+            }
+        }
+        actual.sort(Comparator.naturalOrder());
+        return actual;
     }
 
     private void checkResult(CloseableIterator<?> results, String fileName) throws IOException {

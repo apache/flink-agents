@@ -166,19 +166,21 @@ public class WorkflowMultipleAgentExample {
         Table inputTable = tableEnv.from("product_reviews");
 
         // Use the TableReviewAnalysisAgent (LLM) to analyze each review.
-        // The agent extracts the review score and unsatisfied reasons.
-        DataStream<Object> reviewAnalysisResStream =
+        // The agent extracts the review score and unsatisfied reasons. Declaring the
+        // output type via toDataStream(ProductReviewAnalysisRes.class) yields a typed
+        // stream directly, so the result is already a
+        // DataStream<ProductReviewAnalysisRes> and needs no manual downcast below.
+        DataStream<ProductReviewAnalysisRes> reviewAnalysisResStream =
                 agentsEnv
                         .fromTable(inputTable, new TableReviewAnalysisAgent.RowKeySelector())
                         .apply(new TableReviewAnalysisAgent())
-                        .toDataStream();
+                        .toDataStream(ProductReviewAnalysisRes.class);
 
         // Aggregate the analysis results in 1-minute tumbling windows.
         // This produces a score distribution and collects all unsatisfied reasons for
         // each product.
         DataStream<String> aggregatedAnalysisResStream =
                 reviewAnalysisResStream
-                        .map(element -> (ProductReviewAnalysisRes) element)
                         .keyBy(ProductReviewAnalysisRes::getId)
                         .window(TumblingProcessingTimeWindows.of(Duration.ofMinutes(1)))
                         .process(new AggregateScoreDistributionAndDislikeReasons());

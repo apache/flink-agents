@@ -187,4 +187,38 @@ public class FlinkIntegrationAgent {
             ctx.sendEvent(new OutputEvent(output));
         }
     }
+
+    /** A structured output type used to exercise the typed output terminals. */
+    public static class TypedOutput {
+        public int value;
+        public String label;
+
+        public TypedOutput() {}
+
+        public TypedOutput(int value, String label) {
+            this.value = value;
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return "TypedOutput{value=" + value + ", label='" + label + "'}";
+        }
+    }
+
+    /** Agent emitting a structured {@link TypedOutput} derived from each integer input. */
+    public static class TypedOutputAgent extends Agent {
+        /**
+         * Turns each integer input into a deterministic structured output.
+         *
+         * @param event the input event carrying an integer id.
+         * @param ctx the runner context for sending the output event.
+         */
+        @Action(EventType.InputEvent)
+        public static void processInput(Event event, RunnerContext ctx) throws Exception {
+            InputEvent inputEvent = InputEvent.fromEvent(event);
+            int id = (Integer) inputEvent.getInput();
+            ctx.sendEvent(new OutputEvent(new TypedOutput(id * 10, "item-" + id)));
+        }
+    }
 }
