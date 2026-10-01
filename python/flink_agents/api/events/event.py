@@ -218,7 +218,11 @@ class Event(BaseModel, extra="allow"):
 
     @classmethod
     def from_json(cls, json_str: str) -> "Event":
-        """Deserialize a unified event from a JSON string.
+        """Deserialize an event from a JSON string.
+
+        Known built-in event types are restored to their concrete subclass, so
+        nested typed values survive the cross-language boundary; unknown or
+        user-defined types are returned as a generic ``Event``.
 
         Parameters
         ----------
@@ -228,12 +232,13 @@ class Event(BaseModel, extra="allow"):
         Returns:
         -------
         Event
-            The deserialized event.
+            The deserialized event, or its concrete built-in subclass.
 
         Raises:
         ------
         ValueError
-            If the ``type`` field is missing or empty.
+            If the ``type`` field is missing or empty, or if a built-in event is
+            malformed and cannot be reconstructed.
         """
         data = json.loads(json_str)
         if not data.get("type"):
@@ -242,7 +247,11 @@ class Event(BaseModel, extra="allow"):
         event = cls.model_validate(data)
         for key in list(event.attributes):
             event.attributes[key] = _reconstruct_row_if_needed(event.attributes[key])
-        return event
+        # Imported lazily: built_in_events imports the concrete subclasses, which
+        # import this module, so a top-level import here would be circular.
+        from flink_agents.api.events.built_in_events import restore
+
+        return restore(event)
 
 
 class InputEvent(Event):
