@@ -91,6 +91,7 @@ def test_invoke_python_tool_preserves_explicit_failure() -> None:
         "error": "failed",
         "execution_time_ms": 7,
         "tool_name": "failed",
+        "blocks": None,
     }
 
 
@@ -104,6 +105,7 @@ def test_invoke_python_tool_preserves_explicit_success() -> None:
         "error": None,
         "execution_time_ms": 5,
         "tool_name": "successful",
+        "blocks": None,
     }
 
 
@@ -117,6 +119,7 @@ def test_invoke_python_tool_instance_preserves_explicit_failure() -> None:
         "error": "failed",
         "execution_time_ms": 7,
         "tool_name": "failed",
+        "blocks": None,
     }
 
 
@@ -195,3 +198,18 @@ def test_bridge_uses_function_tool_call() -> None:
         result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
     assert calls == [{"value": "raw"}]
     assert result["__flink_agents_tool_result__"] == "raw"
+
+
+def test_tool_bridge_preserves_explicit_blocks_in_both_directions() -> None:
+    from flink_agents.api.chat_message import ImageBlock, TextBlock
+    from flink_agents.plan.function import _decode_java_tool_result
+    from flink_agents.runtime.python_java_utils import _encode_python_tool_result
+
+    response = ToolResponse(
+        result={"diagnostics": "internal"},
+        blocks=[TextBlock(text="visible"), ImageBlock.from_base64("image/png", "aGk=")],
+    )
+    wire = _encode_python_tool_result(response)
+    assert wire["blocks"][1]["type"] == "image"
+    assert _decode_java_tool_result(wire) == response
+    assert response.to_result_block("id").text == "visible"

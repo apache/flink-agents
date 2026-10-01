@@ -47,6 +47,8 @@ def _connection() -> OllamaChatModelConnection:
     """A connection whose Ollama client is a mock, so no server is contacted."""
     conn = OllamaChatModelConnection()
     response = MagicMock()
+    response.done_reason = "stop"
+    response.message.thinking = None
     response.message.role = "assistant"
     response.message.content = "ok"
     response.message.tool_calls = None
@@ -168,6 +170,8 @@ def _judging_connection() -> tuple[OllamaChatModelConnection, list]:
 
     conn = _JudgingConnection()
     response = MagicMock()
+    response.done_reason = "stop"
+    response.message.thinking = None
     response.message.role = "assistant"
     response.message.content = "ok"
     response.message.tool_calls = None

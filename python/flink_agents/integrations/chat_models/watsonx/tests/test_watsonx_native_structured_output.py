@@ -191,7 +191,7 @@ def test_row_type_info_schema_returns_and_sends_no_response_format(
         temperature=0.5,
     )
 
-    assert response.role == MessageRole.ASSISTANT
+    assert response.message.role == MessageRole.ASSISTANT
     assert "response_format" not in provider_model.chat.call_args.kwargs["params"]
 
 

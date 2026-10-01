@@ -32,11 +32,19 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 
@@ -49,16 +57,19 @@ RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 REQUEST_OWNED_PARAMS = frozenset(
     {"model_id", "messages", "tools", "project_id", "space_id"}
 )
-RESERVED_ADDITIONAL_KWARGS = frozenset(
-    {
-        "model",
-        "temperature",
-        "max_tokens",
-        "extract_reasoning",
-        "tool_choice",
-        "tool_choice_option",
-    }
-) | REQUEST_OWNED_PARAMS
+RESERVED_ADDITIONAL_KWARGS = (
+    frozenset(
+        {
+            "model",
+            "temperature",
+            "max_tokens",
+            "extract_reasoning",
+            "tool_choice",
+            "tool_choice_option",
+        }
+    )
+    | REQUEST_OWNED_PARAMS
+)
 
 
 def _normalize(value: str | None) -> str | None:
@@ -85,6 +96,15 @@ def convert_to_watsonx_messages(
     watsonx_messages: List[Dict[str, Any]] = []
     for message in messages:
         role = message.role
+        blocks = (
+            message.blocks[0].blocks if role == MessageRole.TOOL else message.blocks
+        )
+        for block in blocks:
+            if not isinstance(block, TextBlock | ReasoningBlock | ToolCallBlock):
+                provider = "watsonx"
+                raise UnsupportedContentBlockError.for_block(
+                    provider, block, "unsupported message content"
+                )
 
         if role == MessageRole.ASSISTANT:
             assistant_message: Dict[str, Any] = {"role": "assistant"}
@@ -97,14 +117,13 @@ def convert_to_watsonx_messages(
                 ]
             watsonx_messages.append(assistant_message)
         elif role == MessageRole.TOOL:
-            tool_call_id = message.extra_args.get("external_id")
-            if not tool_call_id or not isinstance(tool_call_id, str):
-                msg = "Tool message must have 'external_id' as a string in extra_args"
-                raise ValueError(msg)
+            tool_call_id = message.blocks[0].call_id
             watsonx_messages.append(
                 {
                     "role": "tool",
-                    "content": message.text,
+                    "content": "".join(
+                        b.text for b in blocks if isinstance(b, TextBlock)
+                    ),
                     "tool_call_id": tool_call_id,
                 }
             )
@@ -138,26 +157,12 @@ def _parse_tool_arguments(args: Any) -> Dict[str, Any]:
     return args
 
 
-def _convert_to_watsonx_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert a framework tool call to watsonx.ai format."""
-    watsonx_tool_call_id = tool_call.get("original_id")
-    if watsonx_tool_call_id is None:
-        tool_call_id = tool_call.get("id")
-        if tool_call_id is None:
-            msg = "Tool call must have either 'original_id' or 'id' field"
-            raise ValueError(msg)
-        watsonx_tool_call_id = str(tool_call_id)
-
-    arguments = tool_call["function"]["arguments"]
+def _convert_to_watsonx_tool_call(tool_call: ToolCallBlock) -> Dict[str, Any]:
+    """Convert a typed tool call to the provider format."""
     return {
-        "id": watsonx_tool_call_id,
+        "id": tool_call.call_id,
         "type": "function",
-        "function": {
-            "name": tool_call["function"]["name"],
-            "arguments": json.dumps(arguments)
-            if isinstance(arguments, dict)
-            else arguments,
-        },
+        "function": {"name": tool_call.name, "arguments": json.dumps(tool_call.input)},
     }
 
 
@@ -426,7 +431,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Process a sequence of messages, and return a response.
 
         A ``BaseModel`` ``output_schema`` is sent as the ``response_format`` request
@@ -438,7 +443,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         provider SDK.
 
         When the response carries a finish reason, it is available verbatim as
-        ``extra_args["finish_reason"]``; the key is absent when the provider
+        ``ChatResult.finish_reason``; the key is absent when the provider
         reports none.
         """
         model_name = kwargs.pop("model", DEFAULT_MODEL)
@@ -519,15 +524,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
             params=request_params or None,
         )
 
-        extra_args: Dict[str, Any] = {}
-
-        usage = response.get("usage")
-        if model_name and usage:
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = usage.get("prompt_tokens", 0)
-            extra_args["completionTokens"] = usage.get("completion_tokens", 0)
-
-        choice: Dict[str, Any] = response["choices"][0]
+        choice = response["choices"][0]
         finish_reason = choice.get("finish_reason")
         if finish_reason not in (None, "stop", "tool_calls"):
             logger.warning(
@@ -536,39 +533,36 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 model_name,
                 finish_reason,
             )
-        if finish_reason is not None:
-            extra_args["finish_reason"] = finish_reason
-
-        response_message: Dict[str, Any] = choice["message"]
-
-        tool_calls: List[Dict[str, Any]] = []
-        for tc in response_message.get("tool_calls") or []:
-            fn = tc.get("function", {}) or {}
-            args = _parse_tool_arguments(fn.get("arguments"))
-            tool_calls.append(
-                {
-                    "id": uuid.uuid4(),
-                    "type": tc.get("type", "function"),
-                    "function": {
-                        "name": fn.get("name"),
-                        "arguments": args,
-                    },
-                    "original_id": tc.get("id"),
-                }
-            )
-
-        content = response_message.get("content") or ""
-
+        message = choice["message"]
+        content = message.get("content") or ""
+        blocks = []
         if extract_reasoning and content:
             content, reasoning = self._extract_reasoning(content)
             if reasoning:
-                extra_args["reasoning"] = reasoning
-
-        return ChatMessage.of(
-            MessageRole(response_message.get("role", "assistant")),
-            content,
-            tool_calls=tool_calls,
-            extra_args=extra_args,
+                blocks.append(ReasoningBlock(text=reasoning))
+        if content:
+            blocks.append(TextBlock(text=content))
+        for call in message.get("tool_calls") or []:
+            function = call["function"]
+            blocks.append(
+                ToolCallBlock(
+                    call_id=call.get("id") or str(uuid.uuid4()),
+                    name=function["name"],
+                    input=_parse_tool_arguments(function.get("arguments")),
+                )
+            )
+        usage = response.get("usage")
+        return ChatResult(
+            message=ChatMessage.assistant(blocks),
+            model=model_name,
+            response_id=response.get("id"),
+            usage=TokenUsage(
+                prompt_tokens=usage.get("prompt_tokens"),
+                completion_tokens=usage.get("completion_tokens"),
+            )
+            if usage
+            else None,
+            finish_reason=choice.get("finish_reason"),
         )
 
 

@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 
 import java.util.Map;
 import java.util.Objects;
@@ -44,12 +44,12 @@ public class ChatResponseEvent extends Event {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static ChatResponseEvent success(UUID requestId, ChatMessage response) {
+    public static ChatResponseEvent success(UUID requestId, ChatResult response) {
         return success(requestId, response, 0, 0);
     }
 
     public static ChatResponseEvent success(
-            UUID requestId, ChatMessage response, int retryCount, int totalRetryWaitSec) {
+            UUID requestId, ChatResult response, int retryCount, int totalRetryWaitSec) {
         return new ChatResponseEvent(
                 requestId, SUCCESS, response, null, retryCount, totalRetryWaitSec);
     }
@@ -62,7 +62,7 @@ public class ChatResponseEvent extends Event {
     private ChatResponseEvent(
             UUID requestId,
             String status,
-            ChatMessage response,
+            ChatResult response,
             String error,
             int retryCount,
             int totalRetryWaitSec) {
@@ -93,7 +93,7 @@ public class ChatResponseEvent extends Event {
         }
         Object rawResponse = attributes.get(RESPONSE);
         if (rawResponse instanceof Map) {
-            attributes.put(RESPONSE, MAPPER.convertValue(rawResponse, ChatMessage.class));
+            attributes.put(RESPONSE, MAPPER.convertValue(rawResponse, ChatResult.class));
         }
         if (!(attributes.get(REQUEST_ID) instanceof UUID)) {
             throw new IllegalArgumentException("request_id must be a UUID");
@@ -103,7 +103,7 @@ public class ChatResponseEvent extends Event {
     }
 
     private static void validate(Object status, Object response, Object error) {
-        if (SUCCESS.equals(status) && response instanceof ChatMessage && error == null) {
+        if (SUCCESS.equals(status) && response instanceof ChatResult && error == null) {
             return;
         }
         if (FAILED.equals(status)
@@ -114,6 +114,19 @@ public class ChatResponseEvent extends Event {
         }
         throw new IllegalArgumentException(
                 "Chat response requires SUCCESS with response or FAILED with error.");
+    }
+
+    public void setStructuredOutput(Object value) {
+        setAttr("structured_output", value);
+    }
+
+    @JsonIgnore
+    public Object getStructuredOutput() {
+        return getAttr("structured_output");
+    }
+
+    public void setRoutingMetadata(Map<String, Object> value) {
+        setAttr("model_routing", value);
     }
 
     @JsonIgnore
@@ -173,11 +186,11 @@ public class ChatResponseEvent extends Event {
     }
 
     @JsonIgnore
-    public ChatMessage getResponse() {
+    public ChatResult getResponse() {
         if (isFailed()) {
             throw new ChatResponseException(getRequestId(), getError());
         }
-        return (ChatMessage) getAttr(RESPONSE);
+        return (ChatResult) getAttr(RESPONSE);
     }
 
     @JsonIgnore

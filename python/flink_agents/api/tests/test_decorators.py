@@ -180,7 +180,9 @@ def test_tool_decorator_supports_injected_args() -> None:
         return f"{tenant_id}:{order_id}"
 
     assert query_order._is_tool is True
-    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+    assert query_order._injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant_id")
+    }
 
 
 def test_tool_decorator_defaults_injected_arg_source_to_sensory_memory() -> None:
@@ -209,7 +211,9 @@ def test_tool_decorator_allows_injected_arg_with_kwargs() -> None:
     def query_order(order_id: str, **kwargs: str) -> str:
         return f"{kwargs['tenant_id']}:{order_id}"
 
-    assert query_order._injected_args == {"tenant_id": InjectedArg.from_config("tenant_id")}
+    assert query_order._injected_args == {
+        "tenant_id": InjectedArg.from_config("tenant_id")
+    }
 
 
 def test_tool_decorator_rejects_list_injected_args() -> None:

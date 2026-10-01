@@ -55,7 +55,9 @@ class RecordingContext:
         self.closed = True
 
 
-def _cache_with(*resources: RecordingResource) -> tuple[ResourceCache, RecordingContext]:
+def _cache_with(
+    *resources: RecordingResource,
+) -> tuple[ResourceCache, RecordingContext]:
     cache = ResourceCache({})
     context = RecordingContext()
     cache._resource_context = context

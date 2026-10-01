@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.chat.model.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -37,7 +38,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class PythonChatModelConnectionTest {
     @Mock private PythonResourceAdapter mockAdapter;
@@ -85,7 +91,7 @@ public class PythonChatModelConnectionTest {
     @Test
     void testChat() throws Exception {
         ChatMessage inputMessage = mock(ChatMessage.class);
-        ChatMessage outputMessage = mock(ChatMessage.class);
+        ChatResult outputMessage = mock(ChatResult.class);
         Tool mockTool = mock(Tool.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
         List<Tool> tools = Collections.singletonList(mockTool);
@@ -101,9 +107,9 @@ public class PythonChatModelConnectionTest {
         when(mockAdapter.convertToPythonTool(mockTool)).thenReturn(pythonTool);
         when(mockAdapter.callMethod(eq(mockChatModel), eq("chat"), any(Map.class)))
                 .thenReturn(pythonOutputMessage);
-        when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
+        when(mockAdapter.fromPythonChatResult(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelConnection.chat(messages, tools, modelParams);
+        ChatResult result = pythonChatModelConnection.chat(messages, tools, modelParams);
 
         assertThat(result).isEqualTo(outputMessage);
 
@@ -132,7 +138,7 @@ public class PythonChatModelConnectionTest {
 
                                     return true;
                                 }));
-        verify(mockAdapter).fromPythonChatMessage(pythonOutputMessage);
+        verify(mockAdapter).fromPythonChatResult(pythonOutputMessage);
         verify(pythonInputMessage).close();
         verify(pythonTool).close();
         verify(pythonOutputMessage).close();

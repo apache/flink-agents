@@ -1202,9 +1202,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     def _durable_identity(self, call: _DurableCall) -> tuple[str, str]:
         return durable_identity_for_call(call.func, call.args, call.kwargs)
 
-    def _call_matches(
-        self, current: _PersistedCallResult, call: _DurableCall
-    ) -> bool:
+    def _call_matches(self, current: _PersistedCallResult, call: _DurableCall) -> bool:
         function_id, args_digest = self._durable_identity(call)
         return current.function_id == function_id and current.args_digest == args_digest
 
@@ -1222,7 +1220,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
-    def _prepare_batch_execution(self, calls: list[_DurableCall]) -> _BatchExecutionPlan:
+    def _prepare_batch_execution(
+        self, calls: list[_DurableCall]
+    ) -> _BatchExecutionPlan:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []

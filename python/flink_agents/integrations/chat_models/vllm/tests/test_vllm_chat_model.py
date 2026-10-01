@@ -99,10 +99,12 @@ def test_native_response_format_applied_for_qwen_model() -> None:
     mock_message.role = "assistant"
     mock_message.content = "ok"
     mock_message.tool_calls = None
+    mock_message.refusal = None
     mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
+        MagicMock(message=mock_message, finish_reason="stop")
     ]
     mock_client.chat.completions.create.return_value.usage = None
+    mock_client.chat.completions.create.return_value.id = "response-id"
     connection._client = mock_client
 
     connection.chat(

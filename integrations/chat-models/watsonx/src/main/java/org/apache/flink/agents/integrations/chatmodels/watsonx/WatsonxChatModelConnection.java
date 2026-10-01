@@ -26,7 +26,14 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -45,13 +52,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** Chat model connection for the IBM watsonx.ai text chat REST API. */
 public class WatsonxChatModelConnection extends BaseChatModelConnection {
@@ -267,7 +274,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
@@ -279,7 +286,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
      * so that the prompt-engineering fallback still governs the response.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -287,7 +294,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -323,16 +330,26 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                                 response.statusCode(), response.body()));
             }
 
-            final ChatMessage chatMessage =
-                    parseResponse(MAPPER.readTree(response.body()), modelName);
+            ChatResult result = parseResponse(MAPPER.readTree(response.body()), modelName);
             if (extractReasoning) {
-                final String[] parts = extractReasoning(chatMessage.getText());
-                chatMessage.setText(parts[0]);
+                String[] parts = extractReasoning(result.getText());
                 if (parts[1] != null) {
-                    chatMessage.getExtraArgs().put("reasoning", parts[1]);
+                    List<ContentBlock> blocks = new java.util.ArrayList<>();
+                    blocks.add(new ReasoningBlock(parts[1]));
+                    if (!parts[0].isEmpty()) {
+                        blocks.add(new TextBlock(parts[0]));
+                    }
+                    blocks.addAll(result.getToolCalls());
+                    return new ChatResult(
+                            result.getMessage().withBlocks(blocks),
+                            result.getModel(),
+                            result.getResponseId(),
+                            result.getUsage(),
+                            result.getFinishReason(),
+                            result.getMetadata());
                 }
             }
-            return chatMessage;
+            return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Interrupted while calling watsonx.ai.", e);
@@ -584,8 +601,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
      * <ul>
      *   <li>SYSTEM/USER messages carry {@code role} and {@code content}.
      *   <li>ASSISTANT messages may carry {@code tool_calls} with JSON string arguments.
-     *   <li>TOOL messages carry {@code tool_call_id} referencing the original call, taken from the
-     *       {@code externalId} entry of the message extra args.
+     *   <li>TOOL messages carry {@code tool_call_id} referencing {@link
+     *       ToolResultBlock#getCallId()}.
      * </ul>
      */
     @VisibleForTesting
@@ -594,6 +611,13 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         for (ChatMessage message : messages) {
             final ObjectNode node = MAPPER.createObjectNode();
             final MessageRole role = message.getRole();
+            for (org.apache.flink.agents.api.chat.messages.ContentBlock block :
+                    message.getBlocks()) {
+                if (block instanceof org.apache.flink.agents.api.chat.messages.MediaBlock) {
+                    throw new IllegalArgumentException(
+                            "watsonx cannot send block " + block.getType());
+                }
+            }
             switch (role) {
                 case SYSTEM:
                 case USER:
@@ -605,20 +629,28 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                     if (message.getText() != null && !message.getText().isEmpty()) {
                         node.put("content", message.getText());
                     }
-                    final List<Map<String, Object>> toolCalls = message.getToolCalls();
-                    if (toolCalls != null && !toolCalls.isEmpty()) {
+                    final List<ToolCallBlock> toolCalls = message.getToolCalls();
+                    if (!toolCalls.isEmpty()) {
                         node.set("tool_calls", convertToolCalls(toolCalls));
                     }
                     break;
                 case TOOL:
-                    final Object externalId = message.getExtraArgs().get("externalId");
-                    if (externalId == null) {
-                        throw new IllegalArgumentException(
-                                "Tool message must have 'externalId' in extra args.");
-                    }
+                    ToolResultBlock toolResult = (ToolResultBlock) message.getBlocks().get(0);
                     node.put("role", "tool");
-                    node.put("content", message.getText());
-                    node.put("tool_call_id", externalId.toString());
+                    node.put(
+                            "content",
+                            toolResult.getBlocks().stream()
+                                    .map(
+                                            block -> {
+                                                if (!(block instanceof TextBlock)) {
+                                                    throw new IllegalArgumentException(
+                                                            "watsonx cannot send tool result block "
+                                                                    + block.getType());
+                                                }
+                                                return ((TextBlock) block).getText();
+                                            })
+                                    .collect(Collectors.joining()));
+                    node.put("tool_call_id", toolResult.getCallId());
                     break;
                 default:
                     throw new IllegalArgumentException("Unsupported role: " + role);
@@ -628,36 +660,19 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return result;
     }
 
-    private static ArrayNode convertToolCalls(List<Map<String, Object>> toolCalls) {
-        final ArrayNode result = MAPPER.createArrayNode();
-        for (Map<String, Object> toolCall : toolCalls) {
-            final Object originalId = toolCall.get("original_id");
-            final Object id = originalId != null ? originalId : toolCall.get("id");
-            if (id == null) {
-                throw new IllegalArgumentException(
-                        "Tool call must have either 'original_id' or 'id' field.");
-            }
-
-            @SuppressWarnings("unchecked")
-            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-            final Object arguments = function.get("arguments");
-            final String argumentsJson;
-            try {
-                argumentsJson =
-                        arguments instanceof String
-                                ? (String) arguments
-                                : MAPPER.writeValueAsString(arguments);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-
-            final ObjectNode node = MAPPER.createObjectNode();
-            node.put("id", id.toString());
+    private static ArrayNode convertToolCalls(List<ToolCallBlock> calls) {
+        ArrayNode result = MAPPER.createArrayNode();
+        for (ToolCallBlock call : calls) {
+            ObjectNode node = result.addObject();
+            node.put("id", call.getCallId());
             node.put("type", "function");
-            final ObjectNode functionNode = node.putObject("function");
-            functionNode.put("name", (String) function.get("name"));
-            functionNode.put("arguments", argumentsJson);
-            result.add(node);
+            ObjectNode function = node.putObject("function");
+            function.put("name", call.getName());
+            try {
+                function.put("arguments", MAPPER.writeValueAsString(call.getInput()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Cannot serialize tool arguments", e);
+            }
         }
         return result;
     }
@@ -684,11 +699,11 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Parses the watsonx.ai chat response. When the provider reports a finish reason it is carried
-     * verbatim in {@code extraArgs} under {@code finish_reason}, including values outside the
-     * documented set, and the entry is absent when the provider reports none.
+     * verbatim in {@link ChatResult#getFinishReason()}, including values outside the documented
+     * set, and is null when the provider reports none.
      */
     @VisibleForTesting
-    static ChatMessage parseResponse(JsonNode response, String modelName) {
+    static ChatResult parseResponse(JsonNode response, String modelName) {
         final JsonNode choice = response.required("choices").get(0);
         final JsonNode responseMessage = choice.required("message");
 
@@ -708,51 +723,37 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         final JsonNode contentNode = responseMessage.get("content");
         final String content =
                 contentNode != null && !contentNode.isNull() ? contentNode.asText() : "";
-        final ChatMessage chatMessage = ChatMessage.assistant(content);
-
-        final JsonNode toolCallsNode = responseMessage.get("tool_calls");
-        if (toolCallsNode != null && toolCallsNode.isArray() && !toolCallsNode.isEmpty()) {
-            final List<Map<String, Object>> toolCalls = new java.util.ArrayList<>();
-            for (JsonNode toolCallNode : toolCallsNode) {
-                final String id = toolCallNode.required("id").asText();
-                final JsonNode functionNode = toolCallNode.required("function");
-                final Map<String, Object> arguments =
-                        parseToolArguments(functionNode.get("arguments"));
-                toolCalls.add(
-                        Map.of(
-                                "id",
-                                id,
-                                "original_id",
-                                id,
-                                "type",
-                                "function",
-                                "function",
-                                Map.of(
-                                        "name",
-                                        functionNode.required("name").asText(),
-                                        "arguments",
-                                        arguments)));
-            }
-            chatMessage.setToolCalls(toolCalls);
+        List<ContentBlock> blocks = new java.util.ArrayList<>();
+        if (!content.isEmpty()) {
+            blocks.add(new TextBlock(content));
         }
-
-        final JsonNode usage = response.get("usage");
-        final boolean hasUsageMetadata =
-                modelName != null && !modelName.isBlank() && usage != null && !usage.isNull();
-        if (hasUsageMetadata || finishReason != null) {
-            final Map<String, Object> extraArgs = new HashMap<>(chatMessage.getExtraArgs());
-            if (hasUsageMetadata) {
-                extraArgs.put("model_name", modelName);
-                extraArgs.put("promptTokens", usage.path("prompt_tokens").asLong(0));
-                extraArgs.put("completionTokens", usage.path("completion_tokens").asLong(0));
+        JsonNode calls = responseMessage.get("tool_calls");
+        if (calls != null && calls.isArray()) {
+            for (JsonNode call : calls) {
+                JsonNode function = call.required("function");
+                blocks.add(
+                        new ToolCallBlock(
+                                call.required("id").asText(),
+                                function.required("name").asText(),
+                                parseToolArguments(function.get("arguments"))));
             }
-            if (finishReason != null) {
-                extraArgs.put("finish_reason", finishReason);
-            }
-            chatMessage.setExtraArgs(extraArgs);
         }
-
-        return chatMessage;
+        JsonNode usage = response.get("usage");
+        return new ChatResult(
+                ChatMessage.assistant(blocks),
+                modelName,
+                response.hasNonNull("id") ? response.get("id").asText() : null,
+                usage == null || usage.isNull()
+                        ? null
+                        : new TokenUsage(
+                                usage.hasNonNull("prompt_tokens")
+                                        ? usage.get("prompt_tokens").longValue()
+                                        : null,
+                                usage.hasNonNull("completion_tokens")
+                                        ? usage.get("completion_tokens").longValue()
+                                        : null),
+                finishReason,
+                null);
     }
 
     /**

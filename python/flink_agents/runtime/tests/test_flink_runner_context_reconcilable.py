@@ -486,7 +486,9 @@ def test_flink_runner_context_durable_execute_async_reexecutes_pending_after_bat
         call_count += 1
         return f"call:{value}"
 
-    function_id, args_digest = durable_identity_for_call(tracked_call, ("order-1",), None)
+    function_id, args_digest = durable_identity_for_call(
+        tracked_call, ("order-1",), None
+    )
     j_runner_context.call_results = [
         _StoredCallResult(
             function_id=function_id,
@@ -1026,9 +1028,7 @@ def test_flink_runner_context_gather_returns_cached_failure() -> None:
     ctx = _create_runner_context(j_runner_context)
 
     try:
-        outcomes = _run_async(
-            ctx.gather(ctx.durable_execute_async(_call_value, "one"))
-        )
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(_call_value, "one")))
     finally:
         _close_runner_context(ctx)
 
@@ -1252,9 +1252,7 @@ def test_flink_runner_context_gather_reconciles_pending_slot() -> None:
     ctx = _create_runner_context(j_runner_context)
     try:
         outcomes = _run_async(
-            ctx.gather(
-                ctx.durable_execute_async(tracked_call, reconciler=reconciler)
-            )
+            ctx.gather(ctx.durable_execute_async(tracked_call, reconciler=reconciler))
         )
     finally:
         _close_runner_context(ctx)
@@ -1277,9 +1275,7 @@ def test_flink_runner_context_gather_recovers_three_slot_partial_batch() -> None
 
     first_id, first_digest = durable_identity_for_call(tracked_call, ("one",), None)
     second_id, second_digest = durable_identity_for_call(tracked_call, ("two",), None)
-    third_id, third_digest = durable_identity_for_call(
-        tracked_call, ("three",), None
-    )
+    third_id, third_digest = durable_identity_for_call(tracked_call, ("three",), None)
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(

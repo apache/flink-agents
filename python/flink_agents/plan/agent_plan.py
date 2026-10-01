@@ -162,7 +162,9 @@ class AgentPlan(BaseModel):
         return AgentPlan(
             actions=actions,
             resource_providers=resource_providers,
-            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
+            agent_name=agent_name
+            if agent_name is not None
+            else agent.__class__.__name__,
             config=config,
         )
 
@@ -224,7 +226,9 @@ def _native_action_marker(value: Any) -> tuple | None:
 
 def _is_action_attr(value: Any) -> bool:
     """True if ``value`` is an @action member: a declaration or a tagged callable."""
-    return isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
+    return (
+        isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
+    )
 
 
 def _get_actions(agent: Agent) -> List[Action]:

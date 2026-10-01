@@ -25,7 +25,7 @@ import dev.cel.common.values.NullValue;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.plan.condition.TriggerCondition;
@@ -173,13 +173,17 @@ class ConditionEvaluatorTest {
     void typedEventAttributesMatchJsonRoundTrip() throws Exception {
         UUID requestId = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
         ChatResponseEvent typed =
-                ChatResponseEvent.success(requestId, ChatMessage.assistant("hello"));
+                ChatResponseEvent.success(
+                        requestId,
+                        new org.apache.flink.agents.api.chat.messages.ChatResult(
+                                org.apache.flink.agents.api.chat.messages.ChatMessage.assistant(
+                                        List.of(new TextBlock("hello")))));
         Event jsonShaped = Event.fromJson(JSON_MAPPER.writeValueAsString(typed));
         List<String> sources =
                 List.of(
                         "request_id == '550e8400-e29b-41d4-a716-446655440000'",
-                        "response.blocks[0].text == 'hello'",
-                        "response.role == 'assistant'");
+                        "response.message.blocks[0].text == 'hello'",
+                        "response.message.blocks[0].type == 'text'");
         EvaluatorHarness testEvaluator =
                 new EvaluatorHarness(sources, ConditionEvaluationFailureStrategy.FAIL);
 

@@ -19,14 +19,17 @@ package org.apache.flink.agents.api.event;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.assertj.core.api.Assertions.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ChatResponseEventTest {
     @Test
@@ -60,7 +63,13 @@ class ChatResponseEventTest {
                                         .writeValueAsString(
                                                 ChatResponseEvent.success(
                                                         UUID.randomUUID(),
-                                                        ChatMessage.assistant("ok")))));
+                                                        new ChatResult(
+                                                                org.apache.flink.agents.api.chat
+                                                                        .messages.ChatMessage
+                                                                        .assistant(
+                                                                                List.of(
+                                                                                        new TextBlock(
+                                                                                                "ok"))))))));
         assertThat(restored.isSuccess()).isTrue();
         assertThat(restored.getResponse().getText()).isEqualTo("ok");
         assertThatThrownBy(restored::getError).isInstanceOf(IllegalStateException.class);
@@ -70,7 +79,11 @@ class ChatResponseEventTest {
     void rejectsMissingStatusAndConflictingPayloads() {
         Map<String, Object> attrs = new HashMap<>();
         attrs.put("request_id", UUID.randomUUID());
-        attrs.put("response", ChatMessage.assistant("ok"));
+        attrs.put(
+                "response",
+                new ChatResult(
+                        org.apache.flink.agents.api.chat.messages.ChatMessage.assistant(
+                                List.of(new TextBlock("ok")))));
         assertThatThrownBy(() -> new ChatResponseEvent(UUID.randomUUID(), attrs))
                 .isInstanceOf(IllegalArgumentException.class);
         attrs.put("status", ChatResponseEvent.FAILED);

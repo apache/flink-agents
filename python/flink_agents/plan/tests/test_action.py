@@ -85,8 +85,7 @@ def test_action_no_warning_when_returns_none(
             trigger_conditions=[InputEvent.EVENT_TYPE],
         )
     assert not any(
-        "ignored by the framework" in record.getMessage()
-        for record in caplog.records
+        "ignored by the framework" in record.getMessage() for record in caplog.records
     )
 
 

@@ -94,7 +94,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     )
     assert action.exec.module == pf.module
     assert action.exec.qualname == pf.qualname
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_java_function_descriptor() -> None:
@@ -117,7 +117,7 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     assert action.exec.qualname == jf.qualname
     assert action.exec.method_name == jf.method_name
     assert list(action.exec.parameter_types) == list(jf.parameter_types)
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_descriptor_action_class_attribute() -> None:
@@ -487,9 +487,7 @@ def test_python_can_deserialize_plan_with_java_model_router() -> None:
         type=ResourceType.MODEL_ROUTER,
         descriptor=ResourceDescriptor(
             target_module="java",
-            target_clazz=(
-                "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
-            ),
+            target_clazz=("org.apache.flink.agents.api.chat.model.routing.ModelRouter"),
             arguments={"candidates": ["small", "big"]},
         ),
     )

@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
 
 import java.util.ArrayList;
@@ -75,19 +74,6 @@ public class PythonPrompt extends Prompt.LocalPrompt {
      */
     @SuppressWarnings("unchecked")
     private static ChatMessage parseChatMessage(Map<String, Object> messageMap) {
-        String roleValue = messageMap.get("role").toString();
-        MessageRole role = MessageRole.fromValue(roleValue);
-
-        List<Map<String, Object>> blocks =
-                (List<Map<String, Object>>) messageMap.getOrDefault("blocks", List.of());
-
-        List<Map<String, Object>> toolCalls =
-                (List<Map<String, Object>>) messageMap.get("tool_calls");
-
-        Map<String, Object> extraArgs = (Map<String, Object>) messageMap.get("extra_args");
-
-        ChatMessage message = new ChatMessage(role, List.of(), toolCalls, extraArgs);
-        message.setBlocksFromMaps(blocks);
-        return message;
+        return ChatMessage.fromMap(messageMap);
     }
 }

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -45,7 +46,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentPlanDeclareChatModelTest {
 
@@ -67,9 +71,9 @@ class AgentPlanDeclareChatModelTest {
         }
 
         @Override
-        public ChatMessage chat(List<ChatMessage> messages) {
+        public ChatResult chat(List<ChatMessage> messages) {
             // Return a deterministic response based on prompt name to assert on.
-            return new ChatMessage(MessageRole.ASSISTANT, "ok:" + messages.get(0).getText());
+            return ChatFixtures.response("ok:" + messages.get(0).getText());
         }
     }
 
@@ -128,9 +132,9 @@ class AgentPlanDeclareChatModelTest {
         assertNotNull(model);
 
         Prompt prompt = Prompt.fromText("Hello world");
-        ChatMessage reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
+        ChatResult reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
-        assertEquals(MessageRole.ASSISTANT, reply.getRole());
+        assertFalse(reply.getMessage().getBlocks().isEmpty());
         assertEquals("ok:Hello world", reply.getText());
     }
 
@@ -152,7 +156,7 @@ class AgentPlanDeclareChatModelTest {
                                                     throw new UnsupportedOperationException(
                                                             "No dependencies expected");
                                                 }));
-        ChatMessage reply =
+        ChatResult reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
         assertEquals("ok:Hi", reply.getText());
     }

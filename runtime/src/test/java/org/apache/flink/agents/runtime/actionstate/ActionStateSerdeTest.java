@@ -52,7 +52,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test class for ActionState serialization and deserialization. */
 public class ActionStateSerdeTest {
@@ -538,8 +545,12 @@ public class ActionStateSerdeTest {
 
         @Override
         public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof MemoryValuePojo)) return false;
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof MemoryValuePojo)) {
+                return false;
+            }
             MemoryValuePojo that = (MemoryValuePojo) o;
             return count == that.count && java.util.Objects.equals(name, that.name);
         }
@@ -585,8 +596,17 @@ public class ActionStateSerdeTest {
         // outputEvents; cover both paths.
         ActionState originalState = new ActionState(new ChatRequestEvent("myModel", List.of(msg)));
         originalState.addEvent(new ChatRequestEvent("myModel", List.of(msg)));
-        originalState.addEvent(ChatResponseEvent.success(requestId, msg));
-        originalState.addEvent(new ToolRequestEvent("myModel", List.of(Map.of("name", "myTool"))));
+        originalState.addEvent(
+                ChatResponseEvent.success(
+                        requestId,
+                        new org.apache.flink.agents.api.chat.messages.ChatResult(
+                                ChatMessage.assistant(List.of(new TextBlock("hello"))))));
+        originalState.addEvent(
+                new ToolRequestEvent(
+                        "myModel",
+                        List.of(
+                                new org.apache.flink.agents.api.chat.messages.ToolCallBlock(
+                                        "call-1", "myTool", Map.of()))));
         originalState.addEvent(
                 new ToolResponseEvent(
                         requestId,

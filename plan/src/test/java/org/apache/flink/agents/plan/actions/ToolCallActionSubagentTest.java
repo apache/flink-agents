@@ -43,6 +43,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -416,7 +417,7 @@ class ToolCallActionSubagentTest {
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -434,7 +435,7 @@ class ToolCallActionSubagentTest {
 
     /** One request carrying two sub-agent calls, so the batched path has more than one to run. */
     private static ToolRequestEvent twoSubagentRequest(String first, String second) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -468,7 +469,7 @@ class ToolCallActionSubagentTest {
      */
     private static ToolRequestEvent mixedRequest(
             String subagentName, String firstTool, String secondTool) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(

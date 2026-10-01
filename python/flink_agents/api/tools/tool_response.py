@@ -15,12 +15,21 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from dataclasses import dataclass
+import json
 from typing import Any
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
-@dataclass(frozen=True)
-class ToolResponse:
+from flink_agents.api.chat_message import ContentBlock, TextBlock, ToolResultBlock
+
+
+class ToolResponse(BaseModel):
     """Represents the result and status of one Python tool execution.
 
     Python tools may continue returning raw values, which the runtime treats as
@@ -28,10 +37,64 @@ class ToolResponse:
     completed normally but the tool operation itself failed.
     """
 
+    model_config = ConfigDict(frozen=True, extra="forbid")
     result: Any = None
     error_message: str | None = None
     execution_time_ms: int = 0
     tool_name: str | None = None
+
+    blocks: tuple[ContentBlock, ...] | None = None
+
+    @field_validator("blocks")
+    @classmethod
+    def validate_blocks(cls, value: tuple | None) -> tuple | None:
+        """Validate explicit model-facing content even before execution finishes."""
+        if value is not None:
+            ToolResultBlock(call_id="validation", blocks=value)
+        return value
+
+    @model_validator(mode="before")
+    @classmethod
+    def from_wire(cls, value: Any) -> Any:
+        """Read Java/Python execution results using one wire shape."""
+        if isinstance(value, dict) and "success" in value:
+            value = dict(value)
+            success = value.pop("success")
+            error = value.pop("error", None)
+            if success != (error is None):
+                msg = "ToolResponse success and error disagree"
+                raise ValueError(msg)
+            value["error_message"] = error
+        return value
+
+    @model_serializer
+    def to_wire(self) -> dict:
+        """Serialize execution data separately from its model-facing projection."""
+        return {
+            "result": self.result,
+            "success": self.is_success(),
+            "error": self.error_message,
+            "execution_time_ms": self.execution_time_ms,
+            "tool_name": self.tool_name,
+            "blocks": self.blocks,
+        }
+
+    def to_result_block(self, call_id: str) -> ToolResultBlock:
+        """Project a tool execution into model-facing content."""
+        if self.is_error():
+            return ToolResultBlock(
+                call_id=call_id,
+                blocks=[TextBlock(text=self.error_message)],
+                is_error=True,
+            )
+        if self.blocks is not None:
+            return ToolResultBlock(call_id=call_id, blocks=self.blocks)
+        text = (
+            self.result
+            if isinstance(self.result, str)
+            else json.dumps(self.result, ensure_ascii=False, allow_nan=False)
+        )
+        return ToolResultBlock(call_id=call_id, blocks=[TextBlock(text=text)])
 
     @classmethod
     def success(

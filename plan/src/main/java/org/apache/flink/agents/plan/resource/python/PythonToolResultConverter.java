@@ -43,20 +43,13 @@ public final class PythonToolResultConverter {
             return ToolResponse.success(result);
         }
 
-        long executionTimeMs = numberValue(response.get("execution_time_ms"));
-        String toolName = stringValue(response.get("tool_name"));
-        if (Boolean.TRUE.equals(response.get("success"))) {
-            return ToolResponse.success(response.get("result"), executionTimeMs, toolName);
-        }
-        return ToolResponse.error(stringValue(response.get("error")), executionTimeMs, toolName);
-    }
-
-    private static long numberValue(Object value) {
-        return value instanceof Number ? ((Number) value).longValue() : 0L;
-    }
-
-    private static String stringValue(Object value) {
-        return value == null ? null : String.valueOf(value);
+        Map<String, Object> fields = new java.util.HashMap<>();
+        response.forEach(
+                (key, value) -> {
+                    if (!RESULT_MARKER.equals(key)) fields.put((String) key, value);
+                });
+        return new com.fasterxml.jackson.databind.ObjectMapper()
+                .convertValue(fields, ToolResponse.class);
     }
 
     private PythonToolResultConverter() {}

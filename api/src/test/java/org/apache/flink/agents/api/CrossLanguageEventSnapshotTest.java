@@ -22,7 +22,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
@@ -76,6 +78,8 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed.";
     private static final String FIXED_TOOL_ERROR = "ValueError: boom";
     private static final String MEMORY_REF_ATTACHMENT_EVENT_TYPE = "_memory_ref_attachment_event";
+    private static final String GENERIC_EVENT_TYPE = "_my_custom_event";
+
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
     private static Path snapshotDir;
@@ -263,7 +267,9 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("status", ChatResponseEvent.SUCCESS);
         attrs.put("error", null);
         attrs.put("request_id", FIXED_REQUEST_ID);
-        attrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
+        attrs.put(
+                "response",
+                new ChatResult(ChatMessage.assistant(List.of(new TextBlock("hi there")))));
         attrs.put("retry_count", 0);
         attrs.put("total_retry_wait_sec", 0);
         return new ChatResponseEvent(FIXED_EVENT_ID, attrs);
@@ -317,9 +323,9 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals(ChatResponseEvent.EVENT_TYPE, typed.getType());
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId(), "request_id mismatch.");
-        ChatMessage response = typed.getResponse();
+        ChatResult response = typed.getResponse();
         assertNotNull(response, "response field is null.");
-        assertEquals(MessageRole.ASSISTANT, response.getRole(), "Role mismatch on response.");
+        assertFalse(response.getMessage().getBlocks().isEmpty(), "Response blocks are empty.");
         assertEquals("hi there", response.getText());
     }
 
@@ -327,9 +333,11 @@ class CrossLanguageEventSnapshotTest {
 
     private static ToolRequestEvent buildToolRequestEvent() {
         Map<String, Object> toolCall = new LinkedHashMap<>();
-        toolCall.put("id", FIXED_TOOL_CALL_ID);
+        toolCall.put("type", "tool_call");
+        toolCall.put("metadata", Map.of());
+        toolCall.put("call_id", FIXED_TOOL_CALL_ID);
         toolCall.put("name", "echo");
-        toolCall.put("arguments", Map.of("value", "ping"));
+        toolCall.put("input", Map.of("value", "ping"));
 
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("model", "test-model");
@@ -356,10 +364,11 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals(ToolRequestEvent.EVENT_TYPE, typed.getType());
         assertEquals("test-model", typed.getModel());
-        List<Map<String, Object>> toolCalls = typed.getToolCalls();
+        List<org.apache.flink.agents.api.chat.messages.ToolCallBlock> toolCalls =
+                typed.getToolCalls();
         assertNotNull(toolCalls);
         assertEquals(1, toolCalls.size());
-        assertEquals(FIXED_TOOL_CALL_ID, toolCalls.get(0).get("id"));
+        assertEquals(FIXED_TOOL_CALL_ID, toolCalls.get(0).getCallId());
     }
 
     // ── ToolResponseEvent ──────────────────────────────────────────────────
@@ -370,7 +379,6 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("responses", Map.of(FIXED_TOOL_CALL_ID, ToolResponse.success("pong")));
         attrs.put("success", Map.of(FIXED_TOOL_CALL_ID, true));
         attrs.put("error", new HashMap<String, String>());
-        attrs.put("external_ids", new HashMap<String, String>());
         attrs.put("timestamp", FIXED_TIMESTAMP);
         return new ToolResponseEvent(FIXED_EVENT_ID, attrs);
     }
@@ -576,8 +584,6 @@ class CrossLanguageEventSnapshotTest {
     }
 
     // ── Generic Event with primitive attributes (user-authored axis) ───────
-
-    private static final String GENERIC_EVENT_TYPE = "_my_custom_event";
 
     private static Event buildGenericEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();

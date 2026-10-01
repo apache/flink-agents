@@ -44,25 +44,17 @@ class ChatMessageSerializationTest {
 
     @Test
     void nullBlocksFailAtEveryEntryPoint() throws Exception {
-        assertThat(MAPPER.readValue("{}", ChatMessage.class).getBlocks()).isEmpty();
         for (String blocks : List.of("null", "[null]")) {
             assertThatThrownBy(
                             () ->
                                     MAPPER.readValue(
-                                            "{\"blocks\":" + blocks + "}", ChatMessage.class))
+                                            "{\"role\":\"user\",\"blocks\":" + blocks + "}",
+                                            ChatMessage.class))
                     .isInstanceOf(JsonMappingException.class);
         }
         ChatMessage message = ChatMessage.user("original");
-        assertThatThrownBy(() -> message.setBlocks(null)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> message.setBlocks(Arrays.asList((ContentBlock) null)))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(
-                        () -> new ChatMessage(MessageRole.USER, Arrays.asList((ContentBlock) null)))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> message.setBlocksFromMaps(null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(
-                        () -> message.setBlocksFromMaps(Arrays.asList((Map<String, Object>) null)))
+        assertThatThrownBy(() -> message.withBlocks(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> message.withBlocks(Arrays.asList((ContentBlock) null)))
                 .isInstanceOf(NullPointerException.class);
         assertThat(message.getText()).isEqualTo("original");
     }
@@ -144,10 +136,11 @@ class ChatMessageSerializationTest {
     }
 
     private static void assertRejectedBlock(Map<String, Object> block) throws Exception {
-        String json = MAPPER.writeValueAsString(Map.of("blocks", List.of(block)));
+        String json = MAPPER.writeValueAsString(Map.of("role", "user", "blocks", List.of(block)));
         assertThatThrownBy(() -> MAPPER.readValue(json, ChatMessage.class))
                 .isInstanceOf(JsonMappingException.class);
-        assertThatThrownBy(() -> new ChatMessage().setBlocksFromMaps(List.of(block)))
+        assertThatThrownBy(
+                        () -> ChatMessage.fromMap(Map.of("role", "user", "blocks", List.of(block))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -160,16 +153,20 @@ class ChatMessageSerializationTest {
             assertThat(source.getSizeBytes()).isNotNegative();
             assertThat(MAPPER.readValue(MAPPER.writeValueAsString(source), MediaSource.class))
                     .isEqualTo(source);
-            ChatMessage message = new ChatMessage();
-            message.setBlocksFromMaps(
-                    List.of(
+            ChatMessage message =
+                    ChatMessage.fromMap(
                             Map.of(
-                                    "type",
-                                    "image",
-                                    "media_type",
-                                    "image/png",
-                                    "source",
-                                    Map.of("type", "base64", "data", data))));
+                                    "role",
+                                    "user",
+                                    "blocks",
+                                    List.of(
+                                            Map.of(
+                                                    "type",
+                                                    "image",
+                                                    "media_type",
+                                                    "image/png",
+                                                    "source",
+                                                    Map.of("type", "base64", "data", data)))));
             assertThat(((ImageBlock) message.getBlocks().get(0)).getSource()).isEqualTo(source);
         }
         for (String data : List.of("YQ==", "YQ", "aGk=", "aGk", "YWJj")) {
@@ -195,8 +192,8 @@ class ChatMessageSerializationTest {
         assertThat(json.get("blocks")).hasSize(1);
         assertThat(json.get("blocks").get(0).get("type").asText()).isEqualTo("text");
         assertThat(json.get("blocks").get(0).get("text").asText()).isEqualTo("hello world");
-        assertThat(json.get("tool_calls")).isEmpty();
-        assertThat(json.get("extra_args")).isEmpty();
+        assertThat(json.has("tool_calls")).isFalse();
+        assertThat(json.get("metadata")).isEmpty();
         assertThat(json.has("content")).isFalse();
     }
 
@@ -240,7 +237,7 @@ class ChatMessageSerializationTest {
                         null);
         ChatMessage original =
                 new ChatMessage(
-                        MessageRole.TOOL,
+                        MessageRole.USER,
                         List.of(
                                 TextBlock.of("before"),
                                 image,

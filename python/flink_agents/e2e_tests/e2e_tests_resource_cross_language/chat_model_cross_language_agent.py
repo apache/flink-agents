@@ -58,7 +58,9 @@ class ChatModelCrossLanguageAgent(Agent):
         """Prompt for instruction."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage.of(MessageRole.SYSTEM, "Please answer the user's question.",
+                ChatMessage.of(
+                    MessageRole.SYSTEM,
+                    "Please answer the user's question.",
                 ),
             ],
         )

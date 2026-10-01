@@ -61,9 +61,7 @@ def _registration_env() -> RemoteExecutionEnvironment:
 
 
 def test_resolve_function_python_with_module_attr() -> None:
-    func = resolve_function(
-        name="anything", function=f"{_TARGETS_MODULE}:increment"
-    )
+    func = resolve_function(name="anything", function=f"{_TARGETS_MODULE}:increment")
     assert isinstance(func, PythonFunction)
     assert func.module == _TARGETS_MODULE
     assert func.qualname == "increment"
@@ -75,9 +73,7 @@ def test_resolve_function_python_with_class_method() -> None:
     # ``module:Class.method`` — the right side becomes
     # ``PythonFunction.qualname`` verbatim and ``as_callable`` does the
     # ``Class.method`` split internally.
-    func = resolve_function(
-        name="bump", function=f"{_TARGETS_MODULE}:Counter.bump"
-    )
+    func = resolve_function(name="bump", function=f"{_TARGETS_MODULE}:Counter.bump")
     assert isinstance(func, PythonFunction)
     assert func.module == _TARGETS_MODULE
     assert func.qualname == "Counter.bump"
@@ -629,9 +625,7 @@ def test_resolve_function_java_supports_inner_classes() -> None:
 
 
 def test_resolve_function_python_is_default_language() -> None:
-    func1 = resolve_function(
-        name="x", function=f"{_TARGETS_MODULE}:increment"
-    )
+    func1 = resolve_function(name="x", function=f"{_TARGETS_MODULE}:increment")
     func2 = resolve_function(
         name="x",
         function=f"{_TARGETS_MODULE}:increment",

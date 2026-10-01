@@ -26,12 +26,17 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -55,7 +60,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 class FileEventLoggerTest {
@@ -460,6 +469,45 @@ class FileEventLoggerTest {
         ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
 
         append(logger, event, null);
+        append(
+                logger,
+                ChatResponseEvent.success(
+                        UUID.randomUUID(),
+                        new ChatResult(
+                                ChatMessage.assistant(message.getBlocks()),
+                                "local",
+                                "response-id",
+                                null,
+                                "stop",
+                                Map.of("provider", "ollama"))),
+                null);
+        ChatMessage assistant =
+                ChatMessage.assistant(
+                                List.of(
+                                        new ReasoningBlock(
+                                                "check the weather", Map.of("signature", "sig")),
+                                        new ToolCallBlock(
+                                                "call-1",
+                                                "weather",
+                                                Map.of("city", "Berlin"),
+                                                Map.of("provider", "ollama"))))
+                        .withMetadata(Map.of("turn", 1));
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call-1",
+                                List.of(
+                                        new TextBlock("sunny"),
+                                        ImageBlock.fromBase64("image/png", payload),
+                                        new DocumentBlock(
+                                                "application/pdf",
+                                                new UrlSource(signedUrl),
+                                                "cat.pdf",
+                                                42L,
+                                                null)),
+                                false,
+                                Map.of("source", "weather")));
+        append(logger, new ChatRequestEvent("test-model", List.of(assistant, tool)), null);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -480,6 +528,33 @@ class FileEventLoggerTest {
                 "https://example.org/media/cat.png", document.get("source").get("url").asText());
         assertEquals("cat.pdf", document.get("name").asText());
         assertEquals(42L, document.get("size_bytes").asLong());
+
+        String responseLine = Files.readAllLines(logFile).get(1);
+        assertFalse(responseLine.contains(payload), "Response inline payload must never be logged");
+        assertFalse(
+                responseLine.contains("secret"), "Response URL credentials must never be logged");
+        assertFalse(
+                responseLine.contains("X-Amz-Signature"),
+                "Response URL query must never be logged");
+        JsonNode response =
+                objectMapper.readTree(responseLine).get("eventAttributes").get("response");
+        assertEquals("assistant", response.at("/message/role").asText());
+        assertEquals("ollama", response.at("/metadata/provider").asText());
+        assertEquals(logged.get("blocks"), response.at("/message/blocks"));
+        assertEquals("response-id", response.get("response_id").asText());
+        String toolLine = Files.readAllLines(logFile).get(2);
+        JsonNode messages = objectMapper.readTree(toolLine).at("/eventAttributes/messages");
+        assertEquals(1, messages.at("/0/metadata/turn").asInt());
+        assertEquals("check the weather", messages.at("/0/blocks/0/text").asText());
+        assertEquals("sig", messages.at("/0/blocks/0/metadata/signature").asText());
+        assertEquals("Berlin", messages.at("/0/blocks/1/input/city").asText());
+        assertEquals("ollama", messages.at("/0/blocks/1/metadata/provider").asText());
+        assertEquals("call-1", messages.at("/1/blocks/0/call_id").asText());
+        assertEquals("sunny", messages.at("/1/blocks/0/blocks/0/text").asText());
+        assertEquals("weather", messages.at("/1/blocks/0/metadata/source").asText());
+        assertFalse(toolLine.contains(payload));
+        assertFalse(toolLine.contains("secret"));
+        assertFalse(toolLine.contains("X-Amz-Signature"));
     }
 
     @Test

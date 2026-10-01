@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -199,11 +200,11 @@ public class ReActAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void stopAction(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        ChatMessage response = chatResponse.getResponse();
+        ChatResult response = chatResponse.getResponse();
 
         Object output;
-        if (response.getExtraArgs().containsKey(STRUCTURED_OUTPUT)) {
-            output = response.getExtraArgs().get(STRUCTURED_OUTPUT);
+        if (chatResponse.getStructuredOutput() != null) {
+            output = chatResponse.getStructuredOutput();
         } else {
             output = response.getText();
         }

@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.chat.model.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -80,7 +81,7 @@ public class PythonChatModelConnection extends BaseChatModelConnection
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         Map<String, Object> kwargs = new HashMap<>(modelParams);
 
@@ -98,7 +99,7 @@ public class PythonChatModelConnection extends BaseChatModelConnection
             kwargs.put("tools", pythonTools);
 
             Object pythonMessageResponse = scope.own(adapter.callMethod(chatModel, "chat", kwargs));
-            return adapter.fromPythonChatMessage(pythonMessageResponse);
+            return adapter.fromPythonChatResult(pythonMessageResponse);
         }
     }
 

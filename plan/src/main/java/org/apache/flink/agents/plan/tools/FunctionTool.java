@@ -143,7 +143,9 @@ public class FunctionTool extends Tool {
                 return PythonToolResultConverter.fromBridgeResult(result);
             }
             Object result = function.call(schema.bind(arguments));
-            return ToolResponse.success(result);
+            return result instanceof ToolResponse
+                    ? (ToolResponse) result
+                    : ToolResponse.success(result);
         } catch (InterruptedException error) {
             Thread.currentThread().interrupt();
             throw new java.util.concurrent.CancellationException("Function tool interrupted");

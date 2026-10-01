@@ -34,6 +34,8 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -186,22 +188,22 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
     /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
-     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
-     * set, and the entry is absent when the provider reports none.
+     * in {@link ChatResult#getFinishReason()}, including values outside the documented set, and the
+     * entry is absent when the provider reports none.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
 
     /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
-     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
-     * set, and the entry is absent when the provider reports none.
+     * in {@link ChatResult#getFinishReason()}, including values outside the documented set, and the
+     * entry is absent when the provider reports none.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -209,7 +211,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -221,29 +223,21 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         ChatMessage response =
                 OpenAIChatCompletionsUtils.convertFromOpenAIMessage(choice.message());
 
-        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException when the member is
-        // absent or null, so the value is read through the raw field.
-        choice._finishReason()
-                .asKnown()
-                .ifPresent(
-                        reason -> response.getExtraArgs().put("finish_reason", reason.asString()));
-
-        // Stash token usage
-        if (completion.usage().isPresent()) {
-            String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-            if (modelName == null || modelName.isBlank()) {
-                modelName = this.defaultModel;
-            }
-            if (modelName != null && !modelName.isBlank()) {
-                response.getExtraArgs().put("model_name", modelName);
-                response.getExtraArgs()
-                        .put("promptTokens", completion.usage().get().promptTokens());
-                response.getExtraArgs()
-                        .put("completionTokens", completion.usage().get().completionTokens());
-            }
-        }
-
-        return response;
+        return new ChatResult(
+                response,
+                (modelParams != null && modelParams.get("model") != null
+                        ? (String) modelParams.get("model")
+                        : this.defaultModel),
+                completion.id(),
+                completion
+                        .usage()
+                        .map(
+                                usage ->
+                                        new TokenUsage(
+                                                usage.promptTokens(), usage.completionTokens()))
+                        .orElse(null),
+                choice._finishReason().asKnown().map(reason -> reason.asString()).orElse(null),
+                null);
     }
 
     // Package-private so the request body (including the native response_format) can be asserted

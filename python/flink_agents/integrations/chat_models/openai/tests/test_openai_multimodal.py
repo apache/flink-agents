@@ -33,6 +33,7 @@ from flink_agents.api.chat_message import (
     ImageBlock,
     MessageRole,
     TextBlock,
+    ToolResultBlock,
     UnsupportedContentBlockError,
     VideoBlock,
 )
@@ -134,10 +135,15 @@ def test_unsupported_user_blocks_fail_explicitly(block: ContentBlock) -> None:
 )
 def test_media_outside_user_messages_fails(role: MessageRole) -> None:
     """Only user messages can carry media."""
-    message = ChatMessage(
-        role=role,
-        blocks=[TextBlock(text="see"), ImageBlock.from_url("image/png", IMAGE_URL)],
+    blocks = [TextBlock(text="see"), ImageBlock.from_url("image/png", IMAGE_URL)]
+    if role == MessageRole.SYSTEM:
+        with pytest.raises(ValueError, match="SYSTEM messages accept only text"):
+            ChatMessage(role=role, blocks=blocks)
+        return
+    message = (
+        ChatMessage.tool(ToolResultBlock(call_id="call-1", blocks=blocks))
+        if role == MessageRole.TOOL
+        else ChatMessage(role=role, blocks=blocks)
     )
-
     with pytest.raises(UnsupportedContentBlockError, match="only user messages"):
         convert_to_openai_message(message)

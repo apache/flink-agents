@@ -169,9 +169,7 @@ def _resolve_action_function(action: ActionSpec) -> Function:
 
 def _add_action_to_agent(agent: Agent, action: ActionSpec) -> None:
     func = _resolve_action_function(action)
-    trigger_conditions = [
-        resolve_event_type(e) for e in action.trigger_conditions
-    ]
+    trigger_conditions = [resolve_event_type(e) for e in action.trigger_conditions]
     config = action.config or {}
     agent.add_action(action.name, trigger_conditions, func, **config)
 
@@ -391,8 +389,8 @@ def load_yaml(
         paths = [paths]
 
     for path in paths:
-        agents, shared_resources, shared_actions, agent_specs, _ = (
-            _build_in_file_state(path)
+        agents, shared_resources, shared_actions, agent_specs, _ = _build_in_file_state(
+            path
         )
 
         # Cross-environment duplicate checks. In-file duplicates were

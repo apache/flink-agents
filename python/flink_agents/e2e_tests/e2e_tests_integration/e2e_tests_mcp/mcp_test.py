@@ -33,6 +33,7 @@ import sys
 import sysconfig
 import time
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -132,7 +133,7 @@ class MyMCPAgent(Agent):
         if mcp_mode == "with_prompts":
             # Send chat request with MCP prompt variables
             # The prompt template will be filled with a and b values
-            msg = ChatMessage(role=MessageRole.USER)
+            msg = ChatMessage.user("")
             ctx.send_event(
                 ChatRequestEvent(
                     model="math_chat_model",
@@ -274,3 +275,18 @@ def test_mcp(
         except subprocess.TimeoutExpired:
             server_process.kill()
             server_process.wait()
+
+
+@pytest.mark.parametrize("mode", ["with_prompts", "without_prompts"])
+def test_mcp_input_request(mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Validate both request paths without requiring a model call or MiniCluster."""
+    monkeypatch.setenv("MCP_SERVER_MODE", mode)
+    context = MagicMock()
+    MyMCPAgent.process_input(InputEvent(input={"a": 1, "b": 2}), context)
+    request = context.send_event.call_args.args[0]
+    assert request.messages[0].role == MessageRole.USER
+    if mode == "with_prompts":
+        assert request.messages[0].blocks == ()
+        assert request.prompt_args == {"a": "1", "b": "2"}
+    else:
+        assert "sum of 1 and 2" in request.messages[0].text

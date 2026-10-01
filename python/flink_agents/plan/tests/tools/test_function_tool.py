@@ -192,9 +192,7 @@ def test_java_function_tool_merges_adapter_injected_args() -> None:
         "name": "add",
         "description": "Add two ints.",
         "inputSchema": _FAKE_JAVA_SCHEMA,
-        "injectedArgs": (
-            '{"tenant_id": {"source": "config", "key": "tenant.id"}}'
-        ),
+        "injectedArgs": ('{"tenant_id": {"source": "config", "key": "tenant.id"}}'),
     }
 
     tool.set_java_resource_adapter(adapter)
@@ -213,7 +211,6 @@ def test_java_function_tool_merges_adapter_injected_args() -> None:
         ["int", "int"],
         {"a": 1, "b": 2, "tenant_id": "tenant", "request_id": "request"},
     )
-
 
 
 def test_java_function_tool_metadata_is_none_without_adapter() -> None:

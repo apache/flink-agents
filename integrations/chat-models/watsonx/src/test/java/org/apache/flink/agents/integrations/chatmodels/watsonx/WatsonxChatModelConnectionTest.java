@@ -26,7 +26,11 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -170,7 +174,7 @@ class WatsonxChatModelConnectionTest {
         exchange.close();
     }
 
-    private static ChatMessage chat(WatsonxChatModelConnection connection) {
+    private static ChatResult chat(WatsonxChatModelConnection connection) {
         return connection.chat(
                 List.of(new ChatMessage(MessageRole.USER, "Hello!")),
                 List.of(),
@@ -334,21 +338,12 @@ class WatsonxChatModelConnectionTest {
     @Test
     @DisplayName("System, user, assistant and tool messages convert to the watsonx format")
     void testConvertMessages() {
-        ChatMessage assistant = new ChatMessage(MessageRole.ASSISTANT, "");
-        assistant.setToolCalls(
-                List.of(
-                        Map.of(
-                                "id", "internal-uuid",
-                                "original_id", "call_abc123",
-                                "type", "function",
-                                "function",
-                                        Map.of(
-                                                "name",
-                                                "add",
-                                                "arguments",
-                                                Map.of("a", 1, "b", 2)))));
+        ChatMessage assistant =
+                ChatMessage.assistant(
+                        List.of(new ToolCallBlock("call_abc123", "add", Map.of("a", 1, "b", 2))));
         ChatMessage toolResult =
-                new ChatMessage(MessageRole.TOOL, "3", Map.of("externalId", "call_abc123"));
+                ChatMessage.tool(
+                        new ToolResultBlock("call_abc123", List.of(new TextBlock("3")), false));
 
         ArrayNode converted =
                 WatsonxChatModelConnection.convertMessages(
@@ -386,7 +381,7 @@ class WatsonxChatModelConnectionTest {
                                 WatsonxChatModelConnection.convertMessages(
                                         List.of(new ChatMessage(MessageRole.TOOL, "3"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("externalId");
+                .hasMessageContaining("ToolResultBlock");
     }
 
     @Test
@@ -454,16 +449,15 @@ class WatsonxChatModelConnectionTest {
                                 + " \"usage\": {\"prompt_tokens\": 100, \"completion_tokens\": 50,"
                                 + " \"total_tokens\": 150}}");
 
-        ChatMessage message =
+        ChatResult message =
                 WatsonxChatModelConnection.parseResponse(response, "ibm/granite-3-3-8b-instruct");
 
-        assertThat(message.getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(message.getMessage().getRole()).isEqualTo(MessageRole.ASSISTANT);
         assertThat(message.getText()).isEqualTo("Hello there!");
-        assertThat(message.getExtraArgs().get("model_name"))
-                .isEqualTo("ibm/granite-3-3-8b-instruct");
-        assertThat(message.getExtraArgs().get("promptTokens")).isEqualTo(100L);
-        assertThat(message.getExtraArgs().get("completionTokens")).isEqualTo(50L);
-        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "stop");
+        assertThat(message.getModel()).isEqualTo("ibm/granite-3-3-8b-instruct");
+        assertThat(message.getUsage().getPromptTokens()).isEqualTo(100L);
+        assertThat(message.getUsage().getCompletionTokens()).isEqualTo(50L);
+        assertThat(message.getFinishReason()).isEqualTo("stop");
     }
 
     @Test
@@ -475,9 +469,9 @@ class WatsonxChatModelConnectionTest {
                                 + " \"content\": \"hi\"}, \"finish_reason\":"
                                 + " \"some_vendor_reason\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+        assertThat(message.getFinishReason()).isEqualTo("some_vendor_reason");
     }
 
     @Test
@@ -488,9 +482,9 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(message.getFinishReason()).isNull();
     }
 
     @Test
@@ -501,9 +495,9 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}, \"finish_reason\": null}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(message.getFinishReason()).isNull();
     }
 
     @Test
@@ -516,11 +510,10 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}, \"finish_reason\": \"tool_calls\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs())
-                .containsEntry("finish_reason", "tool_calls")
-                .doesNotContainKey("promptTokens");
+        assertThat(message.getFinishReason()).isEqualTo("tool_calls");
+        assertThat(message.getUsage()).isNull();
     }
 
     @Test
@@ -744,16 +737,13 @@ class WatsonxChatModelConnectionTest {
                                 + " \"{\\\"a\\\": 1, \\\"b\\\": 2}\"}}]}, \"finish_reason\":"
                                 + " \"tool_calls\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
         assertThat(message.getToolCalls()).hasSize(1);
-        Map<String, Object> toolCall = message.getToolCalls().get(0);
-        assertThat(toolCall.get("id")).isEqualTo("call_abc123");
-        assertThat(toolCall.get("original_id")).isEqualTo("call_abc123");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-        assertThat(function.get("name")).isEqualTo("add");
-        assertThat(function.get("arguments")).isEqualTo(Map.of("a", 1, "b", 2));
+        ToolCallBlock toolCall = message.getToolCalls().get(0);
+        assertThat(toolCall.getCallId()).isEqualTo("call_abc123");
+        assertThat(toolCall.getName()).isEqualTo("add");
+        assertThat(toolCall.getInput()).isEqualTo(Map.of("a", 1, "b", 2));
     }
 
     @ParameterizedTest

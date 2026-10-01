@@ -74,8 +74,6 @@ class LocalPrompt(Prompt):
             msgs = []
             for m in self.template:
                 msg = f"{m.role.value}: {format_string(m.text, **kwargs)}"
-                if m.extra_args is not None and len(m.extra_args) > 0:
-                    msg += f"{m.extra_args}"
                 msgs.append(msg)
             return "\n".join(msgs)
 
@@ -88,9 +86,8 @@ class LocalPrompt(Prompt):
         else:
             msgs = []
             for m in self.template:
-                msg = ChatMessage(
-                    role=m.role,
-                    blocks=[
+                msg = m.with_blocks(
+                    [
                         TextBlock(text=format_string(b.text, **kwargs))
                         if isinstance(b, TextBlock)
                         else b

@@ -99,8 +99,8 @@ def test_anthropic_chat_with_tools() -> None:
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
-    assert add(**tool_call["function"]["arguments"]) == 2
-    assert tool_call.get("original_id") is not None
+    assert add(**tool_call.input) == 2
+    assert tool_call.call_id is not None
 
 
 def test_model_field_roundtrip() -> None:

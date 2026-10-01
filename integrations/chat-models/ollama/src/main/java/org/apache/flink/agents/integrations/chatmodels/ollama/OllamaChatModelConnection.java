@@ -23,17 +23,28 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import io.github.ollama4j.exceptions.RoleNotFoundException;
-import io.github.ollama4j.models.chat.*;
+import io.github.ollama4j.models.chat.OllamaChatMessage;
+import io.github.ollama4j.models.chat.OllamaChatMessageRole;
+import io.github.ollama4j.models.chat.OllamaChatRequest;
+import io.github.ollama4j.models.chat.OllamaChatResponseModel;
+import io.github.ollama4j.models.chat.OllamaChatResult;
+import io.github.ollama4j.models.chat.OllamaChatToolCalls;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.models.request.ThinkMode;
 import io.github.ollama4j.tools.OllamaToolCallsFunction;
 import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -41,7 +52,13 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -180,14 +197,14 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         try {
             final OllamaChatMessageRole ollamaRole =
                     OllamaChatMessageRole.getRole(role.name().toLowerCase());
+            final List<byte[]> images = toOllamaImages(message);
             final OllamaChatMessage ollamaMessage =
-                    new OllamaChatMessage(ollamaRole, message.getText());
-            final List<Map<String, Object>> toolCalls = message.getToolCalls();
-            if (toolCalls != null && !toolCalls.isEmpty()) {
+                    new OllamaChatMessage(ollamaRole, ollamaText(message));
+            final List<ToolCallBlock> toolCalls = message.getToolCalls();
+            if (!toolCalls.isEmpty()) {
                 // Without the calls, the history shows tool results the model never requested.
                 ollamaMessage.setToolCalls(toOllamaToolCalls(toolCalls));
             }
-            final List<byte[]> images = toOllamaImages(message);
             if (!images.isEmpty()) {
                 ollamaMessage.setImages(images);
             }
@@ -197,27 +214,43 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         }
     }
 
+    /** Extracts text while skipping tool calls and reasoning, and rejects unsupported media. */
+    private static String ollamaText(ChatMessage message) {
+        List<ContentBlock> blocks =
+                message.getRole() == MessageRole.TOOL
+                        ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
+                        : message.getBlocks();
+        StringBuilder text = new StringBuilder();
+        for (ContentBlock block : blocks) {
+            if (block instanceof TextBlock) {
+                text.append(((TextBlock) block).getText());
+            } else if (block instanceof ToolCallBlock) {
+                continue;
+            } else if (block instanceof ReasoningBlock) {
+                continue;
+            } else if (block instanceof MediaBlock && message.getRole() == MessageRole.USER) {
+                // Validated and attached separately by toOllamaImages.
+                continue;
+            } else {
+                throw new IllegalArgumentException(
+                        "Ollama cannot send block type " + block.getType());
+            }
+        }
+        return text.toString();
+    }
+
     /**
      * Converts framework tool calls back to Ollama's shape, the function name and its arguments as
      * an object, as the Python connection does. The framework-assigned id is not sent.
      */
-    @SuppressWarnings("unchecked")
-    private static List<OllamaChatToolCalls> toOllamaToolCalls(
-            List<Map<String, Object>> toolCalls) {
-        final List<OllamaChatToolCalls> ollamaToolCalls = new ArrayList<>(toolCalls.size());
-        for (Map<String, Object> toolCall : toolCalls) {
-            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-            if (function == null || function.get("name") == null) {
-                throw new IllegalArgumentException("A tool call must have a function name.");
-            }
-            ollamaToolCalls.add(
+    private static List<OllamaChatToolCalls> toOllamaToolCalls(List<ToolCallBlock> toolCalls) {
+        List<OllamaChatToolCalls> calls = new ArrayList<>();
+        for (ToolCallBlock call : toolCalls) {
+            calls.add(
                     new OllamaChatToolCalls(
-                            null,
-                            new OllamaToolCallsFunction(
-                                    String.valueOf(function.get("name")),
-                                    toArgumentsMap(function.get("arguments")))));
+                            null, new OllamaToolCallsFunction(call.getName(), call.getInput())));
         }
-        return ollamaToolCalls;
+        return calls;
     }
 
     /** Ollama expects the arguments as an object; a JSON string is parsed into one. */
@@ -244,7 +277,11 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      */
     private static List<byte[]> toOllamaImages(ChatMessage message) {
         final List<byte[]> images = new ArrayList<>();
-        for (ContentBlock block : message.getBlocks()) {
+        List<ContentBlock> blocks =
+                message.getRole() == MessageRole.TOOL
+                        ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
+                        : message.getBlocks();
+        for (ContentBlock block : blocks) {
             if (!(block instanceof MediaBlock)) {
                 continue;
             }
@@ -302,7 +339,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
@@ -314,7 +351,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * the prompt-engineering fallback still governs the response.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -322,7 +359,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -335,42 +372,43 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
                     buildRequest(messages, tools, modelParams, outputSchema);
             final OllamaChatResult ollamaChatResult = this.caller.callSync(chatRequest);
             final OllamaChatResponseModel ollamaChatResponse = ollamaChatResult.getResponseModel();
-            final OllamaChatMessage ollamaChatMessage = ollamaChatResponse.getMessage();
+            return convertResponse(
+                    ollamaChatResponse, (String) modelParams.get("model"), extractReasoning);
 
-            Map<String, Object> extraArgs = new HashMap<>();
-            if (extractReasoning) {
-                extraArgs.put("reasoning", ollamaChatMessage.getThinking());
-            }
-
-            final List<OllamaChatToolCalls> ollamaToolCalls = ollamaChatMessage.getToolCalls();
-            final ChatMessage chatMessage = ChatMessage.assistant(ollamaChatMessage.getResponse());
-            chatMessage.setExtraArgs(extraArgs);
-
-            if (ollamaToolCalls != null) {
-                final List<Map<String, Object>> toolCalls = convertToAgentsTools(ollamaToolCalls);
-                chatMessage.setToolCalls(toolCalls);
-            }
-
-            // Stash token usage if model name is available
-            final String modelName = (String) modelParams.get("model");
-            if (modelName != null && !modelName.isBlank()) {
-                Integer promptTokens = ollamaChatResponse.getPromptEvalCount();
-                Integer completionTokens = ollamaChatResponse.getEvalCount();
-                if (promptTokens != null && completionTokens != null) {
-                    extraArgs.put("model_name", modelName);
-                    extraArgs.put("promptTokens", promptTokens.longValue());
-                    extraArgs.put("completionTokens", completionTokens.longValue());
-                }
-            }
-
-            return chatMessage;
         } catch (RuntimeException e) {
-            // Unchanged, so callers can catch documented errors such as
-            // UnsupportedContentBlockException.
             throw e;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
+    }
+
+    // Separates response parsing from transport for contract tests.
+    ChatResult convertResponse(
+            OllamaChatResponseModel ollamaChatResponse, String model, boolean extractReasoning) {
+        final OllamaChatMessage ollamaChatMessage = ollamaChatResponse.getMessage();
+
+        List<ContentBlock> blocks = new ArrayList<>();
+        if (extractReasoning && ollamaChatMessage.getThinking() != null) {
+            blocks.add(new ReasoningBlock(ollamaChatMessage.getThinking()));
+        }
+        if (!ollamaChatMessage.getResponse().isEmpty()) {
+            blocks.add(new TextBlock(ollamaChatMessage.getResponse()));
+        }
+        List<OllamaChatToolCalls> calls = ollamaChatMessage.getToolCalls();
+        if (calls != null) {
+            blocks.addAll(convertToAgentsTools(calls));
+        }
+        Integer input = ollamaChatResponse.getPromptEvalCount();
+        Integer output = ollamaChatResponse.getEvalCount();
+        return new ChatResult(
+                ChatMessage.assistant(blocks),
+                model,
+                null,
+                new TokenUsage(
+                        input == null ? null : input.longValue(),
+                        output == null ? null : output.longValue()),
+                ollamaChatResponse.getDoneReason(),
+                null);
     }
 
     // Package-private so the request body (including the native format) can be asserted without
@@ -464,25 +502,17 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @return a list of tool calls formatted for Flink Agents, where each tool call is represented
      *     as a map containing id, type, and function details
      */
-    private List<Map<String, Object>> convertToAgentsTools(
-            List<OllamaChatToolCalls> ollamaToolCalls) {
-        final List<Map<String, Object>> toolCalls = new ArrayList<>(ollamaToolCalls.size());
-        for (OllamaChatToolCalls ollamaToolCall : ollamaToolCalls) {
-            final UUID id = UUID.randomUUID();
-            final Map<String, Object> toolCall =
-                    Map.of(
-                            "id",
-                            id,
-                            "type",
-                            "function",
-                            "function",
-                            Map.of(
-                                    "name",
-                                    ollamaToolCall.getFunction().getName(),
-                                    "arguments",
-                                    ollamaToolCall.getFunction().getArguments()));
-            toolCalls.add(toolCall);
+    private List<ToolCallBlock> convertToAgentsTools(List<OllamaChatToolCalls> calls) {
+        List<ToolCallBlock> result = new ArrayList<>();
+        for (OllamaChatToolCalls call : calls) {
+            result.add(
+                    new ToolCallBlock(
+                            (call.getId() == null || call.getId().isEmpty())
+                                    ? UUID.randomUUID().toString()
+                                    : call.getId(),
+                            call.getFunction().getName(),
+                            toArgumentsMap(call.getFunction().getArguments())));
         }
-        return toolCalls;
+        return result;
     }
 }

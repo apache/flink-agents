@@ -25,15 +25,14 @@ from flink_agents.api.chat_models.java_chat_model import (
     JavaChatModelConnection,
     JavaChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
 from flink_agents.runtime.java.java_resource_wrapper import (
     set_java_resource_metric_group,
 )
 from flink_agents.runtime.python_java_utils import (
-    dump_blocks,
-    from_java_chat_message,
-    normalize_tool_call_id,
+    from_java_chat_result,
 )
 
 
@@ -42,13 +41,7 @@ def _to_java_chat_message(j_resource_adapter: Any, message: ChatMessage) -> Any:
 
     Content crosses as block maps so media blocks survive the bridge.
     """
-    tool_calls = [normalize_tool_call_id(call) for call in message.tool_calls]
-    return j_resource_adapter.fromPythonChatMessage(
-        message.role.value,
-        dump_blocks(message),
-        tool_calls,
-        message.extra_args,
-    )
+    return j_resource_adapter.fromPythonChatMessage(message.model_dump(mode="json"))
 
 
 class JavaChatModelConnectionImpl(JavaChatModelConnection):
@@ -86,7 +79,7 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Chat by forwarding the request to the wrapped Java connection.
 
         This connection serves as a Java resource wrapper only.
@@ -110,7 +103,7 @@ class JavaChatModelConnectionImpl(JavaChatModelConnection):
         ]
         j_response_message = self._j_resource.chat(java_messages, java_tools, kwargs)
 
-        return from_java_chat_message(j_response_message)
+        return from_java_chat_result(j_response_message)
 
     @override
     def close(self) -> None:
@@ -171,7 +164,7 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Execute chat conversation by delegating to Java implementation.
 
         1. Convert Python messages to Java format
@@ -201,4 +194,4 @@ class JavaChatModelSetupImpl(JavaChatModelSetup):
             java_messages, prompt_args or {}, kwargs
         )
 
-        return from_java_chat_message(j_response_message)
+        return from_java_chat_result(j_response_message)

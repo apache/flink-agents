@@ -344,7 +344,9 @@ def test_unified_event_serialization_roundtrip_with_memory_ref_attachment() -> N
     parsed = json.loads(original.model_dump_json())
     restored = Event.model_validate(parsed)
 
-    assert parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    assert (
+        parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    )
     assert restored.get_attachment("payload") == reference
     assert isinstance(restored.get_attachment("payload"), MemoryRef)
 

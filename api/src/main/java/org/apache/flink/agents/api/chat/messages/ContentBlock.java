@@ -18,7 +18,7 @@
 
 package org.apache.flink.agents.api.chat.messages;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 
@@ -27,9 +27,9 @@ import java.util.Map;
 /**
  * A single, typed part of a {@link ChatMessage}'s content.
  *
- * <p>Blocks are ordered within a message and are immutable value objects: every construction path,
- * including Jackson deserialization, runs the same validation, so sharing a block instance never
- * shares mutable state. The concrete type answers how providers route the content ({@link
+ * <p>Blocks are ordered within a message. Block fields are read-only, while metadata and tool
+ * inputs use ordinary maps. Every construction path, including Jackson deserialization, runs the
+ * same structural validation. The concrete type answers how providers route the content ({@link
  * TextBlock}, {@link ImageBlock}, {@link AudioBlock}, {@link VideoBlock}, {@link DocumentBlock}),
  * while media encoding is carried by the media type on {@link MediaBlock}.
  *
@@ -37,18 +37,24 @@ import java.util.Map;
  * {@code image}, {@code audio}, {@code video}, {@code document}) shared with the Python API, so
  * blocks cross the Java/Python boundary as plain JSON.
  */
-@JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
+@JsonTypeInfo(
+        use = JsonTypeInfo.Id.NAME,
+        include = JsonTypeInfo.As.EXISTING_PROPERTY,
+        property = "type")
 @JsonSubTypes({
     @JsonSubTypes.Type(value = TextBlock.class, name = "text"),
     @JsonSubTypes.Type(value = ImageBlock.class, name = "image"),
     @JsonSubTypes.Type(value = AudioBlock.class, name = "audio"),
     @JsonSubTypes.Type(value = VideoBlock.class, name = "video"),
-    @JsonSubTypes.Type(value = DocumentBlock.class, name = "document")
+    @JsonSubTypes.Type(value = DocumentBlock.class, name = "document"),
+    @JsonSubTypes.Type(value = ReasoningBlock.class, name = "reasoning"),
+    @JsonSubTypes.Type(value = ToolCallBlock.class, name = "tool_call"),
+    @JsonSubTypes.Type(value = ToolResultBlock.class, name = "tool_result")
 })
 public abstract class ContentBlock {
 
     /** The wire discriminator of this block: {@code text}, {@code image}, {@code audio}, ... */
-    @JsonIgnore
+    @JsonProperty("type")
     public abstract String getType();
 
     /**

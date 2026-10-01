@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -107,7 +108,7 @@ public abstract class BaseChatModelConnection extends Resource {
      * @param modelParams the additional arguments passed to the model
      * @return the chat response containing model outputs
      */
-    public abstract ChatMessage chat(
+    public abstract ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams);
 
     /**
@@ -155,7 +156,7 @@ public abstract class BaseChatModelConnection extends Resource {
      * @throws UnsupportedOperationException if {@code outputSchema} is non-null and this connection
      *     has no native structured-output translation
      */
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,

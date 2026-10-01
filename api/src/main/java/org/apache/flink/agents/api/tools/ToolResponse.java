@@ -21,7 +21,12 @@ package org.apache.flink.agents.api.tools;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -29,6 +34,8 @@ import java.util.Objects;
  * error information.
  */
 public class ToolResponse {
+
+    private final List<ContentBlock> blocks;
 
     private final Object result;
     private final boolean success;
@@ -40,13 +47,25 @@ public class ToolResponse {
     @JsonProperty("tool_name")
     private final String toolName;
 
+    private ToolResponse(
+            Object result, boolean success, String error, long executionTimeMs, String toolName) {
+        this(result, success, error, executionTimeMs, toolName, null);
+    }
+
     @JsonCreator
     private ToolResponse(
             @JsonProperty("result") Object result,
             @JsonProperty("success") boolean success,
             @JsonProperty("error") String error,
             @JsonProperty("execution_time_ms") long executionTimeMs,
-            @JsonProperty("tool_name") String toolName) {
+            @JsonProperty("tool_name") String toolName,
+            @JsonProperty("blocks") List<ContentBlock> blocks) {
+        if (success != (error == null))
+            throw new IllegalArgumentException("ToolResponse success and error disagree");
+        this.blocks =
+                blocks == null
+                        ? null
+                        : new ToolResultBlock("validation", blocks, false).getBlocks();
         this.result = result;
         this.success = success;
         this.error = error;
@@ -113,6 +132,29 @@ public class ToolResponse {
         return new ToolResponse(null, false, errorMessage, executionTimeMs, null);
     }
 
+    public List<ContentBlock> getBlocks() {
+        return blocks;
+    }
+
+    public ToolResponse withBlocks(List<ContentBlock> blocks) {
+        return new ToolResponse(result, success, error, executionTimeMs, toolName, blocks);
+    }
+
+    public ToolResultBlock toResultBlock(String callId) {
+        if (!success) return new ToolResultBlock(callId, List.of(new TextBlock(error)), true);
+        if (blocks != null) return new ToolResultBlock(callId, blocks, false);
+        try {
+            String text =
+                    result instanceof String
+                            ? (String) result
+                            : new ObjectMapper().writeValueAsString(result);
+            return new ToolResultBlock(callId, List.of(new TextBlock(text)), false);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(
+                    "Tool result requires JSON data or explicit content blocks", e);
+        }
+    }
+
     /** Get the result of the tool execution. */
     public Object getResult() {
         return result;
@@ -141,6 +183,7 @@ public class ToolResponse {
     }
 
     /** Check if the tool execution failed. */
+    @JsonIgnore
     public boolean isError() {
         return !success;
     }
@@ -178,12 +221,13 @@ public class ToolResponse {
                 && executionTimeMs == that.executionTimeMs
                 && Objects.equals(result, that.result)
                 && Objects.equals(error, that.error)
-                && Objects.equals(toolName, that.toolName);
+                && Objects.equals(toolName, that.toolName)
+                && Objects.equals(blocks, that.blocks);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(result, success, error, executionTimeMs, toolName);
+        return Objects.hash(result, success, error, executionTimeMs, toolName, blocks);
     }
 
     @Override

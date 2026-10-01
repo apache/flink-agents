@@ -100,8 +100,7 @@ def test_built_in_chat_tool_action_content(tmp_path: Path) -> None:
     check_result(
         result_dir=result_dir,
         ground_truth_dir=Path(
-            f"{current_dir}/../resources/ground_truth/"
-            f"test_built_in_action_content.txt"
+            f"{current_dir}/../resources/ground_truth/test_built_in_action_content.txt"
         ),
     )
 
@@ -158,7 +157,6 @@ def test_chat_model_get_resource_in_action(tmp_path: Path) -> None:
     check_result(
         result_dir=result_dir,
         ground_truth_dir=Path(
-            f"{current_dir}/../resources/ground_truth/"
-            f"test_chat_model_get_resource.txt"
+            f"{current_dir}/../resources/ground_truth/test_chat_model_get_resource.txt"
         ),
     )

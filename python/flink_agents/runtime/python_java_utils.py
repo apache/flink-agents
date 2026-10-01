@@ -19,7 +19,7 @@ import importlib
 import json
 import typing
 from functools import lru_cache
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import cloudpickle
 
@@ -234,6 +234,7 @@ def _encode_python_tool_result(result: Any) -> Dict[str, Any]:
         "error": result.error_message,
         "execution_time_ms": result.execution_time_ms,
         "tool_name": result.tool_name,
+        "blocks": result.model_dump(mode="json")["blocks"],
     }
 
 
@@ -297,84 +298,29 @@ def call_embedding_with_usage(
     return embedding_result_to_java(embedding_model.embed_with_usage(**kwargs))
 
 
-def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize tool call by converting the ID field to string format while preserving
-    all other fields.
-
-    This function ensures that the tool call ID is consistently represented as a string,
-    which is required for compatibility with certain systems that expect string IDs.
-
-    Args:
-        tool_call: Dictionary containing tool call information. The dictionary may
-                   contain any number of fields, but typically includes:
-                  - id: Tool call identifier (will be converted to string)
-                  - type: Tool call type (preserved as-is)
-                  - function: Function details (preserved as-is)
-                  - Any other fields (preserved as-is)
-    """
-    normalized_call = tool_call.copy()
-
-    normalized_call["id"] = str(tool_call.get("id", ""))
-
-    return normalized_call
-
-
-def dump_blocks(chat_message: ChatMessage) -> List[Dict[str, Any]]:
-    """Content blocks as plain dicts in the serialized shape, for the Java bridge."""
-    return [
-        block.model_dump(mode="json", exclude_none=True)
-        for block in chat_message.blocks
-    ]
-
-
 def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
-    """Convert a chat message to a python chat message."""
-    return ChatMessage.model_validate(
-        {
-            "role": MessageRole(j_chat_message.getRole().getValue()),
-            # Blocks cross the bridge as plain dicts in the serialized shape.
-            "blocks": j_chat_message.getBlocksAsMaps(),
-            "tool_calls": [
-                normalize_tool_call_id(tool_call)
-                for tool_call in j_chat_message.getToolCalls()
-            ],
-            "extra_args": j_chat_message.getExtraArgs(),
-        }
-    )
+    """Reconstruct from the canonical map, including all nested blocks."""
+    return ChatMessage.model_validate(j_chat_message.toMap())
+
+
+def from_java_chat_result(j_response: Any) -> Any:
+    """Reconstruct a model response from its canonical map."""
+    from flink_agents.api.chat_result import ChatResult
+
+    return ChatResult.model_validate(j_response.toMap())
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
-    """Convert a chat message to a java chat message."""
+    """Construct a Java message from its canonical map."""
     from pemja import findClass
 
-    j_ChatMessage = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
-    j_chat_message = j_ChatMessage()
-
-    j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
-    j_chat_message.setRole(j_MessageRole.fromValue(chat_message.role.value))
-    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
-    j_chat_message.setExtraArgs(chat_message.extra_args)
-    if chat_message.tool_calls:
-        tool_calls = [
-            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
-        ]
-        j_chat_message.setToolCalls(tool_calls)
-
-    return j_chat_message
+    clazz = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
+    return clazz.fromMap(chat_message.model_dump(mode="json"))
 
 
-# TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
-def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
-    """Update a Java chat message using Python chat message."""
-    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
-    j_chat_message.setExtraArgs(chat_message.extra_args)
-    if chat_message.tool_calls:
-        tool_calls = [
-            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
-        ]
-        j_chat_message.setToolCalls(tool_calls)
-
-    return chat_message.role.value
+def update_java_chat_message(value: Any) -> dict:
+    """Extract fields on the interpreter thread for Java-owned conversions."""
+    return value.model_dump(mode="json")
 
 
 def from_java_document(j_document: Any) -> Document:

@@ -27,7 +27,12 @@ import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -49,6 +54,7 @@ import org.slf4j.LoggerFactory;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * Agent definition for testing async execution functionality.
@@ -99,7 +105,7 @@ public class AsyncExecutionAgent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
@@ -109,20 +115,24 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getText());
+                        aggregated.append(
+                                ((ToolResultBlock) message.getBlocks().get(0))
+                                        .getBlocks().stream()
+                                                .filter(b -> b instanceof TextBlock)
+                                                .map(b -> ((TextBlock) b).getText())
+                                                .collect(Collectors.joining()));
                     }
                 }
-                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+                return new ChatResult(ChatMessage.assistant(aggregated.toString()));
             }
 
             String requestId = lastMessage.getText();
-            return new ChatMessage(
-                    MessageRole.ASSISTANT,
-                    "",
-                    List.of(
-                            toolCall("call-1", requestId, 1),
-                            toolCall("call-2", requestId, 2),
-                            toolCall("call-3", requestId, 3)));
+            return new ChatResult(
+                    ChatMessage.assistant(
+                            List.of(
+                                    toolCall("call-1", requestId, 1),
+                                    toolCall("call-2", requestId, 2),
+                                    toolCall("call-3", requestId, 3))));
         }
     }
 
@@ -151,50 +161,36 @@ public class AsyncExecutionAgent {
         }
     }
 
-    private static Map<String, Object> toolCall(String id, String requestId, int index) {
+    private static ToolCallBlock toolCall(String id, String requestId, int index) {
         return toolCallWithSleep(id, requestId, index, 500);
     }
 
-    private static Map<String, Object> toolCallWithSleep(
+    private static ToolCallBlock toolCallWithSleep(
             String id, String requestId, int index, int sleepMs) {
-        return Map.of(
-                "id",
+        return new ToolCallBlock(
                 id,
-                "type",
-                "function",
-                "function",
+                "timed_tool",
                 Map.of(
-                        "name",
-                        "timed_tool",
-                        "arguments",
-                        Map.of(
-                                "request_id",
-                                requestId,
-                                "call_index",
-                                String.valueOf(index),
-                                "sleep_ms",
-                                sleepMs)));
+                        "request_id",
+                        requestId,
+                        "call_index",
+                        String.valueOf(index),
+                        "sleep_ms",
+                        sleepMs));
     }
 
-    private static Map<String, Object> timeoutToolCallWithSleep(
+    private static ToolCallBlock timeoutToolCallWithSleep(
             String id, String requestId, int index, int sleepMs) {
-        return Map.of(
-                "id",
+        return new ToolCallBlock(
                 id,
-                "type",
-                "function",
-                "function",
+                "timed_tool_with_sleep",
                 Map.of(
-                        "name",
-                        "timed_tool_with_sleep",
-                        "arguments",
-                        Map.of(
-                                "request_id",
-                                requestId,
-                                "call_index",
-                                String.valueOf(index),
-                                "sleep_ms",
-                                sleepMs)));
+                        "request_id",
+                        requestId,
+                        "call_index",
+                        String.valueOf(index),
+                        "sleep_ms",
+                        sleepMs));
     }
 
     /**
@@ -208,7 +204,7 @@ public class AsyncExecutionAgent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
@@ -218,19 +214,23 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getText());
+                        aggregated.append(
+                                ((ToolResultBlock) message.getBlocks().get(0))
+                                        .getBlocks().stream()
+                                                .filter(b -> b instanceof TextBlock)
+                                                .map(b -> ((TextBlock) b).getText())
+                                                .collect(Collectors.joining()));
                     }
                 }
-                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+                return new ChatResult(ChatMessage.assistant(aggregated.toString()));
             }
 
             String requestId = lastMessage.getText();
-            return new ChatMessage(
-                    MessageRole.ASSISTANT,
-                    "",
-                    List.of(
-                            timeoutToolCallWithSleep("call-1", requestId, 1, 0),
-                            timeoutToolCallWithSleep("call-2", requestId, 2, 150)));
+            return new ChatResult(
+                    ChatMessage.assistant(
+                            List.of(
+                                    timeoutToolCallWithSleep("call-1", requestId, 1, 0),
+                                    timeoutToolCallWithSleep("call-2", requestId, 2, 150))));
         }
     }
 
@@ -304,7 +304,7 @@ public class AsyncExecutionAgent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
@@ -314,20 +314,25 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getText());
+                        aggregated.append(
+                                ((ToolResultBlock) message.getBlocks().get(0))
+                                        .getBlocks().stream()
+                                                .filter(b -> b instanceof TextBlock)
+                                                .map(b -> ((TextBlock) b).getText())
+                                                .collect(Collectors.joining()));
                     }
                 }
-                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+                return new ChatResult(ChatMessage.assistant(aggregated.toString()));
             }
 
             String requestId = lastMessage.getText();
-            List<Map<String, Object>> toolCalls = new java.util.ArrayList<>();
+            List<ContentBlock> toolCalls = new java.util.ArrayList<>();
             for (int i = 1; i <= ToolBatchMaxParallelismAgent.TOOL_COUNT; i++) {
                 toolCalls.add(
                         timeoutToolCallWithSleep(
                                 "call-" + i, requestId, i, ToolBatchMaxParallelismAgent.SLEEP_MS));
             }
-            return new ChatMessage(MessageRole.ASSISTANT, "", toolCalls);
+            return new ChatResult(ChatMessage.assistant(toolCalls));
         }
     }
 
@@ -355,7 +360,7 @@ public class AsyncExecutionAgent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
@@ -365,19 +370,23 @@ public class AsyncExecutionAgent {
                         if (aggregated.length() > 0) {
                             aggregated.append('|');
                         }
-                        aggregated.append(message.getText());
+                        aggregated.append(
+                                ((ToolResultBlock) message.getBlocks().get(0))
+                                        .getBlocks().stream()
+                                                .filter(b -> b instanceof TextBlock)
+                                                .map(b -> ((TextBlock) b).getText())
+                                                .collect(Collectors.joining()));
                     }
                 }
-                return new ChatMessage(MessageRole.ASSISTANT, aggregated.toString());
+                return new ChatResult(ChatMessage.assistant(aggregated.toString()));
             }
 
             String requestId = lastMessage.getText();
-            return new ChatMessage(
-                    MessageRole.ASSISTANT,
-                    "",
-                    List.of(
-                            timeoutToolCallWithSleep("call-1", requestId, 1, 150),
-                            timeoutToolCallWithSleep("call-2", requestId, 2, 150)));
+            return new ChatResult(
+                    ChatMessage.assistant(
+                            List.of(
+                                    timeoutToolCallWithSleep("call-1", requestId, 1, 150),
+                                    timeoutToolCallWithSleep("call-2", requestId, 2, 150))));
         }
     }
 

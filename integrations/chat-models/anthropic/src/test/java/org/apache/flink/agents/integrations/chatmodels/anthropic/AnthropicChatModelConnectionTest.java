@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
+import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
@@ -31,7 +32,9 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -134,13 +137,14 @@ class AnthropicChatModelConnectionTest {
     @MethodSource("anthropicFinishReasons")
     @DisplayName("Anthropic response records a finish reason for the shared chat action")
     void testResponseRecordsFinishReason(StopReason stopReason, String expectedFinishReason) {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .convertResponse(
-                                new AnthropicChatModelConnection.BuiltRequest(null, false),
+                                connection()
+                                        .buildRequest(userMessage(), List.of(), params(null), null),
                                 textResponse("partial", Optional.of(stopReason)));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", expectedFinishReason);
+        assertThat(response.getFinishReason()).isEqualTo(expectedFinishReason);
     }
 
     private static Stream<Arguments> anthropicFinishReasons() {
@@ -152,13 +156,14 @@ class AnthropicChatModelConnectionTest {
     @Test
     @DisplayName("Anthropic response without a stop reason keeps the existing metadata shape")
     void testResponseOmitsFinishReasonWhenAbsent() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .convertResponse(
-                                new AnthropicChatModelConnection.BuiltRequest(null, false),
+                                connection()
+                                        .buildRequest(userMessage(), List.of(), params(null), null),
                                 textResponse("complete"));
 
-        assertThat(response.getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(response.getFinishReason()).isNull();
     }
 
     /** True when the built request ends with the prefilled assistant "{" message. */
@@ -233,7 +238,14 @@ class AnthropicChatModelConnectionTest {
     @Test
     @DisplayName("request build failures surface as a wrapped RuntimeException")
     void testBuildFailureIsWrapped() {
-        List<ChatMessage> messages = List.of(new ChatMessage(MessageRole.TOOL, "result"));
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.assistant(
+                                List.of(
+                                        org.apache.flink.agents.api.chat.messages.ImageBlock
+                                                .fromUrl(
+                                                        "image/png",
+                                                        "https://example.com/image.png"))));
 
         assertThatThrownBy(() -> connection().chat(messages, List.of(), params(null)))
                 .isInstanceOf(RuntimeException.class)
@@ -569,7 +581,7 @@ class AnthropicChatModelConnectionTest {
         AnthropicChatModelConnection connection =
                 new AnthropicChatModelConnection(descriptor(CAPABLE_MODEL), NOOP) {
                     @Override
-                    public ChatMessage chat(
+                    public ChatResult chat(
                             List<ChatMessage> messages,
                             List<Tool> tools,
                             Map<String, Object> modelParams,
@@ -578,7 +590,7 @@ class AnthropicChatModelConnectionTest {
                         forwardedMessages.set(messages);
                         forwardedTools.set(tools);
                         forwardedParams.set(modelParams);
-                        return ChatMessage.assistant("");
+                        return new ChatResult(ChatMessage.assistant(""));
                     }
                 };
 
@@ -1058,5 +1070,41 @@ class AnthropicChatModelConnectionTest {
         public ToolResponse call(ToolParameters parameters) {
             return ToolResponse.success(null);
         }
+    }
+
+    @Test
+    void testNativeReasoningReplayPreservesSignedAndRedactedBlocks() {
+        ChatMessage message =
+                ChatMessage.assistant(
+                        List.of(
+                                new ReasoningBlock(
+                                        "think",
+                                        Map.of(
+                                                "anthropic",
+                                                Map.of("type", "thinking", "signature", "signed"))),
+                                new ReasoningBlock(
+                                        null,
+                                        Map.of(
+                                                "anthropic",
+                                                Map.of(
+                                                        "type",
+                                                        "redacted_thinking",
+                                                        "data",
+                                                        "opaque"))),
+                                new org.apache.flink.agents.api.chat.messages.TextBlock("answer")));
+        ChatMessage restored = ChatMessage.fromMap(message.toMap());
+        List<ContentBlockParam> blocks =
+                connection()
+                        .buildRequest(List.of(restored), List.of(), params(null), null)
+                        .params
+                        .messages()
+                        .get(0)
+                        .content()
+                        .asBlockParams();
+        assertThat(blocks).hasSize(3);
+        assertThat(blocks.get(0).asThinking().thinking()).isEqualTo("think");
+        assertThat(blocks.get(0).asThinking().signature()).isEqualTo("signed");
+        assertThat(blocks.get(1).asRedactedThinking().data()).isEqualTo("opaque");
+        assertThat(blocks.get(2).asText().text()).isEqualTo("answer");
     }
 }

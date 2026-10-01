@@ -18,7 +18,7 @@
 import os
 from typing import Dict
 
-from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import action, chat_model_setup
@@ -154,7 +154,7 @@ class ParallelChatAgent(Agent):
     def handle_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
         response_event = ChatResponseEvent.from_event(event)
-        parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
+        parsed = response_event.structured_output
         if isinstance(parsed, dict):
             parsed = (
                 SummaryResponse(**parsed)

@@ -21,7 +21,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolResultBlock,
+)
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.tongyi_chat_model import (
@@ -48,7 +53,7 @@ def test_tongyi_chat() -> None:
     assert response is not None
     assert response.text is not None
     assert response.text.strip() != ""
-    assert response.role == MessageRole.ASSISTANT
+    assert response.message.role == MessageRole.ASSISTANT
 
 
 def add(a: int, b: int) -> int:
@@ -109,7 +114,7 @@ def test_tongyi_chat_with_tools() -> None:
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
-    assert add(**tool_call["function"]["arguments"]) == 3
+    assert add(**tool_call.input) == 3
 
 
 def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,9 +178,11 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
         response.text
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
-    assert "reasoning" in response.extra_args
-    assert "philosophical perspectives" in response.extra_args["reasoning"]
-    assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
+    reasoning = next(
+        block.text for block in response.message.blocks if block.type == "reasoning"
+    )
+    assert "philosophical perspectives" in reasoning
+    assert "Hitchhiker's Guide to the Galaxy" in reasoning
 
 
 def test_model_field_roundtrip() -> None:
@@ -227,14 +234,21 @@ def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     response = connection.chat(
         [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")], model=test_model
     )
-    # The tool call action reads this key into the tool result's external_id.
-    assert response.tool_calls[0]["original_id"] == "call_abc"
+    # The tool result uses the same call ID as the model's tool call.
+    assert response.tool_calls[0].call_id == "call_abc"
 
-    tool_result = ChatMessage.of(
-        MessageRole.TOOL, "3", extra_args={"external_id": "call_abc"}
+    tool_result = ChatMessage.tool(
+        ToolResultBlock(
+            call_id="call_abc",
+            blocks=[TextBlock(text="3")],
+        )
     )
     connection.chat(
-        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?"), response, tool_result],
+        [
+            ChatMessage.of(MessageRole.USER, "What is 1 + 2?"),
+            response.message,
+            tool_result,
+        ],
         model=test_model,
     )
 

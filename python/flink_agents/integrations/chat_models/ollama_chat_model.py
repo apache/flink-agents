@@ -31,12 +31,16 @@ from flink_agents.api.chat_message import (
     ImageBlock,
     MediaBlock,
     MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
     UnsupportedContentBlockError,
 )
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 
@@ -139,7 +143,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Process a sequence of messages, and return a response.
 
         Parameters
@@ -159,8 +163,8 @@ class OllamaChatModelConnection(BaseChatModelConnection):
 
         Returns:
         -------
-        ChatMessage
-            Model response message
+        ChatResult
+            Model response envelope
         """
         ollama_messages = self.__convert_to_ollama_messages(messages)
 
@@ -170,6 +174,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
         model_name = kwargs.pop("model")
+        extract_reasoning = kwargs.pop("extract_reasoning", False)
 
         # Native structured output applies only for a BaseModel schema; any other schema
         # form, such as a RowTypeInfo wrapped in OutputSchema, keeps the
@@ -201,69 +206,78 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             **format_kwargs,
         )
 
-        ollama_tool_calls = response.message.tool_calls
-        if ollama_tool_calls is None:
-            ollama_tool_calls = []
-        tool_calls = []
-        for ollama_tool_call in ollama_tool_calls:
-            tool_call = {
-                "id": uuid.uuid4(),
-                "type": "function",
-                "function": {
-                    "name": ollama_tool_call.function.name,
-                    "arguments": ollama_tool_call.function.arguments,
-                },
-            }
-            tool_calls.append(tool_call)
-
-        content = response.message.content
-        extra_args = {}
-
-        # Process reasoning if extract_reasoning is enabled
-        if kwargs.get("extract_reasoning") and content:
-            content, reasoning = self._extract_reasoning(content)
+        blocks = []
+        content = response.message.content or ""
+        reasoning = getattr(response.message, "thinking", None)
+        if extract_reasoning:
+            content, extracted = self._extract_reasoning(content)
+            reasoning = reasoning or extracted
             if reasoning:
-                extra_args["reasoning"] = reasoning
-
-        # Record token metrics if model name and usage are available
-        if (
-            model_name
-            and response.prompt_eval_count is not None
-            and response.eval_count is not None
-        ):
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = response.prompt_eval_count
-            extra_args["completionTokens"] = response.eval_count
-
-        return ChatMessage.of(
-            MessageRole(response.message.role),
-            content,
-            tool_calls=tool_calls,
-            extra_args=extra_args,
+                blocks.append(ReasoningBlock(text=reasoning))
+        if content:
+            blocks.append(TextBlock(text=content))
+        blocks.extend(
+            ToolCallBlock(
+                call_id=getattr(call, "id", None) or str(uuid.uuid4()),
+                name=call.function.name,
+                input=call.function.arguments,
+            )
+            for call in response.message.tool_calls or []
+        )
+        reason = getattr(response, "done_reason", None)
+        return ChatResult(
+            message=ChatMessage.assistant(blocks),
+            model=model_name,
+            usage=TokenUsage(
+                prompt_tokens=response.prompt_eval_count,
+                completion_tokens=response.eval_count,
+            ),
+            finish_reason=reason,
         )
 
     @staticmethod
     def __convert_to_ollama_messages(messages: Sequence[ChatMessage]) -> List[Message]:
+        # Preserve text, user images and tool calls. Reasoning is
+        # stored for inspection, never flattened into assistant text or replayed.
         ollama_messages = []
         for message in messages:
-            ollama_message = Message(
-                role=message.role.value,
-                content=message.text,
-                images=_ollama_images(message),
-            )
-            if len(message.tool_calls) > 0:
-                ollama_tool_calls = []
-                for tool_call in message.tool_calls:
-                    name = tool_call["function"]["name"]
-                    arguments = tool_call["function"]["arguments"]
-                    ollama_tool_call = Message.ToolCall(
-                        function=Message.ToolCall.Function(
-                            name=name, arguments=arguments
+            images = _ollama_images(message)
+            text = []
+            calls = []
+            blocks = message.blocks
+            if message.role == MessageRole.TOOL:
+                blocks = message.blocks[0].blocks
+            for block in blocks:
+                if isinstance(block, TextBlock):
+                    text.append(block.text)
+                elif isinstance(block, ToolCallBlock):
+                    calls.append(
+                        Message.ToolCall(
+                            function=Message.ToolCall.Function(
+                                name=block.name, arguments=dict(block.input)
+                            )
                         )
                     )
-                    ollama_tool_calls.append(ollama_tool_call)
-                ollama_message.tool_calls = ollama_tool_calls
-            ollama_messages.append(ollama_message)
+                elif isinstance(block, ReasoningBlock):
+                    continue
+                elif isinstance(block, MediaBlock) and message.role == MessageRole.USER:
+                    # Validated and attached separately by _ollama_images.
+                    continue
+                else:
+                    msg = "Ollama"
+                    raise UnsupportedContentBlockError.for_block(
+                        msg,
+                        block,
+                        "this adapter supports text and tool calls only",
+                    )
+            ollama_messages.append(
+                Message(
+                    role=message.role.value,
+                    content="".join(text),
+                    tool_calls=calls or None,
+                    images=images,
+                )
+            )
         return ollama_messages
 
 
@@ -280,7 +294,10 @@ def _ollama_images(message: ChatMessage) -> List[Image] | None:
     so a text-only request is unchanged.
     """
     images = []
-    for block in message.blocks:
+    blocks = (
+        message.blocks[0].blocks if message.role == MessageRole.TOOL else message.blocks
+    )
+    for block in blocks:
         if not isinstance(block, MediaBlock):
             continue
         if message.role != MessageRole.USER:
@@ -328,7 +345,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
         request(default: 5m)
     extract_reasoning : bool
         If True, extracts content within <think></think> tags from the response and
-        stores it in additional_kwargs.
+        stores it in a ReasoningBlock.
     """
 
     temperature: float = Field(
@@ -355,7 +372,7 @@ class OllamaChatModelSetup(BaseChatModelSetup):
     extract_reasoning: bool = Field(
         default=True,
         description="If True, extracts content within <think></think> tags from the response and "
-        "stores it in additional_kwargs.",
+        "stores it in a ReasoningBlock.",
     )
 
     think: bool | Literal["low", "medium", "high"] = Field(

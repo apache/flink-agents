@@ -40,23 +40,13 @@ public class ToolResponseEvent extends Event {
             UUID requestId,
             Map<String, ToolResponse> responses,
             Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, String> externalIds) {
+            Map<String, String> error) {
         super(EVENT_TYPE);
         setAttr("request_id", requestId);
         setAttr("responses", responses);
         setAttr("success", success);
         setAttr("error", error);
-        setAttr("external_ids", externalIds);
         setAttr("timestamp", System.currentTimeMillis());
-    }
-
-    public ToolResponseEvent(
-            UUID requestId,
-            Map<String, ToolResponse> responses,
-            Map<String, Boolean> success,
-            Map<String, String> error) {
-        this(requestId, responses, success, error, Map.of());
     }
 
     @JsonCreator
@@ -121,12 +111,6 @@ public class ToolResponseEvent extends Event {
     @SuppressWarnings("unchecked")
     public Map<String, ToolResponse> getResponses() {
         return (Map<String, ToolResponse>) getAttr("responses");
-    }
-
-    @JsonIgnore
-    @SuppressWarnings("unchecked")
-    public Map<String, String> getExternalIds() {
-        return (Map<String, String>) getAttr("external_ids");
     }
 
     @JsonIgnore

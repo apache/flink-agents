@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.routing;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidate;
@@ -123,12 +124,14 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                     judgeResult.model,
                     judgeResult.retryCount,
                     judgeResult.totalRetryWaitSec);
-            ChatMessage reply = judgeResult.response;
+            ChatResult reply = judgeResult.response;
             // Same both-or-neither type guard as the metrics reader of these extraArgs
             // keys (ChatModelAction#recordChatTokenMetrics): a half-populated or non-Number
             // pair must not leak into the durable decision metadata.
-            Object promptTokens = reply.getExtraArgs().get("promptTokens");
-            Object completionTokens = reply.getExtraArgs().get("completionTokens");
+            Object promptTokens =
+                    reply.getUsage() == null ? null : reply.getUsage().getPromptTokens();
+            Object completionTokens =
+                    reply.getUsage() == null ? null : reply.getUsage().getCompletionTokens();
             if (promptTokens instanceof Number && completionTokens instanceof Number) {
                 judgeMetadata.put("judge_prompt_tokens", promptTokens);
                 judgeMetadata.put("judge_completion_tokens", completionTokens);

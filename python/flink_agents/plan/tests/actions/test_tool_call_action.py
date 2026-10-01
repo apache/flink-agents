@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from flink_agents.api.chat_message import ToolCallBlock
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
@@ -74,6 +75,20 @@ def _expected_durable_function_id(
         {"order_id": order_id, "tenant_id": tenant_id},
     )
     return function_id
+
+
+def _request(model, tool_calls) -> ToolRequestEvent:
+    return ToolRequestEvent(
+        model,
+        [
+            ToolCallBlock(
+                call_id=c["id"],
+                name=c["function"]["name"],
+                input=c["function"]["arguments"],
+            )
+            for c in tool_calls
+        ],
+    )
 
 
 class _TestDurableFuture:
@@ -214,7 +229,7 @@ class _WrongConfig:
 def test_tool_call_action_injects_args_from_config_without_mutating_request() -> None:
     ctx = _Context()
     arguments = {"order_id": "order-1"}
-    event = ToolRequestEvent(
+    event = _request(
         model="model",
         tool_calls=[
             {
@@ -228,7 +243,9 @@ def test_tool_call_action_injects_args_from_config_without_mutating_request() ->
     asyncio.run(process_tool_request(event, ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "tenant-1:order-1"
+    assert (
+        response.responses["call-1"].to_result_block("call").text == "tenant-1:order-1"
+    )
     assert response.success["call-1"] is True
     assert response.error == {}
     assert arguments == {"order_id": "order-1"}
@@ -237,7 +254,7 @@ def test_tool_call_action_injects_args_from_config_without_mutating_request() ->
 def test_tool_call_action_overrides_model_supplied_injected_argument() -> None:
     ctx = _Context()
     arguments = {"order_id": "order-1", "tenant_id": "model-tenant"}
-    event = ToolRequestEvent(
+    event = _request(
         model="model",
         tool_calls=[
             {
@@ -252,7 +269,9 @@ def test_tool_call_action_overrides_model_supplied_injected_argument() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
-    assert response.responses["call-1"] == "tenant-1:order-1"
+    assert (
+        response.responses["call-1"].to_result_block("call").text == "tenant-1:order-1"
+    )
     assert response.error == {}
     assert arguments == {"order_id": "order-1", "tenant_id": "model-tenant"}
 
@@ -268,7 +287,10 @@ def test_tool_call_action_injects_args_from_sensory_memory() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "tenant-sensory:order-1"
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "tenant-sensory:order-1"
+    )
     assert response.success["call-1"] is True
 
 
@@ -283,13 +305,16 @@ def test_tool_call_action_injects_args_from_short_term_memory() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "tenant-short:order-1"
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "tenant-short:order-1"
+    )
     assert response.success["call-1"] is True
 
 
 def test_tool_call_action_reports_missing_config_injected_arg() -> None:
     ctx = _Context(AgentConfiguration({}))
-    event = ToolRequestEvent(
+    event = _request(
         model="model",
         tool_calls=[
             {
@@ -306,7 +331,10 @@ def test_tool_call_action_reports_missing_config_injected_arg() -> None:
     asyncio.run(process_tool_request(event, ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-1"] is False
     assert (
         response.error["call-1"]
@@ -325,7 +353,10 @@ def test_tool_call_action_reports_missing_memory_path() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-1"] is False
     assert (
         response.error["call-1"]
@@ -344,7 +375,10 @@ def test_tool_call_action_reports_nested_memory_path() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-1"] is False
     assert (
         response.error["call-1"]
@@ -362,7 +396,10 @@ def test_tool_call_action_reports_uninitialized_memory() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-1"] is False
     assert (
         response.error["call-1"]
@@ -376,7 +413,10 @@ def test_tool_call_action_exposes_wrong_config_type() -> None:
     asyncio.run(process_tool_request(tool_request(), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-1"] is False
     assert (
         response.error["call-1"] == "'_WrongConfig' object has no attribute 'conf_data'"
@@ -398,7 +438,7 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses == {
+    assert {k: v.to_result_block(k).text for k, v in response.responses.items()} == {
         "call-1": "tenant-1:order-call-1",
         "call-2": "tenant-1:order-call-2",
     }
@@ -455,7 +495,7 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
 
     _stub_gather(ctx, execute_all)
 
-    request = ToolRequestEvent(
+    request = _request(
         model="model-a",
         tool_calls=[
             {
@@ -524,7 +564,7 @@ def test_parallel_tool_calls_report_their_own_completion_timestamps() -> None:
         return [Outcome.success(first), Outcome.success(second)]
 
     _stub_gather(ctx, execute_all)
-    request = ToolRequestEvent(
+    request = _request(
         model="model-a",
         tool_calls=[
             {
@@ -694,7 +734,7 @@ def test_timeout_reports_failure_without_repeating_on_late_completion() -> None:
     try:
         asyncio.run(
             process_tool_request(
-                ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
+                _request(model="model-a", tool_calls=[trace_tool_call()]), ctx
             )
         )
         assert_occurrence_reports(ctx, ["call-1"], [], ["call-1"])
@@ -883,7 +923,7 @@ def test_partial_cache_replay_only_reports_start_for_invoked_tool() -> None:
 
 
 def parallel_trace_request() -> ToolRequestEvent:
-    return ToolRequestEvent(
+    return _request(
         model="model-a",
         tool_calls=[
             {
@@ -969,9 +1009,12 @@ def test_tool_call_action_records_parallel_outcome_failure() -> None:
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "ok"
+    assert response.responses["call-1"].to_result_block("call").text == "ok"
     assert response.success["call-1"] is True
-    assert response.responses["call-2"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-2"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.success["call-2"] is False
     assert response.error["call-2"] == "boom"
 
@@ -990,7 +1033,9 @@ def test_tool_call_action_records_parallel_tool_response_failure() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success == {"call-1": True, "call-2": False}
-    assert response.responses["call-2"] == "business failure"
+    assert (
+        response.responses["call-2"].to_result_block("call").text == "business failure"
+    )
     assert response.error["call-2"] == "business failure"
 
 
@@ -1020,7 +1065,10 @@ def test_tool_call_action_records_tool_execution_exception() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
-    assert response.responses["call-1"] == "Tool `query_order` execute failed."
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == "Tool `query_order` execute failed."
+    )
     assert response.error["call-1"] == "boom"
 
 
@@ -1051,7 +1099,7 @@ def test_tool_call_action_records_infrastructure_failure_for_all_parallel_tools(
 def tool_request(*call_ids: str) -> ToolRequestEvent:
     if not call_ids:
         call_ids = ("call-1",)
-    return ToolRequestEvent(
+    return _request(
         model="model",
         tool_calls=[
             {
@@ -1076,7 +1124,7 @@ def test_tool_call_reports_started_and_succeeded() -> None:
     tool.tool_type.return_value = ToolType.FUNCTION
     tool.call = MagicMock(return_value="result")
     ctx, sent_events = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
 
     asyncio.run(process_tool_request(request, ctx))
 
@@ -1084,7 +1132,6 @@ def test_tool_call_reports_started_and_succeeded() -> None:
     metadata = {
         ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID: str(request.id),
         ToolExecutionMetadataKeys.TOOL_CALL_ID: "call-1",
-        ToolExecutionMetadataKeys.EXTERNAL_ID: "external-call-1",
         ToolExecutionMetadataKeys.TOOL_TYPE: "function",
     }
     ctx.report_execution_created.assert_called_once_with(
@@ -1107,7 +1154,7 @@ def test_tool_call_reports_failed() -> None:
     tool.tool_type.return_value = ToolType.FUNCTION
     tool.call = MagicMock(side_effect=RuntimeError("boom"))
     ctx, _ = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
 
     asyncio.run(process_tool_request(request, ctx))
 
@@ -1126,12 +1173,14 @@ def test_tool_call_reports_explicit_tool_response_failure() -> None:
     tool.tool_type.return_value = ToolType.FUNCTION
     tool.call = MagicMock(return_value=ToolResponse.error("business failure"))
     ctx, sent_events = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
 
     asyncio.run(process_tool_request(request, ctx))
 
     response = ToolResponseEvent.from_event(sent_events[0])
-    assert response.responses["call-1"] == "business failure"
+    assert (
+        response.responses["call-1"].to_result_block("call").text == "business failure"
+    )
     assert response.success["call-1"] is False
     assert response.error["call-1"] == "business failure"
     ctx.report_execution_failed_at.assert_called_once()
@@ -1143,12 +1192,12 @@ def test_tool_call_preserves_empty_tool_response_error() -> None:
     tool.tool_type.return_value = ToolType.FUNCTION
     tool.call = MagicMock(return_value=ToolResponse.error(""))
     ctx, sent_events = trace_context(tool)
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
 
     asyncio.run(process_tool_request(request, ctx))
 
     response = ToolResponseEvent.from_event(sent_events[0])
-    assert response.responses["call-1"] == ""
+    assert response.responses["call-1"].to_result_block("call").text == ""
     assert response.success["call-1"] is False
     assert response.error["call-1"] == ""
 
@@ -1162,7 +1211,7 @@ def test_missing_tool_reports_creation_and_failure_without_start() -> None:
 
     asyncio.run(
         process_tool_request(
-            ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
+            _request(model="model-a", tool_calls=[trace_tool_call()]), ctx
         )
     )
 
@@ -1195,7 +1244,7 @@ def test_tool_call_includes_provider_metadata() -> None:
             return {ToolExecutionMetadataKeys.MCP_SERVER: "search_server"}
 
     ctx, _ = trace_context(MetadataTool())
-    request = ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()])
+    request = _request(model="model-a", tool_calls=[trace_tool_call()])
 
     asyncio.run(process_tool_request(request, ctx))
 
@@ -1225,7 +1274,7 @@ def test_tool_call_reports_registered_skill_metadata() -> None:
 
     asyncio.run(
         process_tool_request(
-            ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
+            _request(model="model-a", tool_calls=[trace_tool_call()]), ctx
         )
     )
 
@@ -1243,7 +1292,7 @@ def test_durable_cache_hit_does_not_record_tool_call_latency() -> None:
 
     asyncio.run(
         process_tool_request(
-            ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
+            _request(model="model-a", tool_calls=[trace_tool_call()]), ctx
         )
     )
 
@@ -1273,12 +1322,12 @@ def test_tool_execution_metadata_cannot_mutate_call_arguments() -> None:
 
     asyncio.run(
         process_tool_request(
-            ToolRequestEvent(model="model-a", tool_calls=[trace_tool_call()]), ctx
+            _request(model="model-a", tool_calls=[trace_tool_call()]), ctx
         )
     )
 
     response = ToolResponseEvent.from_event(sent_events[0])
-    assert response.responses["call-1"] == "flink"
+    assert response.responses["call-1"].to_result_block("call").text == "flink"
 
 
 def trace_context(tool: object) -> tuple[MagicMock, list[ToolResponseEvent]]:
@@ -1300,6 +1349,5 @@ def trace_context(tool: object) -> tuple[MagicMock, list[ToolResponseEvent]]:
 def trace_tool_call() -> dict:
     return {
         "id": "call-1",
-        "original_id": "external-call-1",
         "function": {"name": "search", "arguments": {"query": "flink"}},
     }

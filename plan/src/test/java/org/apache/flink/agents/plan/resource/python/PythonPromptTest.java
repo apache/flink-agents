@@ -101,8 +101,8 @@ public class PythonPromptTest {
         Map<String, Object> message = messageDump("user", null);
         Map<String, Object> serialized = Map.of("template", List.of(message));
         assertThatThrownBy(() -> PythonPrompt.fromSerializedMap(serialized))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("blocks must not be null");
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("blocks");
 
         message.remove("blocks");
         assertThat(
@@ -117,8 +117,7 @@ public class PythonPromptTest {
         Map<String, Object> message = new HashMap<>();
         message.put("role", role);
         message.put("blocks", blocks);
-        message.put("tool_calls", new ArrayList<>());
-        message.put("extra_args", new HashMap<>());
+        message.put("metadata", new HashMap<>());
         return message;
     }
 

@@ -21,7 +21,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+)
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.integrations.chat_models.watsonx.watsonx_chat_model import (
@@ -61,7 +67,7 @@ def test_watsonx_chat() -> None:
     assert response is not None
     assert response.text is not None
     assert response.text.strip() != ""
-    assert response.role == MessageRole.ASSISTANT
+    assert response.message.role == MessageRole.ASSISTANT
 
 
 def _mock_chat_response(
@@ -123,12 +129,12 @@ def test_watsonx_chat_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
         "top_p": 0.5,
     }
 
-    assert response.role == MessageRole.ASSISTANT
+    assert response.message.role == MessageRole.ASSISTANT
     assert response.text == "Hello there!"
-    assert response.extra_args["model_name"] == test_model
-    assert response.extra_args["promptTokens"] == 100
-    assert response.extra_args["completionTokens"] == 50
-    assert response.extra_args["finish_reason"] == "stop"
+    assert response.model == test_model
+    assert response.usage.prompt_tokens == 100
+    assert response.usage.completion_tokens == 50
+    assert response.finish_reason == "stop"
     model_inference.assert_called_once_with(
         model_id=test_model,
         api_client=api_client,
@@ -177,7 +183,7 @@ def test_watsonx_chat_carries_unknown_finish_reason_verbatim(
 
     response = llm.chat([ChatMessage.of(role=MessageRole.USER, content="Hello!")])
 
-    assert response.extra_args["finish_reason"] == "some_vendor_reason"
+    assert response.finish_reason == "some_vendor_reason"
 
 
 def test_watsonx_chat_no_finish_reason_key_when_none(
@@ -192,7 +198,7 @@ def test_watsonx_chat_no_finish_reason_key_when_none(
 
     response = llm.chat([ChatMessage.of(role=MessageRole.USER, content="Hello!")])
 
-    assert "finish_reason" not in response.extra_args
+    assert response.finish_reason is None
 
 
 def test_watsonx_tool_call_response_mocked(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -222,9 +228,9 @@ def test_watsonx_tool_call_response_mocked(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert len(response.tool_calls) == 1
     tool_call = response.tool_calls[0]
-    assert tool_call["function"]["name"] == "add"
-    assert tool_call["function"]["arguments"] == {"a": 1, "b": 2}
-    assert tool_call["original_id"] == "call_abc123"
+    assert tool_call.name == "add"
+    assert tool_call.input == {"a": 1, "b": 2}
+    assert tool_call.call_id == "call_abc123"
 
 
 def test_chat_retries_transient_failures(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -316,21 +322,14 @@ def test_convert_to_watsonx_messages_round_trip() -> None:
     messages = [
         ChatMessage.of(MessageRole.SYSTEM, "You are helpful."),
         ChatMessage.of(MessageRole.USER, "What is 1 + 2?"),
-        ChatMessage(
-            role=MessageRole.ASSISTANT,
-            tool_calls=[
-                {
-                    "id": "internal-id",
-                    "type": "function",
-                    "function": {"name": "add", "arguments": {"a": 1, "b": 2}},
-                    "original_id": "call_abc123",
-                }
-            ],
+        ChatMessage.assistant(
+            [ToolCallBlock(call_id="call_abc123", name="add", input={"a": 1, "b": 2})]
         ),
-        ChatMessage.of(
-            MessageRole.TOOL,
-            "3",
-            extra_args={"external_id": "call_abc123"},
+        ChatMessage.tool(
+            ToolResultBlock(
+                call_id="call_abc123",
+                blocks=[TextBlock(text="3")],
+            )
         ),
     ]
 

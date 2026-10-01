@@ -138,11 +138,17 @@ class FlinkAgentsLLM(LLMBase):
             )
             for msg in messages
         ]
-        response: ChatMessage = self._chat_model.chat(messages=chat_messages)
+        response = self._chat_model.chat(messages=chat_messages)
 
         # Capture token usage metrics if a queue is available.
-        if self._metric_records is not None and response.extra_args:
-            self._metric_records.put(response.extra_args)
+        if self._metric_records is not None and response.usage is not None:
+            self._metric_records.put(
+                {
+                    "model_name": response.model,
+                    "promptTokens": response.usage.prompt_tokens,
+                    "completionTokens": response.usage.completion_tokens,
+                }
+            )
 
         # Mem0 expects a plain string response from generate_response.
         # It handles JSON parsing internally via remove_code_blocks/json.loads.

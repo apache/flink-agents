@@ -37,8 +37,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
 
-import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
-
 /**
  * An agent that demonstrates parallel LLM invocations via fan-out of multiple {@link
  * ChatRequestEvent} events.
@@ -168,7 +166,7 @@ public class ParallelChatAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void handleResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        Object parsed = chatResponse.getResponse().getExtraArgs().get(STRUCTURED_OUTPUT);
+        Object parsed = chatResponse.getStructuredOutput();
 
         if (parsed instanceof CustomTypesAndResources.SummaryResponse) {
             CustomTypesAndResources.SummaryResponse summary =

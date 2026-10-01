@@ -25,6 +25,7 @@ from uuid import UUID
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.event import Event
 
 
@@ -123,7 +124,7 @@ class ChatResponseEvent(Event):
     ----------
     request_id : UUID
         The id of the request event.
-    response : ChatMessage
+    response : ChatResult
         The response from the chat model.
     retry_count : int
         The total number of retries across all tool call rounds.
@@ -146,7 +147,7 @@ class ChatResponseEvent(Event):
         self,
         request_id: UUID,
         status: str,
-        response: ChatMessage | None = None,
+        response: ChatResult | None = None,
         error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
@@ -155,7 +156,7 @@ class ChatResponseEvent(Event):
         if not (
             (
                 status == self.SUCCESS
-                and isinstance(response, ChatMessage)
+                and isinstance(response, ChatResult)
                 and error is None
             )
             or (
@@ -187,7 +188,7 @@ class ChatResponseEvent(Event):
     def success(
         cls,
         request_id: UUID,
-        response: ChatMessage,
+        response: ChatResult,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
     ) -> "ChatResponseEvent":
@@ -223,7 +224,7 @@ class ChatResponseEvent(Event):
         assert cls._REQUEST_ID in event.attributes
         response_raw = event.attributes.get(cls._RESPONSE)
         response = (
-            ChatMessage.model_validate(response_raw)
+            ChatResult.model_validate(response_raw)
             if isinstance(response_raw, dict)
             else response_raw
         )
@@ -235,6 +236,11 @@ class ChatResponseEvent(Event):
             retry_count=event.attributes.get(cls._RETRY_COUNT, 0),
             total_retry_wait_sec=event.attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
         )
+        result.attributes["structured_output"] = event.attributes.get(
+            "structured_output"
+        )
+        if "model_routing" in event.attributes:
+            result.attributes["model_routing"] = event.attributes["model_routing"]
         return result.reconstruct_from(event)
 
     @property
@@ -244,11 +250,16 @@ class ChatResponseEvent(Event):
         return UUID(val) if isinstance(val, str) else val
 
     @property
-    def response(self) -> ChatMessage:
+    def response(self) -> ChatResult:
         """Return the chat model response."""
         if self.is_failed:
             raise ChatResponseError(self.request_id, self.error)
         return self.get_attr(self._RESPONSE)
+
+    @property
+    def structured_output(self) -> Any:
+        """Parsed final output, separate from the provider response."""
+        return self.attributes.get("structured_output")
 
     @property
     def status(self) -> str:

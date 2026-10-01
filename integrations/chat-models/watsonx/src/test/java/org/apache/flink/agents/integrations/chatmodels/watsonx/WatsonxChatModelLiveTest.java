@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.watsonx;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -75,7 +76,7 @@ class WatsonxChatModelLiveTest {
     @Test
     @DisplayName("Basic chat returns a non-empty assistant message")
     void testBasicChat() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .chat(
                                 List.of(
@@ -85,16 +86,16 @@ class WatsonxChatModelLiveTest {
                                 List.of(),
                                 Map.of("model", model(), "max_tokens", 100));
 
-        assertThat(response.getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(response.getMessage().getRole()).isEqualTo(MessageRole.ASSISTANT);
         assertThat(response.getText()).isNotBlank();
-        assertThat(response.getExtraArgs().get("promptTokens")).isNotNull();
-        assertThat(response.getExtraArgs().get("completionTokens")).isNotNull();
+        assertThat(response.getUsage().getPromptTokens()).isNotNull();
+        assertThat(response.getUsage().getCompletionTokens()).isNotNull();
     }
 
     @Test
     @DisplayName("A POJO output schema comes back as content that deserializes into it")
     void testChatWithOutputSchema() throws Exception {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .chat(
                                 List.of(

@@ -30,6 +30,7 @@ from flink_agents.api.chat_message import (
     find_first_system_message,
 )
 from flink_agents.api.chat_models.subagent_tool import SubagentTool
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
@@ -116,6 +117,18 @@ class BaseChatModelConnection(Resource, ABC):
 
     One connection can be shared in multiple chat model setup.
     """
+
+    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
+        re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
+        re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
+        re.compile(
+            r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
+        ),
+        re.compile(
+            r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE
+        ),
+    )
 
     # Reject unrecognized constructor arguments instead of silently ignoring them
     # (pydantic's default extra="ignore"), so a misspelled or unsupported config
@@ -225,18 +238,6 @@ class BaseChatModelConnection(Resource, ABC):
         )
         raise NotImplementedError(msg)
 
-    DEFAULT_REASONING_PATTERNS: ClassVar[Tuple[re.Pattern[str], ...]] = (
-        re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE),
-        re.compile(r"<analysis>(.*?)</analysis>", re.DOTALL | re.IGNORECASE),
-        re.compile(r"<reasoning>(.*?)</reasoning>", re.DOTALL | re.IGNORECASE),
-        re.compile(
-            r"```(?:think|reasoning|thought)\s*\n(.*?)\n```", re.DOTALL | re.IGNORECASE
-        ),
-        re.compile(
-            r"(?:^|\n)Reasoning:\s*(.*?)(?:\n{2,}|$)", re.DOTALL | re.IGNORECASE
-        ),
-    )
-
     @staticmethod
     def _extract_reasoning(
         content: str,
@@ -282,7 +283,7 @@ class BaseChatModelConnection(Resource, ABC):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Direct communication with model service for chat conversation.
 
         Parameters
@@ -332,7 +333,7 @@ class BaseChatModelConnection(Resource, ABC):
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message
         """
 
@@ -503,7 +504,7 @@ class BaseChatModelSetup(Resource):
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Execute chat conversation.
 
         1. Apply prompt template (if any), filled from ``prompt_args``
@@ -524,7 +525,7 @@ class BaseChatModelSetup(Resource):
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message
         """
         # Apply prompt template

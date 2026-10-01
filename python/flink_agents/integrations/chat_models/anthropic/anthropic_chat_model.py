@@ -26,14 +26,26 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 logger = logging.getLogger(__name__)
+
+_ANTHROPIC_METADATA = "anthropic"
+_THINKING = "thinking"
+_REDACTED_THINKING = "redacted_thinking"
 
 
 def to_anthropic_tool(
@@ -55,34 +67,48 @@ def to_anthropic_tool(
 
 def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
     """Convert ChatMessage to Anthropic MessageParam format."""
+    blocks = (
+        message.blocks[0].blocks if message.role == MessageRole.TOOL else message.blocks
+    )
+    content = []
+    for block in blocks:
+        if isinstance(block, TextBlock):
+            content.append({"type": "text", "text": block.text})
+        elif isinstance(block, ToolCallBlock):
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": block.call_id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+            )
+        elif isinstance(block, ReasoningBlock):
+            native = block.metadata.get(_ANTHROPIC_METADATA)
+            if native:
+                native_block = dict(native)
+                if native_block.get("type") == _THINKING:
+                    native_block[_THINKING] = block.text
+                content.append(native_block)
+        else:
+            provider = "Anthropic"
+            raise UnsupportedContentBlockError.for_block(
+                provider, block, "unsupported message content"
+            )
     if message.role == MessageRole.TOOL:
+        result = message.blocks[0]
         return {
-            "role": MessageRole.USER.value,
+            "role": "user",
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": message.extra_args.get("external_id"),
-                    "content": message.text,
+                    "tool_use_id": result.call_id,
+                    "content": content,
+                    "is_error": result.is_error,
                 }
             ],
         }
-    elif message.role == MessageRole.ASSISTANT:
-        # Use original Anthropic content blocks if available for context
-        anthropic_content_blocks = message.extra_args.get("anthropic_content_blocks")
-        content = (
-            anthropic_content_blocks
-            if anthropic_content_blocks is not None
-            else message.text
-        )
-        return {
-            "role": message.role.value,
-            "content": content,  # type: ignore
-        }
-    else:
-        return {
-            "role": message.role.value,
-            "content": message.text,
-        }
+    return {"role": message.role.value, "content": content}
 
 
 def convert_to_anthropic_messages(
@@ -369,7 +395,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Direct communication with Anthropic model service for chat conversation.
 
         Parameters
@@ -392,7 +418,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message
         """
         anthropic_tools = None
@@ -487,63 +513,46 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        extra_args = {}
-        # Record token metrics if model name and usage are available
-        model_name = kwargs.get("model")
-        if model_name and message.usage:
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = message.usage.input_tokens
-            extra_args["completionTokens"] = message.usage.output_tokens
-
-        if message.stop_reason is not None:
-            # The shared chat action recognizes the OpenAI-compatible ``length`` value.
-            # Anthropic calls the same terminal condition ``max_tokens``.
-            extra_args["finish_reason"] = (
-                "length" if message.stop_reason == "max_tokens" else message.stop_reason
+        blocks = []
+        needs_prefix = prefill_applied
+        for block in message.content:
+            if block.type == "text":
+                text = ("{" if needs_prefix else "") + block.text
+                needs_prefix = False
+                blocks.append(TextBlock(text=text))
+            elif block.type == "tool_use":
+                blocks.append(
+                    ToolCallBlock(
+                        call_id=block.id or str(uuid.uuid4()),
+                        name=block.name,
+                        input=block.input,
+                    )
+                )
+            elif block.type in (_THINKING, _REDACTED_THINKING):
+                native = block.model_dump(mode="json")
+                text = native.pop(_THINKING, None)
+                blocks.append(
+                    ReasoningBlock(text=text, metadata={_ANTHROPIC_METADATA: native})
+                )
+            else:
+                msg = f"Unsupported Anthropic response block: {block.type}"
+                raise ValueError(msg)
+        if needs_prefix:
+            blocks.insert(0, TextBlock(text="{"))
+        return ChatResult(
+            message=ChatMessage.assistant(blocks),
+            model=kwargs.get("model"),
+            response_id=message.id,
+            usage=TokenUsage(
+                prompt_tokens=message.usage.input_tokens,
+                completion_tokens=message.usage.output_tokens,
             )
-
-        # A response may lead with a non-text block (e.g. a tool_use block when
-        # the model calls a tool without any preface), so pick the first text
-        # block instead of assuming content[0] is text.
-        text = next(
-            (block.text for block in message.content if block.type == "text"), ""
+            if message.usage
+            else None,
+            finish_reason="length"
+            if message.stop_reason == "max_tokens"
+            else message.stop_reason,
         )
-
-        # The response continues the prefilled "{" rather than repeating it, so the
-        # document is only complete once it is put back. Keyed on the decision actually
-        # applied above: reconstructing on any other signal either prepends a stray "{"
-        # or drops a required one, and the response itself gives no sign of either.
-        if prefill_applied:
-            text = "{" + text
-
-        if message.stop_reason == "tool_use":
-            tool_calls = [
-                {
-                    "id": uuid.uuid4(),
-                    "type": "function",
-                    "function": {
-                        "name": content_block.name,
-                        "arguments": content_block.input,
-                    },
-                    "original_id": content_block.id,
-                }
-                for content_block in message.content
-                if content_block.type == "tool_use"
-            ]
-
-            extra_args["anthropic_content_blocks"] = message.content
-            return ChatMessage.of(
-                MessageRole(message.role),
-                text,
-                tool_calls=tool_calls,
-                extra_args=extra_args,
-            )
-        else:
-            return ChatMessage.of(
-                MessageRole(message.role),
-                text,
-                extra_args=extra_args,
-            )
 
     @override
     def close(self) -> None:

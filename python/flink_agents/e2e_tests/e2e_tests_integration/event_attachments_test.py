@@ -82,9 +82,7 @@ def test_python_event_attachments_roundtrip_on_flink() -> None:
     env = StreamExecutionEnvironment.get_execution_environment(config)
     env.set_python_executable(sys.executable)
     env.set_parallelism(1)
-    input_stream = env.from_collection(
-        [{"key": "k1", "value": {"message": "hello"}}]
-    )
+    input_stream = env.from_collection([{"key": "k1", "value": {"message": "hello"}}])
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output = (
         agents_env.from_datastream(input_stream, _KeySelector())

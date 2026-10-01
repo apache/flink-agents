@@ -24,6 +24,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -39,13 +41,21 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import software.amazon.awssdk.core.SdkBytes;
 import software.amazon.awssdk.core.document.Document;
+import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseOutput;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
+import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatType;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
@@ -89,9 +99,8 @@ class BedrockChatModelConnectionTest {
     }
 
     private static ChatMessage toolMessage(String externalId, String content) {
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("externalId", externalId);
-        return new ChatMessage(MessageRole.TOOL, content, extraArgs);
+        return ChatMessage.tool(
+                new ToolResultBlock(externalId, List.of(new TextBlock(content)), false));
     }
 
     @Test
@@ -205,39 +214,35 @@ class BedrockChatModelConnectionTest {
     @Test
     @DisplayName("stripMarkdownFences: normal text with braces is not modified")
     void testStripMarkdownFencesPreservesTextWithBraces() {
-        assertThat(
-                        BedrockChatModelConnection.stripMarkdownFences(
-                                "Use the format {key: value} for config"))
+        assertThat(BedrockChatUtils.stripMarkdownFences("Use the format {key: value} for config"))
                 .isEqualTo("Use the format {key: value} for config");
     }
 
     @Test
     @DisplayName("stripMarkdownFences: clean JSON passes through")
     void testStripMarkdownFencesCleanJson() {
-        assertThat(
-                        BedrockChatModelConnection.stripMarkdownFences(
-                                "{\"score\": 5, \"reasons\": []}"))
+        assertThat(BedrockChatUtils.stripMarkdownFences("{\"score\": 5, \"reasons\": []}"))
                 .isEqualTo("{\"score\": 5, \"reasons\": []}");
     }
 
     @Test
     @DisplayName("stripMarkdownFences: strips ```json fences")
     void testStripMarkdownFencesJsonBlock() {
-        assertThat(BedrockChatModelConnection.stripMarkdownFences("```json\n{\"score\": 5}\n```"))
+        assertThat(BedrockChatUtils.stripMarkdownFences("```json\n{\"score\": 5}\n```"))
                 .isEqualTo("{\"score\": 5}");
     }
 
     @Test
     @DisplayName("stripMarkdownFences: strips plain ``` fences")
     void testStripMarkdownFencesPlainBlock() {
-        assertThat(BedrockChatModelConnection.stripMarkdownFences("```\n{\"id\": \"P001\"}\n```"))
+        assertThat(BedrockChatUtils.stripMarkdownFences("```\n{\"id\": \"P001\"}\n```"))
                 .isEqualTo("{\"id\": \"P001\"}");
     }
 
     @Test
     @DisplayName("stripMarkdownFences: null returns null")
     void testStripMarkdownFencesNull() {
-        assertThat(BedrockChatModelConnection.stripMarkdownFences(null)).isNull();
+        assertThat(BedrockChatUtils.stripMarkdownFences(null)).isNull();
     }
 
     @Test
@@ -670,5 +675,39 @@ class BedrockChatModelConnectionTest {
                                         outputSchema)
                                 .outputConfig())
                 .isNull();
+    }
+
+    @Test
+    void testReasoningRoundTripPreservesSignatureAndRedactedData() throws Exception {
+        ContentBlock signed =
+                ContentBlock.fromReasoningContent(
+                        software.amazon.awssdk.services.bedrockruntime.model.ReasoningContentBlock
+                                .fromReasoningText(
+                                        software.amazon.awssdk.services.bedrockruntime.model
+                                                .ReasoningTextBlock.builder()
+                                                .text("Think first")
+                                                .signature("signature")
+                                                .build()));
+        ContentBlock redacted =
+                ContentBlock.fromReasoningContent(
+                        software.amazon.awssdk.services.bedrockruntime.model.ReasoningContentBlock
+                                .fromRedactedContent(SdkBytes.fromByteArray(new byte[] {1, 2, 3})));
+        ConverseResponse response =
+                ConverseResponse.builder()
+                        .output(
+                                ConverseOutput.fromMessage(
+                                        Message.builder()
+                                                .role(ConversationRole.ASSISTANT)
+                                                .content(signed, redacted)
+                                                .build()))
+                        .build();
+        BedrockChatModelConnection connection = connection();
+        ChatMessage message = BedrockChatUtils.convertResponse(response);
+        assertThat(message.getBlocks()).hasSize(2);
+        assertThat(message.getText()).isEmpty();
+        message = ChatMessage.fromMap(message.toMap());
+        ConverseRequest replay =
+                connection.buildRequest(List.of(message), List.of(), Map.of(), null);
+        assertThat(replay.messages().get(0).content()).containsExactly(signed, redacted);
     }
 }

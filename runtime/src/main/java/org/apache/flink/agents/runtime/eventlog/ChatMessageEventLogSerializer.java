@@ -24,16 +24,17 @@ import com.fasterxml.jackson.databind.Module;
 import com.fasterxml.jackson.databind.SerializerProvider;
 import com.fasterxml.jackson.databind.module.SimpleModule;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
 
 import java.io.IOException;
 
 /**
  * The Event Log's {@link ChatMessage} serializer: each content block is written through its own
- * {@link ContentBlock#sanitize()} projection, so media payload bytes and unsanitized URLs never
- * reach the log — at any log level, VERBOSE included. Everything else (role, tool calls, extra
- * args) keeps the regular shape, and the level-dependent {@link JsonTruncator} still applies to the
- * result afterwards at STANDARD.
+ * {@link ContentBlock#sanitize()} projection, so inline media payloads are omitted and media source
+ * URLs are sanitized at every log level, including VERBOSE. Other fields, including reasoning, tool
+ * inputs, and metadata, keep their regular shape, and the level-dependent {@link JsonTruncator}
+ * still applies to the result afterwards at STANDARD.
  *
  * <p>This serializer is registered only on the Event Log mappers via {@link #module()}; the global
  * {@link ChatMessage} wire format — the Java/Python bridge, event serialization, state recovery —
@@ -47,7 +48,26 @@ public class ChatMessageEventLogSerializer extends JsonSerializer<ChatMessage> {
     /** The module Event Log mappers register to apply the sanitized {@link ChatMessage} shape. */
     public static Module module() {
         return new SimpleModule("flink-agents-event-log-chat-messages")
-                .addSerializer(ChatMessage.class, new ChatMessageEventLogSerializer());
+                .addSerializer(ChatMessage.class, new ChatMessageEventLogSerializer())
+                .addSerializer(
+                        ChatResult.class,
+                        new JsonSerializer<ChatResult>() {
+                            @Override
+                            public void serialize(
+                                    ChatResult response,
+                                    JsonGenerator gen,
+                                    SerializerProvider serializers)
+                                    throws IOException {
+                                gen.writeStartObject();
+                                gen.writeObjectField("message", response.getMessage());
+                                gen.writeStringField("model", response.getModel());
+                                gen.writeStringField("response_id", response.getResponseId());
+                                gen.writeObjectField("usage", response.getUsage());
+                                gen.writeObjectField("finish_reason", response.getFinishReason());
+                                gen.writeObjectField("metadata", response.getMetadata());
+                                gen.writeEndObject();
+                            }
+                        });
     }
 
     @Override
@@ -60,8 +80,7 @@ public class ChatMessageEventLogSerializer extends JsonSerializer<ChatMessage> {
             gen.writeObject(block.sanitize());
         }
         gen.writeEndArray();
-        gen.writeObjectField("tool_calls", message.getToolCalls());
-        gen.writeObjectField("extra_args", message.getExtraArgs());
+        gen.writeObjectField("metadata", message.getMetadata());
         gen.writeEndObject();
     }
 }

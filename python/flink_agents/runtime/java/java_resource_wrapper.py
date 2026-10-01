@@ -90,14 +90,7 @@ class JavaPrompt(Prompt):
             j_MessageRole.fromValue(role.value), kwargs
         )
         chatMessages = [
-            ChatMessage.model_validate(
-                {
-                    "role": MessageRole(j_chat_message.getRole().getValue()),
-                    "blocks": j_chat_message.getBlocksAsMaps(),
-                    "tool_calls": j_chat_message.getToolCalls(),
-                    "extra_args": j_chat_message.getExtraArgs(),
-                }
-            )
+            ChatMessage.model_validate(j_chat_message.toMap())
             for j_chat_message in j_chat_messages
         ]
         return chatMessages
@@ -127,7 +120,9 @@ class JavaResourceContextWrapper(ResourceContext):
         so that a Python chat model running inside a Java agent can use skills
         declared on the Java side.
         """
-        result = self._j_resource_adapter.generateAvailableSkillsPrompt(list(skill_names))
+        result = self._j_resource_adapter.generateAvailableSkillsPrompt(
+            list(skill_names)
+        )
         return result if result is not None else ""
 
     @override

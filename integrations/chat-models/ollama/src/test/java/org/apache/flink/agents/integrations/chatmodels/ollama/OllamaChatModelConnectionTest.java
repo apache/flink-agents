@@ -26,6 +26,8 @@ import io.github.ollama4j.tools.Tools;
 import io.github.ollama4j.utils.Utils;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -185,9 +187,14 @@ class OllamaChatModelConnectionTest {
         List<ChatMessage> history =
                 List.of(
                         new ChatMessage(MessageRole.USER, "Weather and time in Paris?"),
-                        ChatMessage.assistant("", List.of(call, jsonArgumentsCall)),
-                        new ChatMessage(MessageRole.TOOL, "sunny"),
-                        new ChatMessage(MessageRole.TOOL, "10:00"));
+                        ChatMessage.assistant(
+                                List.of(
+                                        new ToolCallBlock(
+                                                "call-1", "get_weather", Map.of("city", "Paris")),
+                                        new ToolCallBlock(
+                                                "call-2", "get_time", Map.of("zone", "CET")))),
+                        ChatMessage.tool(ToolResponse.success("sunny").toResultBlock("call-1")),
+                        ChatMessage.tool(ToolResponse.success("10:00").toResultBlock("call-2")));
 
         OllamaChatRequest request =
                 connection().buildRequest(history, List.of(), params("qwen3:4b"), null);
@@ -296,5 +303,59 @@ class OllamaChatModelConnectionTest {
         // all, so the guard the sibling connections need for their allowlists would be a silent
         // behavior change here.
         assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    }
+
+    @Test
+    void parsesEnvelopeAndPreservesProviderCallId() throws Exception {
+        io.github.ollama4j.models.chat.OllamaChatResponseModel wire =
+                MAPPER.readValue(
+                        "{\"message\":{\"role\":\"assistant\",\"content\":\"answer\",\"thinking\":\"private\",\"tool_calls\":[{\"id\":\"provider-id\",\"function\":{\"name\":\"add\",\"arguments\":{\"x\":1}}}]},\"done_reason\":\"stop\",\"prompt_eval_count\":0}",
+                        io.github.ollama4j.models.chat.OllamaChatResponseModel.class);
+        org.apache.flink.agents.api.chat.messages.ChatResult response =
+                connection().convertResponse(wire, "local", true);
+        assertThat(response.getText()).isEqualTo("answer");
+        assertThat(response.getToolCalls().get(0).getCallId()).isEqualTo("provider-id");
+        assertThat(response.getUsage().getPromptTokens()).isZero();
+        assertThat(response.getUsage().getCompletionTokens()).isNull();
+        assertThat(response.getFinishReason()).isEqualTo("stop");
+        assertThat(response.getMetadata()).isEmpty();
+        ReasoningBlock reasoning = (ReasoningBlock) response.getMessage().getBlocks().get(0);
+        reasoning.getMetadata().put("custom", "retained in history");
+        JsonNode replay =
+                MAPPER.valueToTree(
+                        connection()
+                                .buildRequest(
+                                        List.of(response.getMessage()),
+                                        List.of(),
+                                        params("local"),
+                                        null));
+        assertThat(replay.at("/messages/0/content").asText()).isEqualTo("answer");
+        assertThat(replay.at("/messages/0/thinking").asText()).isNotEqualTo("private");
+        wire.setDoneReason("length");
+        assertThat(connection().convertResponse(wire, "local", true).getFinishReason())
+                .isEqualTo("length");
+    }
+
+    @ParameterizedTest
+    @NullAndEmptySource
+    @ValueSource(strings = {"stop", "tool_calls", "length", "content_filter", "some_vendor_reason"})
+    void preservesFinishReasonRegardlessOfToolCalls(String reason) throws Exception {
+        for (String toolCalls :
+                List.of(
+                        "",
+                        ",\"tool_calls\":[{\"function\":{\"name\":\"add\",\"arguments\":{\"x\":1}}}]")) {
+            io.github.ollama4j.models.chat.OllamaChatResponseModel wire =
+                    MAPPER.readValue(
+                            "{\"message\":{\"role\":\"assistant\",\"content\":\"answer\""
+                                    + toolCalls
+                                    + "}}",
+                            io.github.ollama4j.models.chat.OllamaChatResponseModel.class);
+            wire.setDoneReason(reason);
+            org.apache.flink.agents.api.chat.messages.ChatResult response =
+                    connection().convertResponse(wire, "local", true);
+            assertThat(response.getFinishReason()).isEqualTo(reason);
+            assertThat(response.getMetadata()).isEmpty();
+            assertThat(response.getToolCalls()).hasSize(toolCalls.isEmpty() ? 0 : 1);
+        }
     }
 }

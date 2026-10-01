@@ -40,6 +40,7 @@ import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
@@ -296,7 +297,7 @@ public class ToolCallActionTest {
         Map<String, Object> arguments =
                 new HashMap<>(Map.of("orderId", "order-1", "tenant_id", "model-tenant"));
         ToolRequestEvent event =
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 Map.of(
@@ -357,7 +358,7 @@ public class ToolCallActionTest {
                         .withSensoryMemory(Map.of());
 
         ToolRequestEvent request =
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 Map.of(
@@ -535,7 +536,7 @@ public class ToolCallActionTest {
                 };
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 toolCall("missingTool", "missing-call", "order-0"),
@@ -672,7 +673,7 @@ public class ToolCallActionTest {
     }
 
     private static ToolRequestEvent toolRequest(String toolName) {
-        return new ToolRequestEvent("model", List.of(toolCall(toolName, "call-1", "order-1")));
+        return ChatFixtures.request("model", List.of(toolCall(toolName, "call-1", "order-1")));
     }
 
     private static ToolRequestEvent toolRequest(String toolName, String... ids) {
@@ -680,7 +681,7 @@ public class ToolCallActionTest {
         for (int i = 0; i < ids.length; i++) {
             toolCalls.add(toolCall(toolName, ids[i], "order-" + (i + 1)));
         }
-        return new ToolRequestEvent("model", toolCalls);
+        return ChatFixtures.request("model", toolCalls);
     }
 
     private static Map<String, Object> toolCall(String toolName, String id, String orderId) {

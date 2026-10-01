@@ -34,6 +34,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -95,16 +96,14 @@ class ToolCallActionReportTest {
         function.put("arguments", Map.of("query", "flink"));
         Map<String, Object> toolCall = new LinkedHashMap<>();
         toolCall.put("id", "call-1");
-        toolCall.put("original_id", "external-call-1");
         toolCall.put("function", function);
-        ToolRequestEvent request = new ToolRequestEvent("test-model", List.of(toolCall));
+        ToolRequestEvent request = ChatFixtures.request("test-model", List.of(toolCall));
 
         ToolCallAction.processToolRequest(request, ctx);
 
         Map<String, Object> metadata = new LinkedHashMap<>();
         metadata.put(ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID, request.getId().toString());
         metadata.put(ToolExecutionMetadataKeys.TOOL_CALL_ID, "call-1");
-        metadata.put(ToolExecutionMetadataKeys.EXTERNAL_ID, "external-call-1");
         metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, ToolType.MCP.getValue());
         metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, "search-server");
         ExecutionReporter reporter = (ExecutionReporter) ctx;
@@ -150,7 +149,7 @@ class ToolCallActionReportTest {
         Map<String, Object> toolCall = new LinkedHashMap<>();
         toolCall.put("id", "call-1");
         toolCall.put("function", function);
-        ToolRequestEvent request = new ToolRequestEvent("test-model", List.of(toolCall));
+        ToolRequestEvent request = ChatFixtures.request("test-model", List.of(toolCall));
 
         ToolCallAction.processToolRequest(request, ctx);
 
@@ -189,7 +188,7 @@ class ToolCallActionReportTest {
         assertThatThrownBy(
                         () ->
                                 ToolCallAction.processToolRequest(
-                                        new ToolRequestEvent(
+                                        ChatFixtures.request(
                                                 "test-model", List.of(toolCall("call-1"))),
                                         ctx))
                 .isSameAs(failure);
@@ -261,7 +260,7 @@ class ToolCallActionReportTest {
         toolCall.put("function", function);
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent("test-model", List.of(toolCall)), ctx);
+                ChatFixtures.request("test-model", List.of(toolCall)), ctx);
 
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         ArgumentCaptor<Map<String, Object>> createdMetadata = ArgumentCaptor.forClass(Map.class);
@@ -308,7 +307,7 @@ class ToolCallActionReportTest {
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(ctx).sendEvent(any());
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "test-model",
                         List.of(toolCall("call-1"), toolCall("call-2"), toolCall("call-3"))),
                 ctx);
@@ -380,7 +379,7 @@ class ToolCallActionReportTest {
         try (MockedStatic<Instant> clock = mockStatic(Instant.class)) {
             clock.when(Instant::now).thenAnswer(invocation -> now.get());
             ToolCallAction.processToolRequest(
-                    new ToolRequestEvent(
+                    ChatFixtures.request(
                             "test-model", List.of(toolCall("call-1"), toolCall("call-2"))),
                     ctx);
         }
@@ -571,7 +570,7 @@ class ToolCallActionReportTest {
 
         try {
             ToolCallAction.processToolRequest(
-                    new ToolRequestEvent("test-model", List.of(toolCall("call-1"))), ctx);
+                    ChatFixtures.request("test-model", List.of(toolCall("call-1"))), ctx);
             assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1"));
             ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
             verify((ExecutionReporter) ctx)
@@ -799,7 +798,7 @@ class ToolCallActionReportTest {
     }
 
     private static ToolRequestEvent parallelRequest() {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "test-model", List.of(toolCall("call-1"), toolCall("call-2"), toolCall("call-3")));
     }
 
@@ -879,7 +878,7 @@ class ToolCallActionReportTest {
         Map<String, Object> toolCall = new LinkedHashMap<>();
         toolCall.put("id", "call-1");
         toolCall.put("function", function);
-        ToolRequestEvent request = new ToolRequestEvent("test-model", List.of(toolCall));
+        ToolRequestEvent request = ChatFixtures.request("test-model", List.of(toolCall));
 
         ToolCallAction.processToolRequest(request, ctx);
 
@@ -914,7 +913,7 @@ class ToolCallActionReportTest {
         toolCall.put("function", function);
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent("test-model", List.of(toolCall)), ctx);
+                ChatFixtures.request("test-model", List.of(toolCall)), ctx);
 
         verify(tool, never()).call(any());
         ExecutionReporter reporter = (ExecutionReporter) ctx;
@@ -942,7 +941,7 @@ class ToolCallActionReportTest {
         assertThatThrownBy(
                         () ->
                                 ToolCallAction.processToolRequest(
-                                        new ToolRequestEvent(
+                                        ChatFixtures.request(
                                                 "test-model", List.of(toolCall("call-1"))),
                                         ctx))
                 .isInstanceOf(InterruptedException.class);
@@ -978,7 +977,7 @@ class ToolCallActionReportTest {
         assertThatThrownBy(
                         () ->
                                 ToolCallAction.processToolRequest(
-                                        new ToolRequestEvent(
+                                        ChatFixtures.request(
                                                 "test-model",
                                                 List.of(toolCall("call-1"), toolCall("call-2"))),
                                         ctx))
@@ -1013,7 +1012,7 @@ class ToolCallActionReportTest {
         toolCall.put("function", function);
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent("test-model", List.of(toolCall)), ctx);
+                ChatFixtures.request("test-model", List.of(toolCall)), ctx);
 
         ToolResponseEvent responseEvent = (ToolResponseEvent) sentEvents.get(0);
         assertThat(responseEvent.getResponses().get("call-1").getResult()).isEqualTo("flink");

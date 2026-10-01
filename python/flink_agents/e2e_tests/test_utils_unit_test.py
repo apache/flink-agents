@@ -39,9 +39,10 @@ def _tool_request_record(tool_calls: list) -> dict:
 
 def _function_tool_call(name: str, arguments: object) -> dict:
     return {
-        "id": "00000000-0000-0000-0000-0000000000aa",
-        "type": "function",
-        "function": {"name": name, "arguments": arguments},
+        "call_id": "00000000-0000-0000-0000-0000000000aa",
+        "type": "tool_call",
+        "name": name,
+        "input": arguments,
     }
 
 
@@ -53,7 +54,7 @@ def _write_log(log_dir: Path, records: list) -> None:
 
 
 def test_collect_tool_invocations(tmp_path: Path) -> None:
-    """Parser extracts nested function.name/function.arguments from a tool request line.
+    """Parser extracts tool call name/input from a tool request line.
 
     Records with a different eventType are ignored.
     """

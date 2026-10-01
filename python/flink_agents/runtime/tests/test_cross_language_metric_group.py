@@ -138,7 +138,9 @@ def test_set_metric_group_wraps_java_metric_group():
     set_metric_group(python_resource, java_metric_group.j_metric_group)
 
     assert isinstance(python_resource.metric_group, FlinkMetricGroup)
-    assert python_resource.metric_group._j_metric_group is java_metric_group.j_metric_group
+    assert (
+        python_resource.metric_group._j_metric_group is java_metric_group.j_metric_group
+    )
 
 
 def test_set_metric_group_forwards_none():

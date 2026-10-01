@@ -17,43 +17,32 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.gemini;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import com.google.genai.Client;
-import com.google.genai.types.Candidate;
 import com.google.genai.types.Content;
-import com.google.genai.types.FunctionCall;
-import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.GenerateContentResponse;
 import com.google.genai.types.GenerateContentResponseUsageMetadata;
 import com.google.genai.types.HttpOptions;
-import com.google.genai.types.Part;
-import com.google.genai.types.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
@@ -105,8 +94,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
     private static final Logger LOG = LoggerFactory.getLogger(GeminiChatModelConnection.class);
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-
     // Models for which Google documents native structured output.
     // Source of truth: each model's Capabilities row at
     // https://ai.google.dev/gemini-api/docs/models
@@ -129,7 +116,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     private static final Set<String> NON_TEXT_MODALITY_MARKERS =
             Set.of("-image", "-tts", "-audio", "-live", "-transcribe", "-embedding", "-omni");
 
-    private final ObjectMapper mapper = new ObjectMapper();
     private final Client client;
     private final String defaultModel;
 
@@ -252,7 +238,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments) {
@@ -273,7 +259,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * without the schema.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments,
@@ -289,17 +275,15 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             throw new IllegalArgumentException("model name must be provided for Gemini.");
         }
 
-        // ChatModelAction emits TOOL messages with only `externalId` in extraArgs (matching the
-        // sibling Anthropic/OpenAI connectors). Gemini's functionResponse part however requires the
-        // function name. Build a tool-call-id -> name lookup from prior ASSISTANT turns so the TOOL
-        // branch in convertToContent can recover the name from `externalId`.
-        Map<String, String> toolCallIdToName = buildToolCallIdToNameMap(messages);
+        // Gemini requires the function name in tool results. Recover it from the matching
+        // assistant tool call using the shared call ID.
+        Map<String, String> toolCallIdToName = GeminiChatUtils.buildToolCallIdToNameMap(messages);
 
         try {
             List<Content> contents =
                     messages.stream()
                             .filter(m -> m.getRole() != MessageRole.SYSTEM)
-                            .map(m -> convertToContent(m, toolCallIdToName))
+                            .map(m -> GeminiChatUtils.convertToContent(m, toolCallIdToName))
                             .collect(Collectors.toList());
 
             GenerateContentConfig config =
@@ -307,11 +291,25 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
             GenerateContentResponse response =
                     client.models.generateContent(modelName, contents, config);
-            ChatMessage result = convertResponse(response);
+            ChatMessage result = GeminiChatUtils.convertResponse(response);
 
-            recordUsage(result, modelName, response);
-
-            return result;
+            GenerateContentResponseUsageMetadata usage = response.usageMetadata().orElse(null);
+            return new ChatResult(
+                    result,
+                    modelName,
+                    null,
+                    usage == null
+                            ? null
+                            : new TokenUsage(
+                                    usage.promptTokenCount().map(Integer::longValue).orElse(null),
+                                    usage.candidatesTokenCount()
+                                            .map(Integer::longValue)
+                                            .orElse(null)),
+                    response.candidates()
+                            .flatMap(c -> c.get(0).finishReason())
+                            .map(Object::toString)
+                            .orElse(null),
+                    null);
         } catch (IllegalArgumentException e) {
             // Preserve the validation-error contract: surface IAE unwrapped, consistent with the
             // constructor.
@@ -319,37 +317,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Gemini generateContent API.", e);
         }
-    }
-
-    // Package-visible for testing. Walks ASSISTANT messages and records every tool-call's
-    // `original_id` (or `id`) -> function `name` mapping so TOOL turns can resolve their name from
-    // `externalId` alone (which is what the runtime supplies).
-    static Map<String, String> buildToolCallIdToNameMap(List<ChatMessage> messages) {
-        Map<String, String> map = new HashMap<>();
-        for (ChatMessage message : messages) {
-            if (message.getRole() != MessageRole.ASSISTANT) {
-                continue;
-            }
-            List<Map<String, Object>> toolCalls = message.getToolCalls();
-            if (toolCalls == null) {
-                continue;
-            }
-            for (Map<String, Object> call : toolCalls) {
-                Object id = call.get("original_id");
-                if (id == null) {
-                    id = call.get("id");
-                }
-                Object function = call.get("function");
-                if (id == null || !(function instanceof Map)) {
-                    continue;
-                }
-                Object name = ((Map<?, ?>) function).get("name");
-                if (name != null) {
-                    map.put(id.toString(), name.toString());
-                }
-            }
-        }
-        return map;
     }
 
     // Package-visible for unit testing of the request-config assembly. modelName is passed
@@ -363,7 +330,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             Object outputSchema) {
         GenerateContentConfig.Builder builder = GenerateContentConfig.builder();
 
-        Content systemInstruction = extractSystemInstruction(messages);
+        Content systemInstruction = GeminiChatUtils.extractSystemInstruction(messages);
         if (systemInstruction != null) {
             builder.systemInstruction(systemInstruction);
         }
@@ -386,7 +353,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         }
 
         if (tools != null && !tools.isEmpty()) {
-            builder.tools(List.of(convertTools(tools)));
+            builder.tools(List.of(GeminiChatUtils.convertTools(tools)));
         }
 
         // Native structured output applies only for a POJO Class schema; any other schema form,
@@ -522,227 +489,5 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                     break;
             }
         }
-    }
-
-    private Tool convertTools(List<org.apache.flink.agents.api.tools.Tool> tools) {
-        List<FunctionDeclaration> declarations = new ArrayList<>(tools.size());
-        for (org.apache.flink.agents.api.tools.Tool tool : tools) {
-            ToolMetadata metadata = tool.getMetadata();
-            FunctionDeclaration.Builder builder =
-                    FunctionDeclaration.builder()
-                            .name(metadata.getName())
-                            .description(metadata.getDescription());
-
-            String schema = metadata.getInputSchema();
-            if (schema != null && !schema.isBlank()) {
-                builder.parametersJsonSchema(parseSchema(schema));
-            }
-
-            declarations.add(builder.build());
-        }
-        return Tool.builder().functionDeclarations(declarations).build();
-    }
-
-    private Content extractSystemInstruction(List<ChatMessage> messages) {
-        Part[] parts =
-                messages.stream()
-                        .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                        .map(m -> Part.fromText(Optional.ofNullable(m.getText()).orElse("")))
-                        .toArray(Part[]::new);
-        return parts.length == 0 ? null : Content.fromParts(parts);
-    }
-
-    // Package-visible for unit testing of the message conversion.
-    Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
-        MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getText()).orElse("");
-
-        switch (role) {
-            case USER:
-                return Content.builder()
-                        .role("user")
-                        .parts(List.of(Part.fromText(content)))
-                        .build();
-
-            case ASSISTANT:
-                List<Part> parts = new ArrayList<>();
-                if (!content.isEmpty()) {
-                    parts.add(Part.fromText(content));
-                }
-                List<Map<String, Object>> toolCalls = message.getToolCalls();
-                if (toolCalls != null) {
-                    for (Map<String, Object> call : toolCalls) {
-                        parts.add(convertToolCallToPart(call));
-                    }
-                }
-                if (parts.isEmpty()) {
-                    parts.add(Part.fromText(""));
-                }
-                return Content.builder().role("model").parts(parts).build();
-
-            case TOOL:
-                String functionName = resolveToolFunctionName(message, toolCallIdToName);
-                Map<String, Object> responseMap = new LinkedHashMap<>();
-                responseMap.put("result", content);
-                return Content.builder()
-                        .role("user")
-                        .parts(List.of(Part.fromFunctionResponse(functionName, responseMap)))
-                        .build();
-
-            default:
-                throw new IllegalArgumentException("Unsupported role: " + role);
-        }
-    }
-
-    private static String resolveToolFunctionName(
-            ChatMessage toolMessage, Map<String, String> toolCallIdToName) {
-        // 1. Honor an explicit `name` if the caller supplied one.
-        Object explicit = toolMessage.getExtraArgs().get("name");
-        if (explicit != null) {
-            return explicit.toString();
-        }
-        // 2. Otherwise look up the function name via the tool-call id the runtime supplies as
-        // `externalId` (set equal to the assistant turn's `original_id` by ToolCallAction).
-        Object externalId = toolMessage.getExtraArgs().get("externalId");
-        if (externalId != null && toolCallIdToName != null) {
-            String name = toolCallIdToName.get(externalId.toString());
-            if (name != null) {
-                return name;
-            }
-        }
-        throw new IllegalArgumentException(
-                "Tool message must carry the function name: provide either 'name' in extraArgs, or"
-                        + " an 'externalId' matching a prior ASSISTANT tool-call's id.");
-    }
-
-    // Package-visible for unit testing of the tool-call round-trip.
-    Part convertToolCallToPart(Map<String, Object> call) {
-        Map<String, Object> functionPayload = toMap(call.get("function"));
-        String functionName = String.valueOf(functionPayload.get("name"));
-        Map<String, Object> argsMap = toMap(functionPayload.get("arguments"));
-
-        FunctionCall.Builder fcBuilder = FunctionCall.builder().name(functionName).args(argsMap);
-        Object originalId = call.get("original_id");
-        // A synthetic id exists only for runtime correlation (the API omitted the native id);
-        // echoing a fabricated id back to Gemini would claim the model produced it.
-        if (originalId != null && !Boolean.TRUE.equals(call.get("synthetic_id"))) {
-            fcBuilder.id(originalId.toString());
-        }
-
-        Part.Builder partBuilder = Part.builder().functionCall(fcBuilder.build());
-        // Echo back the thoughtSignature captured from the model response (Gemini 3 requirement).
-        Object signature = call.get("thought_signature");
-        if (signature != null) {
-            partBuilder.thoughtSignature(Base64.getDecoder().decode(signature.toString()));
-        }
-        return partBuilder.build();
-    }
-
-    private Object parseSchema(String schemaJson) {
-        try {
-            return mapper.readValue(schemaJson, MAP_TYPE);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to parse tool schema JSON.", e);
-        }
-    }
-
-    private ChatMessage convertResponse(GenerateContentResponse response) {
-        // Walk the first candidate's parts directly (rather than the response.text()/
-        // functionCalls() conveniences) so we can capture the part-level thoughtSignature that
-        // Gemini 3 emits alongside each functionCall and requires to be echoed back on the next
-        // turn.
-        StringBuilder textContent = new StringBuilder();
-        List<Map<String, Object>> toolCalls = new ArrayList<>();
-
-        List<Candidate> candidates = response.candidates().orElseGet(List::of);
-        if (candidates.isEmpty()) {
-            throw new IllegalStateException(
-                    "Gemini response did not contain any candidates (likely safety-blocked or"
-                            + " filtered).");
-        }
-        // Let the SDK validate the finish reason: this raises IllegalArgumentException when the
-        // model finished for an unexpected reason (SAFETY, MAX_TOKENS, RECITATION, …) instead of
-        // silently returning a truncated or filtered message. The IAE is propagated unwrapped by
-        // chat()'s catch block, matching the constructor's error contract.
-        response.checkFinishReason();
-
-        List<Part> parts = candidates.get(0).content().flatMap(Content::parts).orElseGet(List::of);
-
-        for (Part part : parts) {
-            part.text().ifPresent(textContent::append);
-            part.functionCall()
-                    .ifPresent(
-                            fc ->
-                                    toolCalls.add(
-                                            convertFunctionCall(
-                                                    fc, part.thoughtSignature().orElse(null))));
-        }
-
-        ChatMessage chatMessage = ChatMessage.assistant(textContent.toString());
-        if (!toolCalls.isEmpty()) {
-            chatMessage.setToolCalls(toolCalls);
-        }
-        return chatMessage;
-    }
-
-    // Package-visible for unit testing of the function-call parsing.
-    Map<String, Object> convertFunctionCall(FunctionCall functionCall, byte[] thoughtSignature) {
-        String id = functionCall.id().orElse(null);
-        String name = functionCall.name().orElse("");
-        Map<String, Object> argsMap = functionCall.args().orElseGet(LinkedHashMap::new);
-
-        Map<String, Object> functionMap = new LinkedHashMap<>();
-        functionMap.put("name", name);
-        functionMap.put("arguments", argsMap);
-
-        Map<String, Object> toolCall = new LinkedHashMap<>();
-        if (id != null) {
-            toolCall.put("id", id);
-            toolCall.put("original_id", id);
-        } else {
-            // The Gemini Developer API frequently omits functionCall.id. Downstream correlation
-            // still needs one: ToolCallAction keys its result maps on `id` (two id-less parallel
-            // calls would otherwise collide on the literal "null") and only propagates
-            // `original_id` as the TOOL message's externalId, which is how the follow-up turn
-            // recovers the function name for Gemini's functionResponse part. Synthesize an id for
-            // the runtime round-trip and mark it so it is never echoed back to the API.
-            String syntheticId = UUID.randomUUID().toString();
-            toolCall.put("id", syntheticId);
-            toolCall.put("original_id", syntheticId);
-            toolCall.put("synthetic_id", Boolean.TRUE);
-        }
-        toolCall.put("type", "function");
-        toolCall.put("function", functionMap);
-        // Gemini 3 requires the opaque thoughtSignature to be echoed back when the tool-call turn
-        // is replayed. Stash it as Base64 so it survives the Map<String, Object> representation.
-        if (thoughtSignature != null) {
-            toolCall.put("thought_signature", Base64.getEncoder().encodeToString(thoughtSignature));
-        }
-        return toolCall;
-    }
-
-    private void recordUsage(
-            ChatMessage result, String modelName, GenerateContentResponse response) {
-        GenerateContentResponseUsageMetadata usage = response.usageMetadata().orElse(null);
-        if (usage == null) {
-            return;
-        }
-        long promptTokens = usage.promptTokenCount().orElse(0);
-        long completionTokens = usage.candidatesTokenCount().orElse(0);
-        result.getExtraArgs().put("model_name", modelName);
-        result.getExtraArgs().put("promptTokens", promptTokens);
-        result.getExtraArgs().put("completionTokens", completionTokens);
-    }
-
-    private Map<String, Object> toMap(Object value) {
-        if (value instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> casted = (Map<String, Object>) value;
-            return new LinkedHashMap<>(casted);
-        }
-        if (value == null) {
-            return new LinkedHashMap<>();
-        }
-        return mapper.convertValue(value, MAP_TYPE);
     }
 }

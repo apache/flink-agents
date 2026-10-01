@@ -57,14 +57,18 @@ A `ChatRequestEvent` can name a model router instead of a chat model to pick the
 
 Use `ChatMessage.blocks` to combine text and media in a single message, in the
 order you want them presented. Supported block types are `TextBlock`, `ImageBlock`,
-`AudioBlock`, `VideoBlock`, and `DocumentBlock`. For example, a message can contain
+`AudioBlock`, `VideoBlock`, and `DocumentBlock`. Assistant messages can also contain
+`ReasoningBlock` and `ToolCallBlock`; a tool message contains one `ToolResultBlock`
+whose `call_id` matches the corresponding tool call and whose blocks hold the result.
+`ChatResult` wraps the assistant message and invocation metadata. For example, a message can contain
 a question followed by an image:
 
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
 [Multimodal Input](#multimodal-input) for what each block becomes. Ollama sends
-Base64 images; see its section. The other built-in integrations, including the
-OpenAI Responses integration, currently send only the text portion of a message.
+Base64 images; see its section. Other integrations support text and tool
+interactions; media support is provider-specific. Unsupported media raises an
+error instead of silently dropping content.
 
 {{< tabs "Message content blocks" >}}
 
@@ -1632,12 +1636,12 @@ class MyChatModelConnection(BaseChatModelConnection):
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         # Core method: send messages to LLM and return response
         # - messages: Input message sequence
         # - tools: Optional list of tools available to the model
         # - kwargs: Additional parameters from model_kwargs
-        # - Returns: ChatMessage with the model's response
+        # - Returns: ChatResult containing the assistant message and invocation metadata
         pass
 ```
 {{< /tab >}}
@@ -1662,13 +1666,13 @@ public class MyChatModelConnection extends BaseChatModelConnection {
     
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
         // Core method: send messages to LLM and return response
         // - messages: Input message sequence
         // - tools: Optional list of tools available to the model
         // - arguments: Additional parameters from ChatModelSetup
-        // - Returns: ChatMessage with the model's response
+        // - Returns: ChatResult containing the assistant message and invocation metadata
     }
 }
 ```
@@ -1718,7 +1722,7 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 ## Built-in Events and Actions
 
-`ChatResponseEvent` represents a terminal `SUCCESS` or `FAILED` result. A success carries a `ChatMessage` in `response`; a failure carries an `error` string containing the exception type and message. The two payloads are mutually exclusive. Error text is diagnostic information, not a stable error code; exception objects and stack traces are not stored in the event.
+`ChatResponseEvent` represents a terminal `SUCCESS` or `FAILED` result. A success carries a `ChatResult` in `response`. Its `message` is the assistant `ChatMessage`; model, response ID, token usage, and finish reason describe the invocation. Structured output is carried separately in `ChatResponseEvent.structured_output` (Python) or `structuredOutput` (Java); a failure carries an `error` string containing the exception type and message. The two payloads are mutually exclusive. Error text is diagnostic information, not a stable error code; exception objects and stack traces are not stored in the event.
 
 Check `event.is_failed` (Python) or `event.isFailed()` (Java) to handle a failed request. Reading `event.response` or `event.getResponse()` on a failed event raises `ChatResponseError` or `ChatResponseEvent.ChatResponseException`, respectively, with the original request ID and error text. Reading `error` on a successful event also raises. Serialization and event logging do not invoke these accessors. The built-in ReAct agent reads the response directly, so an unhandled failed response propagates from its consumer Action; applications that want to recover should handle the failed event explicitly.
 
