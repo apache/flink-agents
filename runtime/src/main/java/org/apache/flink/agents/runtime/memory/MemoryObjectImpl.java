@@ -95,7 +95,7 @@ public class MemoryObjectImpl implements MemoryObject {
     public MemoryRef set(String path, Object value) throws Exception {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
-        String[] parts = absPath.split("\\.");
+        String[] parts = checkWritePath(absPath);
         fillParents(parts);
 
         String parent =
@@ -122,8 +122,7 @@ public class MemoryObjectImpl implements MemoryObject {
     public MemoryObject newObject(String path, boolean overwrite) throws Exception {
         mailboxThreadChecker.run();
         String absPath = fullPath(path);
-        String[] parts = absPath.split("\\.");
-
+        String[] parts = checkWritePath(absPath);
         fillParents(parts);
 
         if (store.contains(absPath)) {
@@ -215,6 +214,40 @@ public class MemoryObjectImpl implements MemoryObject {
 
     private String fullPath(String path) {
         return (prefix.isEmpty() ? path : prefix + SEPARATOR + path);
+    }
+
+    /**
+     * Splits a write path into its components and rejects a path that has an empty component
+     * (leading, trailing or doubled separator) or runs through a field that holds a value. Must run
+     * before any mutation, so that a rejected write leaves neither intermediate nodes nor a
+     * recorded update behind.
+     */
+    private String[] checkWritePath(String absPath) throws Exception {
+        // Keep trailing empty components, so that every component is checked.
+        String[] parts = absPath.split("\\.", -1);
+        for (String part : parts) {
+            if (part.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Cannot write field '" + absPath + "': path has an empty component.");
+            }
+        }
+
+        StringBuilder path = new StringBuilder();
+        for (int i = 0; i < parts.length - 1; i++) {
+            if (i > 0) path.append(SEPARATOR);
+            path.append(parts[i]);
+
+            MemoryItem ancestor = store.get(path.toString());
+            if (ancestor != null && ancestor.getType() != ItemType.OBJECT) {
+                throw new IllegalArgumentException(
+                        "Cannot write field '"
+                                + absPath
+                                + "': '"
+                                + path
+                                + "' exists but is not an object.");
+            }
+        }
+        return parts;
     }
 
     private void fillParents(String[] parts) throws Exception {

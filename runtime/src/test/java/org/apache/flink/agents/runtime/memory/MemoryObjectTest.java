@@ -25,6 +25,7 @@ import org.junit.jupiter.api.Test;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** Tests for {@link MemoryObject}. */
@@ -156,6 +157,102 @@ public class MemoryObjectTest {
         MemoryObject obj = memory.newObject("scalar", true);
         obj.set("k", "v");
         assertEquals("v", memory.get("scalar.k").getValue());
+    }
+
+    @Test
+    void testSetUnderValueAncestorIsRejectedWithoutSideEffects() throws Exception {
+        memory.set("a", 1);
+
+        assertThatThrownBy(() -> memory.set("a.b", 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b': 'a' exists but is not an object.");
+        assertThatThrownBy(() -> memory.set("a.b.c", 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b.c': 'a' exists but is not an object.");
+        MemoryObject valueHandle = memory.get("a");
+        assertThatThrownBy(() -> valueHandle.set("b", 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b': 'a' exists but is not an object.");
+
+        // The rejected writes must not leave intermediate nodes or recorded updates behind.
+        assertFalse(memory.isExist("a.b"));
+        assertFalse(memory.isExist("a.b.c"));
+        assertEquals(1, memory.get("a").getValue());
+        assertThat(memory.getFields()).containsOnly(Map.entry("a", 1));
+        assertThat(memoryUpdates).containsExactly(new MemoryUpdate("a", 1));
+    }
+
+    @Test
+    void testNewObjectUnderValueAncestorIsRejectedWithoutSideEffects() throws Exception {
+        memory.set("a", 1);
+
+        assertThatThrownBy(() -> memory.newObject("a.b"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b': 'a' exists but is not an object.");
+        // overwrite applies to the target field, not to its ancestors.
+        assertThatThrownBy(() -> memory.newObject("a.b", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b': 'a' exists but is not an object.");
+        assertThatThrownBy(() -> memory.newObject("a.b.c"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'a.b.c': 'a' exists but is not an object.");
+
+        assertFalse(memory.isExist("a.b"));
+        assertEquals(1, memory.get("a").getValue());
+        assertThat(memoryUpdates).containsExactly(new MemoryUpdate("a", 1));
+    }
+
+    @Test
+    void testSetWithEmptyPathComponentIsRejectedWithoutSideEffects() throws Exception {
+        memory.set("a", 1);
+        memory.newObject("o");
+
+        for (String path : new String[] {"a.", ".a", "a..b", "", "o.", "o..b"}) {
+            assertThatThrownBy(() -> memory.set(path, 2))
+                    .as("set(\"%s\")", path)
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Cannot write field '" + path + "': path has an empty component.");
+        }
+        MemoryObject nested = memory.get("o");
+        assertThatThrownBy(() -> nested.set("", 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'o.': path has an empty component.");
+
+        assertMemoryHoldsOnlyValueAAndEmptyObjectO();
+    }
+
+    @Test
+    void testNewObjectWithEmptyPathComponentIsRejectedWithoutSideEffects() throws Exception {
+        memory.set("a", 1);
+        memory.newObject("o");
+
+        for (String path : new String[] {"a.", ".a", "a..b", "", "o.", "o..b"}) {
+            for (boolean overwrite : new boolean[] {false, true}) {
+                assertThatThrownBy(() -> memory.newObject(path, overwrite))
+                        .as("newObject(\"%s\", %s)", path, overwrite)
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage(
+                                "Cannot write field '" + path + "': path has an empty component.");
+            }
+        }
+        MemoryObject nested = memory.get("o");
+        assertThatThrownBy(() -> nested.newObject("", true))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Cannot write field 'o.': path has an empty component.");
+
+        assertMemoryHoldsOnlyValueAAndEmptyObjectO();
+    }
+
+    private void assertMemoryHoldsOnlyValueAAndEmptyObjectO() throws Exception {
+        for (String path : new String[] {"a.", ".a", "a..b", "o.", "o..b"}) {
+            assertFalse(memory.isExist(path), path);
+        }
+        assertEquals(1, memory.get("a").getValue());
+        assertThat(memory.get("o").getFields()).isEmpty();
+        assertThat(memory.getFields())
+                .containsOnly(Map.entry("a", 1), Map.entry("o", "NestedObject"));
+        assertThat(memoryUpdates)
+                .containsExactly(new MemoryUpdate("a", 1), new MemoryUpdate("o", null, true));
     }
 
     @Test
