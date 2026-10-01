@@ -203,10 +203,13 @@ class _Context(ExecutionReporter):
         return registry[name]
 
     def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        kwargs.pop("durable_id", None)
         self.durable_executions += 1
         return func(*args, **kwargs)
 
     def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+        kwargs.pop("durable_id", None)
+
         # Deferred: the count reflects executions (when the future is awaited,
         # directly or via gather), not handle creations, matching the lazy
         # durable-future contract.
