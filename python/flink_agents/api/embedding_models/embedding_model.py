@@ -155,4 +155,50 @@ class BaseEmbeddingModelSetup(Resource, ABC):
         """Generate embeddings and return provider token usage when available."""
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        return self._get_connection().embed_with_usage(text, **merged_kwargs)
+        result = self._get_connection().embed_with_usage(text, **merged_kwargs)
+        self._record_token_usage(result.token_usage)
+        return result
+
+    def _record_token_metrics(
+        self, model_name: str, prompt_tokens: int, total_tokens: int
+    ) -> None:
+        """Record embedding token usage metrics for the given model.
+
+        Mirrors ``BaseChatModelSetup._record_token_metrics`` but records input-side
+        tokens only, since embeddings have no completion tokens. Counters are placed
+        under the same ``model`` key-value group used by chat metrics, so embedding
+        and chat usage for a model share one dimension.
+
+        Unlike the chat path, embedding calls do not run inside a plan action that
+        hands in a request-scoped metric group (vector-store, RAG, and direct calls
+        reach this setup directly), so the resource-bound metric group injected via
+        ``set_metric_group`` is used instead.
+
+        Parameters
+        ----------
+        model_name : str
+            The name of the model used
+        prompt_tokens : int
+            The number of prompt tokens
+        total_tokens : int
+            The total number of tokens reported by the provider
+        """
+        metric_group = self.metric_group
+        if metric_group is None:
+            return
+
+        model_group = metric_group.get_sub_group("model", model_name)
+        model_group.get_counter("promptTokens").inc(prompt_tokens)
+        model_group.get_counter("totalTokens").inc(total_tokens)
+
+    def _record_token_usage(self, token_usage: EmbeddingTokenUsage | None) -> None:
+        """Record the provider-reported embedding token usage, if any.
+
+        Called from ``embed_with_usage`` so direct calls and vector-store/RAG paths
+        are both covered without each provider repeating the recording.
+        """
+        if token_usage is None or not self.model:
+            return
+        self._record_token_metrics(
+            self.model, token_usage.prompt_tokens, token_usage.total_tokens
+        )
