@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.YamlParserUtils;
@@ -235,9 +237,43 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         }
 
         @Override
+        public <V> DataStream<V> toDataStream(TypeInformation<V> typeInformation) {
+            // Layer a downstream conversion operator on the shared raw stream instead of
+            // retyping it, so the raw Object view stays unrestricted and heterogeneous output
+            // remains available through toDataStream(). Each call is independent, so several
+            // typed views of different types can coexist on one execution.
+            return toDataStream().map(new OutputCaster<V>()).returns(typeInformation);
+        }
+
+        @Override
         public Table toTable(Schema schema) {
             DataStream<Object> dataStream = toDataStream();
             return getTableEnvironment().fromDataStream(dataStream, schema);
+        }
+
+        @Override
+        public <V> Table toTable(TypeInformation<V> typeInformation) {
+            // Derive the physical schema from the declared type: fromDataStream reads the
+            // table structure off the typed stream's TypeInformation (a POJO's fields become
+            // columns). The type is applied by a downstream operator on the shared raw stream,
+            // so the unrestricted toDataStream() view is unaffected.
+            return getTableEnvironment().fromDataStream(toDataStream(typeInformation));
+        }
+    }
+
+    /**
+     * Casts the unrestricted agent output objects to the type declared by a typed terminal. The
+     * elements are already instances of the declared type; the operator exists so the declared type
+     * is attached downstream of the shared raw stream rather than welded onto it.
+     */
+    private static final class OutputCaster<T> implements MapFunction<Object, T> {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public T map(Object value) {
+            return (T) value;
         }
     }
 }

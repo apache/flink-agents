@@ -98,6 +98,15 @@ under the License.
             <version>${flink.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- Test-scoped planner so the typed toTable terminals can be unit-tested headlessly
+             (StreamTableEnvironment.create needs an ExecutorFactory); production gets the planner
+             from the cluster classpath. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-planner_2.12</artifactId>
+            <version>${flink.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-test-utils-junit</artifactId>
