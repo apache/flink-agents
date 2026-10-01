@@ -364,6 +364,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             }
 
             return chatMessage;
+        } catch (RuntimeException e) {
+            // Unchanged, so callers can catch documented errors such as
+            // UnsupportedContentBlockException.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

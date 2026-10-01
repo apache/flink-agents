@@ -141,4 +141,35 @@ class OllamaMultimodalTest {
                 .isNotInstanceOf(UnsupportedContentBlockException.class)
                 .hasMessage("An image block's base64 data could not be decoded.");
     }
+
+    @Test
+    @DisplayName("chat() surfaces media errors with their own types")
+    void testChatKeepsMediaErrorTypes() {
+        assertThatThrownBy(
+                        () ->
+                                chat(
+                                        ChatMessage.user(
+                                                List.of(
+                                                        AudioBlock.fromBase64(
+                                                                "audio/wav", FIRST)))))
+                .isExactlyInstanceOf(UnsupportedContentBlockException.class);
+        assertThatThrownBy(
+                        () ->
+                                chat(
+                                        ChatMessage.user(
+                                                List.of(ImageBlock.fromBase64("image/png", "!!")))))
+                .isExactlyInstanceOf(IllegalArgumentException.class)
+                .hasMessage("An image block's base64 data could not be decoded.");
+    }
+
+    /** Goes through the public chat(); the errors are raised before any request is sent. */
+    private static ChatMessage chat(ChatMessage message) {
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
+                        .addInitialArgument("endpoint", "http://localhost:11434")
+                        .build();
+        return new OllamaChatModelConnection(
+                        descriptor, ResourceContext.fromGetResource((a, b) -> null))
+                .chat(List.of(message), List.of(), Map.of("model", "llava"));
+    }
 }

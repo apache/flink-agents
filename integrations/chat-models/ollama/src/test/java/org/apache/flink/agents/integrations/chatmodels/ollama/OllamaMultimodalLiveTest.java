@@ -45,8 +45,9 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * OllamaMultimodalTest} pins.
  *
  * <p>Skipped unless {@code OLLAMA_VISION_MODEL} names a vision model the server already has (for
- * example {@code qwen2.5vl:3b}); {@code OLLAMA_ENDPOINT} defaults to {@code
- * http://localhost:11434}.
+ * example {@code qwen3.5:2b} or {@code qwen2.5vl:3b}); {@code OLLAMA_ENDPOINT} defaults to {@code
+ * http://localhost:11434}. Thinking is disabled, and the image is 64x64 because Qwen vision
+ * processors reject sides under 32 pixels.
  */
 class OllamaMultimodalLiveTest {
 
@@ -74,6 +75,8 @@ class OllamaMultimodalLiveTest {
                         descriptor, ResourceContext.fromGetResource((name, type) -> null));
         Map<String, Object> params = new HashMap<>();
         params.put("model", MODEL);
+        // Not every vision model supports thinking (qwen2.5vl does not).
+        params.put("think", false);
 
         ChatMessage response =
                 connection.chat(
@@ -92,9 +95,9 @@ class OllamaMultimodalLiveTest {
     }
 
     private static String redSquarePng() throws Exception {
-        BufferedImage image = new BufferedImage(16, 16, BufferedImage.TYPE_INT_RGB);
-        for (int x = 0; x < 16; x++) {
-            for (int y = 0; y < 16; y++) {
+        BufferedImage image = new BufferedImage(64, 64, BufferedImage.TYPE_INT_RGB);
+        for (int x = 0; x < 64; x++) {
+            for (int y = 0; y < 64; y++) {
                 image.setRGB(x, y, Color.RED.getRGB());
             }
         }

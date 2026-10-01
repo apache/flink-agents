@@ -18,7 +18,7 @@
 """A real image through the Ollama connection.
 
 Checks that the server accepts what test_ollama_multimodal.py pins. Skipped
-unless OLLAMA_VISION_MODEL names a vision model (for example qwen2.5vl:3b);
+unless OLLAMA_VISION_MODEL names a vision model (for example qwen3.5:2b);
 the model is pulled if the server lacks it. Mirrors the Java
 OllamaMultimodalLiveTest.
 """
@@ -49,8 +49,8 @@ def _client_ready() -> bool:
 
 
 def _red_square_png() -> str:
-    """A 16x16 red PNG."""
-    rows = b"".join(b"\x00" + b"\xff\x00\x00" * 16 for _ in range(16))
+    """A 64x64 red PNG; Qwen vision processors reject sides under 32 pixels."""
+    rows = b"".join(b"\x00" + b"\xff\x00\x00" * 64 for _ in range(64))
 
     def chunk(kind: bytes, data: bytes) -> bytes:
         body = kind + data
@@ -58,7 +58,7 @@ def _red_square_png() -> str:
 
     png = (
         b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", 16, 16, 8, 2, 0, 0, 0))
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 64, 64, 8, 2, 0, 0, 0))
         + chunk(b"IDAT", zlib.compress(rows))
         + chunk(b"IEND", b"")
     )
@@ -79,5 +79,7 @@ def test_image() -> None:
             )
         ],
         model=VISION_MODEL,
+        # Not every vision model supports thinking (qwen2.5vl does not).
+        think=False,
     )
     assert response.text.strip()
