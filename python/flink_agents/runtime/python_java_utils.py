@@ -55,12 +55,14 @@ def convert_to_python_key_text(bytes_object: bytes, serialization: str) -> str:
 
 
 def convert_json_to_python_event(event_json: str) -> Event:
-    """Deserialize a JSON string into a base Python Event object.
+    """Deserialize a JSON string into a Python Event object.
 
     Called from Java via PythonActionExecutor to convert a Java Event
-    (serialized as JSON) into a Python Event for action dispatch.
-    Actions that need a typed subclass should call
-    ``SubClass.from_event(event)`` themselves.
+    (serialized as JSON) into a Python Event for action dispatch. Known
+    built-in event types are restored to their concrete subclass by
+    ``Event.from_json``; user-defined types remain generic ``Event``
+    instances. ``SubClass.from_event(event)`` is idempotent, so actions that
+    still reconstruct their own subtype keep working.
     """
     return Event.from_json(event_json)
 
