@@ -21,9 +21,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict
 
 import cloudpickle
-from pyflink.common import TypeInformation
 from pyflink.common.typeinfo import (
+    ExternalTypeInfo,
     PickledBytesTypeInfo,
+    RowTypeInfo,
 )
 from pyflink.datastream import (
     DataStream,
@@ -42,6 +43,16 @@ from flink_agents.api.execution_environment import (
 from flink_agents.api.resource import ResourceType
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.runtime.output_type_utils import (
+    _unwrap_type_info,
+    is_structured_declaration,
+    reconstruct_instance,
+    resolve_row_type_info,
+    row_shape,
+    row_type_info_to_schema,
+    schema_to_row_type_info,
+    to_row,
+)
 
 _CONFIG_FILE_NAME = "config.yaml"
 _LEGACY_CONFIG_FILE_NAME = "flink-conf.yaml"
@@ -49,12 +60,23 @@ _AGENT_PLAN_JSON_VALIDATOR_CLASS = "org.apache.flink.agents.plan.AgentPlanJsonVa
 _AGENT_PLAN_JSON_VALIDATOR_METHOD = "validateAgentPlan"
 
 
+def _row_types_equal(left: RowTypeInfo, right: RowTypeInfo) -> bool:
+    """Whether two row types describe the same fields (names and types).
+
+    Java ``RowTypeInfo.equals`` ignores field names, so names are compared
+    separately while the Java check covers the (possibly nested) field types.
+    """
+    return list(left.get_field_names()) == list(right.get_field_names()) and bool(
+        left.get_java_type_info().equals(right.get_java_type_info())
+    )
+
+
 class RemoteAgentBuilder(AgentBuilder):
     """RemoteAgentBuilder for integrating datastream/table and agent."""
 
     __input: DataStream
     __agent_plan_json: str | None = None
-    __output: DataStream = None
+    __raw_output: DataStream = None
     __t_env: StreamTableEnvironment
     __config: AgentConfiguration
     __resources: Dict[ResourceType, Dict[str, Any]] = None
@@ -136,20 +158,19 @@ class RemoteAgentBuilder(AgentBuilder):
         if error_message is not None:
             raise ValueError(error_message)
 
-    def to_datastream(self, output_type: TypeInformation | None = None) -> DataStream:
-        """Get output datastream of agent execution.
+    def _raw_output_stream(self) -> DataStream:
+        """Return the shared, untyped agent output stream (pickled bytes).
 
-        Returns:
-        -------
-        DataStream
-            Output datastream of agent execution.
+        Every terminal layers its own conversion operator on this single cached
+        stream, so requesting a typed view never re-runs the agent operator and
+        never changes the element type of the unrestricted view. Caching here, at
+        the untyped boundary, is what removes the previous bug where the first
+        requested ``output_type`` was silently reused by every later terminal.
         """
         if self.__agent_plan_json is None:
             err_msg = "Must apply agent before call to_datastream/to_table."
             raise RuntimeError(err_msg)
-
-        # return the same output datastream when call to_datastream multiple.
-        if self.__output is None:
+        if self.__raw_output is None:
             j_data_stream_output = invoke_method(
                 None,
                 "org.apache.flink.agents.runtime.CompileUtils",
@@ -163,28 +184,126 @@ class RemoteAgentBuilder(AgentBuilder):
                     "java.lang.String",
                 ],
             )
-            output_stream = DataStream(j_data_stream_output)
-            self.__output = output_stream.map(
-                lambda x: cloudpickle.loads(x), output_type=output_type
-            )
-        return self.__output
+            self.__raw_output = DataStream(j_data_stream_output)
+        return self.__raw_output
 
-    def to_table(self, schema: Schema, output_type: TypeInformation) -> Table:
-        """Get output Table of agent execution.
+    def _row_stream(self, row_type_info: RowTypeInfo) -> DataStream:
+        """Conversion operator adapting the raw output to physical ``Row``s.
+
+        Only the picklable nested field-name shape is captured in the closure;
+        the py4j-backed ``RowTypeInfo`` stays on the driver and is handed to the
+        operator as ``ExternalTypeInfo`` for the Table/Row serializer.
+        """
+        raw = self._raw_output_stream()
+        shape = row_shape(row_type_info)
+        return raw.map(
+            lambda b: to_row(cloudpickle.loads(b), shape),
+            output_type=ExternalTypeInfo(row_type_info),
+        )
+
+    def to_datastream(self, output_type: Any = None) -> DataStream:
+        """Get the output datastream of agent execution.
+
+        The typed view is a downstream conversion operator on the shared, cached
+        raw stream, so it never re-runs the agent operator nor changes the element
+        type of the unrestricted view, and several typed views of different types
+        can coexist on one execution.
 
         Parameters
         ----------
-        schema : Schema
-            Indicate schema of the output table.
-        output_type : TypeInformation
-            Indicate schema corresponding type information.
+        output_type : Any
+            Optional output-type declaration. When omitted, the unrestricted view
+            carries whatever the agent emitted; when given, a downstream conversion
+            operator materializes each element as that type.
+
+        Returns:
+        -------
+        DataStream
+            Output datastream of agent execution.
+        """
+        raw = self._raw_output_stream()
+        if output_type is None:
+            # Unrestricted view: keep the agent's own output elements.
+            return raw.map(lambda b: cloudpickle.loads(b))
+        if is_structured_declaration(output_type):
+            # Typed view of a python structured type: rebuild declared instances.
+            # A Pydantic model has no native Flink TypeInformation, so the stream
+            # stays pickle-typed and the increment is the validated instances.
+            model_cls = output_type
+            return raw.map(
+                lambda b: reconstruct_instance(model_cls, cloudpickle.loads(b))
+            )
+        declared = _unwrap_type_info(output_type)
+        if isinstance(declared, RowTypeInfo):
+            return self._row_stream(declared)
+        # Scalar / other explicit TypeInformation: elements already match the type.
+        return raw.map(lambda b: cloudpickle.loads(b), output_type=output_type)
+
+    def to_table(self, schema: Schema | None = None, output_type: Any = None) -> Table:
+        """Get output Table of agent execution.
+
+        At least one of ``schema`` or ``output_type`` must be given; passing both
+        cross-checks that they describe the same row type.
+
+        Parameters
+        ----------
+        schema : Schema | None
+            A Table ``Schema`` whose physical columns give the row type. It may
+            also carry Table-domain information such as a primary key, computed
+            columns, or a watermark.
+        output_type : Any
+            The output-type declaration -- a Pydantic model / dataclass / named
+            tuple / ``TypedDict`` / ``RowTypeInfo``, or an explicit
+            ``TypeInformation``. The physical schema is derived from it.
 
         Returns:
         -------
         Table
             Output Table of agent execution.
         """
-        return self.t_env.from_data_stream(self.to_datastream(output_type), schema)
+        if schema is not None and not isinstance(schema, Schema):
+            msg = (
+                "to_table 'schema' accepts a Table Schema only; to declare the "
+                "output with a type (Pydantic model / dataclass / named tuple / "
+                "TypedDict / RowTypeInfo), pass it as output_type=... instead."
+            )
+            raise TypeError(msg)
+        if isinstance(output_type, Schema):
+            msg = (
+                "to_table 'output_type' accepts a type declaration (Pydantic model "
+                "/ dataclass / named tuple / TypedDict / RowTypeInfo / "
+                "TypeInformation); pass a Table Schema as schema=... instead."
+            )
+            raise TypeError(msg)
+        if schema is None and output_type is None:
+            msg = (
+                "to_table requires at least one of 'schema' or 'output_type'; "
+                "neither was given."
+            )
+            raise ValueError(msg)
+        schema_row_type = (
+            schema_to_row_type_info(schema) if schema is not None else None
+        )
+        output_row_type = (
+            None if output_type is None else resolve_row_type_info(output_type)
+        )
+        if schema_row_type is not None and output_row_type is not None:
+            if not _row_types_equal(schema_row_type, output_row_type):
+                msg = (
+                    "to_table got a schema and an output type describing different "
+                    f"row types: {schema_row_type!r} vs {output_row_type!r}"
+                )
+                raise ValueError(msg)
+        row_type_info = schema_row_type or output_row_type
+
+        # Preserve the caller's Schema when present so Table-domain information
+        # (primary key, computed columns, watermark) survives; otherwise derive it.
+        table_schema = (
+            schema if schema is not None else row_type_info_to_schema(row_type_info)
+        )
+        return self.t_env.from_data_stream(
+            self._row_stream(row_type_info), table_schema
+        )
 
 
 class RemoteExecutionEnvironment(AgentsExecutionEnvironment):

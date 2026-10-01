@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
@@ -72,20 +73,83 @@ public interface AgentBuilder {
      * Get output DataStream of agent execution.
      *
      * <p>This method converts the agent's output events into a Flink DataStream that can be further
-     * processed in the Flink pipeline.
+     * processed in the Flink pipeline. The returned view is unrestricted: its elements are whatever
+     * the agent emitted ({@code Object}). To obtain a typed view, declare the output type with
+     * {@link #toDataStream(TypeInformation)} or {@link #toDataStream(Class)}.
      *
      * @return DataStream containing outputs from agent execution.
      */
     DataStream<Object> toDataStream();
 
     /**
-     * Get output Table of agent execution.
+     * Get output DataStream of agent execution, typed as {@code T}.
      *
-     * <p>This method converts the agent's output events into a Flink Table using the provided
-     * schema for structure definition.
+     * <p>The agent operator keeps emitting {@code Object} on the shared raw stream and the declared
+     * type is applied by a downstream conversion operator, so the unrestricted {@link
+     * #toDataStream()} view is unaffected and heterogeneous output stays available through it. Each
+     * call is independent, so several typed views of different types can coexist on one execution.
+     *
+     * @param typeInformation the declared type of the agent's output elements.
+     * @param <T> the declared output element type.
+     * @return DataStream whose elements are typed as {@code T}.
+     */
+    <T> DataStream<T> toDataStream(TypeInformation<T> typeInformation);
+
+    /**
+     * Get output DataStream of agent execution, typed as {@code T}, deriving the {@link
+     * TypeInformation} from the given output class.
+     *
+     * <p>Convenience overload for the common case. Prefer {@link #toDataStream(TypeInformation)}
+     * for generic or custom types that a {@link Class} cannot express.
+     *
+     * @param outputType the declared class of the agent's output elements.
+     * @param <T> the declared output element type.
+     * @return DataStream whose elements are typed as {@code T}.
+     */
+    default <T> DataStream<T> toDataStream(Class<T> outputType) {
+        return toDataStream(TypeInformation.of(outputType));
+    }
+
+    /**
+     * Get output Table of agent execution, materializing the unrestricted view with an explicit
+     * physical schema.
+     *
+     * <p>The table's row type is derived from the schema's physical columns, and the Table planner
+     * adapts each agent output element into a matching row. Computed and metadata columns declared
+     * in the schema are derived by the planner rather than read from the agent output. To declare
+     * the output with a type instead of a physical schema, use {@link #toTable(TypeInformation)} or
+     * {@link #toTable(Class)}.
      *
      * @param schema Schema indicating the structure of the output table.
      * @return Table containing outputs from agent execution.
      */
     Table toTable(Schema schema);
+
+    /**
+     * Get output Table of agent execution, typed as {@code T}, deriving the physical schema from
+     * the declared type (for example, a POJO's fields become columns).
+     *
+     * <p>The declared type is applied by a downstream conversion operator on the shared raw stream,
+     * so the unrestricted {@link #toDataStream()} view is unaffected.
+     *
+     * @param typeInformation the declared type of the agent's output elements.
+     * @param <T> the declared output element type.
+     * @return Table containing the agent's output, typed as {@code T}.
+     */
+    <T> Table toTable(TypeInformation<T> typeInformation);
+
+    /**
+     * Get output Table of agent execution, typed as {@code T}, deriving the {@link TypeInformation}
+     * from the given output class.
+     *
+     * <p>Convenience overload for the common case. Prefer {@link #toTable(TypeInformation)} for
+     * generic or custom types that a {@link Class} cannot express.
+     *
+     * @param outputType the declared class of the agent's output elements.
+     * @param <T> the declared output element type.
+     * @return Table containing the agent's output, typed as {@code T}.
+     */
+    default <T> Table toTable(Class<T> outputType) {
+        return toTable(TypeInformation.of(outputType));
+    }
 }
