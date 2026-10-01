@@ -55,6 +55,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -201,6 +202,111 @@ public class KafkaActionStateStoreTest {
                 .isTrue();
         assertNotNull(record.value());
         assertThat(record.value()).isEqualTo(testActionState);
+    }
+
+    @Test
+    void testPutPropagatesAsyncBrokerFailureBeforeCachingState() {
+        RuntimeException brokerFailure = new RuntimeException("simulated broker failure");
+        MockProducer<String, ActionState> failingProducer =
+                new MockProducer<>(
+                        false,
+                        new ActionStateKeyPartitioner(),
+                        new StringSerializer(),
+                        new ActionStateKafkaSeder()) {
+                    @Override
+                    public synchronized Future<RecordMetadata> send(
+                            ProducerRecord<String, ActionState> record) {
+                        Future<RecordMetadata> future = super.send(record);
+                        assertThat(errorNext(brokerFailure)).isTrue();
+                        return future;
+                    }
+                };
+        actionStateStore =
+                new KafkaActionStateStore(
+                        actionStates,
+                        new AgentConfiguration(),
+                        failingProducer,
+                        mockConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM));
+
+        assertThatThrownBy(
+                        () ->
+                                actionStateStore.put(
+                                        TEST_KEY, 1L, testAction, testEvent, testActionState))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("Failed to send action state to Kafka")
+                .hasRootCause(brokerFailure);
+        assertThat(actionStates).isEmpty();
+    }
+
+    @Test
+    void testPutPreservesInterruptWhileWaitingForBrokerAcknowledgement() {
+        AtomicBoolean flushCalled = new AtomicBoolean();
+        MockProducer<String, ActionState> producer =
+                new MockProducer<>() {
+                    @Override
+                    public synchronized Future<RecordMetadata> send(
+                            ProducerRecord<String, ActionState> record) {
+                        return interruptingFuture();
+                    }
+
+                    @Override
+                    public synchronized void flush() {
+                        flushCalled.set(true);
+                    }
+                };
+        actionStateStore =
+                new KafkaActionStateStore(
+                        actionStates,
+                        new AgentConfiguration(),
+                        producer,
+                        mockConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM));
+
+        try {
+            assertThatThrownBy(
+                            () ->
+                                    actionStateStore.put(
+                                            TEST_KEY, 1L, testAction, testEvent, testActionState))
+                    .isInstanceOf(InterruptedException.class)
+                    .hasMessage("cancelled");
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+            assertThat(actionStates).isEmpty();
+            assertThat(flushCalled).isFalse();
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    private static Future<RecordMetadata> interruptingFuture() {
+        return new Future<>() {
+            @Override
+            public boolean cancel(boolean mayInterruptIfRunning) {
+                return false;
+            }
+
+            @Override
+            public boolean isCancelled() {
+                return false;
+            }
+
+            @Override
+            public boolean isDone() {
+                return true;
+            }
+
+            @Override
+            public RecordMetadata get() throws InterruptedException {
+                throw new InterruptedException("cancelled");
+            }
+
+            @Override
+            public RecordMetadata get(long timeout, TimeUnit unit) throws InterruptedException {
+                throw new InterruptedException("cancelled");
+            }
+        };
     }
 
     @Test
