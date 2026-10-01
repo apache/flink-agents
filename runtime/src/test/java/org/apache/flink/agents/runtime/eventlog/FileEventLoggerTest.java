@@ -60,6 +60,16 @@ import static org.mockito.Mockito.when;
 
 class FileEventLoggerTest {
 
+    /** An inline base64 payload that must never survive into the Event Log. */
+    private static final String PAYLOAD = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+
+    /** A pre-signed URL whose credentials and query must never survive into the Event Log. */
+    private static final String SIGNED_URL =
+            "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+
+    /** The credential-free, query-free form the Event Log is allowed to keep. */
+    private static final String STRIPPED_URL = "https://example.org/media/cat.png";
+
     @TempDir Path tempDir;
 
     @Mock private StreamingRuntimeContext runtimeContext;
@@ -437,34 +447,99 @@ class FileEventLoggerTest {
     }
 
     private void assertMediaPayloadsSanitizedAt(String level) throws Exception {
+        openLoggerAt(level);
+
+        // A natively typed Java event: its messages are already ChatMessage instances, so the
+        // Event Log's ChatMessage serializer engages directly.
+        append(logger, multimodalChatRequest(), null);
+        logger.flush();
+
+        assertSanitizedMediaLogLine();
+    }
+
+    @Test
+    void testCrossLanguageMediaPayloadsNeverReachTheLogAtStandard() throws Exception {
+        assertCrossLanguageMediaSanitizedAt("STANDARD");
+    }
+
+    @Test
+    void testCrossLanguageMediaPayloadsNeverReachTheLogAtVerbose() throws Exception {
+        // VERBOSE lifts truncation, not sanitization, on the cross-language path either.
+        assertCrossLanguageMediaSanitizedAt("VERBOSE");
+    }
+
+    /**
+     * Runtime-layer unit test for the cross-language Event Log path: a multimodal chat request that
+     * originates in Python arrives as generic wire JSON, and its inline payload and signed URL must
+     * still be sanitized before they reach the log.
+     *
+     * <p>{@code Event.fromJson} restores the concrete {@link ChatRequestEvent}, so its messages
+     * become typed {@link ChatMessage} instances rather than generic maps. Only a typed message
+     * engages the Event Log's {@code ChatMessage} serializer; had the event stayed generic, its
+     * messages would be logged verbatim and the payload and URL credentials would leak.
+     *
+     * <p>This drives the deserialization seam directly, so it is a focused unit test rather than a
+     * public-API end-to-end test: {@code Event.fromJson} is an internal bridge entry point, not a
+     * documented user-facing API. The end-to-end counterpart, which emits the multimodal request
+     * from a real Python agent through {@code ctx.send_event} and reads the resulting Event Log on
+     * a MiniCluster, lives in the Python suite at {@code
+     * e2e_tests/e2e_tests_integration/event_log_media_sanitization_test.py}.
+     */
+    private void assertCrossLanguageMediaSanitizedAt(String level) throws Exception {
+        openLoggerAt(level);
+
+        // The wire format is not sanitized: it carries the payload and the signed URL verbatim,
+        // exactly as ChatMessage.model_dump_json() emits them on the Python side.
+        String wireJson = objectMapper.writeValueAsString(multimodalChatRequest());
+        assertTrue(wireJson.contains(PAYLOAD), "the wire format must carry the inline payload");
+        assertTrue(
+                wireJson.contains("X-Amz-Signature"),
+                "the wire format must carry the signed URL query");
+
+        Event restored = Event.fromJson(wireJson);
+        assertTrue(
+                restored instanceof ChatRequestEvent,
+                "a cross-language chat request must restore to its concrete type");
+        assertTrue(
+                ((ChatRequestEvent) restored).getMessages().get(0) instanceof ChatMessage,
+                "restored messages must be typed ChatMessage instances, not generic maps");
+
+        append(logger, restored, null);
+        logger.flush();
+
+        assertSanitizedMediaLogLine();
+    }
+
+    /** Rebuilds the logger at a single per-test level so each case writes a fresh log file. */
+    private void openLoggerAt(String level) throws Exception {
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("event-log.level", level);
-
         config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
+    }
 
-        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
-        String signedUrl = "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+    /** A user message mixing text, an inline base64 image, and a signed-URL document. */
+    private static ChatRequestEvent multimodalChatRequest() {
         ChatMessage message =
                 ChatMessage.user(
                         List.of(
                                 TextBlock.of("what is in this picture?"),
-                                ImageBlock.fromBase64("image/png", payload),
+                                ImageBlock.fromBase64("image/png", PAYLOAD),
                                 new DocumentBlock(
                                         "application/pdf",
-                                        new UrlSource(signedUrl),
+                                        new UrlSource(SIGNED_URL),
                                         "cat.pdf",
                                         42L,
                                         null)));
-        ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
+        return new ChatRequestEvent("test-model", List.of(message));
+    }
 
-        append(logger, event, null);
-        logger.flush();
-
+    /** Asserts the single logged line kept media metadata but dropped every payload/credential. */
+    private void assertSanitizedMediaLogLine() throws Exception {
         Path logFile = getExpectedLogFilePath();
         String line = Files.readAllLines(logFile).get(0);
-        assertFalse(line.contains(payload), "Inline payload bytes must never be logged");
+        assertFalse(line.contains(PAYLOAD), "Inline payload bytes must never be logged");
         assertFalse(line.contains("secret"), "URL credentials must never be logged");
         assertFalse(line.contains("X-Amz-Signature"), "URL query strings must never be logged");
 
@@ -476,8 +551,7 @@ class FileEventLoggerTest {
         assertFalse(image.get("source").has("data"), "Inline data is dropped, not masked");
         assertTrue(image.get("size_bytes").isNumber(), "Derived size metadata should be logged");
         JsonNode document = logged.get("blocks").get(2);
-        assertEquals(
-                "https://example.org/media/cat.png", document.get("source").get("url").asText());
+        assertEquals(STRIPPED_URL, document.get("source").get("url").asText());
         assertEquals("cat.pdf", document.get("name").asText());
         assertEquals(42L, document.get("size_bytes").asLong());
     }

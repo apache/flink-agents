@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Base64;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -351,6 +353,34 @@ class ChatMessageSerializationTest {
     @DisplayName("A message's block list is an unmodifiable snapshot")
     void testBlockListIsSnapshot() {
         ChatMessage message = ChatMessage.user("hello");
+        assertThatThrownBy(() -> message.getBlocks().add(TextBlock.of("injected")))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("A message stores its blocks in a list Flink 1.20's Kryo can rebuild")
+    void testStoredBlocksAreKryoRebuildable() throws Exception {
+        // The runtime keeps action-task events (and their ChatMessages) in operator state that
+        // Flink serializes with Kryo. Flink 1.20's Kryo rebuilds a stored collection by
+        // allocating it and calling add() per element, which the immutable lists returned by
+        // List.of and List.copyOf reject, so such state cannot be restored. Flink 2.x's Kryo
+        // ships immutable-collection serializers, which is why only the it-python [flink-1.20]
+        // suite catches this. The stored block list must therefore stay structurally modifiable,
+        // while getBlocks() still hands callers an unmodifiable view.
+        ChatMessage message =
+                ChatMessage.user(
+                        List.of(
+                                TextBlock.of("What's in this picture?"),
+                                ImageBlock.fromBase64("image/png", "aGk=")));
+
+        Field stored = ChatMessage.class.getDeclaredField("blocks");
+        stored.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<ContentBlock> backing = (List<ContentBlock>) stored.get(message);
+
+        // The exact operation Flink 1.20's Kryo performs while rebuilding the list from state.
+        assertThatCode(() -> backing.add(TextBlock.of("probe"))).doesNotThrowAnyException();
+        // Callers still cannot mutate the message through the public view.
         assertThatThrownBy(() -> message.getBlocks().add(TextBlock.of("injected")))
                 .isInstanceOf(UnsupportedOperationException.class);
     }

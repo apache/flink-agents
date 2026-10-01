@@ -107,9 +107,18 @@ public class ChatMessage {
                 : Collections.singletonList(new TextBlock(text));
     }
 
-    /** An unmodifiable copy — since blocks are immutable, this freezes the content. */
+    /**
+     * A defensive copy that rejects nulls. The backing list must be modifiable because Flink 1.20's
+     * Kryo rebuilds a deserialized collection by adding elements one at a time; {@link
+     * #getBlocks()} returns an unmodifiable view.
+     */
     private static List<ContentBlock> snapshotOf(List<ContentBlock> blocks) {
-        return List.copyOf(Objects.requireNonNull(blocks, "blocks must not be null"));
+        Objects.requireNonNull(blocks, "blocks must not be null");
+        List<ContentBlock> copy = new ArrayList<>(blocks.size());
+        for (ContentBlock block : blocks) {
+            copy.add(Objects.requireNonNull(block, "blocks must not contain null"));
+        }
+        return copy;
     }
 
     public MessageRole getRole() {
@@ -122,7 +131,7 @@ public class ChatMessage {
 
     /** The content as an unmodifiable list of immutable blocks. */
     public List<ContentBlock> getBlocks() {
-        return blocks;
+        return Collections.unmodifiableList(blocks);
     }
 
     public void setBlocks(List<ContentBlock> blocks) {
@@ -132,7 +141,7 @@ public class ChatMessage {
     /** Replaces the content with a single text block (empty text clears the content). */
     @JsonIgnore
     public void setText(String text) {
-        this.blocks = blocksOf(text);
+        this.blocks = snapshotOf(blocksOf(text));
     }
 
     @JsonProperty("tool_calls")

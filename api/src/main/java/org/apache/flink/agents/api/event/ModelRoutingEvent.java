@@ -115,12 +115,7 @@ public class ModelRoutingEvent extends Event {
 
     /** Reconstructs a typed ModelRoutingEvent from a base Event. */
     public static ModelRoutingEvent fromEvent(Event event) {
-        ModelRoutingEvent result =
-                new ModelRoutingEvent(event.getId(), new HashMap<>(event.getAttributes()));
-        if (event.hasSourceTimestamp()) {
-            result.setSourceTimestamp(event.getSourceTimestamp());
-        }
-        return result;
+        return reconstructFrom(event, ModelRoutingEvent::new);
     }
 
     @JsonIgnore
