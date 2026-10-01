@@ -32,7 +32,11 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -49,16 +53,19 @@ RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 REQUEST_OWNED_PARAMS = frozenset(
     {"model_id", "messages", "tools", "project_id", "space_id"}
 )
-RESERVED_ADDITIONAL_KWARGS = frozenset(
-    {
-        "model",
-        "temperature",
-        "max_tokens",
-        "extract_reasoning",
-        "tool_choice",
-        "tool_choice_option",
-    }
-) | REQUEST_OWNED_PARAMS
+RESERVED_ADDITIONAL_KWARGS = (
+    frozenset(
+        {
+            "model",
+            "temperature",
+            "max_tokens",
+            "extract_reasoning",
+            "tool_choice",
+            "tool_choice_option",
+        }
+    )
+    | REQUEST_OWNED_PARAMS
+)
 
 
 def _normalize(value: str | None) -> str | None:
@@ -441,6 +448,8 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         ``extra_args["finish_reason"]``; the key is absent when the provider
         reports none.
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("IBM watsonx.ai", messages)
         model_name = kwargs.pop("model", DEFAULT_MODEL)
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
         tool_choice = kwargs.pop("tool_choice", None)

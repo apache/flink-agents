@@ -201,6 +201,20 @@ class UnsupportedContentBlockError(ValueError):
             description += f" ({block.media_type}, {block.source.type} source)"
         return cls(f"{provider} cannot send {description}: {reason}.")
 
+    @classmethod
+    def reject_media(cls, provider: str, messages: Sequence["ChatMessage"]) -> None:
+        """Raise for the first media block in the messages.
+
+        For integrations that send text only, so that media fails explicitly
+        rather than being dropped from the request.
+        """
+        for message in messages:
+            for block in message.blocks:
+                if isinstance(block, MediaBlock):
+                    raise cls.for_block(
+                        provider, block, "this integration sends text only"
+                    )
+
 
 def _blocks_of(text: str) -> List[ContentBlock]:
     """An empty text becomes an empty block list rather than an empty text block."""
