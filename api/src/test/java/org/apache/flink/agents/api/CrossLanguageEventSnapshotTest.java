@@ -472,6 +472,27 @@ class CrossLanguageEventSnapshotTest {
         assertTrue(printed.contains(FIXED_TOOL_CALL_ID_FAILED + "=false"), printed);
     }
 
+    @Test
+    void javaTransitOfPythonToolResponseEventPreservesRawResponses() throws Exception {
+        // A Python-produced event that merely transits a Java operator is restored to a typed
+        // ToolResponseEvent and re-serialized. Its raw scalar responses must survive verbatim: if
+        // Java rewrote them into the {result,success,...} object form, the Python consumer would
+        // show the model a dict repr instead of the raw value.
+        Event transited = readPythonSnapshot("tool_response_event.json");
+        JsonNode responses =
+                MAPPER.readTree(MAPPER.writeValueAsString(transited))
+                        .path("attributes")
+                        .path("responses");
+
+        assertFalse(
+                responses.path(FIXED_TOOL_CALL_ID).isObject(),
+                "A transiting Python response must not be rewritten into the Java object form.");
+        assertEquals("pong", responses.path(FIXED_TOOL_CALL_ID).asText());
+        assertEquals(42, responses.path(FIXED_TOOL_CALL_ID_NUMERIC).asInt());
+        assertTrue(responses.path(FIXED_TOOL_CALL_ID_BOOL).asBoolean());
+        assertEquals(FIXED_TOOL_FAILURE_TEXT, responses.path(FIXED_TOOL_CALL_ID_FAILED).asText());
+    }
+
     // ── ContextRetrievalRequestEvent ───────────────────────────────────────
 
     private static ContextRetrievalRequestEvent buildContextRetrievalRequestEvent() {
