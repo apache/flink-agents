@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from importlib_resources import files
-from pyflink.common import TypeInformation
 from pyflink.datastream import DataStream, KeySelector, StreamExecutionEnvironment
 from pyflink.table import Schema, StreamTableEnvironment, Table
 
@@ -53,8 +52,22 @@ class AgentBuilder(ABC):
         """
 
     @abstractmethod
-    def to_datastream(self) -> DataStream:
-        """Get output datastream of agent execution.
+    def to_datastream(self, output_type: Any = None) -> DataStream:
+        """Get the output datastream of agent execution.
+
+        Without ``output_type`` the returned view is unrestricted: it carries
+        whatever the agent emitted, with no output-type declaration. Passing
+        ``output_type`` layers a downstream conversion operator that materializes
+        each element as that declared type, leaving the unrestricted view
+        unaffected, so several typed calls of different types can coexist on one
+        execution.
+
+        Parameters
+        ----------
+        output_type : Any
+            Optional output-type declaration -- a Pydantic model / dataclass /
+            named tuple / ``TypedDict`` / ``RowTypeInfo``, or an explicit
+            ``TypeInformation``. When omitted, the unrestricted view is returned.
 
         Returns:
         -------
@@ -62,17 +75,25 @@ class AgentBuilder(ABC):
             Output datastream of agent execution.
         """
 
-    # TODO: auto generate output_type.
     @abstractmethod
-    def to_table(self, schema: Schema, output_type: TypeInformation) -> Table:
+    def to_table(self, schema: Schema | None = None, output_type: Any = None) -> Table:
         """Get output table of agent execution.
+
+        At least one of ``schema`` or ``output_type`` must be given. A ``schema``
+        fixes the physical columns and may carry Table-domain information such as
+        a primary key, computed columns, or a watermark; an ``output_type``
+        derives the physical schema from the declared type (for example a POJO's
+        fields become columns). Passing both cross-checks that they describe the
+        same row type.
 
         Parameters
         ----------
-        schema : Schema
-            Indicate schema of the output table.
-        output_type : TypeInformation
-            Indicate schema corresponding type information.
+        schema : Schema | None
+            A Table ``Schema`` whose physical columns give the row type.
+        output_type : Any
+            The output-type declaration -- a Pydantic model / dataclass / named
+            tuple / ``TypedDict`` / ``RowTypeInfo``, or an explicit
+            ``TypeInformation``.
 
         Returns:
         -------
