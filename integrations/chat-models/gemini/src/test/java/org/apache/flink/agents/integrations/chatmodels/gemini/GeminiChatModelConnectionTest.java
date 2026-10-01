@@ -47,6 +47,7 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
@@ -90,8 +91,7 @@ class GeminiChatModelConnectionTest {
     }
 
     /**
-     * buildConfig consumes the keys it recognizes via {@code arguments.remove(...)}, so the map
-     * handed to it must be mutable.
+     * Model parameters for one request; mutable so a test can add keys before handing them over.
      */
     private static Map<String, Object> params() {
         return new HashMap<>();
@@ -989,5 +989,137 @@ class GeminiChatModelConnectionTest {
 
             assertThat(judged.get()).isEqualTo(named);
         }
+    }
+
+    /** A connection that records what the feasibility query answered on each config it built. */
+    private static GeminiChatModelConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        return new GeminiChatModelConnection(
+                descriptor("test-key", null, "gemini-3-pro-preview"), NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> arguments) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, arguments);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("The feasibility query answers exactly what the native branch decides")
+    void feasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the config ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable throughout, so the schema form and the bound tools are what move.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        GeminiChatModelConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
+                answered.set(null);
+
+                GenerateContentConfig config =
+                        connection.buildConfig(
+                                userMessage(), tools, params(), CAPABLE_MODEL, schema);
+
+                // A null here means the branch never consulted the query at all, which is the
+                // drift this test exists to catch. The value assertion below would fail too, but
+                // on a null comparison that does not say why.
+                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
+                assertThat(answered.get())
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(config.responseJsonSchema().isPresent());
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools make a POJO schema infeasible, an empty or absent list does not")
+    void feasibilityQueryFollowsBoundTools() {
+        // Pinning the answer itself, not just its agreement with the branch: an override that
+        // dropped this conjunct would drop it from the branch too, and the binding test would
+        // still see the two agree. Gemini is the only connection whose answer tools can move.
+        assertThat(connection().canApplyNativeStructuredOutput(Report.class, List.of(), params()))
+                .isTrue();
+        assertThat(connection().canApplyNativeStructuredOutput(Report.class, null, params()))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Report.class, List.of(new SchemaOnlyTool()), params()))
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("The feasibility query leaves the model's capability out of its answer")
+    void feasibilityQueryExcludesModelCapability() {
+        // Feasibility and capability are independent: a POJO with no tools bound is feasible here
+        // whatever the model is named, and the branch's own capability conjunct is what keeps an
+        // undocumented model's config unconstrained.
+        assertThat(connection().canApplyNativeStructuredOutput(Report.class, List.of(), params()))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .buildConfig(
+                                        userMessage(),
+                                        List.of(),
+                                        params(),
+                                        "gemini-2.5-flash-image",
+                                        Report.class)
+                                .responseJsonSchema())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
+    void feasibilityQueryDoesNotConsumeItsInputs() {
+        // buildConfig consumes the keys it recognizes, so a query copying that idiom would leave
+        // the builder without them. Both inputs are immutable, so a consuming implementation
+        // raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool());
+        Map<String, Object> arguments = Map.of("temperature", 0.5);
+
+        connection().canApplyNativeStructuredOutput(Report.class, tools, arguments);
+
+        assertThat(tools).hasSize(1);
+        assertThat(arguments).isEqualTo(Map.of("temperature", 0.5));
+    }
+
+    @Test
+    @DisplayName(
+            "The native branch asks the query with the caller's parameters, not a consumed copy")
+    void feasibilityQueryIsAskedWithTheUnstrippedParameters() {
+        // buildConfig recognizes temperature, max_output_tokens and additional_kwargs, and chat
+        // resolves the model. Asked with what was left after those were taken out, the query would
+        // answer about a map four keys short of the one an outside caller asks with. The override
+        // reads no parameter today, so without this test nothing in the module would notice.
+        AtomicReference<Map<String, Object>> asked = new AtomicReference<>();
+        GeminiChatModelConnection connection =
+                new GeminiChatModelConnection(
+                        descriptor("test-key", null, "gemini-3-pro-preview"), NOOP) {
+                    @Override
+                    protected boolean canApplyNativeStructuredOutput(
+                            Object outputSchema, List<Tool> tools, Map<String, Object> arguments) {
+                        asked.set(arguments);
+                        return super.canApplyNativeStructuredOutput(outputSchema, tools, arguments);
+                    }
+                };
+
+        Map<String, Object> arguments = params();
+        arguments.put("model", CAPABLE_MODEL);
+        arguments.put("temperature", 0.5);
+        arguments.put("max_output_tokens", 256);
+        arguments.put("additional_kwargs", Map.of("top_k", 5));
+
+        connection.buildConfig(userMessage(), List.of(), arguments, CAPABLE_MODEL, Report.class);
+
+        assertThat(asked.get())
+                .containsKeys("model", "temperature", "max_output_tokens", "additional_kwargs");
+        // The builder takes what it recognizes from a copy, so the caller's own map survives whole.
+        assertThat(arguments)
+                .containsKeys("model", "temperature", "max_output_tokens", "additional_kwargs");
     }
 }

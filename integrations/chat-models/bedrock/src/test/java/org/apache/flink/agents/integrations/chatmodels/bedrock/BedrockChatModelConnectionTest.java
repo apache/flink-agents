@@ -671,4 +671,91 @@ class BedrockChatModelConnectionTest {
                                 .outputConfig())
                 .isNull();
     }
+
+    /** A connection that records what the feasibility query answered on each request it built. */
+    private static BedrockChatModelConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        return new BedrockChatModelConnection(descriptor("us-east-1", CAPABLE_MODEL), NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    @Test
+    @DisplayName("the feasibility query answers exactly what the native branch decides")
+    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable throughout, so the schema form is the only thing that moves.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        BedrockChatModelConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Profile.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(
+                            List.<Tool>of(),
+                            List.<Tool>of(new SchemaOnlyTool("{\"type\":\"object\"}")),
+                            null)) {
+                answered.set(null);
+
+                ConverseRequest request =
+                        connection.buildRequest(
+                                List.of(ChatMessage.user("hello")),
+                                tools,
+                                params(CAPABLE_MODEL),
+                                schema);
+
+                // A null here means the branch never consulted the query at all, which is the
+                // drift this test exists to catch. The value assertion below would fail too, but
+                // on a null comparison that does not say why.
+                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
+                assertThat(answered.get())
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(request.outputConfig() != null);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("the feasibility query leaves the model's capability out of its answer")
+    void testFeasibilityQueryExcludesModelCapability() {
+        // Feasibility and capability are independent: a POJO is feasible here even on a model AWS
+        // does not document support for, and the branch's own capability conjunct is what keeps
+        // that request unconstrained. An override that folded capability in would make this pair
+        // agree, which the binding test cannot see because it moves both sides at once.
+        Map<String, Object> incapable = params(INCAPABLE_MODEL);
+
+        assertThat(connection().canApplyNativeStructuredOutput(Profile.class, null, incapable))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .buildRequest(
+                                        List.of(ChatMessage.user("hello")),
+                                        null,
+                                        incapable,
+                                        Profile.class)
+                                .outputConfig())
+                .isNull();
+    }
+
+    @Test
+    @DisplayName("the feasibility query reads its tools and parameters without consuming them")
+    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool("{\"type\":\"object\"}"));
+        Map<String, Object> modelParams = Map.of("model", CAPABLE_MODEL, "temperature", 0.5);
+
+        connection().canApplyNativeStructuredOutput(Profile.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", CAPABLE_MODEL, "temperature", 0.5));
+    }
 }

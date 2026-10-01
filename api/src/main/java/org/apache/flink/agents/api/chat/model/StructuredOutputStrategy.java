@@ -25,8 +25,12 @@ import java.util.Locale;
  *
  * <p>This expresses <b>policy</b> only. Whether a connection <i>can</i> apply the provider's native
  * structured-output API is a separate, model-dependent <b>capability</b> question answered by
- * {@link BaseChatModelConnection#supportsNativeStructuredOutput(String)}. Policy and capability are
- * combined at request-build time.
+ * {@link BaseChatModelConnection#supportsNativeStructuredOutput(String)}. {@link
+ * #resolvesToNative(boolean)} combines the two.
+ *
+ * <p>TODO(#912): strategy resolution is not wired into production yet. Once it is, the native
+ * branches must honor the resolved policy rather than vetoing NATIVE through their own capability
+ * check.
  */
 public enum StructuredOutputStrategy {
     /**

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable
+from typing import Any, Callable, List, Mapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,6 +25,7 @@ from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
 )
@@ -324,3 +325,97 @@ def test_effective_model_for_names_the_model_the_request_judges(
     )
 
     assert judged == [named]
+
+
+def _query_recording_connection() -> tuple[OpenAIChatModelConnection, List[bool]]:
+    """A connection recording what the feasibility query answered on each request.
+
+    Subclassing keeps the query itself under test rather than standing a stub in for
+    it: the override notes the answer it gave and delegates to the real one.
+    """
+    answers: List[bool] = []
+
+    class _RecordingConnection(OpenAIChatModelConnection):
+        def can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
+        ) -> bool:
+            answer = super().can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
+            answers.append(answer)
+            return answer
+
+    conn = _RecordingConnection(api_key="test-key", api_base_url="http://localhost")
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_message.refusal = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    conn._client = mock_client
+    return conn, answers
+
+
+def test_feasibility_query_agrees_with_the_native_branch() -> None:
+    """The answer matches whether the request ends up carrying a response_format.
+
+    Comparing the answer against what the request carries, rather than against a
+    literal, is what keeps the query and the branch from drifting in step. The model is
+    capable in every case, so the query is the only conjunct left for the branch to act
+    on. Clearing the record per case makes the single-element comparison an assertion
+    that the query was reached exactly once on that request, too.
+    """
+    conn, answers = _query_recording_connection()
+    tool = FunctionTool(func=PythonFunction.from_callable(_add))
+    row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
+
+    for schema in (
+        OutputSchema(output_schema=Person),
+        OutputSchema(output_schema=row_type),
+        None,
+    ):
+        for tools in (None, [], [tool]):
+            answers.clear()
+
+            conn.chat(
+                [ChatMessage(role=MessageRole.USER, content="hi")],
+                tools=tools,
+                model="gpt-4o",
+                output_schema=schema,
+            )
+
+            carried = "response_format" in _create_call_kwargs(conn)
+            assert answers == [carried], f"schema {schema}, tools {tools}"
+
+
+def test_feasibility_query_excludes_model_capability() -> None:
+    """A translatable schema stays feasible on a model the allowlist rejects.
+
+    The two answers are independent, and it is the branch's separate capability
+    conjunct that leaves such a request unconstrained. A capability conjunct folded
+    into the query would be invisible to the binding test above, which moves both sides
+    at once, so it is pinned here.
+    """
+    conn = _connection()
+    incapable = {"model": "gpt-3.5-turbo"}
+
+    assert (
+        conn.can_apply_native_structured_output(
+            OutputSchema(output_schema=Person), [], incapable
+        )
+        is True
+    )
+
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        output_schema=OutputSchema(output_schema=Person),
+        **incapable,
+    )
+    assert "response_format" not in _create_call_kwargs(conn)

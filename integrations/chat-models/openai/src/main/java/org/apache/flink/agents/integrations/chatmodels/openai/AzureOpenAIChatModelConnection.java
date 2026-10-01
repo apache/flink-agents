@@ -268,6 +268,39 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
+     * Whether {@code outputSchema} is a form this connection could translate into a native {@code
+     * response_format}, the effective model's capability aside.
+     *
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
+     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And the configured
+     * api-version has to reach the structured-output floor, which is a property of this connection
+     * rather than of the request.
+     *
+     * <p>A {@code true} answer is about those two conditions alone, and is not a promise that a
+     * request gets built. A caller-supplied {@code response_format} in {@code additional_kwargs} is
+     * deliberately not a condition here: the native branch sets the format and a later check raises
+     * on that conflict rather than skipping, so a caller that asked this first can still be met
+     * with an exception. Reporting the conflict infeasible instead would turn a documented error
+     * into a silently unconstrained request.
+     *
+     * <p>Neither the tools nor the parameters are read: this connection sends a native schema
+     * alongside bound tools, and the parameter that would matter is the model backing the
+     * deployment, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class} and the configured api-version
+     *     reaches the structured-output floor; a caller-supplied {@code response_format} does not
+     *     make it false, and the request builder raises on that conflict
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class && apiVersionSupportsStructuredOutput();
+    }
+
+    /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
      * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
      * set, and the entry is absent when the provider reports none.
@@ -381,17 +414,12 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         // applies only for a POJO Class schema — a RowTypeInfo (wrapped in OutputSchema) keeps the
         // prompt-engineering fallback, as do an incapable model and an api-version below the floor.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE therefore gets an unconstrained response instead of an error whenever this
-        // branch is skipped, which on Azure also happens when the api-version is below the floor
-        // or when model_of_azure_deployment is unset and capability cannot be resolved at all.
-        // Once strategy resolution is wired up, NATIVE must either bypass this re-check or fail
-        // explicitly.
+        // The schema form and the api-version floor are asked rather than restated, so a caller
+        // asking the same question gets the answer this branch acts on. Capability stays here
+        // because it is keyed on the model backing the deployment, which that query excludes.
         String nativeSchemaName = null;
-        if (outputSchema instanceof Class
-                && supportsNativeStructuredOutput(modelOfAzureDeployment)
-                && apiVersionSupportsStructuredOutput()) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && supportsNativeStructuredOutput(modelOfAzureDeployment)) {
             Class<?> schemaClass = (Class<?>) outputSchema;
             builder.responseFormat(toNativeResponseFormat(schemaClass));
             nativeSchemaName = schemaClass.getSimpleName();

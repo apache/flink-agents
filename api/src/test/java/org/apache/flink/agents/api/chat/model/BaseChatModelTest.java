@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -25,6 +26,9 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -371,6 +375,64 @@ class BaseChatModelTest {
         assertFalse(connection.supportsNativeStructuredOutput("gpt-4o"));
         assertFalse(connection.supportsNativeStructuredOutput("gpt-3.5-turbo"));
         assertFalse(connection.supportsNativeStructuredOutput(null));
+    }
+
+    @Test
+    @DisplayName("Default feasibility query reports no schema applicable on any request")
+    void testDefaultFeasibilityPredicateIsFalse() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+
+        // Both forms a schema arrives in: a POJO class, and a wrapper a connection would have
+        // to unwrap before it could translate anything.
+        assertFalse(
+                connection.canApplyNativeStructuredOutput(String.class, List.of(), modelParams));
+        assertFalse(
+                connection.canApplyNativeStructuredOutput(
+                        new OutputSchema(
+                                new RowTypeInfo(
+                                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                                        new String[] {"name"})),
+                        List.of(),
+                        modelParams));
+    }
+
+    @Test
+    @DisplayName("Feasibility query accepts a null schema and empty tools without raising")
+    void testDefaultFeasibilityPredicateAcceptsNullSchemaAndEmptyTools() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // An unconstrained request is an ordinary input to ask about, not a misuse. The
+        // immutable map catches only a write that raises, which is why silent consumption
+        // has a test of its own.
+        assertFalse(connection.canApplyNativeStructuredOutput(null, List.of(), Map.of()));
+    }
+
+    @Test
+    @DisplayName("Feasibility query leaves the parameters a request would be built from intact")
+    void testDefaultFeasibilityPredicateDoesNotConsumeModelParams() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+        modelParams.put("temperature", 0.5);
+
+        connection.canApplyNativeStructuredOutput(String.class, List.of(), modelParams);
+
+        // The same map goes on to build the request the answer was about, so a query that
+        // took a key out of it would answer about one request and build another.
+        assertEquals(Map.of("model", "gpt-4o", "temperature", 0.5), modelParams);
+    }
+
+    @Test
+    @DisplayName("Feasibility query accepts a null tool list and null parameters without raising")
+    void testDefaultFeasibilityPredicateAcceptsNullToolsAndNullModelParams() {
+        RecordingConnection connection = new RecordingConnection();
+
+        // Both are reachable from a request builder: a request binding no tools may carry a null
+        // list rather than an empty one, and a builder handed null parameters asks with the same
+        // null it was handed.
+        assertFalse(connection.canApplyNativeStructuredOutput(String.class, null, null));
     }
 
     @Test

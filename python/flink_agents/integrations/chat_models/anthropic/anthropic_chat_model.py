@@ -17,7 +17,7 @@
 #################################################################################
 import logging
 import uuid
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from anthropic import Anthropic, transform_schema
 from anthropic._types import NOT_GIVEN
@@ -258,6 +258,26 @@ def _supports_sampling_params(effective_model: str | None) -> bool:
     return effective_model not in _SAMPLING_UNSUPPORTED_MODELS
 
 
+def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
+
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the feasibility query has to know whether a
+    schema would be sent without rendering it, and rendering raises on a schema it
+    cannot express.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
+
+
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Anthropic ``output_config`` for a native structured-output request.
 
@@ -275,12 +295,8 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+    model = _native_output_model(output_schema)
+    if model is None:
         return None
     return {
         "format": {
@@ -363,6 +379,51 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             for prefix in _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES
         )
 
+    @override
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a derived
+        ``output_config``, leaving the effective model's capability out of the answer.
+
+        Two conditions. Only a ``BaseModel`` subclass has a native translation here; a
+        ``RowTypeInfo`` wrapped in ``OutputSchema``, or no schema at all, has none. And
+        a caller-supplied ``output_config`` wins: it is the caller being explicit about
+        the exact parameter the native branch writes, so the schema keeps the
+        prompt-engineering fallback rather than the two competing on one request.
+
+        The tools are not read; a bound tool does not stop this connection sending a
+        schema.
+
+        A ``True`` is not a promise that the call succeeds. The branch renders the
+        schema once it has decided to apply it, and rendering raises on a ``BaseModel``
+        that carries no JSON Schema.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Read for a caller-supplied ``output_config``. These must be the parameters
+            as they arrived, since a mapping the request path has already stripped
+            could report a caller's value absent.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass and the caller
+            supplied no ``output_config`` of its own.
+        """
+        return _native_output_model(output_schema) is not None and (
+            model_kwargs is None or "output_config" not in model_kwargs
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -404,32 +465,33 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         anthropic_system = convert_to_anthropic_system_prompts(messages)
         anthropic_messages = convert_to_anthropic_messages(messages)
 
+        # Snapshotted before the pop below, so the feasibility query is asked with the
+        # parameters as they arrived rather than with a mapping this path has already
+        # stripped. The key the query reads is not among the stripped ones today; the
+        # shape is what keeps a term added later from reading a mapping the caller's
+        # value has already left.
+        raw_kwargs = dict(kwargs)
+
         # Removed from kwargs unconditionally: it is a framework parameter, and leaving
         # it in place would reach messages.create as an unknown request field.
         json_prefill = kwargs.pop("json_prefill", False)
 
-        # TODO(#912): the requested strategy is not visible here, so this check
-        # cannot tell an explicit NATIVE request apart from one that merely
-        # resolved to native. A caller asking for NATIVE on a model this
-        # predicate rejects therefore degrades silently to the prompt-engineering
-        # fallback instead of getting an error. Once strategy resolution is wired
-        # up, NATIVE must either bypass this capability check or fail explicitly.
-        if output_schema is not None and self.supports_native_structured_output(
-            kwargs.get("model")
-        ):
-            # An output_config already in kwargs is the caller being explicit about the
-            # exact parameter this branch writes, so it is left alone and the schema
-            # keeps the prompt-engineering fallback. Writing over it would drop the
-            # caller's value with no error and no other trace.
-            #
-            # The schema is rendered inside that test rather than before it, because
-            # rendering raises on a schema it cannot express. Rendering one whose
-            # result this branch is about to discard would fail a request the caller
-            # had already steered away from the derived config.
-            if "output_config" not in kwargs:
-                output_config = _native_output_config(output_schema)
-                if output_config is not None:
-                    kwargs["output_config"] = output_config
+        # Native structured output applies only for a BaseModel schema on a model the
+        # provider documents as capable, and only where the caller supplied no
+        # output_config of its own. That value is the caller being explicit about the
+        # exact parameter this branch writes, so it wins and the schema keeps the
+        # prompt-engineering fallback; writing over it would drop the caller's value
+        # with no error and no other trace.
+        #
+        # Both feasibility conditions are asked rather than restated, so a caller
+        # asking the same question gets the answer this branch acts on. The schema is
+        # rendered only once that answer is in, because rendering raises on a schema it
+        # cannot express, and rendering one this branch is about to discard would fail
+        # a request the caller had already steered away from the derived config.
+        if self.can_apply_native_structured_output(
+            output_schema, tools, raw_kwargs
+        ) and self.supports_native_structured_output(kwargs.get("model")):
+            kwargs["output_config"] = _native_output_config(output_schema)
 
         # JSON prefill appends a prefilled assistant "{" message to steer the model
         # into emitting a JSON document. It applies only when the request carries none

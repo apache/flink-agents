@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable
+from typing import Any, Callable, List, Mapping
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,6 +25,7 @@ from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
     AzureOpenAIChatModelConnection,
 )
@@ -617,3 +618,208 @@ def test_effective_model_for_names_the_model_the_request_judges(
 
     assert judged == [named]
     assert judged[0] != DEPLOYMENT
+
+
+def _query_recording_connection(
+    api_version: str = CAPABLE_API_VERSION,
+) -> tuple[AzureOpenAIChatModelConnection, List[bool]]:
+    """A connection recording what the feasibility query answered on each request.
+
+    Subclassing keeps the query itself under test rather than standing a stub in for
+    it: the override notes the answer it gave and delegates to the real one.
+    """
+    answers: List[bool] = []
+
+    class _RecordingConnection(AzureOpenAIChatModelConnection):
+        def can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
+        ) -> bool:
+            answer = super().can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
+            answers.append(answer)
+            return answer
+
+    conn = _RecordingConnection(
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version=api_version,
+    )
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    conn._client = mock_client
+    return conn, answers
+
+
+def test_feasibility_query_agrees_with_the_native_branch() -> None:
+    """The answer matches whether the request ends up carrying a response_format.
+
+    Comparing the answer against what the request carries, rather than against a
+    literal, is what keeps the query and the branch from drifting in step. The backing
+    model is capable throughout, so the api-version and the schema form are what move.
+    Clearing the record per case makes the single-element comparison an assertion that
+    the query was reached exactly once on that request, too.
+    """
+    tool = FunctionTool(func=PythonFunction.from_callable(_add))
+
+    for api_version in (CAPABLE_API_VERSION, BELOW_FLOOR_API_VERSION):
+        conn, answers = _query_recording_connection(api_version)
+
+        for schema in (
+            OutputSchema(output_schema=Person),
+            OutputSchema(output_schema=ROW_TYPE),
+            None,
+        ):
+            for tools in (None, [], [tool]):
+                answers.clear()
+
+                conn.chat(
+                    [ChatMessage(role=MessageRole.USER, content="hi")],
+                    tools=tools,
+                    model=DEPLOYMENT,
+                    model_of_azure_deployment="gpt-4o-mini",
+                    output_schema=schema,
+                )
+
+                carried = "response_format" in _create_call_kwargs(conn)
+                assert answers == [carried], (
+                    f"api-version {api_version}, schema {schema}, tools {tools}"
+                )
+
+
+def test_feasibility_query_follows_the_api_version_floor() -> None:
+    """The configured api-version is part of the answer, not only of the branch.
+
+    Pinning the answer itself rather than only its agreement with the branch: an
+    override that dropped this term would drop it from the branch too, and the binding
+    test above would still see the two agree.
+    """
+    schema = OutputSchema(output_schema=Person)
+    params = _model_kwargs("gpt-4o-mini")
+
+    assert (
+        _connection(CAPABLE_API_VERSION).can_apply_native_structured_output(
+            schema, [], params
+        )
+        is True
+    )
+    assert (
+        _connection(BELOW_FLOOR_API_VERSION).can_apply_native_structured_output(
+            schema, [], params
+        )
+        is False
+    )
+
+
+def test_feasibility_query_excludes_model_capability() -> None:
+    """A translatable schema stays feasible on a backing model the allowlist rejects.
+
+    The two answers are independent, and it is the branch's separate capability
+    conjunct that leaves such a request unconstrained. A capability conjunct folded
+    into the query would be invisible to the binding test above, which moves both sides
+    at once, so it is pinned here.
+    """
+    conn = _connection()
+    incapable = _model_kwargs("gpt-3.5-turbo")
+
+    assert (
+        conn.can_apply_native_structured_output(
+            OutputSchema(output_schema=Person), [], incapable
+        )
+        is True
+    )
+
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        output_schema=OutputSchema(output_schema=Person),
+        **incapable,
+    )
+    assert "response_format" not in _create_call_kwargs(conn)
+
+
+@pytest.mark.parametrize("in_additional_kwargs", [True, False])
+def test_feasibility_query_ignores_a_caller_response_format(
+    in_additional_kwargs: bool,
+) -> None:
+    """A caller-supplied response_format does not make a translatable schema infeasible.
+
+    The branch answers that conflict by raising rather than by skipping, so the query
+    has to keep answering ``True`` here. Reporting it infeasible instead would turn a
+    documented error into a silently unconstrained request.
+    """
+    params = _model_kwargs("gpt-4o-mini")
+    if in_additional_kwargs:
+        params["additional_kwargs"] = {"response_format": CALLER_RESPONSE_FORMAT}
+    else:
+        params["response_format"] = CALLER_RESPONSE_FORMAT
+
+    assert (
+        _connection().can_apply_native_structured_output(
+            OutputSchema(output_schema=Person), [], params
+        )
+        is True
+    )
+
+
+def test_feasibility_query_is_asked_with_the_unstripped_kwargs() -> None:
+    """The query sees the parameters as they arrived, not a copy ``chat`` has stripped.
+
+    ``chat`` removes ``model``, ``model_of_azure_deployment`` and ``additional_kwargs``
+    from its own mapping before the native branch runs. Asked with that copy, an
+    override reading any of them would answer about a request other than the one being
+    built. No term of today's answer reads them, so this pins the shape rather than a
+    live defect.
+    """
+    asked: List[Mapping[str, Any] | None] = []
+
+    class _CapturingConnection(AzureOpenAIChatModelConnection):
+        def can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
+        ) -> bool:
+            asked.append(model_kwargs)
+            return super().can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
+
+    conn = _CapturingConnection(
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+        api_version=CAPABLE_API_VERSION,
+    )
+    mock_client = MagicMock()
+    mock_message = MagicMock()
+    mock_message.role = "assistant"
+    mock_message.content = "ok"
+    mock_message.tool_calls = None
+    mock_client.chat.completions.create.return_value.choices = [
+        MagicMock(message=mock_message)
+    ]
+    mock_client.chat.completions.create.return_value.usage = None
+    conn._client = mock_client
+
+    conn.chat(
+        [ChatMessage(role=MessageRole.USER, content="hi")],
+        model=DEPLOYMENT,
+        model_of_azure_deployment="gpt-4o-mini",
+        additional_kwargs={"user": "someone"},
+        output_schema=OutputSchema(output_schema=Person),
+    )
+
+    assert len(asked) == 1
+    assert asked[0] is not None
+    assert asked[0]["model"] == DEPLOYMENT
+    assert asked[0]["model_of_azure_deployment"] == "gpt-4o-mini"
+    assert asked[0]["additional_kwargs"] == {"user": "someone"}

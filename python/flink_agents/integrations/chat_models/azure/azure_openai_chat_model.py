@@ -270,6 +270,54 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             return False
         return self.api_version[:10] >= _MIN_STRUCTURED_OUTPUT_API_VERSION
 
+    @override
+    def can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native
+        ``response_format``, leaving the effective model's capability out of the answer.
+
+        Two conditions. Only a ``BaseModel`` subclass has a native translation here; a
+        ``RowTypeInfo`` wrapped in ``OutputSchema``, or no schema at all, has none. And
+        the configured api-version has to reach the structured-output floor, which is a
+        property of this connection rather than of the request.
+
+        A caller-supplied ``response_format`` is deliberately not a condition: the
+        branch sets the format and then raises on that conflict rather than skipping,
+        so a caller that asked here first can still be met with an exception.
+        Reporting the conflict infeasible instead would turn a documented error into a
+        silently unconstrained request. Rendering raises likewise, on a ``BaseModel``
+        that carries no JSON Schema, so a ``True`` is not a promise the call succeeds.
+
+        Neither the tools nor the parameters are read: this connection sends a native
+        schema alongside bound tools, and the parameter that would bear on the answer
+        is the model backing the deployment, which is the capability question this
+        excludes.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Not read.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass and the
+            configured api-version reaches the structured-output floor.
+        """
+        return (
+            _native_output_model(output_schema) is not None
+            and self._api_version_supports_structured_output()
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
@@ -303,6 +351,13 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             Model response message. When the response carries a finish reason,
             it is available as ``extra_args["finish_reason"]``.
         """
+        # Snapshotted before the pops below, so the feasibility query is asked with
+        # the parameters as they arrived rather than with a mapping this path has
+        # already stripped. No term of today's answer reads them; the shape is what
+        # keeps a term added later from answering about a request other than the one
+        # being built.
+        raw_kwargs = dict(kwargs)
+
         tool_specs = None
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
@@ -327,18 +382,13 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         # Capability belongs to the model backing the deployment, so it is the input to
         # the check. The deployment name is chosen by the user and carries none.
         #
-        # TODO(#912): the requested strategy is not visible here, so this check cannot
-        # tell an explicit NATIVE request apart from one that merely resolved to native.
-        # A caller asking for NATIVE therefore gets an unconstrained response instead of
-        # an error whenever this branch is skipped, which on Azure also happens when the
-        # api-version is below the floor or when model_of_azure_deployment is unset and
-        # capability cannot be resolved at all. Once strategy resolution is wired up,
-        # NATIVE must either bypass this check or fail explicitly.
-        if (
-            output_schema is not None
-            and self.supports_native_structured_output(model_of_azure_deployment)
-            and self._api_version_supports_structured_output()
-        ):
+        # The schema form and the api-version floor are asked rather than restated, so
+        # a caller asking the same question gets the answer this branch acts on.
+        # Capability stays a conjunct here because it is keyed on the model backing the
+        # deployment, which that query excludes.
+        if self.can_apply_native_structured_output(
+            output_schema, tools, raw_kwargs
+        ) and self.supports_native_structured_output(model_of_azure_deployment):
             native_model = _native_output_model(output_schema)
             # Tested before the schema is rendered. A caller who supplies both a schema
             # and a response_format has a conflict to resolve whatever the schema turns
@@ -348,7 +398,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             caller_response_format = (
                 "response_format" in kwargs or "response_format" in additional_kwargs
             )
-            if native_model is not None and caller_response_format:
+            if caller_response_format:
                 msg = (
                     f"The {native_model.__name__} output schema "
                     f"is sent as response_format on deployment "
@@ -358,9 +408,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
                     f"directly."
                 )
                 raise ValueError(msg)
-            response_format = _native_response_format(output_schema)
-            if response_format is not None:
-                kwargs["response_format"] = response_format
+            kwargs["response_format"] = _native_response_format(output_schema)
 
         response = self.client.chat.completions.create(
             # Azure OpenAI APIs use Azure deployment name as the model parameter

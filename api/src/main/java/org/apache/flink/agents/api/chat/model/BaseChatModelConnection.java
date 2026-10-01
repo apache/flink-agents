@@ -65,6 +65,13 @@ public abstract class BaseChatModelConnection extends Resource {
      * connection whose capability belongs to the endpoint rather than to the model answers for the
      * endpoint instead, and may report {@code true} for a name it has never seen.
      *
+     * <p>This answer is advisory rather than binding: it is a statement about the model that a
+     * configured policy is permitted to overrule, and {@link
+     * StructuredOutputStrategy#resolvesToNative(boolean)} is defined to do so in either direction.
+     * Feasibility admits no such override, which is why {@link
+     * #canApplyNativeStructuredOutput(Object, List, Map)} is a separate hook rather than a further
+     * condition folded into this one.
+     *
      * @param effectiveModel the model whose capability is being asked about, as returned by {@link
      *     #effectiveModelFor(Map)}, may be null
      * @return true if a schema can be applied natively for {@code effectiveModel}
@@ -97,6 +104,53 @@ public abstract class BaseChatModelConnection extends Resource {
     @Nullable
     protected String effectiveModelFor(@Nullable Map<String, Object> modelParams) {
         return modelParams == null ? null : (String) modelParams.get("model");
+    }
+
+    /**
+     * Whether this connection could apply {@code outputSchema} natively to a request built from
+     * these tools and parameters, leaving the effective model's capability out of the answer.
+     *
+     * <p>Feasibility, not capability: the answer covers everything this connection's native branch
+     * requires of a request apart from the effective model, and says nothing about whether the
+     * model the request names would honor a native schema, which is the separate question {@link
+     * #supportsNativeStructuredOutput(String)} answers. Neither answer bounds the other, in either
+     * direction. A POJO on a model the connection does not classify as capable is feasible here and
+     * not capable there; a {@code RowTypeInfo} on a connection whose capability predicate is
+     * unconditionally true is capable there and not feasible here.
+     *
+     * <p>This answer is binding rather than advisory, which is the asymmetry that keeps it separate
+     * from capability. A request whose schema this connection cannot encode has no native form to
+     * send, so no policy can overrule a {@code false} here, whereas a policy is permitted to
+     * overrule the capability answer.
+     *
+     * <p>An override must answer from the same logic its own request builder uses to decide the
+     * native branch, so that the answer cannot drift from what the request ends up carrying.
+     *
+     * <p>A {@code false} answer is not an error: it reports that the request would carry no native
+     * schema, so the caller keeps the prompt-engineering fallback rather than losing the schema.
+     *
+     * <p>The default {@code false} is safe only for a connection that translates no schema at all.
+     * A connection whose request builder has a native branch but which leaves this unoverridden
+     * reports every request infeasible: a caller that degrades to the prompt-engineering fallback
+     * then silently never reaches that branch, and one that refuses an unapplicable schema instead
+     * fails on a request the connection could in fact have applied.
+     *
+     * <p>Answers about the request rather than validating it. A null {@code outputSchema} is an
+     * unconstrained request, a null {@code tools} is a request binding no tools, and a null {@code
+     * modelParams} is accepted; none of the three may raise. The parameters must be read without
+     * being consumed, so that the same map still builds the request the answer was about.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools the tools the request would bind, may be null or empty for none
+     * @param modelParams the parameters the request would be built from, may be null
+     * @return true if these inputs satisfy every condition the native branch imposes apart from the
+     *     effective model's capability
+     */
+    protected boolean canApplyNativeStructuredOutput(
+            @Nullable Object outputSchema,
+            @Nullable List<Tool> tools,
+            @Nullable Map<String, Object> modelParams) {
+        return false;
     }
 
     /**

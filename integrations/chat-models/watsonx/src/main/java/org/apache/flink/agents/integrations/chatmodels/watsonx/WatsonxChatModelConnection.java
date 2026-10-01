@@ -266,6 +266,36 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return true;
     }
 
+    /**
+     * Whether {@code outputSchema} is a form this connection could translate into a native {@code
+     * response_format}, the effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Since this connection's capability predicate is unconditionally true, the schema form is the
+     * whole of what it can report infeasible.
+     *
+     * <p>A {@code true} answer is about the schema form alone, and is not a promise that a payload
+     * gets built. A caller-supplied {@code response_format} is deliberately not a condition here,
+     * and the native branch answers that conflict by raising rather than by skipping, so a caller
+     * that asked this first can still be met with an exception. Reporting the conflict infeasible
+     * instead would turn a documented error into a silently unconstrained request.
+     *
+     * <p>Neither the tools nor the parameters are read; this connection sends a native schema
+     * alongside bound tools.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}; a caller-supplied {@code
+     *     response_format} does not make it false, and the native branch raises on that conflict
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
@@ -482,13 +512,10 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         // written at the payload root. When no native translation applies the key stays absent
         // rather than being written as a null, which would still be a present field on the wire.
         //
-        // TODO(#912): the requested strategy is not visible here, so a request that explicitly
-        // asked for NATIVE cannot be told apart from one that merely resolved to it. Capability is
-        // unconditional on this connection, so the schema form is the only way through to an
-        // unconstrained response: a caller who asked for NATIVE and passed a schema this branch
-        // cannot translate gets one silently. Once strategy resolution is wired up, NATIVE must
-        // either bypass this re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility half is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                && supportsNativeStructuredOutput(modelName)) {
             // A caller reaches the same payload field through either channel. Only the branch that
             // actually sends a derived schema may reject the caller's value; every path that skips
             // it leaves that value untouched. A null is not a conflict, because both write loops

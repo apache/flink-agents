@@ -253,6 +253,27 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         return model;
     }
 
+    /**
+     * Whether a request built from these inputs would carry a native {@code outputConfig}, the
+     * effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Nothing else about the request constrains the native branch, so neither the tools nor the
+     * parameters are read: this connection sends a native schema alongside bound tools, and the one
+     * parameter that would matter is the model, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    @Override
+    protected boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
+    }
+
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
@@ -366,7 +387,10 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
         }
 
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelId)) {
+        // The feasibility half is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                && supportsNativeStructuredOutput(modelId)) {
             requestBuilder.outputConfig(nativeOutputConfig((Class<?>) outputSchema));
         }
 

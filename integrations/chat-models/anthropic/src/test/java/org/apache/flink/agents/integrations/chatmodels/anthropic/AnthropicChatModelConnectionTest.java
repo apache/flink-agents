@@ -47,6 +47,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1041,6 +1042,156 @@ class AnthropicChatModelConnectionTest {
         assertThat(override.wasRendered()).isTrue();
         // The overridden value would have named a setting the request was never going to carry.
         assertThat(topLevel.wasRendered()).isFalse();
+    }
+
+    /** A connection that records what the feasibility query answered on each request it built. */
+    private static AnthropicChatModelConnection recordingConnection(
+            AtomicReference<Boolean> answered) {
+        return new AnthropicChatModelConnection(descriptor(CAPABLE_MODEL), NOOP) {
+            @Override
+            protected boolean canApplyNativeStructuredOutput(
+                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+                boolean answer =
+                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
+                answered.set(answer);
+                return answer;
+            }
+        };
+    }
+
+    /** Model params on a capable model, optionally carrying a caller-supplied output_config. */
+    private static Map<String, Object> paramsWithCallerOutputConfig(boolean supplied) {
+        Map<String, Object> params = paramsWithModel(CAPABLE_MODEL, null);
+        if (supplied) {
+            params.put("additional_kwargs", Map.of("output_config", Map.of("format", Map.of())));
+        }
+        return params;
+    }
+
+    @Test
+    @DisplayName("the feasibility query answers exactly what the native branch decides")
+    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable throughout, so the schema form and the caller's output_config are what move.
+        AtomicReference<Boolean> answered = new AtomicReference<>();
+        AnthropicChatModelConnection connection = recordingConnection(answered);
+
+        for (Object schema : Arrays.asList(Answer.class, "row<name STRING>", null)) {
+            for (boolean callerConfig : List.of(false, true)) {
+                for (List<Tool> tools :
+                        Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
+                    answered.set(null);
+
+                    AnthropicChatModelConnection.BuiltRequest built =
+                            connection.buildRequest(
+                                    userMessage(),
+                                    tools,
+                                    paramsWithCallerOutputConfig(callerConfig),
+                                    schema);
+
+                    // A null here means the branch never consulted the query at all, which is
+                    // the drift this test exists to catch. The value assertion below would fail
+                    // too, but on a null comparison that does not say why.
+                    assertThat(answered.get())
+                            .as(
+                                    "query reached for schema %s, callerConfig %s",
+                                    schema, callerConfig)
+                            .isNotNull();
+                    assertThat(answered.get())
+                            .as("schema %s, callerConfig %s, tools %s", schema, callerConfig, tools)
+                            .isEqualTo(built.params.outputConfig().isPresent());
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("the native branch asks the query with the parameters as they arrived")
+    void testFeasibilityQueryIsAskedWithTheUnstrippedParameters() {
+        // buildRequest removes additional_kwargs from its own copy before the native branch runs.
+        // Asked with that copy, the query would answer about a map that no longer holds the key it
+        // reads, and a caller-supplied output_config would become invisible to it.
+        AtomicReference<Map<String, Object>> asked = new AtomicReference<>();
+        AnthropicChatModelConnection connection =
+                new AnthropicChatModelConnection(descriptor(CAPABLE_MODEL), NOOP) {
+                    @Override
+                    protected boolean canApplyNativeStructuredOutput(
+                            Object outputSchema,
+                            List<Tool> tools,
+                            Map<String, Object> modelParams) {
+                        asked.set(modelParams);
+                        return super.canApplyNativeStructuredOutput(
+                                outputSchema, tools, modelParams);
+                    }
+                };
+
+        AnthropicChatModelConnection.BuiltRequest built =
+                connection.buildRequest(
+                        userMessage(), List.of(), paramsWithCallerOutputConfig(true), Answer.class);
+
+        assertThat(asked.get()).containsKey("additional_kwargs");
+        assertThat(built.params.outputConfig()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("a caller-supplied output_config makes a POJO schema infeasible")
+    void testFeasibilityQueryFollowsTheCallerOutputConfig() {
+        // Pinning the answer itself, not just its agreement with the branch: an override that
+        // dropped this conjunct would drop it from the branch too, and the binding test would
+        // still see the two agree.
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Answer.class,
+                                        List.of(),
+                                        paramsWithCallerOutputConfig(false)))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .canApplyNativeStructuredOutput(
+                                        Answer.class,
+                                        List.of(),
+                                        paramsWithCallerOutputConfig(true)))
+                .isFalse();
+    }
+
+    @Test
+    @DisplayName("the feasibility query leaves the model's capability out of its answer")
+    void testFeasibilityQueryExcludesModelCapability() {
+        // Feasibility and capability are independent: a POJO is feasible here even on a model
+        // Anthropic does not document support for, and the branch's own capability conjunct is
+        // what keeps that request unconstrained.
+        Map<String, Object> incapable = paramsWithModel(INCAPABLE_MODEL, null);
+
+        assertThat(connection().canApplyNativeStructuredOutput(Answer.class, List.of(), incapable))
+                .isTrue();
+        assertThat(
+                        connection()
+                                .buildRequest(userMessage(), List.of(), incapable, Answer.class)
+                                .params
+                                .outputConfig())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("the feasibility query reads its tools and parameters without consuming them")
+    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new StubTool());
+        Map<String, Object> modelParams =
+                Map.of(
+                        "model",
+                        CAPABLE_MODEL,
+                        "additional_kwargs",
+                        Map.of("output_config", Map.of("format", Map.of())));
+
+        connection().canApplyNativeStructuredOutput(Answer.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).containsKey("additional_kwargs");
     }
 
     /** Minimal tool stub; only its presence in the tools list matters. */
