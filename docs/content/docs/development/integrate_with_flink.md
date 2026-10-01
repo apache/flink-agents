@@ -161,7 +161,6 @@ Integrate the agent with input `Table`, and return the output `Table` can be con
 
 {{< tab "Python" >}}
 ```python
-from pyflink.common.typeinfo import BasicTypeInfo, ExternalTypeInfo, RowTypeInfo
 from pyflink.datastream import KeySelector
 from pyflink.table import DataTypes, Schema
 
@@ -179,19 +178,14 @@ input_table = t_env.from_elements(
     ["id", "input"],
 )
 
-# The output TypeInformation and Schema must be mutually consistent: both
-# describe a single "result" INT column here.
-output_type = ExternalTypeInfo(RowTypeInfo(
-    [BasicTypeInfo.INT_TYPE_INFO()],
-    ["result"],
-))
-
-schema = (Schema.new_builder().column("result", DataTypes.INT())).build()
+# A single output-type declaration: the Schema's physical columns give the
+# output row type, and each agent output element is adapted into a matching row.
+schema = Schema.new_builder().column("result", DataTypes.INT()).build()
 
 output_table = (
     agents_env.from_table(input=input_table, key_selector=MyKeySelector())
     .apply(your_agent)
-    .to_table(schema=schema, output_type=output_type)
+    .to_table(schema=schema)
 )
 ```
 {{< /tab >}}
@@ -225,11 +219,14 @@ Table inputTable =
                 Row.of(2, "Bob", 92.0),
                 Row.of(3, "Charlie", 78.3));
 
-// The agent output is exposed as a single anonymous column named "f0".
-// Declare "f0" with the agent's OUTPUT type: a scalar type (e.g. DataTypes.STRING())
-// when the agent emits a scalar value, or a nested DataTypes.ROW(...) only when the
-// agent emits a composite row.
-Schema outputSchema = Schema.newBuilder().column("f0", DataTypes.STRING()).build();
+// Declare the output columns. Each agent output element is adapted into a row by
+// matching columns by name (from a POJO's getters/public fields, a Row, or a Map);
+// a scalar output maps to a single-column schema.
+Schema outputSchema =
+        Schema.newBuilder()
+                .column("name", DataTypes.STRING())
+                .column("score", DataTypes.DOUBLE())
+                .build();
 
 Table outputTable =
         agentsEnv
@@ -244,18 +241,49 @@ Table outputTable =
 
 User should provide `KeySelector` in `from_table()` to tell how to convert the input `Table` to `KeyedStream` internally.
 
-The arguments required by `to_table()` differ by language:
+## Typed outputs
 
-- **Python**: provide both `Schema` and `TypeInformation` to define the output `Table` schema.
-- **Java**: provide only `Schema` (`toTable(Schema)`); `TypeInformation` is not required.
+`to_datastream()` / `toDataStream()` return an unrestricted stream whose elements are whatever the agent emitted (`Object` in Java). To give the output a concrete type, pass the type straight to the terminal: `to_datastream(output_type)` / `toDataStream(TypeInformation)` materialize a typed stream, and `to_table(output_type=...)` / `toTable(TypeInformation)` materialize a typed table. The unrestricted call stays available and unchanged:
 
-The two languages also name the output columns differently:
+{{< tabs "Typed outputs" >}}
 
-- **Python**: the `TypeInformation` passed to `to_table()` is a `RowTypeInfo` whose field names become the output columns, so you name them directly (the `"result"` column above matches `RowTypeInfo([...], ["result"])`).
-- **Java**: `toTable(Schema)` exposes the agent output as a single anonymous column named `f0` (internally it calls `StreamTableEnvironment.fromDataStream(DataStream<Object>, schema)`), so the `Schema` must reference `f0` — wrap it in a `ROW(...)` only when the agent emits a composite row.
+{{< tab "Python" >}}
+```python
+builder = agents_env.from_datastream(input_stream, key_selector).apply(your_agent)
 
-{{< hint info >}}
-In Python, `to_table()` currently requires both `Schema` and `TypeInformation`; we plan to support providing only one of them in the future.
-{{< /hint >}}
+raw = builder.to_datastream()   # unrestricted: whatever the agent emitted
 
-For complete, runnable examples, see [`WorkflowMultipleAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/WorkflowMultipleAgentExample.java) (Java) and [`workflow_multiple_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/workflow_multiple_agent_example.py) (Python).
+# Pass the output type to the terminal to materialize a typed stream or table.
+typed = builder.to_datastream(ReviewOutput)          # stream of validated ReviewOutput
+table = builder.to_table(output_type=ReviewOutput)   # schema derived from the type
+# Or pass both: the Schema drives the physical table and is cross-checked
+# against the declared type.
+both = builder.to_table(review_schema, ReviewOutput)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+AgentBuilder builder =
+        agentsEnv.fromDataStream(inputStream, keySelector).apply(yourAgent);
+
+DataStream<Object> raw = builder.toDataStream();   // unrestricted
+
+// Pass the output type to the terminal to materialize a typed stream or table.
+DataStream<ReviewOutput> typed = builder.toDataStream(ReviewOutput.class);
+Table fromType = builder.toTable(ReviewOutput.class);   // schema derived from the type
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+For the `Table` terminal:
+
+- Calling `to_table(output_type=...)` / `toTable(TypeInformation)` with no schema derives the physical columns from the declared type, so a POJO's fields (or a structured Python type's fields) become columns.
+- In Python, `to_table(schema, output_type)` accepts both: the `Schema` drives the physical table, preserving Table-domain information such as a primary key, computed columns, metadata columns, or a watermark, and is cross-checked against the declared type, raising if the two describe different row types. At least one of the two is required. In Java the schema-only `toTable(Schema)` and the type-only `toTable(TypeInformation)` are separate overloads.
+
+In Java, `toDataStream(Class)` / `toTable(Class)` are conveniences that derive the `TypeInformation` from the class; the `TypeInformation` overloads remain for generic or custom types.
+
+The schema-only `to_table(schema=...)` / `toTable(Schema)` stays available when you have a physical schema but no output type to declare.
+
+Each agent output element is adapted to the declared row type by matching columns by name — from a POJO's getters or public fields, a `Row`, or a `Map`. A scalar output maps to a single-column row.
