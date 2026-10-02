@@ -152,6 +152,7 @@ public final class Aliases {
         vsJava.put("opensearch", ResourceName.VectorStore.OPENSEARCH_VECTOR_STORE);
         vsJava.put("s3_vectors", ResourceName.VectorStore.S3_VECTORS_VECTOR_STORE);
         vsJava.put("milvus", ResourceName.VectorStore.MILVUS_VECTOR_STORE);
+        vsJava.put("pgvector", ResourceName.VectorStore.PGVECTOR_VECTOR_STORE);
         Map<String, String> vsPython = new HashMap<>();
         vsPython.put("chroma", ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE);
         vsPython.put("mem0", ResourceName.VectorStore.Python.MEM0_VECTOR_STORE);

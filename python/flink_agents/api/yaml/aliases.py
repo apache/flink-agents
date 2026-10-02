@@ -137,6 +137,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "opensearch": ResourceName.VectorStore.Java.OPENSEARCH_VECTOR_STORE,
             "s3_vectors": ResourceName.VectorStore.Java.S3_VECTORS_VECTOR_STORE,
             "milvus": ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
+            "pgvector": ResourceName.VectorStore.Java.PGVECTOR_VECTOR_STORE,
         },
     },
 }

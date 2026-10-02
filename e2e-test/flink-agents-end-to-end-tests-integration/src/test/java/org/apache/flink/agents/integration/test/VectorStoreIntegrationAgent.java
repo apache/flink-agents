@@ -76,10 +76,10 @@ public class VectorStoreIntegrationAgent extends Agent {
                     ResourceDescriptor.Builder.newBuilder(
                                     ResourceName.VectorStore.ELASTICSEARCH_VECTOR_STORE)
                             .addInitialArgument("embedding_model", "embeddingModel")
-                            .addInitialArgument("host", System.getenv("ES_HOST"))
-                            .addInitialArgument("index", System.getenv("ES_INDEX"))
-                            .addInitialArgument("dims", Integer.parseInt(System.getenv("ES_DIMS")))
-                            .addInitialArgument("vector_field", System.getenv("ES_VECTOR_FIELD"));
+                            .addInitialArgument("host", envOr("ES_HOST", null))
+                            .addInitialArgument("index", envOr("ES_INDEX", null))
+                            .addInitialArgument("dims", Integer.parseInt(envOr("ES_DIMS", "768")))
+                            .addInitialArgument("vector_field", envOr("ES_VECTOR_FIELD", null));
 
             final String username = System.getenv("ES_USERNAME");
             final String password = System.getenv("ES_PASSWORD");
@@ -89,9 +89,43 @@ public class VectorStoreIntegrationAgent extends Agent {
             }
 
             return builder.build();
+        } else if (provider.equals("PGVECTOR")) {
+            // Table name and dimensionality come from the test; the pgvector container from
+            // tools/docker/pgvector uses the postgres/postgres role by default.
+            return ResourceDescriptor.Builder.newBuilder(
+                            ResourceName.VectorStore.PGVECTOR_VECTOR_STORE)
+                    .addInitialArgument("embedding_model", "embeddingModel")
+                    .addInitialArgument("uri", requiredEnvOrProperty("PGVECTOR_URI"))
+                    .addInitialArgument("username", envOr("PGVECTOR_USERNAME", "postgres"))
+                    .addInitialArgument("password", envOr("PGVECTOR_PASSWORD", "postgres"))
+                    // A system property on purpose: VectorStoreIntegrationTest hands over the
+                    // throwaway table it seeds and drops, and no exported variable may redirect
+                    // the job elsewhere.
+                    .addInitialArgument(
+                            "collection", System.getProperty("PGVECTOR_COLLECTION", "fa_e2e_docs"))
+                    .addInitialArgument("dims", Integer.parseInt(envOr("PGVECTOR_DIMS", "768")))
+                    .build();
         } else {
             throw new RuntimeException(String.format("Unknown vector store provider %s", provider));
         }
+    }
+
+    /** Environment variable first, then system property, then the default. */
+    static String envOr(String key, String defaultValue) {
+        String value = System.getenv(key);
+        if (value == null || value.isEmpty()) {
+            value = System.getProperty(key);
+        }
+        return value == null || value.isEmpty() ? defaultValue : value;
+    }
+
+    /** Same lookup as the test, so the job and its setup point at the same database. */
+    static String requiredEnvOrProperty(String key) {
+        String value = envOr(key, "");
+        if (value.isEmpty()) {
+            throw new IllegalStateException(key + " is not set");
+        }
+        return value;
     }
 
     @Action(EventType.InputEvent)

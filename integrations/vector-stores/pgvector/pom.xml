@@ -22,30 +22,37 @@ under the License.
 
     <parent>
         <groupId>org.apache.flink</groupId>
-        <artifactId>flink-agents</artifactId>
+        <artifactId>flink-agents-integrations-vector-stores</artifactId>
         <version>0.4-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <artifactId>flink-agents-integrations</artifactId>
-    <name>Flink Agents : Integrations:</name>
-    <packaging>pom</packaging>
+    <artifactId>flink-agents-integrations-vector-stores-pgvector</artifactId>
+    <name>Flink Agents : Integrations: Vector Stores: PgVector</name>
+    <packaging>jar</packaging>
 
-    <properties>
-        <ollama4j.version>1.1.5</ollama4j.version>
-        <elasticsearch.version>8.19.0</elasticsearch.version>
-        <milvus.version>2.6.18</milvus.version>
-        <postgresql.version>42.7.7</postgresql.version>
-        <openai.version>4.8.0</openai.version>
-        <anthropic.version>2.12.0</anthropic.version>
-        <aws.sdk.version>2.41.22</aws.sdk.version>
-        <google.genai.version>1.56.0</google.genai.version>
-    </properties>
-
-    <modules>
-        <module>chat-models</module>
-        <module>embedding-models</module>
-        <module>vector-stores</module>
-        <module>mcp</module>
-    </modules>
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-agents-api</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>${postgresql.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>1.3.9</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
 
 </project>
