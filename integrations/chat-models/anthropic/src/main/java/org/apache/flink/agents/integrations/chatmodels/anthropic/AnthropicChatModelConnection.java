@@ -458,14 +458,15 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
-        // Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockException.rejectMedia("Anthropic", messages);
         try {
             BuiltRequest built = buildRequest(messages, tools, modelParams, outputSchema);
             Message response = client.messages().create(built.params);
             ChatResult result = convertResponse(built, response);
 
             return result;
+        } catch (UnsupportedContentBlockException e) {
+            // Unchanged, so callers can catch it by type; other build failures stay wrapped.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Anthropic messages API.", e);
         }

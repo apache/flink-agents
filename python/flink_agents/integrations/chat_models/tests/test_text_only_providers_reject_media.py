@@ -33,9 +33,6 @@ from flink_agents.api.chat_message import (
     UnsupportedContentBlockError,
 )
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
-from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
-    AnthropicChatModelConnection,
-)
 from flink_agents.integrations.chat_models.dashscope_chat_model import (
     DashScopeChatModelConnection,
 )
@@ -44,7 +41,6 @@ from flink_agents.integrations.chat_models.watsonx.watsonx_chat_model import (
 )
 
 CONNECTIONS: Dict[str, Callable[[], BaseChatModelConnection]] = {
-    "Anthropic": lambda: AnthropicChatModelConnection(api_key="fake-key"),
     "DashScope": lambda: DashScopeChatModelConnection(api_key="fake-key"),
     "IBM watsonx.ai": lambda: WatsonxChatModelConnection(
         url="https://us-south.ml.cloud.ibm.com",

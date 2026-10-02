@@ -219,10 +219,12 @@ For tools that return text or media, see
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
 [Multimodal Input]({{< ref "docs/development/calling-llms/chat-models/providers#multimodal-input" >}}) for what each block becomes. Ollama sends
-Base64 images; see the [Ollama provider section]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}). The Anthropic, Gemini, Amazon Bedrock, IBM
-watsonx.ai, DashScope and OpenAI Responses integrations do not send media yet: a
-message with a media block raises `UnsupportedContentBlockException` (Java) or
-`UnsupportedContentBlockError` (Python).
+Base64 images, and Anthropic sends images and PDF or plain-text documents; see the
+[Ollama]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}) and
+[Anthropic]({{< ref "docs/development/calling-llms/chat-models/providers#anthropic" >}}) provider
+sections. The Gemini, Amazon Bedrock, IBM watsonx.ai, DashScope and OpenAI Responses
+integrations do not send media yet: a message with a media block raises
+`UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python).
 
 For example, a message can contain a question followed by an image:
 
