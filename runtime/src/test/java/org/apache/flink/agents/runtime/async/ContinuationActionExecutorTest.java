@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.async;
 
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -32,9 +33,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /** Tests the JDK<21 mailbox-lock handoff contract. */
 class ContinuationActionExecutorTest {
+
+    @BeforeEach
+    void requireSynchronousFallback() {
+        // This suite pins the JDK<21 synchronous-fallback handoff. On JDK 21+ the multi-release
+        // build places the real continuation executor on the test classpath, where executeAsync
+        // needs a continuation scope, so the fallback contract under test does not apply there.
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+    }
 
     @Test
     void executeAsyncReleasesAndReacquiresLockAndRestoresContext() throws Exception {

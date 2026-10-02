@@ -164,7 +164,19 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
 
     def on_action_prepared(self, task: Any) -> None:
         """Record the task whose execution is currently issuing calls."""
-        namespace = Namespace.from_task(task)
+        self.adopt_prepared_namespace(Namespace.from_task(task))
+
+    def adopt_prepared_namespace(self, namespace: Namespace) -> None:
+        """Record an already-extracted task namespace as the id-assignment source.
+
+        Split from :meth:`on_action_prepared` so the runtime context can replay
+        the prepared namespace onto a handle materialized *after* the operator's
+        notification fanned out. A Python-compiled internal sub-agent is
+        Java-owned (its child plan dispatches on the Java side), so its
+        caller-facing handle is built lazily during the action body rather than
+        eagerly at open; replaying the namespace here lets a no-id :meth:`submit`
+        mint identities exactly as an eagerly registered external setup does.
+        """
         self._current_namespace = replace(
             namespace, subagent_name=self._subagent_name or ""
         )
