@@ -255,12 +255,17 @@ public class Event {
     /**
      * Creates an Event from a JSON string.
      *
+     * <p>Known built-in event types are restored to their concrete subclass via {@link
+     * BuiltInEvents#restore(Event)}, so nested typed values survive the cross-language boundary;
+     * unknown or user-defined types are returned as a generic {@link Event}.
+     *
      * @param json the JSON string to deserialize
-     * @return the deserialized Event
+     * @return the deserialized Event, or its concrete built-in subclass
      * @throws IOException if JSON parsing fails or the 'type' field is missing or empty
+     * @throws IllegalArgumentException if a built-in event is malformed and cannot be reconstructed
      */
     public static Event fromJson(String json) throws IOException {
-        return MAPPER.readValue(json, Event.class);
+        return BuiltInEvents.restore(MAPPER.readValue(json, Event.class));
     }
 
     /** Deserializes one attachment value, preserving explicitly tagged memory references. */
