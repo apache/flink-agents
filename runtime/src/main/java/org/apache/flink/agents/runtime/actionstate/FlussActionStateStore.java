@@ -214,6 +214,14 @@ public class FlussActionStateStore implements ActionStateStore {
             throws Exception {
         String stateKey = keyEncoder.generateKey(key, seqNum, action, event);
         String businessKeyIdentity = keyEncoder.generateBusinessKeyIdentity(key);
+        appendState(stateKey, businessKeyIdentity, state);
+        actionStates.put(stateKey, state);
+
+        LOG.debug("Stored action state: key={}, isCompleted={}", stateKey, state.isCompleted());
+    }
+
+    private void appendState(String stateKey, String businessKeyIdentity, ActionState state)
+            throws Exception {
         byte[] payload = ActionStateSerde.serialize(state);
 
         GenericRow row =
@@ -227,10 +235,12 @@ public class FlussActionStateStore implements ActionStateStore {
         //  (see
         // https://github.com/apache/fluss/blob/5850c837/fluss-client/src/main/java/org/apache/fluss/client/write/Sender.java#L234-L241).
         //  Note: steps affecting recovery correctness must remain synchronous.
-        writer.append(row).get();
-        actionStates.put(stateKey, state);
-
-        LOG.debug("Stored action state: key={}, isCompleted={}", stateKey, state.isCompleted());
+        try {
+            writer.append(row).get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        }
     }
 
     @Override
@@ -483,19 +493,41 @@ public class FlussActionStateStore implements ActionStateStore {
                 buckets.add(b);
             }
             return admin.listOffsets(tablePath, buckets, offsetSpec).all().get();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(
+                    "Interrupted getting offsets for Fluss table: " + tablePath, e);
         } catch (Exception e) {
             throw new RuntimeException("Failed to get offsets for Fluss table: " + tablePath, e);
         }
     }
 
     /**
-     * Returns the end offsets of each bucket as a recovery marker. Similar to Kafka's
-     * implementation, this captures the current log position so that {@link #rebuildState} can
-     * resume from these offsets instead of scanning from the beginning.
+     * Captures bucket end offsets, then synchronously appends the cached states after those offsets
+     * before returning the recovery marker.
+     *
+     * <p>A pending action may already have persisted call results before the checkpoint. Starting
+     * recovery at the unmodified log end would lose those results. Fluss append acknowledgements do
+     * not expose record offsets, so refreshing the cache into the recovery window avoids guessing
+     * where the earlier writes landed. Completed actions are also retained until the enclosing
+     * input sequence is pruned after a completed checkpoint.
+     *
+     * <p>Called on the operator thread, serially with puts and pruning. A failed refresh fails the
+     * checkpoint; partial appends remain safe for earlier recovery markers. This adds one append
+     * per cached state per snapshot and requires Fluss retention to preserve the recovery window.
      */
     @Override
     public Object getRecoveryMarker() {
-        return getBucketEndOffsets();
+        Map<Integer, Long> offsets = getBucketEndOffsets();
+        try {
+            for (Map.Entry<String, ActionState> entry : actionStates.entrySet()) {
+                String identity = ActionStateUtil.parseKey(entry.getKey()).get(4);
+                appendState(entry.getKey(), identity, entry.getValue());
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to refresh Fluss action state for checkpoint", e);
+        }
+        return offsets;
     }
 
     /**
