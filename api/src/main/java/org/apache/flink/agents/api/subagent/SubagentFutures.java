@@ -31,8 +31,14 @@ public abstract class SubagentFutures {
 
     /**
      * Waits for every handle in the group and returns their outcomes in the order the handles were
-     * added. Like {@link SubagentFuture#await()}, failures surface through failed {@link
-     * SubagentResult}s.
+     * added. Deferred calls from the same runner context execute as one durable batch. A batch
+     * containing internal sub-agents admits at most {@code subagent.parallelism} calls at once
+     * (default 16), and nested batches have their own limit. Internal calls require JDK 21+.
+     *
+     * <p>Duplicate handles, different runner contexts, non-positive limits and batches larger than
+     * {@code subagent.max-batch-size} (default 1024) are rejected before execution. Child failures
+     * become failed {@link SubagentResult}s; cancellation and runtime infrastructure failures
+     * propagate as exceptions. Results already resolved by a handle are reused.
      */
     public abstract List<SubagentResult> awaitAll() throws Exception;
 

@@ -17,13 +17,15 @@
  */
 package org.apache.flink.agents.runtime.async;
 
-import org.apache.flink.agents.api.context.Outcome;
-
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
+import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -36,10 +38,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 /**
  * Executor for Java actions that supports asynchronous execution using JDK 21+ Continuation API.
@@ -71,8 +71,7 @@ public class ContinuationActionExecutor {
             ParallelExecutionContextRestorer contextRestorer) {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
         this.asyncThreadFactory = new AsyncExecutorThreadFactory(threadCleanup);
-        this.asyncExecutor =
-                Executors.newFixedThreadPool(numAsyncThreads, asyncThreadFactory);
+        this.asyncExecutor = Executors.newFixedThreadPool(numAsyncThreads, asyncThreadFactory);
     }
 
     /**
@@ -200,6 +199,18 @@ public class ContinuationActionExecutor {
             Duration timeout,
             int maxParallelism)
             throws Exception {
+        return executeAllAsync(context, suppliers, timeout, maxParallelism, (index, outcome) -> {});
+    }
+
+    /** Calls {@code onCompleted} on the mailbox before admitting another invocation. */
+    @SuppressWarnings("unchecked")
+    public <T> BatchExecutionResult<T> executeAllAsync(
+            ContinuationContext context,
+            List<Callable<T>> suppliers,
+            Duration timeout,
+            int maxParallelism,
+            BiConsumer<Integer, Outcome<T>> onCompleted)
+            throws Exception {
         context.clearAsyncState();
         if (suppliers.isEmpty()) {
             return new BatchExecutionResult<>(List.of(), new boolean[0]);
@@ -224,28 +235,48 @@ public class ContinuationActionExecutor {
                 return collectBatchOutcomesOnTimeout(slots, started, exception);
             }
 
-            while (nextToSubmit < batchSize && countInFlight(slots, nextToSubmit) < parallelismLimit) {
+            // Persist completed slots before releasing their concurrency budget to queued calls.
+            for (int i = 0; i < nextToSubmit; i++) {
+                if (slots[i].isDone() && !counted[i]) {
+                    onCompleted.accept(i, slots[i].join());
+                    counted[i] = true;
+                    completed++;
+                }
+            }
+            while (nextToSubmit < batchSize && nextToSubmit - completed < parallelismLimit) {
                 int index = nextToSubmit++;
                 Callable<T> supplier = suppliers.get(index);
-                slots[index] =
-                        CompletableFuture.supplyAsync(
-                                () -> {
-                                    // Mark started only when the worker truly begins, so a task
-                                    // queued in a saturated pool but never run stays re-executable
-                                    // on recovery instead of being recorded as a timeout failure.
-                                    started.set(index, 1);
-                                    try {
-                                        return Outcome.success(supplier.call());
-                                    } catch (Exception e) {
-                                        return Outcome.failure(e);
-                                    }
-                                }, asyncExecutor);
+                if (supplier instanceof InternalSubagentCallable) {
+                    started.set(index, 1);
+                    try {
+                        slots[index] =
+                                ((InternalSubagentCallable) supplier)
+                                        .start()
+                                        .thenApply(result -> Outcome.success((T) result));
+                    } catch (Exception e) {
+                        slots[index] = CompletableFuture.completedFuture(Outcome.failure(e));
+                    }
+                } else {
+                    slots[index] =
+                            CompletableFuture.supplyAsync(
+                                    () -> {
+                                        // Queued suppliers stay pending until a worker begins.
+                                        started.set(index, 1);
+                                        try {
+                                            return Outcome.success(supplier.call());
+                                        } catch (Exception e) {
+                                            return Outcome.failure(e);
+                                        }
+                                    },
+                                    asyncExecutor);
+                }
             }
 
             List<CompletableFuture<?>> inFlight = new ArrayList<>(parallelismLimit);
             for (int i = 0; i < nextToSubmit; i++) {
                 if (slots[i].isDone()) {
                     if (!counted[i]) {
+                        onCompleted.accept(i, slots[i].join());
                         counted[i] = true;
                         completed++;
                     }
@@ -260,8 +291,7 @@ public class ContinuationActionExecutor {
                 }
 
                 CompletableFuture<Object> progressBarrier =
-                        CompletableFuture.anyOf(
-                                inFlight.toArray(new CompletableFuture<?>[0]));
+                        CompletableFuture.anyOf(inFlight.toArray(new CompletableFuture<?>[0]));
                 context.setPendingBatchFuture(progressBarrier, deadlineNanos);
                 if (!progressBarrier.isDone()) {
                     Continuation.yield(SCOPE);
@@ -273,18 +303,6 @@ public class ContinuationActionExecutor {
         context.setPendingBatchFuture(null);
         return collectBatchOutcomes(Arrays.asList(slots), started);
     }
-
-    private static <T> int countInFlight(
-            CompletableFuture<Outcome<T>>[] slots, int submittedCount) {
-        int inFlight = 0;
-        for (int i = 0; i < submittedCount; i++) {
-            if (!slots[i].isDone()) {
-                inFlight++;
-            }
-        }
-        return inFlight;
-    }
-
 
     /**
      * Collects per-slot outcomes after the batch barrier completes normally.
@@ -316,8 +334,8 @@ public class ContinuationActionExecutor {
      * retract a supplier already handed to the executor: skipping it is a best-effort effect of
      * common JVM implementations, not a guarantee. Correctness therefore never depends on the
      * cancel taking effect — whether the supplier actually ran is decided when recovery sees the
-     * {@code started} flag — but on JVMs that do skip cancelled suppliers this avoids executing
-     * the tool after the batch already timed out, only to discard its result.
+     * {@code started} flag — but on JVMs that do skip cancelled suppliers this avoids executing the
+     * tool after the batch already timed out, only to discard its result.
      */
     private static <T> BatchExecutionResult<T> collectBatchOutcomesOnTimeout(
             CompletableFuture<Outcome<T>>[] futures,

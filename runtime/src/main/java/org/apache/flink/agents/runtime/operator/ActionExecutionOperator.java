@@ -811,11 +811,29 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     actionTask.action.getName(),
                     key);
             isFinished = true;
-            outputEvents =
-                    actionTask.finalizeOutputEvents(
-                            actionTask.isSubagentEvent()
-                                    ? actionState.getSubagentResultEvents()
-                                    : actionState.getOutputEvents());
+            List<Event> replayedEvents = new ArrayList<>();
+            for (Event event : actionState.getOutputEvents()) {
+                if (event instanceof InternalSubagentCallEvent) {
+                    // A completed action has already awaited its nested calls. Replaying their
+                    // bootstrap commands would start them again without a waiting caller. Only
+                    // forwarded events belonging to this action's own child scope are replayed.
+                    InternalSubagentCallEvent target = (InternalSubagentCallEvent) event;
+                    if (!actionTask.isSubagentEvent()) {
+                        continue;
+                    }
+                    InternalSubagentCallEvent source = (InternalSubagentCallEvent) actionTask.event;
+                    if (!source.getSessionId().equals(target.getSessionId())
+                            || !source.getCallId().equals(target.getCallId())) {
+                        continue;
+                    }
+                }
+                replayedEvents.add(event);
+            }
+            replayedEvents.addAll(actionState.getSubagentResultEvents());
+            outputEvents = actionTask.finalizeOutputEvents(replayedEvents);
+            if (actionTask.isSubagentEvent() && actionState.getSubagentError() != null) {
+                subagentScope.getCallStatus().failAction(actionState.getSubagentError());
+            }
             MemoryUpdateReplayer.replay(
                     actionTask.getRunnerContext().getShortTermMemory(),
                     actionState.getShortTermMemoryUpdates());
@@ -855,8 +873,20 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         // of failing the whole job.
                         InternalSubagentCallEvent envelope =
                                 (InternalSubagentCallEvent) actionTask.event;
-                        requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId())
-                                .failAction(actionFailure);
+                        InternalSubagentCallStatus failedCall =
+                                requireInternalCallStatus(
+                                        envelope.getSessionId(), envelope.getCallId());
+                        failedCall.failAction(actionFailure);
+                        // Events emitted before the exception are discarded with the action, so
+                        // they must not keep its child scope waiting for dispatch forever.
+                        for (Event discarded : actionTask.getRunnerContext().drainEvents(null)) {
+                            if (discarded instanceof InternalSubagentCallEvent) {
+                                failedCall.markEmittedEventDispatched();
+                            }
+                        }
+                        if (actionState != null) {
+                            actionState.setSubagentError(failedCall.getFailureSummary());
+                        }
                         actionTaskResult =
                                 actionTask
                                 .new ActionTaskResult(true, Collections.emptyList(), null);
@@ -1540,6 +1570,29 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        // A waiting root action is checkpointed alongside its child tasks, but call scopes and
+        // continuations are transient. Restart the root first: replaying its durable calls
+        // reconstructs those scopes and regenerates the child event graph. Keeping checkpointed
+        // child tasks as well would dispatch them before their scope exists, or execute them twice.
+        stateManager.forEachActionTaskKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    List<ActionTask> roots = new ArrayList<>();
+                    boolean removedChildren = false;
+                    for (ActionTask task : state.get()) {
+                        if (task.isSubagentEvent()) {
+                            removedChildren = true;
+                        } else {
+                            roots.add(task);
+                        }
+                    }
+                    if (removedChildren) {
+                        checkState(
+                                !roots.isEmpty(),
+                                "Cannot recover internal sub-agent tasks without their parent");
+                        state.update(roots);
+                    }
+                });
         Iterable<Object> keys = stateManager.getProcessingKeys();
         long activeInputRuns = 0L;
         if (keys != null) {

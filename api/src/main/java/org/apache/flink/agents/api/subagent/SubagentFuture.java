@@ -44,8 +44,9 @@ public abstract class SubagentFuture {
     public abstract boolean isDone();
 
     /**
-     * Resolves the invocation, waiting until it reaches a terminal state. Failures converge into a
-     * failed {@link SubagentResult} rather than a separately reported exceptional completion.
+     * Resolves the invocation, waiting until it reaches a terminal state. Child failures become a
+     * failed {@link SubagentResult}; cancellation and runtime infrastructure failures propagate as
+     * exceptions.
      */
     public abstract SubagentResult await() throws Exception;
 

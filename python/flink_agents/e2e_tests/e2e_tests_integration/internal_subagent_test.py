@@ -40,8 +40,11 @@ future yields the ``Result``.
 and replays it identically after a failover.
 """
 
+import json
 import os
 import sysconfig
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +54,7 @@ from pyflink.datastream import KeySelector, StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import StreamingFileSink
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -128,15 +132,19 @@ class RootAgent(Agent):
             ctx.send_event(OutputEvent(output=f"failed:{result.error_message}"))
 
 
-def _run_and_collect(child: Agent, tmp_path: Path) -> str:
+def _run_and_collect(
+    child: Agent, tmp_path: Path, root: Agent | None = None, parallelism: int = 2
+) -> str:
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
     input_stream = env.from_collection(["hello"])
 
-    root = RootAgent()
+    root = root or RootAgent()
     root.add_resource(CHILD_SCOPE, ResourceType.AGENT, child)
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env.get_config().set(AgentExecutionOptions.SUBAGENT_PARALLELISM, parallelism)
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1)
     output_datastream = (
         agents_env.from_datastream(input=input_stream, key_selector=InputKeySelector())
         .apply(root)
@@ -176,8 +184,92 @@ def test_python_internal_subagent_failure_surfaces_via_result(tmp_path: Path) ->
 
 def test_python_internal_subagent_nested_call(tmp_path: Path) -> None:
     """A child may itself await a grandchild registered in its own plan."""
-    contents = _run_and_collect(NestingChildAgent(), tmp_path)
+    contents = _run_and_collect(NestingChildAgent(), tmp_path, parallelism=1)
 
     assert "relayed:echo:deep:hello" in contents, (
         f"nested call did not complete; collected: {contents!r}"
     )
+
+
+_BATCH_ACTIVE = 0
+_BATCH_MAX_ACTIVE = 0
+_BATCH_PEERS_READY = threading.Event()
+
+
+def _batch_work() -> None:
+    # The first child cannot finish before its peer starts. A serialized caller
+    # or an internal wait occupying the sole async worker cannot pass this gate.
+    if not _BATCH_PEERS_READY.wait(10):
+        msg = "sub-agent batch did not overlap"
+        raise RuntimeError(msg)
+    time.sleep(0.02)
+
+
+class BatchChildAgent(Agent):
+    """A child requiring async work from the only shared worker."""
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    async def work(event: Event, ctx: RunnerContext) -> None:
+        """Measure concurrency and return one intentional failure."""
+        global _BATCH_ACTIVE, _BATCH_MAX_ACTIVE
+        _BATCH_ACTIVE += 1
+        _BATCH_MAX_ACTIVE = max(_BATCH_MAX_ACTIVE, _BATCH_ACTIVE)
+        if _BATCH_ACTIVE == 2:
+            _BATCH_PEERS_READY.set()
+        try:
+            await ctx.durable_execute_async(_batch_work)
+            value = InputEvent.from_event(event).input
+            if value == 5:
+                msg = "expected child failure"
+                raise ValueError(msg)
+            ctx.send_event(OutputEvent(output=value))
+        finally:
+            _BATCH_ACTIVE -= 1
+
+
+class BatchRootAgent(Agent):
+    """Fan out across different child resources and await one ordered batch."""
+
+    def __init__(self) -> None:
+        """Register a second child resource to exercise mixed target names."""
+        super().__init__()
+        self.add_resource("other", ResourceType.AGENT, BatchChildAgent())
+
+    @action(InputEvent.EVENT_TYPE)
+    @staticmethod
+    async def fan_out(event: Event, ctx: RunnerContext) -> None:
+        """Collect a fan-out larger than the active-call window."""
+        global _BATCH_ACTIVE, _BATCH_MAX_ACTIVE
+        _BATCH_ACTIVE = 0
+        _BATCH_MAX_ACTIVE = 0
+        _BATCH_PEERS_READY.clear()
+        children = [
+            ctx.get_resource(name, ResourceType.AGENT)
+            for name in [CHILD_SCOPE, "other"]
+        ]
+        futures = [await children[i % 2].submit(ctx, i) for i in range(12)]
+        results = await futures[0].combine(*futures[1:])
+        ctx.send_event(
+            OutputEvent(
+                output=json.dumps(
+                    {
+                        "maximum": _BATCH_MAX_ACTIVE,
+                        "results": [
+                            result.result if result.success else "failed"
+                            for result in results
+                        ],
+                    }
+                )
+            )
+        )
+
+
+def test_python_internal_subagent_batch_bounds_and_partial_failure(
+    tmp_path: Path,
+) -> None:
+    """Twelve calls overlap at a cap of two and keep each ordered outcome."""
+    contents = _run_and_collect(BatchChildAgent(), tmp_path, BatchRootAgent())
+    result = json.loads(contents.strip())
+    assert result["maximum"] == 2
+    assert result["results"] == [[i] if i != 5 else "failed" for i in range(12)]

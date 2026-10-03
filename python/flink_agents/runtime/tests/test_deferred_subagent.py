@@ -22,7 +22,9 @@ from typing import Any, Callable, NamedTuple
 
 import pytest
 
+from flink_agents.api.runner_context import Outcome
 from flink_agents.api.subagent import SubagentResult
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.deferred_subagent import (
     DeferredSubagentFuture,
     DeferredSubagentSetup,
@@ -48,6 +50,7 @@ class _RecordingContext:
 
     def __init__(self) -> None:
         self.durable_execute_calls: list[_DurableExecuteCall] = []
+        self.config = AgentConfiguration({})
 
     def durable_execute(
         self,
@@ -90,6 +93,11 @@ class _AwaitingContext(_RecordingContext):
             _DurableExecuteCall(func, args, reconciler, durable_id)
         )
         return _ImmediateAwaitable(func(*args))
+
+    def gather(self, *futures: Any) -> Any:
+        return _ImmediateAwaitable([
+            Outcome.success(_run(future)) for future in futures
+        ])
 
 
 class _ImmediateAwaitable:

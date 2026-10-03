@@ -27,6 +27,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -133,6 +134,22 @@ public class ContinuationActionExecutor {
             parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
             contextRestorer.restore(context.getKey(), context.getActionTask());
         }
+    }
+
+    /** Signature-compatible callback overload for the multi-release continuation executor. */
+    public <T> BatchExecutionResult<T> executeAllAsync(
+            ContinuationContext context,
+            List<Callable<T>> suppliers,
+            Duration timeout,
+            int maxParallelism,
+            BiConsumer<Integer, Outcome<T>> onCompleted)
+            throws Exception {
+        BatchExecutionResult<T> result =
+                executeAllAsync(context, suppliers, timeout, maxParallelism);
+        for (int i = 0; i < result.getOutcomes().size(); i++) {
+            onCompleted.accept(i, result.getOutcomes().get(i));
+        }
+        return result;
     }
 
     private static <T> BatchExecutionResult<T> executeSuppliers(List<Callable<T>> suppliers) {

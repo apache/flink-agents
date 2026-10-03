@@ -170,8 +170,8 @@ class SubagentFuture(ABC):
     def __await__(self) -> Any:
         """Resolve the invocation, waiting until it reaches a terminal state.
 
-        Failures converge into a failed :class:`SubagentResult` rather than a
-        separately raised exception.
+        Child failures become failed :class:`SubagentResult` values.
+        Cancellation and runtime infrastructure failures propagate as exceptions.
         """
 
 
@@ -197,7 +197,12 @@ class SubagentFutures(ABC):
     def __await__(self) -> Any:
         """Resolve every handle in the group and return their outcomes in the
         order the handles were added. Like awaiting a single handle, failures
-        surface through failed :class:`SubagentResult`s.
+        surface through failed :class:`SubagentResult`s. Unresolved deferred
+        handles run as one durable batch. Internal calls use
+        ``subagent.parallelism`` and reserve queued calls before dispatch.
+        Duplicate handles, handles from different runner contexts, non-positive
+        limits and batches exceeding ``subagent.max-batch-size`` are rejected
+        before preparing calls. Runtime infrastructure failures propagate.
         """
 
 

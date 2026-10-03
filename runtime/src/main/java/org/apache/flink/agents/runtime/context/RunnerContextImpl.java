@@ -160,8 +160,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     /**
      * Index of the internal sub-agent setups owning a bootstrapped call session, keyed by session
      * id. Populated by {@link InternalSubagentSetup#bootstrap} so {@link #awaitSubagentCall} can
-     * resolve the owning setup off the mailbox thread without depending on the scope currently
-     * wired onto this shared context.
+     * resolve the owning setup without depending on the scope currently wired onto this shared
+     * context.
      */
     private final Map<String, InternalSubagentSetup> internalCallOwners = new HashMap<>();
 
@@ -230,8 +230,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * setup instance, so it passes the resource scope and this method resolves the materialized
      * {@link InternalSubagentSetup} from the cache in effect (a nested call resolves against the
      * caller's child plan). Must run on the mailbox thread (it sends the bootstrap event); the
-     * caller subsequently offloads {@link #awaitSubagentCall} onto a Python async worker so the
-     * mailbox stays free to dispatch the child agent's actions.
+     * caller polls {@link #isSubagentCallDone} while yielding its coroutine, then reads the result
+     * through {@link #awaitSubagentCall} without occupying an async worker.
      */
     public void bootstrapSubagentCallForScope(
             String scope, String sessionId, String callId, Object prompt) throws Exception {
@@ -249,8 +249,9 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * Blocks until the internal sub-agent call identified by {@code (sessionId, callId)} completes
      * and returns its accumulated output.
      *
-     * <p>Cross-language (Python) entry point invoked over pemja off the mailbox thread; resolves
-     * the owning setup through the session index rather than the currently wired scope.
+     * <p>Cross-language (Python) entry point invoked after {@link #isSubagentCallDone} returns
+     * true; resolves the owning setup through the session index rather than the currently wired
+     * scope.
      */
     public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
         InternalSubagentSetup owner = internalCallOwners.get(sessionId);
@@ -260,6 +261,33 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 sessionId,
                 callId);
         return owner.awaitSubagentCall(sessionId, callId);
+    }
+
+    /** Polls an internal call without blocking or occupying a shared async worker. */
+    public boolean isSubagentCallDone(String sessionId, String callId) {
+        mailboxThreadChecker.run();
+        InternalSubagentSetup owner = internalCallOwners.get(sessionId);
+        Preconditions.checkNotNull(
+                owner, "No internal sub-agent session registered: %s", sessionId);
+        return Preconditions.checkNotNull(
+                        owner.getCallStatus(sessionId, callId),
+                        "No internal sub-agent call registered: %s",
+                        callId)
+                .isDone();
+    }
+
+    /** Returns the durable child failure summary, or null for a successful call. */
+    @Nullable
+    public String getSubagentCallError(String sessionId, String callId) {
+        mailboxThreadChecker.run();
+        InternalSubagentSetup owner = internalCallOwners.get(sessionId);
+        Preconditions.checkNotNull(
+                owner, "No internal sub-agent session registered: %s", sessionId);
+        return Preconditions.checkNotNull(
+                        owner.getCallStatus(sessionId, callId),
+                        "No internal sub-agent call registered: %s",
+                        callId)
+                .getFailureSummary();
     }
 
     /**
@@ -359,8 +387,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                                 callStatus.getScope(),
                                 callStatus.getCallId(),
                                 callStatus.getSessionId());
-        callStatus.emitEvent();
         addPendingEvent(wrapped);
+        callStatus.emitEvent();
     }
 
     private void addPendingEvent(Event event) {

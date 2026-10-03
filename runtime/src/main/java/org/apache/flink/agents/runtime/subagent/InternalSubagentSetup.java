@@ -50,18 +50,13 @@ import java.util.Map;
  *
  * <p>Execution mode is the deferred one, inherited from {@link BaseDeferredSubagentSetup}: {@link
  * #submit} returns a deferred handle whose request is prepared on first resolve. {@link #prepare}
- * then runs the mailbox-confined bootstrap — registering the call status and sending one {@code
- * InternalSubagentCallEvent} — and returns the durable callable that waits off the mailbox thread
- * for the child to quiesce, so the operator can dispatch the child agent's actions in between.
+ * returns a side-effect-free callable. The batch scheduler bootstraps admitted calls on the mailbox
+ * and suspends until their response futures complete, without occupying an async worker.
  *
  * <p>Orchestration state lives here, not in the operator: the per-call quiesce statuses, the
  * per-scope child resource caches, and the per-key session index used to clean up when a record
  * finishes. The operator only dispatches envelope events and reports lifecycle through the
  * inherited {@link org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener} hooks.
- *
- * <p>Sending the event outside the durable boundary is deliberate: a replayed send carries the same
- * event attributes, so the child action resolves to the same persisted action state and replays its
- * recorded output instead of running again.
  */
 public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
@@ -120,43 +115,12 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
         return actionMatcher.match(event);
     }
 
-    /**
-     * The mailbox-confined bootstrap plus the off-mailbox wait. Sending the bootstrap event must
-     * happen before the wait releases the mailbox, so it runs here, on the resolving thread.
-     */
+    /** Prepares a deferred invocation; admitting the callable starts its child scope. */
     @Override
     protected DurableCallable<SubagentResult> prepare(
             RunnerContext ctx, Object prompt, String sessionId, String callId) {
         requireMailboxSuspension(ctx);
-        try {
-            bootstrap(ctx, sessionId, callId, prompt);
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Failed to bootstrap internal sub-agent call for scope " + scope, e);
-        }
-        return new DurableCallable<SubagentResult>() {
-            @Override
-            public String getId() {
-                return sessionId + "#" + callId;
-            }
-
-            @Override
-            public Class<SubagentResult> getResultClass() {
-                return SubagentResult.class;
-            }
-
-            @Override
-            public SubagentResult call() {
-                // Runs off the mailbox thread, so the operator can dispatch the child's
-                // actions; failures converge into a failed SubagentResult like the other
-                // deferred setups.
-                try {
-                    return SubagentResult.ok(awaitSubagentCall(sessionId, callId));
-                } catch (Exception e) {
-                    return SubagentResult.error(e);
-                }
-            }
-        };
+        return new InternalSubagentCallable(this, ctx, prompt, sessionId, callId);
     }
 
     /**
@@ -198,8 +162,8 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             keySessionIds.computeIfAbsent(key, k -> new ArrayList<>()).add(sessionId);
         }
         if (ctx instanceof RunnerContextImpl) {
-            // Let the shared context resolve this session off the mailbox thread (pemja await),
-            // independent of whichever scope is wired onto it at that moment.
+            // Let the Python bridge resolve this session independently of whichever scope
+            // is wired onto the shared context when the caller resumes.
             RunnerContextImpl runnerContext = (RunnerContextImpl) ctx;
             runnerContext.registerInternalCallOwner(sessionId, this);
             ownerContexts.put(sessionId, runnerContext);
@@ -211,7 +175,8 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
     /**
      * Blocks until the internal sub-agent call identified by {@code (sessionId, callId)} completes
-     * and returns its accumulated output. Must be invoked off the mailbox thread.
+     * and returns its accumulated output. The Python scheduler calls this on the mailbox only after
+     * the response future has completed; an unresolved call must be awaited off the mailbox.
      */
     public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
         InternalSubagentCallStatus cs = getCallStatus(sessionId, callId);

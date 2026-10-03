@@ -117,28 +117,53 @@ class SubagentFutureGroup(SubagentFutures):
         return SubagentFutureGroup((*self._futures, *others))
 
     def __await__(self) -> Any:
-        """Wait for every handle in submission order.
-
-        Pending deferred handles are prepared before any execution
-        starts, then executed one by one.
-        """
+        """Resolve one durable batch, preserving the input order and child failures."""
         # Late import: deferred handles build on this module.
+        from flink_agents.api.core_options import AgentExecutionOptions
+        from flink_agents.runtime.async_subagent import AsyncSubagentFuture
         from flink_agents.runtime.deferred_subagent import DeferredSubagentFuture
 
+        if len({id(future) for future in self._futures}) != len(self._futures):
+            msg = "The same sub-agent future cannot appear more than once in a batch"
+            raise ValueError(msg)
         pending = [
             future
             for future in self._futures
             if isinstance(future, DeferredSubagentFuture) and not future.done()
         ]
-        for future in pending:
-            future.prepare()
-        # TODO(#926): execute the prepared calls as one batch once durable
-        # execution supports batched submission; until then the prepared
-        # calls are executed one by one.
-        for future in pending:
-            yield from future.execute()
+        ctx = None
+        for future in self._futures:
+            if isinstance(future, DeferredSubagentFuture | AsyncSubagentFuture):
+                if future._cancelled:
+                    yield from future.__await__()
+                if ctx is not None and future._ctx is not ctx:
+                    msg = "Sub-agent futures in a batch must belong to the same runner context"
+                    raise ValueError(msg)
+                ctx = future._ctx
+        if ctx is not None:
+            limit = ctx.config.get(AgentExecutionOptions.SUBAGENT_MAX_BATCH_SIZE)
+            parallelism = ctx.config.get(AgentExecutionOptions.SUBAGENT_PARALLELISM)
+            if limit <= 0 or parallelism <= 0:
+                msg = "subagent.parallelism and subagent.max-batch-size must be positive"
+                raise ValueError(msg)
+            if len(self._futures) > limit:
+                msg = f"Sub-agent batch size {len(self._futures)} exceeds limit {limit}"
+                raise ValueError(msg)
+        if pending:
+            # Prepare every handle before creating durable futures: setup preparation
+            # is mailbox-confined and internal preparation has no dispatch side effects.
+            for future in pending:
+                future.prepare()
+            outcomes = yield from ctx.gather(
+                *(future.durable_future() for future in pending)
+            ).__await__()
+            for future, outcome in zip(pending, outcomes, strict=True):
+                if outcome.error is None:
+                    future._resolve(outcome.value)
+            for outcome in outcomes:
+                if outcome.error is not None:
+                    raise outcome.error
         outcomes = []
         for future in self._futures:
-            outcome = yield from future.__await__()
-            outcomes.append(outcome)
+            outcomes.append((yield from future.__await__()))
         return outcomes

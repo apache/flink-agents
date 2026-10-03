@@ -58,6 +58,16 @@ final class AsyncSubagentFuture extends SubagentFuture {
         }
     }
 
+    RunnerContext getContext() {
+        return ctx;
+    }
+
+    void checkNotCancelled() {
+        if (cancelled) {
+            throw new CancellationException("Sub-agent call cancelled: " + identity());
+        }
+    }
+
     /**
      * Probes the remote status directly. The probe runs outside durable execution, so a failover
      * replay may probe a different number of times than the original execution. A probe failure

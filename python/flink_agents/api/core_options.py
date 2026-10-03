@@ -358,6 +358,17 @@ class AgentExecutionOptions:
         default=-1,
     )
 
+    # Limits apply to one gathered batch of internal sub-agent calls. Waiting
+    # ancestors do not consume capacity in a descendant's separate batch.
+    SUBAGENT_PARALLELISM = ConfigOption(
+        key="subagent.parallelism", config_type=int, default=16
+    )
+
+    # Reject an oversized batch before reserving durable state or starting calls.
+    SUBAGENT_MAX_BATCH_SIZE = ConfigOption(
+        key="subagent.max-batch-size", config_type=int, default=1024
+    )
+
     RAG_ASYNC = ConfigOption(
         key="rag.async",
         config_type=bool,

@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import inspect
 import itertools
 import json
 import logging
@@ -54,6 +55,7 @@ from flink_agents.runtime.durable_execution import (
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.internal_subagent_call import InternalSubagentCall
 from flink_agents.runtime.memory.event_attachment_utils import store_event_attachments
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
@@ -353,11 +355,38 @@ class _DurableBatchAsyncExecutionResult(_AsyncExecutionResult):
         self._calls = calls
 
     def __await__(self) -> Any:
-        plan = self._ctx._prepare_batch_execution(self._calls)
-        parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
-        timeout_ms = self._ctx.config.get(
-            AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS
+        internal = any(
+            isinstance(inspect.unwrap(call.func), InternalSubagentCall)
+            for call in self._calls
         )
+        if internal:
+            parallelism = self._ctx.config.get(AgentExecutionOptions.SUBAGENT_PARALLELISM)
+            limit = self._ctx.config.get(AgentExecutionOptions.SUBAGENT_MAX_BATCH_SIZE)
+            if parallelism <= 0 or limit <= 0:
+                msg = "subagent.parallelism and subagent.max-batch-size must be positive"
+                raise ValueError(msg)
+            if len(self._calls) > limit:
+                msg = f"Sub-agent batch size {len(self._calls)} exceeds limit {limit}"
+                raise ValueError(msg)
+            timeout_ms = -1
+        else:
+            parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
+            timeout_ms = self._ctx.config.get(
+                AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS
+            )
+        plan = self._ctx._prepare_batch_execution(self._calls)
+        base = self._ctx._j_runner_context.getCurrentCallIndex()
+        finalized: set[int] = set()
+
+        def on_completed(index: int, outcome: Outcome) -> None:
+            if outcome.error is not None:
+                raise outcome.error
+            call_index = plan.suppliers[index][0]
+            self._ctx._finalize_batch_call(
+                self._calls[call_index], base + call_index, outcome
+            )
+            finalized.add(index)
+
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         suppliers = [supplier for _, supplier in plan.suppliers]
         batch_futures: list[Any | None] = [None] * len(suppliers)
@@ -371,12 +400,15 @@ class _DurableBatchAsyncExecutionResult(_AsyncExecutionResult):
                 timeout_ms,
                 batch_futures,
                 started,
+                on_completed if internal else None,
             )
         except _BatchTimeoutError as exception:
             executed = _collect_sliding_window_outcomes_on_timeout(
                 batch_futures, exception
             )
-        return self._ctx._finalize_batch_execution(self._calls, plan, started, executed)
+        return self._ctx._finalize_batch_execution(
+            self._calls, plan, started, executed, finalized
+        )
 
 
 class _SingleDurableFuture(DurableFuture[Any]):
@@ -386,6 +418,13 @@ class _SingleDurableFuture(DurableFuture[Any]):
         self._call = call
 
     def _resolve(self) -> Any:
+        if isinstance(inspect.unwrap(self._call.func), InternalSubagentCall):
+            outcomes = yield from _DurableBatchAsyncExecutionResult(
+                self._ctx, [self._call]
+            ).__await__()
+            if outcomes[0].error is not None:
+                raise outcomes[0].error
+            return outcomes[0].value
         return (yield from self._ctx._resolve_durable_call(self._call).__await__())
 
 
@@ -455,6 +494,7 @@ def _execute_sliding_window_batch(
     timeout_ms: int,
     futures: list[Any | None],
     started: list[bool],
+    on_completed: Callable[[int, Outcome], None] | None = None,
 ) -> Any:
     batch_size = len(suppliers)
     if batch_size == 0:
@@ -465,13 +505,6 @@ def _execute_sliding_window_batch(
     completed = 0
     counted = [False] * batch_size
 
-    def in_flight() -> int:
-        return sum(
-            1
-            for i in range(next_to_submit)
-            if futures[i] is not None and not futures[i].done()
-        )
-
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
             timeout_message = (
@@ -479,17 +512,24 @@ def _execute_sliding_window_batch(
             )
             raise _BatchTimeoutError(timeout_message)
 
-        while next_to_submit < batch_size and in_flight() < parallelism_limit:
-            index = next_to_submit
-            futures[index] = executor.submit(
-                _mark_started_on_run(suppliers[index], started, index)
-            )
-            next_to_submit += 1
-
         for i in range(next_to_submit):
             if not counted[i] and futures[i].done():
+                if on_completed is not None:
+                    on_completed(i, _collect_outcomes([futures[i]])[0])
                 counted[i] = True
                 completed += 1
+
+        while next_to_submit < batch_size and next_to_submit - completed < parallelism_limit:
+            index = next_to_submit
+            supplier = suppliers[index]
+            if isinstance(supplier, InternalSubagentCall):
+                futures[index] = supplier.start()
+                started[index] = True
+            else:
+                futures[index] = executor.submit(
+                    _mark_started_on_run(supplier, started, index)
+                )
+            next_to_submit += 1
 
         if completed < batch_size:
             yield
@@ -1294,6 +1334,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             return Outcome.failure(e)
 
     def _callable_for_durable_call(self, call: _DurableCall) -> Callable[[], Any]:
+        func = inspect.unwrap(call.func)
+        if isinstance(func, InternalSubagentCall):
+            return func
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
@@ -1358,12 +1401,24 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             execution_start=execution_start,
         )
 
+    def _finalize_batch_call(
+        self, call: _DurableCall, index: int, outcome: Outcome
+    ) -> None:
+        function_id, args_digest = self._durable_identity(call)
+        result_payload, exception_payload = self._serialize_call_payloads(
+            outcome.value, outcome.error
+        )
+        self._j_runner_context.finalizeCallAt(
+            index, function_id, args_digest, result_payload, exception_payload
+        )
+
     def _finalize_batch_execution(
         self,
         calls: list[_DurableCall],
         plan: _BatchExecutionPlan,
         started: list[bool],
         executed: list[Outcome],
+        finalized: set[int] | None = None,
     ) -> list[Outcome]:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes = list(plan.outcomes)
@@ -1372,7 +1427,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         ):
             call = calls[call_index]
             function_id, args_digest = self._durable_identity(call)
-            if not started[i]:
+            if not started[i] or (finalized is not None and i in finalized):
                 outcomes[call_index] = outcome
                 continue
             try:
@@ -1545,15 +1600,16 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             scope, session_id, call_id, prompt
         )
 
-    def await_subagent_call(self, session_id: str, call_id: str) -> list:
-        """Block until the identified internal sub-agent call quiesces.
+    def is_subagent_call_done(self, session_id: str, call_id: str) -> bool:
+        """Poll an internal call on the mailbox without using an async worker."""
+        return self._j_runner_context.isSubagentCallDone(session_id, call_id)
 
-        Implements
-        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java ``RunnerContextImpl.awaitSubagentCall``. Must run
-        off the mailbox thread (e.g. on the durable-execution async worker) so
-        the mailbox stays free to dispatch the child agent's actions.
-        """
+    def get_subagent_call_error(self, session_id: str, call_id: str) -> str | None:
+        """Return the same child failure summary before and after recovery."""
+        return self._j_runner_context.getSubagentCallError(session_id, call_id)
+
+    def await_subagent_call(self, session_id: str, call_id: str) -> list:
+        """Read a completed internal call's output on the mailbox thread."""
         return list(self._j_runner_context.awaitSubagentCall(session_id, call_id))
 
     @property

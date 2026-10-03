@@ -105,6 +105,14 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Long> TOOL_CALL_BATCH_TIMEOUT_MS =
             new ConfigOption<>("tool-call.batch.timeout.ms", Long.class, -1L);
 
+    /** Maximum concurrent internal invocations per sub-agent batch; must be positive. */
+    public static final ConfigOption<Integer> SUBAGENT_PARALLELISM =
+            new ConfigOption<>("subagent.parallelism", Integer.class, 16);
+
+    /** Maximum number of handles in a sub-agent batch; must be positive. */
+    public static final ConfigOption<Integer> SUBAGENT_MAX_BATCH_SIZE =
+            new ConfigOption<>("subagent.max-batch-size", Integer.class, 1024);
+
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);
 

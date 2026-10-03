@@ -31,6 +31,7 @@ public class ActionState {
     private final List<MemoryUpdate> shortTermMemoryUpdates;
     private final List<Event> outputEvents;
     private final List<Event> subagentResultEvents;
+    private String subagentError;
 
     /**
      * Records of completed durable_execute/durable_execute_async calls for fine-grained recovery.
@@ -120,6 +121,15 @@ public class ActionState {
 
     public List<Event> getSubagentResultEvents() {
         return subagentResultEvents;
+    }
+
+    /** A failed child action's durable exception summary, without its stack trace. */
+    public String getSubagentError() {
+        return subagentError;
+    }
+
+    public void setSubagentError(String subagentError) {
+        this.subagentError = subagentError;
     }
 
     /** Setters for the fields */
@@ -237,6 +247,7 @@ public class ActionState {
                 31 * result
                         + (subagentResultEvents.isEmpty() ? 0 : subagentResultEvents.hashCode());
         result = 31 * result + (callResults.isEmpty() ? 0 : callResults.hashCode());
+        result = 31 * result + java.util.Objects.hashCode(subagentError);
         result = 31 * result + (completed ? 1 : 0);
         return result;
     }
@@ -256,6 +267,7 @@ public class ActionState {
                 && java.util.Objects.equals(shortTermMemoryUpdates, that.shortTermMemoryUpdates)
                 && java.util.Objects.equals(outputEvents, that.outputEvents)
                 && java.util.Objects.equals(subagentResultEvents, that.subagentResultEvents)
+                && java.util.Objects.equals(subagentError, that.subagentError)
                 && java.util.Objects.equals(callResults, that.callResults);
     }
 
@@ -272,6 +284,8 @@ public class ActionState {
                 + outputEvents
                 + ", subagentResultEvents="
                 + subagentResultEvents
+                + ", subagentError="
+                + subagentError
                 + ", callResults="
                 + callResults
                 + ", completed="

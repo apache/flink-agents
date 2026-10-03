@@ -22,11 +22,13 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
@@ -209,7 +211,10 @@ public class InternalSubagentCallTest {
                 new String[] {InputEvent.EVENT_TYPE},
                 InternalSubagentCallTest.class.getMethod(
                         callerAction, Event.class, RunnerContext.class));
-        return new AgentPlan(agent);
+        AgentConfiguration configuration = new AgentConfiguration();
+        configuration.set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
+        configuration.set(AgentExecutionOptions.SUBAGENT_PARALLELISM, 1);
+        return new AgentPlan(agent, configuration);
     }
 
     @SuppressWarnings("unchecked")

@@ -37,6 +37,8 @@ public class InternalSubagentCallStatus {
     private final CompletableFuture<List<Object>> responseFuture = new CompletableFuture<>();
     private int runningActions;
     private int pendingEvents;
+    private Throwable failure;
+    private String failureSummary;
     private final List<Object> output = new ArrayList<>();
 
     public InternalSubagentCallStatus(
@@ -122,7 +124,24 @@ public class InternalSubagentCallStatus {
     }
 
     public void failAction(Throwable cause) {
-        responseFuture.completeExceptionally(cause);
+        if (failure == null) {
+            failure = cause;
+            failureSummary = cause.getClass().getName() + ": " + cause.getMessage();
+        }
+        tryComplete();
+    }
+
+    /** Restores a failed action without inventing a different exception type in its result. */
+    public void failAction(String summary) {
+        if (failure == null) {
+            failure = new IllegalStateException(summary);
+            failureSummary = summary;
+        }
+        tryComplete();
+    }
+
+    public String getFailureSummary() {
+        return failureSummary;
     }
 
     public void cancel() {
@@ -140,6 +159,10 @@ public class InternalSubagentCallStatus {
         if (runningActions != 0 || pendingEvents != 0) {
             return;
         }
-        responseFuture.complete(new ArrayList<>(output));
+        if (failure == null) {
+            responseFuture.complete(new ArrayList<>(output));
+        } else {
+            responseFuture.completeExceptionally(failure);
+        }
     }
 }
