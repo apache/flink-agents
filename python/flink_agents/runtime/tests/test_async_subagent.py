@@ -24,6 +24,7 @@ import pytest
 from pydantic import PrivateAttr
 
 from flink_agents.api.subagent import SubagentResult
+from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.async_subagent import (
     BaseAsyncSubagentSetup,
     RunStatus,
@@ -46,6 +47,7 @@ class _RecordingContext:
     def __init__(self) -> None:
         self.durable_execute_calls: list[_DurableExecuteCall] = []
         self.async_durable_calls = 0
+        self.config = AgentConfiguration({})
 
     def durable_execute(
         self,

@@ -26,6 +26,7 @@ import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourcePro
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 
 import java.io.IOException;
 
@@ -57,6 +58,9 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
         } else if (resourceProvider instanceof JavaSerializableResourceProvider) {
             serializeJavaSerializableResourceProvider(
                     jsonGenerator, (JavaSerializableResourceProvider) resourceProvider);
+        } else if (resourceProvider instanceof InternalSubagentProvider) {
+            serializeInternalSubagentProvider(
+                    jsonGenerator, (InternalSubagentProvider) resourceProvider);
         } else {
             throw new IllegalArgumentException(
                     "Unsupported resource provider type: " + resourceProvider.getClass().getName());
@@ -117,5 +121,15 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
         gen.writeObjectField("descriptor", provider.getDescriptor());
         gen.writeStringField(
                 "__resource_provider_type__", JavaResourceProvider.class.getSimpleName());
+    }
+
+    private void serializeInternalSubagentProvider(
+            JsonGenerator gen, InternalSubagentProvider provider) throws IOException {
+        gen.writeStringField("name", provider.getName());
+        gen.writeStringField("type", provider.getType().getValue());
+        gen.writeStringField("scope", provider.getScope());
+        gen.writeObjectField("childPlan", provider.getChildPlan());
+        gen.writeStringField(
+                "__resource_provider_type__", InternalSubagentProvider.class.getSimpleName());
     }
 }

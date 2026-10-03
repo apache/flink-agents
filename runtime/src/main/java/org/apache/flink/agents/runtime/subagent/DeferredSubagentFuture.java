@@ -56,11 +56,19 @@ public final class DeferredSubagentFuture extends SubagentFuture {
         }
     }
 
-    /** Prepares the request if it has not been prepared yet; must run on the mailbox thread. */
-    DurableCallable<SubagentResult> prepare() {
+    RunnerContext getContext() {
+        return ctx;
+    }
+
+    void checkNotCancelled() {
         if (cancelled) {
             throw new CancellationException("Sub-agent call cancelled: " + identity());
         }
+    }
+
+    /** Prepares the request if it has not been prepared yet; must run on the mailbox thread. */
+    DurableCallable<SubagentResult> prepare() {
+        checkNotCancelled();
         if (prepared == null) {
             prepared = preparedSupplier.get();
         }
@@ -98,7 +106,7 @@ public final class DeferredSubagentFuture extends SubagentFuture {
     }
 
     /** Records the outcome produced by a batched wait. */
-    private void complete(SubagentResult outcome) {
+    void complete(SubagentResult outcome) {
         this.value = outcome;
         this.done = true;
         if (registry != null) {

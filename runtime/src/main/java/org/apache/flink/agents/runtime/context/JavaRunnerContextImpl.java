@@ -27,12 +27,14 @@ import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallable;
 
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -69,6 +71,13 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
     @Override
     protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
+        if (callable instanceof InternalSubagentCallable) {
+            Outcome<T> outcome = resolveDurableBatch(List.of(callable)).get(0);
+            if (outcome.isFailure()) {
+                throw outcome.getError();
+            }
+            return outcome.getValue();
+        }
         if (durableExecutionContext != null) {
             Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
@@ -90,8 +99,12 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         if (callables.isEmpty()) {
             return List.of();
         }
+        boolean internal = callables.stream().anyMatch(InternalSubagentCallable.class::isInstance);
+        if (internal) {
+            validateInternalBatch(callables.size());
+        }
         if (durableExecutionContext == null) {
-            return executeAllWithoutDurableState(callables);
+            return executeAllWithoutDurableState(callables, internal);
         }
 
         String argsDigest = "";
@@ -100,8 +113,36 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
         reservePendingBatchIfNeeded(callables, argsDigest, plan);
 
-        BatchExecutionResult<T> executed = executeOutcomeSuppliers(plan.suppliers);
-        finalizeExecutedOutcomes(callables, base, argsDigest, plan, executed);
+        if (internal) {
+            try {
+                executeOutcomeSuppliers(
+                        plan.suppliers,
+                        true,
+                        (index, outcome) -> {
+                            int callIndex = plan.executableCallIndexes.get(index);
+                            DurableCallable<T> callable = callables.get(callIndex);
+                            try {
+                                if (outcome.isFailure()) {
+                                    throw outcome.getError();
+                                }
+                                finalizeCallAt(
+                                        base + callIndex,
+                                        callable.getId(),
+                                        argsDigest,
+                                        serializeDurableResult(outcome.getValue()),
+                                        null);
+                                plan.outcomes.set(callIndex, outcome);
+                            } catch (Exception e) {
+                                throw new DurableExecutionRuntimeException(e);
+                            }
+                        });
+            } catch (DurableExecutionRuntimeException e) {
+                throw (Exception) e.getCause();
+            }
+        } else {
+            BatchExecutionResult<T> executed = executeOutcomeSuppliers(plan.suppliers, false, null);
+            finalizeExecutedOutcomes(callables, base, argsDigest, plan, executed);
+        }
 
         advanceCallIndexBy(callables.size());
         return plan.outcomes;
@@ -115,21 +156,23 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             CallResult current = getCallResultAt(base + i);
             if (current == null) {
                 markReservationStart(plan, i);
-                addExecutableCall(plan, i, callable::call);
+                addExecutableCall(plan, i, asExecutionCallable(callable));
                 continue;
             }
             if (!current.matches(callable.getId(), argsDigest)) {
                 clearCallResultsFromAndPersist(base + i);
                 plan.needsReservation = true;
                 plan.executionStart = i;
-                addExecutableCall(plan, i, callable::call);
+                addExecutableCall(plan, i, asExecutionCallable(callable));
                 appendRemainingExecutions(callables, plan, i + 1);
                 break;
             }
             if (current.isPending()) {
                 Callable<T> reconcileCallable = callable.reconciler();
                 Callable<T> executionCallable =
-                        reconcileCallable != null ? reconcileCallable : callable::call;
+                        reconcileCallable != null
+                                ? reconcileCallable
+                                : asExecutionCallable(callable);
                 addExecutableCall(plan, i, executionCallable);
             } else {
                 plan.outcomes.add(
@@ -158,7 +201,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             List<DurableCallable<T>> callables, BatchExecutionPlan<T> plan, int startIndex) {
         for (int i = startIndex; i < callables.size(); i++) {
             DurableCallable<T> remaining = callables.get(i);
-            addExecutableCall(plan, i, remaining::call);
+            addExecutableCall(plan, i, asExecutionCallable(remaining));
         }
     }
 
@@ -227,13 +270,14 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         }
     }
 
-    private <T> List<Outcome<T>> executeAllWithoutDurableState(List<DurableCallable<T>> callables)
-            throws Exception {
+    private <T> List<Outcome<T>> executeAllWithoutDurableState(
+            List<DurableCallable<T>> callables, boolean internal) throws Exception {
         List<Callable<T>> suppliers = new ArrayList<>();
         for (DurableCallable<T> callable : callables) {
-            suppliers.add(callable::call);
+            suppliers.add(asExecutionCallable(callable));
         }
-        List<Outcome<T>> outcomes = executeOutcomeSuppliers(suppliers).getOutcomes();
+        List<Outcome<T>> outcomes =
+                executeOutcomeSuppliers(suppliers, internal, null).getOutcomes();
         for (Outcome<T> outcome : outcomes) {
             if (outcome.isFailure() && outcome.getError() instanceof InterruptedException) {
                 // Without a durable store there is nothing to leave pending, but a cancellation
@@ -246,7 +290,35 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         return outcomes;
     }
 
-    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers)
+    @SuppressWarnings("unchecked")
+    private static <T> Callable<T> asExecutionCallable(DurableCallable<T> callable) {
+        return callable instanceof InternalSubagentCallable
+                ? (Callable<T>) callable
+                : callable::call;
+    }
+
+    private void validateInternalBatch(int size) {
+        int maximum = getConfig().get(AgentExecutionOptions.SUBAGENT_MAX_BATCH_SIZE);
+        int parallelism = getConfig().get(AgentExecutionOptions.SUBAGENT_PARALLELISM);
+        if (maximum <= 0 || parallelism <= 0) {
+            throw new IllegalArgumentException(
+                    "subagent.max-batch-size and subagent.parallelism must be positive");
+        }
+        if (size > maximum) {
+            throw new IllegalArgumentException(
+                    "Sub-agent batch size " + size + " exceeds subagent.max-batch-size " + maximum);
+        }
+        if (!ContinuationActionExecutor.isContinuationSupported()
+                || continuationExecutor == null
+                || continuationContext == null) {
+            throw new IllegalStateException("Internal sub-agent calls require stackful suspension");
+        }
+    }
+
+    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(
+            List<Callable<T>> suppliers,
+            boolean internal,
+            BiConsumer<Integer, Outcome<T>> onCompleted)
             throws Exception {
         if (suppliers.isEmpty()) {
             return new BatchExecutionResult<>(List.of(), new boolean[0]);
@@ -266,6 +338,14 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
             boolean[] started = new boolean[suppliers.size()];
             Arrays.fill(started, true);
             return new BatchExecutionResult<>(outcomes, started);
+        }
+        if (internal) {
+            return continuationExecutor.executeAllAsync(
+                    continuationContext,
+                    suppliers,
+                    null,
+                    getConfig().get(AgentExecutionOptions.SUBAGENT_PARALLELISM),
+                    onCompleted == null ? (index, outcome) -> {} : onCompleted);
         }
         Long timeoutMs = getConfig().get(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS);
         Duration timeout =

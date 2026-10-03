@@ -166,6 +166,8 @@ public abstract class SubagentSetup extends SerializableResource {
 
     /**
      * Issues a new invocation with an implementation-assigned identity. This is the preferred form.
+     * Internal sub-agents defer execution until the returned handle is resolved; combine handles
+     * with {@link SubagentFuture#combine(SubagentFuture...)} to run a bounded batch.
      */
     public abstract SubagentFuture submit(RunnerContext ctx, Object prompt) throws Exception;
 

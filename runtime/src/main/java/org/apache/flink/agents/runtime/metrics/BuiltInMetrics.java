@@ -175,15 +175,14 @@ public class BuiltInMetrics {
     }
 
     private BuiltInActionMetrics actionMetrics(String actionName) {
-        BuiltInActionMetrics actionMetrics = actionMetricGroups.get(actionName);
-        if (actionMetrics == null) {
-            throw new IllegalArgumentException("Unknown action: " + actionName);
-        }
-        return actionMetrics;
+        // An action outside the root plan is legitimate: an internal sub-agent runs its child
+        // plan's actions through the same operator. Register its metrics on first use; the shared
+        // metric group makes repeat registration idempotent.
+        return actionMetricGroups.computeIfAbsent(actionName, this::createActionMetrics);
     }
 
     private BuiltInActionMetrics restoredActionMetrics(String actionName) {
-        return actionMetricGroups.computeIfAbsent(actionName, this::createActionMetrics);
+        return actionMetrics(actionName);
     }
 
     private BuiltInActionMetrics createActionMetrics(String actionName) {

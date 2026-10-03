@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import inspect
 import itertools
 import json
 import logging
@@ -54,6 +55,7 @@ from flink_agents.runtime.durable_execution import (
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.internal_subagent_call import InternalSubagentCall
 from flink_agents.runtime.memory.event_attachment_utils import store_event_attachments
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
@@ -353,11 +355,38 @@ class _DurableBatchAsyncExecutionResult(_AsyncExecutionResult):
         self._calls = calls
 
     def __await__(self) -> Any:
-        plan = self._ctx._prepare_batch_execution(self._calls)
-        parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
-        timeout_ms = self._ctx.config.get(
-            AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS
+        internal = any(
+            isinstance(inspect.unwrap(call.func), InternalSubagentCall)
+            for call in self._calls
         )
+        if internal:
+            parallelism = self._ctx.config.get(AgentExecutionOptions.SUBAGENT_PARALLELISM)
+            limit = self._ctx.config.get(AgentExecutionOptions.SUBAGENT_MAX_BATCH_SIZE)
+            if parallelism <= 0 or limit <= 0:
+                msg = "subagent.parallelism and subagent.max-batch-size must be positive"
+                raise ValueError(msg)
+            if len(self._calls) > limit:
+                msg = f"Sub-agent batch size {len(self._calls)} exceeds limit {limit}"
+                raise ValueError(msg)
+            timeout_ms = -1
+        else:
+            parallelism = self._ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
+            timeout_ms = self._ctx.config.get(
+                AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS
+            )
+        plan = self._ctx._prepare_batch_execution(self._calls)
+        base = self._ctx._j_runner_context.getCurrentCallIndex()
+        finalized: set[int] = set()
+
+        def on_completed(index: int, outcome: Outcome) -> None:
+            if outcome.error is not None:
+                raise outcome.error
+            call_index = plan.suppliers[index][0]
+            self._ctx._finalize_batch_call(
+                self._calls[call_index], base + call_index, outcome
+            )
+            finalized.add(index)
+
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         suppliers = [supplier for _, supplier in plan.suppliers]
         batch_futures: list[Any | None] = [None] * len(suppliers)
@@ -371,12 +400,15 @@ class _DurableBatchAsyncExecutionResult(_AsyncExecutionResult):
                 timeout_ms,
                 batch_futures,
                 started,
+                on_completed if internal else None,
             )
         except _BatchTimeoutError as exception:
             executed = _collect_sliding_window_outcomes_on_timeout(
                 batch_futures, exception
             )
-        return self._ctx._finalize_batch_execution(self._calls, plan, started, executed)
+        return self._ctx._finalize_batch_execution(
+            self._calls, plan, started, executed, finalized
+        )
 
 
 class _SingleDurableFuture(DurableFuture[Any]):
@@ -386,6 +418,13 @@ class _SingleDurableFuture(DurableFuture[Any]):
         self._call = call
 
     def _resolve(self) -> Any:
+        if isinstance(inspect.unwrap(self._call.func), InternalSubagentCall):
+            outcomes = yield from _DurableBatchAsyncExecutionResult(
+                self._ctx, [self._call]
+            ).__await__()
+            if outcomes[0].error is not None:
+                raise outcomes[0].error
+            return outcomes[0].value
         return (yield from self._ctx._resolve_durable_call(self._call).__await__())
 
 
@@ -455,6 +494,7 @@ def _execute_sliding_window_batch(
     timeout_ms: int,
     futures: list[Any | None],
     started: list[bool],
+    on_completed: Callable[[int, Outcome], None] | None = None,
 ) -> Any:
     batch_size = len(suppliers)
     if batch_size == 0:
@@ -465,13 +505,6 @@ def _execute_sliding_window_batch(
     completed = 0
     counted = [False] * batch_size
 
-    def in_flight() -> int:
-        return sum(
-            1
-            for i in range(next_to_submit)
-            if futures[i] is not None and not futures[i].done()
-        )
-
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
             timeout_message = (
@@ -479,17 +512,24 @@ def _execute_sliding_window_batch(
             )
             raise _BatchTimeoutError(timeout_message)
 
-        while next_to_submit < batch_size and in_flight() < parallelism_limit:
-            index = next_to_submit
-            futures[index] = executor.submit(
-                _mark_started_on_run(suppliers[index], started, index)
-            )
-            next_to_submit += 1
-
         for i in range(next_to_submit):
             if not counted[i] and futures[i].done():
+                if on_completed is not None:
+                    on_completed(i, _collect_outcomes([futures[i]])[0])
                 counted[i] = True
                 completed += 1
+
+        while next_to_submit < batch_size and next_to_submit - completed < parallelism_limit:
+            index = next_to_submit
+            supplier = suppliers[index]
+            if isinstance(supplier, InternalSubagentCall):
+                futures[index] = supplier.start()
+                started[index] = True
+            else:
+                futures[index] = executor.submit(
+                    _mark_started_on_run(supplier, started, index)
+                )
+            next_to_submit += 1
 
         if completed < batch_size:
             yield
@@ -561,11 +601,19 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         )
         self.__resource_cache.set_java_resource_adapter(j_resource_adapter)
         self.__config = self.__agent_plan.config
+        self.__j_resource_adapter = j_resource_adapter
+        # Resource caches for sub-agent scopes, keyed by the child plan JSON.
+        self.__scoped_resource_caches: dict = {}
         self.executor = executor
         # Task lifecycle listeners the operator's callbacks fan out to,
         # registered via add_task_lifecycle_listener() (aligned with the Java
         # operator's taskLifecycleListeners).
         self.__task_lifecycle_listeners: list = []
+        # The namespace of the task the operator last reported prepared, extracted
+        # eagerly so no pemja reference is retained across calls. Replayed onto a
+        # sub-agent handle materialized lazily during the action body — see
+        # __observe_subagent_setup().
+        self.__prepared_namespace: Any = None
 
     def set_long_term_memory(self, ltm: InternalBaseLongTermMemory) -> None:
         """Set long term memory instance to this context.
@@ -607,10 +655,73 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         self, name: str, type: ResourceType, metric_group: MetricGroup = None
     ) -> Resource:
         self._j_runner_context.checkMailboxThread()
-        resource = self.__resource_cache.get_resource(name, type)
+        cache = self.__active_resource_cache()
+        resource = cache.get_resource(name, type)
         # Bind metric group to the resource
         resource.set_metric_group(metric_group or self.action_metric_group)
+        self.__observe_subagent_setup(resource)
         return resource
+
+    def __active_resource_cache(self) -> ResourceCache:
+        """The resource cache in effect: the child plan's while inside a
+        sub-agent call (so a child agent resolves its own resources, including
+        any nested sub-agents), else the root plan's.
+        """
+        plan_json = self._j_runner_context.getActiveScopePlanJson()
+        if plan_json is None:
+            return self.__resource_cache
+        cache = self.__scoped_resource_caches.get(plan_json)
+        if cache is None:
+            from flink_agents.plan.agent_plan import AgentPlan
+
+            scoped_plan = AgentPlan.model_validate_json(plan_json)
+            cache = ResourceCache(scoped_plan.resource_providers, scoped_plan.config)
+            cache.set_java_resource_adapter(self.__j_resource_adapter)
+            self.__scoped_resource_caches[plan_json] = cache
+        return cache
+
+    def __observe_subagent_setup(self, resource: Any) -> None:
+        """Wire a lazily materialized sub-agent handle into the task lifecycle.
+
+        An external Python setup is materialized eagerly at open and registered
+        before the first action, so it already observes the lifecycle. A
+        Python-compiled internal sub-agent is Java-owned (its child plan
+        dispatches on the Java side), so its caller-facing handle is first built
+        here, mid-action, after ``on_action_prepared`` has fanned out. Register it
+        now and replay the prepared namespace so a no-id ``submit`` can mint
+        deterministic identities; later tasks reach it through the ordinary
+        fan-out.
+        """
+        from flink_agents.runtime.base_subagent import BaseSubagentSetup
+
+        if not isinstance(resource, BaseSubagentSetup):
+            return
+        if any(resource is listener for listener in self.__task_lifecycle_listeners):
+            # Eagerly registered (external setup) or already wired on a prior
+            # get_resource: the ordinary fan-out covers it.
+            return
+        self.add_task_lifecycle_listener(resource)
+        if self.__prepared_namespace is not None:
+            resource.adopt_prepared_namespace(self.__prepared_namespace)
+
+    def __capture_prepared_namespace(self, task: Any) -> None:
+        """Record ``task``'s namespace as the id-assignment source, best-effort.
+
+        A live ``ActionTask`` proxy always yields a namespace, extracted eagerly
+        here (plain Python values, no pemja reference retained) so a sub-agent
+        handle built later in the action body can adopt it — see
+        __observe_subagent_setup(). The lifecycle-bridge fan-out is also
+        exercised with opaque placeholder tasks that expose no accessor surface
+        (see test_task_lifecycle_bridge); those carry no facts to mint a
+        sub-agent identity from, so the capture yields nothing rather than
+        raising, leaving the pure fan-out to forward them untouched.
+        """
+        from flink_agents.runtime.base_subagent import Namespace
+
+        try:
+            self.__prepared_namespace = Namespace.from_task(task)
+        except AttributeError:
+            self.__prepared_namespace = None
 
     def eager_materialize(self, resource_type: str) -> Dict[str, Resource]:
         """Materialize every Python-owned resource of ``resource_type``.
@@ -643,6 +754,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_prepared(self, task: Any) -> None:
         """Fan out the operator's onActionPrepared to the task lifecycle listeners."""
+        self.__capture_prepared_namespace(task)
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_prepared(task)
 
@@ -653,11 +765,13 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_transferred(self, from_task: Any, to_task: Any) -> None:
         """Fan out the operator's onActionTransferred to the listeners."""
+        self.__capture_prepared_namespace(to_task)
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_transferred(from_task, to_task)
 
     def notify_action_finishing(self, task: Any) -> None:
         """Fan out the operator's onActionFinishing to the task lifecycle listeners."""
+        self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_finishing(task)
 
@@ -668,6 +782,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
 
     def notify_action_reused(self, task: Any) -> None:
         """Fan out the operator's onActionReused to the task lifecycle listeners."""
+        self.__prepared_namespace = None
         for listener in self.__task_lifecycle_listeners:
             listener.on_action_reused(task)
 
@@ -1219,6 +1334,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             return Outcome.failure(e)
 
     def _callable_for_durable_call(self, call: _DurableCall) -> Callable[[], Any]:
+        func = inspect.unwrap(call.func)
+        if isinstance(func, InternalSubagentCall):
+            return func
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
@@ -1283,12 +1401,24 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             execution_start=execution_start,
         )
 
+    def _finalize_batch_call(
+        self, call: _DurableCall, index: int, outcome: Outcome
+    ) -> None:
+        function_id, args_digest = self._durable_identity(call)
+        result_payload, exception_payload = self._serialize_call_payloads(
+            outcome.value, outcome.error
+        )
+        self._j_runner_context.finalizeCallAt(
+            index, function_id, args_digest, result_payload, exception_payload
+        )
+
     def _finalize_batch_execution(
         self,
         calls: list[_DurableCall],
         plan: _BatchExecutionPlan,
         started: list[bool],
         executed: list[Outcome],
+        finalized: set[int] | None = None,
     ) -> list[Outcome]:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes = list(plan.outcomes)
@@ -1297,7 +1427,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         ):
             call = calls[call_index]
             function_id, args_digest = self._durable_identity(call)
-            if not started[i]:
+            if not started[i] or (finalized is not None and i in finalized):
                 outcomes[call_index] = outcome
                 continue
             try:
@@ -1454,6 +1584,33 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             args,
             kwargs,
         )
+
+    def bootstrap_subagent_call(
+        self, scope: str, session_id: str, call_id: str, prompt: Any
+    ) -> None:
+        """Bootstrap an internal sub-agent call under the assigned identity.
+
+        Implements
+        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
+        Delegates to the Java ``RunnerContextImpl.bootstrapSubagentCallForScope``,
+        which resolves the materialized sub-agent setup by ``scope`` and sends
+        the bootstrap event. Must run on the mailbox thread.
+        """
+        self._j_runner_context.bootstrapSubagentCallForScope(
+            scope, session_id, call_id, prompt
+        )
+
+    def is_subagent_call_done(self, session_id: str, call_id: str) -> bool:
+        """Poll an internal call on the mailbox without using an async worker."""
+        return self._j_runner_context.isSubagentCallDone(session_id, call_id)
+
+    def get_subagent_call_error(self, session_id: str, call_id: str) -> str | None:
+        """Return the same child failure summary before and after recovery."""
+        return self._j_runner_context.getSubagentCallError(session_id, call_id)
+
+    def await_subagent_call(self, session_id: str, call_id: str) -> list:
+        """Read a completed internal call's output on the mailbox thread."""
+        return list(self._j_runner_context.awaitSubagentCall(session_id, call_id))
 
     @property
     @override

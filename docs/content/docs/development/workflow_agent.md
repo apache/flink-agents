@@ -901,3 +901,82 @@ There are several built-in `Event` and `Action` in Flink-Agents:
 * See [Tool Use]({{< ref "docs/development/tool_use#built-in-events-and-actions" >}}) for how to programmatically use a tool leveraging built-in action and events.
 * See [Vector Stores]({{< ref "docs/development/vector_stores#built-in-events-and-actions" >}}) for how to retrieve context from vector stores leveraging built-in action and events.
 * See [Model Routing]({{< ref "docs/development/model_routing#observability" >}}) for how a chat request selects between several models and how routing decisions are reported.
+
+## Batch sub-agent calls
+
+Register child `Agent` instances as `AGENT` resources to run them as internal
+sub-agents. Submit every input, combine the returned handles, then await the group
+in the parent action. The same child can receive many inputs, and one group may
+contain calls to different child resources.
+
+{{< tabs "Batch sub-agent calls" >}}
+{{< tab "Python" >}}
+
+```python
+# During parent construction:
+parent.add_resource("reviewer", ResourceType.AGENT, ReviewAgent())
+parent.add_resource("checker", ResourceType.AGENT, CheckAgent())
+
+# Inside an async parent action:
+reviewer = ctx.get_resource("reviewer", ResourceType.AGENT)
+checker = ctx.get_resource("checker", ResourceType.AGENT)
+first = await reviewer.submit(ctx, "first input")
+second = await reviewer.submit(ctx, "second input")
+third = await checker.submit(ctx, "third input")
+results = await first.combine(second, third)
+for result in results:
+    if result.success:
+        print(result.result)  # The child's collected OutputEvent payloads.
+    else:
+        print(result.error_message)
+```
+
+{{< /tab >}}
+{{< tab "Java" >}}
+
+```java
+// During parent construction:
+parent.addResource("reviewer", ResourceType.AGENT, new ReviewAgent());
+parent.addResource("checker", ResourceType.AGENT, new CheckAgent());
+
+// Inside a parent action (JDK 21+):
+SubagentSetup reviewer = (SubagentSetup) ctx.getResource("reviewer", ResourceType.AGENT);
+SubagentSetup checker = (SubagentSetup) ctx.getResource("checker", ResourceType.AGENT);
+SubagentFuture first = reviewer.submit(ctx, "first input");
+SubagentFuture second = reviewer.submit(ctx, "second input");
+SubagentFuture third = checker.submit(ctx, "third input");
+List<SubagentResult> results = first.combine(second, third).awaitAll();
+```
+
+{{< /tab >}}
+{{< /tabs >}}
+
+`ReviewAgent` and `CheckAgent` are application-defined child agents. Each result
+corresponds to the handle at the same position in the group. One child's failure
+produces a failed result without discarding successful siblings. Cancellation or
+a runtime infrastructure failure propagates as an exception.
+
+`subagent.parallelism` (default `16`) limits active internal invocations **per
+gathered batch**, across all child resource names in that batch. Remaining calls
+queue in durable `PENDING` slots before any child starts. Each completed call's
+result is persisted independently. Internal waits release the mailbox without
+occupying the shared async worker pool; a child can use durable async tools even
+with `num-async-threads=1`. A nested child has its own batch, so an ancestor waiting
+for it does not consume the descendant's capacity. This is not a job-wide cap.
+
+`subagent.max-batch-size` (default `1024`) bounds the number of handles in a group.
+Both settings must be positive. Oversized groups, duplicate handles and handles
+from different runner contexts are rejected before preparation or durable
+reservation; split a larger fan-out into smaller groups. Calls through external
+async setups may already have been submitted before grouping. The limit bounds
+call count, not input or output payload bytes. A batch containing internal calls
+uses the sub-agent concurrency limit and does not apply the tool-batch timeout.
+
+After a failure, the parent replays completed results and reconstructs outstanding
+calls under their original identities. Child action journals replay intermediate
+events, outputs and failure summaries. Outstanding external side effects retain
+the single-call durability model: use idempotent operations or a reconciler where
+replaying an unfinished operation would otherwise duplicate its effects.
+
+Java internal calls require JDK 21+ continuations. Python caller actions must be
+`async`; their coroutine yields allow the operator to run the children.

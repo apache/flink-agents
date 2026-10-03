@@ -18,13 +18,21 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.context.DurableFuture;
+import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 
 /** The {@link SubagentFutures} returned by {@code combine}: several handles held together. */
 final class SubagentFutureGroup extends SubagentFutures {
@@ -58,16 +66,68 @@ final class SubagentFutureGroup extends SubagentFutures {
 
     @Override
     public List<SubagentResult> awaitAll() throws Exception {
+        RunnerContext context = null;
+        Set<SubagentFuture> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        List<DeferredSubagentFuture> pending = new ArrayList<>();
         for (SubagentFuture future : futures) {
-            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
-                ((DeferredSubagentFuture) future).prepare();
+            Objects.requireNonNull(future, "Sub-agent handle must not be null");
+            if (!seen.add(future)) {
+                throw new IllegalArgumentException(
+                        "Cannot combine the same sub-agent handle twice");
+            }
+            RunnerContext owner = null;
+            if (future instanceof DeferredSubagentFuture) {
+                DeferredSubagentFuture deferred = (DeferredSubagentFuture) future;
+                deferred.checkNotCancelled();
+                owner = deferred.getContext();
+                if (!future.isDone()) {
+                    pending.add(deferred);
+                }
+            } else if (future instanceof AsyncSubagentFuture) {
+                AsyncSubagentFuture async = (AsyncSubagentFuture) future;
+                async.checkNotCancelled();
+                owner = async.getContext();
+            }
+            if (owner != null) {
+                if (context != null && context != owner) {
+                    throw new IllegalArgumentException(
+                            "Sub-agent handles must belong to the same runner context");
+                }
+                context = owner;
             }
         }
-        // TODO(#926): execute the prepared calls as one batch once durable execution supports
-        // batched submission; until then the prepared calls are executed one by one.
-        for (SubagentFuture future : futures) {
-            if (future instanceof DeferredSubagentFuture && !future.isDone()) {
-                ((DeferredSubagentFuture) future).execute();
+        if (context != null) {
+            int maximum = context.getConfig().get(AgentExecutionOptions.SUBAGENT_MAX_BATCH_SIZE);
+            int parallelism = context.getConfig().get(AgentExecutionOptions.SUBAGENT_PARALLELISM);
+            if (maximum <= 0 || parallelism <= 0) {
+                throw new IllegalArgumentException(
+                        "subagent.max-batch-size and subagent.parallelism must be positive");
+            }
+            if (futures.size() > maximum) {
+                throw new IllegalArgumentException(
+                        "Sub-agent batch size "
+                                + futures.size()
+                                + " exceeds subagent.max-batch-size "
+                                + maximum);
+            }
+        }
+        if (!pending.isEmpty()) {
+            List<DurableFuture<SubagentResult>> calls = new ArrayList<>(pending.size());
+            for (DeferredSubagentFuture future : pending) {
+                calls.add(context.durableExecuteAsync(future.prepare()));
+            }
+            List<Outcome<SubagentResult>> results = context.gather(calls).await();
+            Exception failure = null;
+            for (int i = 0; i < results.size(); i++) {
+                Outcome<SubagentResult> result = results.get(i);
+                if (result.isSuccess()) {
+                    pending.get(i).complete(result.getValue());
+                } else if (failure == null) {
+                    failure = result.getError();
+                }
+            }
+            if (failure != null) {
+                throw failure;
             }
         }
         List<SubagentResult> outcomes = new ArrayList<>(futures.size());
