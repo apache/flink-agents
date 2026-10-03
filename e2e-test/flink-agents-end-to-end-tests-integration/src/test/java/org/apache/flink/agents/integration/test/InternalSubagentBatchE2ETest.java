@@ -37,19 +37,18 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
+import org.apache.flink.api.common.functions.RichMapFunction;
 import org.apache.flink.api.common.state.CheckpointListener;
-import org.apache.flink.api.common.state.ListState;
-import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.runtime.state.FunctionInitializationContext;
 import org.apache.flink.runtime.state.FunctionSnapshotContext;
 import org.apache.flink.streaming.api.checkpoint.CheckpointedFunction;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
-import org.apache.flink.streaming.api.functions.sink.legacy.SinkFunction;
-import org.apache.flink.streaming.api.functions.source.legacy.RichParallelSourceFunction;
+import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -163,15 +162,31 @@ public class InternalSubagentBatchE2ETest {
         config.set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
         config.set(AgentExecutionOptions.SUBAGENT_PARALLELISM, 2);
         DataStream<Long> input =
-                recovery ? env.addSource(new RestartingSource()) : env.fromElements(1L);
-        input.keyBy(value -> value)
-                .transform(
-                        "internal-batch",
-                        TypeInformation.of(Object.class),
-                        new JournalOperatorFactory(new AgentPlan(parent, config)))
-                .setMaxParallelism(128)
-                .addSink(new ResultSink());
-        env.execute("internal-subagent-batch");
+                recovery
+                        ? env.fromSequence(1, Long.MAX_VALUE)
+                                .filter(value -> value == 1L)
+                                .map(new CheckpointGate())
+                        : env.fromElements(1L);
+        DataStream<String> output =
+                input.keyBy(value -> value)
+                        .transform(
+                                "internal-batch",
+                                TypeInformation.of(String.class),
+                                new JournalOperatorFactory(new AgentPlan(parent, config)))
+                        .setMaxParallelism(128);
+        try (CloseableIterator<String> results = output.collectAsync()) {
+            JobClient job = env.executeAsync("internal-subagent-batch");
+            try {
+                assertThat(results.hasNext()).isTrue();
+                OUTPUTS.add(results.next());
+            } finally {
+                if (recovery && !job.getJobExecutionResult().isDone()) {
+                    job.cancel().get(30, TimeUnit.SECONDS);
+                } else {
+                    job.getJobExecutionResult().get(30, TimeUnit.SECONDS);
+                }
+            }
+        }
     }
 
     public static void callBatch(Event event, RunnerContext ctx) throws Exception {
@@ -233,7 +248,8 @@ public class InternalSubagentBatchE2ETest {
                                                     if (!INTERRUPTED_WORK.await(
                                                             60, TimeUnit.SECONDS)) {
                                                         throw new IllegalStateException(
-                                                                "checkpoint did not restart parked work");
+                                                                "checkpoint did not restart parked"
+                                                                        + " work");
                                                     }
                                                 } else if (!recovery
                                                         && !FIRST_WAVE.await(
@@ -255,42 +271,18 @@ public class InternalSubagentBatchE2ETest {
         }
     }
 
-    private static final class ResultSink implements SinkFunction<Object> {
-        @Override
-        public void invoke(Object value, Context context) {
-            OUTPUTS.add(String.valueOf(value));
-        }
-    }
-
-    /** Remains unbounded until the result arrives, allowing barriers through a parked batch. */
-    private static final class RestartingSource extends RichParallelSourceFunction<Long>
+    /** Fails only after a checkpoint contains completed, running and queued calls. */
+    private static final class CheckpointGate extends RichMapFunction<Long, Long>
             implements CheckpointedFunction, CheckpointListener {
-        private transient ListState<Boolean> emittedState;
-        private boolean emitted;
-        private volatile boolean running = true;
         private long eligibleCheckpoint = Long.MAX_VALUE;
 
         @Override
-        public void run(SourceContext<Long> context) throws Exception {
-            synchronized (context.getCheckpointLock()) {
-                if (!emitted) {
-                    context.collect(1L);
-                    emitted = true;
-                }
-            }
-            while (running && OUTPUTS.isEmpty()) {
-                Thread.sleep(10);
-            }
-        }
-
-        @Override
-        public void cancel() {
-            running = false;
+        public Long map(Long value) {
+            return value;
         }
 
         @Override
         public void snapshotState(FunctionSnapshotContext context) throws Exception {
-            emittedState.update(Collections.singletonList(emitted));
             if (!FAILED.get() && INVOCATIONS.containsKey(2) && ACTIVE.get() == 2) {
                 assertThat(INVOCATIONS).doesNotContainKey(3);
                 assertThat(ACTIVE.get()).isEqualTo(2);
@@ -300,12 +292,6 @@ public class InternalSubagentBatchE2ETest {
 
         @Override
         public void initializeState(FunctionInitializationContext context) throws Exception {
-            emittedState =
-                    context.getOperatorStateStore()
-                            .getListState(new ListStateDescriptor<>("emitted", Boolean.class));
-            for (boolean value : emittedState.get()) {
-                emitted = value;
-            }
             if (context.isRestored()) {
                 RESTORES.incrementAndGet();
             }
@@ -320,7 +306,7 @@ public class InternalSubagentBatchE2ETest {
     }
 
     private static final class JournalOperatorFactory
-            extends ActionExecutionOperatorFactory<Long, Object> {
+            extends ActionExecutionOperatorFactory<Long, String> {
         private JournalOperatorFactory(AgentPlan plan) {
             super(plan, true, new Journal());
         }
