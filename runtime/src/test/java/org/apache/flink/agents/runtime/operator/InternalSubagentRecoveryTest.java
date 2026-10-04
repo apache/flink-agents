@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentResult;
@@ -30,22 +31,29 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateSerde;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.apache.flink.util.ExceptionUtils;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
@@ -71,6 +79,8 @@ public class InternalSubagentRecoveryTest {
     private static final String CHILD_SCOPE = "child";
 
     private static final AtomicInteger CHILD_EXECUTIONS = new AtomicInteger();
+    private static final AtomicInteger INTERRUPTED_CALLS = new AtomicInteger();
+    private static boolean wrapInterruption;
 
     @BeforeEach
     void resetChildExecutions() {
@@ -132,6 +142,147 @@ public class InternalSubagentRecoveryTest {
                 .as("the replayed envelope must address the same action state")
                 .isEqualTo(childStates.keySet());
         assertThat(output).hasSize(1);
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Timeout(60)
+    void interruptedChildRetriesAfterCheckpointRestore(boolean wrapped) throws Exception {
+        assumeTrue(Runtime.version().feature() >= 21, "internal calls need continuations");
+        INTERRUPTED_CALLS.set(0);
+        wrapInterruption = wrapped;
+        Agent child = new Agent();
+        child.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                InternalSubagentRecoveryTest.class.getMethod(
+                        "interruptibleChild", Event.class, RunnerContext.class));
+        Agent parent = new Agent();
+        parent.addResource(CHILD_SCOPE, ResourceType.AGENT, child);
+        parent.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                InternalSubagentRecoveryTest.class.getMethod(
+                        "callChild", Event.class, RunnerContext.class));
+        AgentPlan plan = new AgentPlan(parent);
+        InMemoryActionStateStore store = new InMemoryActionStateStore(false);
+        OperatorSubtaskState snapshot;
+        long key = 1L;
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                recoveryHarness(plan, store)) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(key));
+            // Checkpoint while the parent is awaiting the child, before the child runs.
+            harness.getTaskMailbox().take(0).run();
+            snapshot = harness.snapshot(1L, 1L);
+            harness.notifyOfCompletedCheckpoint(1L);
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) harness.getOperator();
+            AtomicBoolean interruptedAtFailure = new AtomicBoolean();
+            operator.addTaskLifecycleListener(
+                    new TaskLifecycleListener() {
+                        @Override
+                        public void onActionFailed(ActionTask task, Throwable error) {
+                            if (task.isSubagentEvent()) {
+                                interruptedAtFailure.set(Thread.currentThread().isInterrupted());
+                            }
+                        }
+                    });
+            try {
+                Throwable failure = catchThrowable(operator::waitInFlightEventsFinished);
+                // The mailbox may consume the flag while propagating InterruptedException.
+                // Clear any remaining flag so assertions and operator cleanup can proceed.
+                Thread.interrupted();
+                assertThat(failure).isNotNull();
+                assertThat(ExceptionUtils.findThrowable(failure, InterruptedException.class))
+                        .isPresent();
+            } finally {
+                Thread.interrupted();
+            }
+            assertThat(harness.getRecordOutput()).isEmpty();
+            assertThat(childActionStates(store, key).values())
+                    .singleElement()
+                    .satisfies(
+                            state -> {
+                                assertThat(state.isCompleted()).isFalse();
+                                assertThat(state.getSubagentFailureMessage()).isNull();
+                                assertThat(state.getCallResults()).isEmpty();
+                            });
+            assertThat(interruptedAtFailure).isTrue();
+        }
+
+        // Rebuild persisted records rather than sharing mutable state with the failed attempt.
+        InMemoryActionStateStore restoredStore = new InMemoryActionStateStore(false);
+        store.getKeyedActionStates()
+                .forEach(
+                        (stateKey, states) -> {
+                            Map<String, ActionState> copies = new LinkedHashMap<>();
+                            states.forEach(
+                                    (name, state) ->
+                                            copies.put(
+                                                    name,
+                                                    ActionStateSerde.deserialize(
+                                                            ActionStateSerde.serialize(state))));
+                            restoredStore.getKeyedActionStates().put(stateKey, copies);
+                        });
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
+                recoveryHarness(plan, restoredStore)) {
+            restored.initializeState(snapshot);
+            restored.open();
+            ((ActionExecutionOperator<Long, Object>) restored.getOperator())
+                    .waitInFlightEventsFinished();
+            assertThat(restored.getRecordOutput()).hasSize(1);
+            assertThat(restored.getRecordOutput().iterator().next().getValue())
+                    .isEqualTo(List.of("recovered"));
+            assertThat(INTERRUPTED_CALLS.get()).isEqualTo(2);
+            assertThat(childActionStates(restoredStore, key).values())
+                    .singleElement()
+                    .satisfies(
+                            state -> {
+                                assertThat(state.isCompleted()).isTrue();
+                                assertThat(state.getSubagentFailureMessage()).isNull();
+                            });
+        }
+    }
+
+    public static void interruptibleChild(Event event, RunnerContext ctx) throws Exception {
+        String result;
+        try {
+            result =
+                    ctx.durableExecute(
+                            new DurableCallable<String>() {
+                                @Override
+                                public String getId() {
+                                    return "interruptible-call";
+                                }
+
+                                @Override
+                                public Class<String> getResultClass() {
+                                    return String.class;
+                                }
+
+                                @Override
+                                public String call() throws Exception {
+                                    if (INTERRUPTED_CALLS.incrementAndGet() == 1) {
+                                        throw new InterruptedException("task cancelled");
+                                    }
+                                    return "recovered";
+                                }
+                            });
+        } catch (InterruptedException interruption) {
+            if (wrapInterruption) {
+                throw new IllegalStateException("wrapped child interruption", interruption);
+            }
+            throw interruption;
+        }
+        ctx.sendEvent(new OutputEvent(result));
+    }
+
+    private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> recoveryHarness(
+            AgentPlan plan, InMemoryActionStateStore store) throws Exception {
+        return new KeyedOneInputStreamOperatorTestHarness<>(
+                new ActionExecutionOperatorFactory<>(plan, true, store),
+                (KeySelector<Long, Long>) value -> value,
+                TypeInformation.of(Long.class));
     }
 
     @Test

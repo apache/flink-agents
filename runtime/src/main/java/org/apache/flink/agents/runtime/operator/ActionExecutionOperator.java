@@ -614,7 +614,16 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     getRuntimeContext().getUserCodeClassLoader(),
                                     this.pythonBridge.getPythonActionExecutor());
                 } catch (Throwable actionFailure) {
-                    if (actionTask.isSubagentEvent()) {
+                    // Java invocation and continuation boundaries can wrap interruption. It
+                    // must fail the task without completing the child's durable action state,
+                    // otherwise recovery replays a cancellation as a terminal child failure.
+                    boolean interrupted =
+                            ExceptionUtils.findThrowable(actionFailure, InterruptedException.class)
+                                    .isPresent();
+                    if (interrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    if (actionTask.isSubagentEvent() && !interrupted) {
                         // A child-call failure converges into the pending call future instead
                         // of failing the whole job.
                         InternalSubagentCallEvent envelope =
