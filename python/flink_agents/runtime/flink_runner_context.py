@@ -55,6 +55,7 @@ from flink_agents.runtime.durable_execution import (
 )
 from flink_agents.runtime.flink_memory_object import FlinkMemoryObject
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
+from flink_agents.runtime.internal_subagent import InternalSubagentCall
 from flink_agents.runtime.memory.event_attachment_utils import store_event_attachments
 from flink_agents.runtime.memory.internal_base_long_term_memory import (
     InternalBaseLongTermMemory,
@@ -184,6 +185,27 @@ class _CachedAsyncExecutionResult(AsyncExecutionResult):
         if False:
             yield  # Make this a generator function
         return self._cached_result
+
+
+class _InternalSubagentAsyncExecutionResult(AsyncExecutionResult):
+    """Cooperatively await an operator-owned call without reserving a worker."""
+
+    def __init__(
+        self, ctx: "FlinkRunnerContext", call: InternalSubagentCall, durable_id: str
+    ) -> None:
+        self._ctx = ctx
+        self._call = call
+        self._func = with_durable_id(call, durable_id)
+
+    def __await__(self) -> Any:
+        # A recorded result can be returned without waiting for replayed child work.
+        if not self._ctx._matches_current_pending_call(self._func, (), {}):
+            hit, result = self._ctx._try_get_cached_result(self._func, (), {})
+            if hit:
+                return result
+        while not self._call.done():
+            yield
+        return self._ctx.durable_execute(self._func)
 
 
 class _DurableAsyncExecutionResult(AsyncExecutionResult):
@@ -1401,6 +1423,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         is awaited. Fire-and-forget calls (not awaiting the result) will NOT be
         recorded and cannot be recovered.
         """
+        if isinstance(func, InternalSubagentCall):
+            if args or kwargs or reconciler is not None or durable_id is None:
+                msg = "Internal calls require only their stable durable identity."
+                raise ValueError(msg)
+            return _InternalSubagentAsyncExecutionResult(self, func, durable_id)
+
         validated_reconciler = _validate_reconciler_callable(reconciler)
         if durable_id is not None:
             func = with_durable_id(func, durable_id)
@@ -1451,15 +1479,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         )
 
     def await_subagent_call(self, session_id: str, call_id: str) -> list:
-        """Block until the identified internal sub-agent call quiesces.
-
-        Implements
-        :class:`~flink_agents.runtime.internal_subagent.InternalSubagentCallFactory`.
-        Delegates to the Java ``RunnerContextImpl.awaitSubagentCall``. Must run
-        off the mailbox thread (e.g. on the durable-execution async worker) so
-        the mailbox stays free to dispatch the child agent's actions.
-        """
+        """Read a completed child result on the mailbox; never block waiting for it."""
         return list(self._j_runner_context.awaitSubagentCall(session_id, call_id))
+
+    def is_subagent_call_done(self, session_id: str, call_id: str) -> bool:
+        """Check readiness so the caller can yield without using an async worker."""
+        return self._j_runner_context.isSubagentCallDone(session_id, call_id)
 
     def subagent_failure_message(self, session_id: str, call_id: str) -> str | None:
         """Read the durable failure summary instead of a reconstructed wrapper."""

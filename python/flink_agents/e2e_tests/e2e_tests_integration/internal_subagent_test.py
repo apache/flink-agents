@@ -41,6 +41,7 @@ and replays it identically after a failover.
 """
 
 import os
+import sys
 import sysconfig
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ from pyflink.datastream import KeySelector, StreamExecutionEnvironment
 from pyflink.datastream.connectors.file_system import StreamingFileSink
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -131,12 +133,14 @@ class RootAgent(Agent):
 def _run_and_collect(child: Agent, tmp_path: Path) -> str:
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
+    env.set_python_executable(sys.executable)
     input_stream = env.from_collection(["hello"])
 
     root = RootAgent()
     root.add_resource(CHILD_SCOPE, ResourceType.AGENT, child)
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents_env.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1)
     output_datastream = (
         agents_env.from_datastream(input=input_stream, key_selector=InputKeySelector())
         .apply(root)

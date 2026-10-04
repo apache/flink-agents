@@ -28,12 +28,11 @@ Execution mode is the deferred one, inherited from
 :meth:`submit` returns a deferred handle whose request is prepared on the
 first resolve. :meth:`prepare` then runs the mailbox-confined bootstrap —
 sending the call event through the runtime context — and returns the
-``(id, call, reconcile)`` triple whose call waits off the mailbox thread for
-the child to quiesce, so the operator can dispatch the child agent's actions
-in between. The wait releases the
-mailbox through the await-only resolve contract: a synchronous Python action
-holds the mailbox for its whole ``pemja`` invocation, so it can never yield
-for the operator to dispatch the child's actions and a blocking wait would
+``(id, call, reconcile)`` triple whose call is read after a cooperative wait
+for the child to quiesce. No async worker is occupied by the wait. The wait
+releases the mailbox through the await-only resolve contract: a synchronous
+Python action holds the mailbox for its whole ``pemja`` invocation, so it cannot
+yield for the operator to dispatch the child's actions and a blocking wait would
 deadlock.
 
 Sending the bootstrap event outside the durable boundary is deliberate: a
@@ -57,10 +56,8 @@ from flink_agents.runtime.deferred_subagent import (
 class InternalSubagentCallFactory(Protocol):
     """Runtime hook a ``RunnerContext`` implements to drive internal sub-agents.
 
-    Split into a mailbox-thread ``bootstrap`` (sends the call event) and an
-    off-mailbox ``await``, because a Python action cannot cooperatively yield
-    the mailbox from inside one blocking call the way the Java continuation
-    path does.
+    Bootstrap sends the call event on the mailbox. A readiness probe lets the
+    coroutine yield until the result can be read without blocking.
     """
 
     def bootstrap_subagent_call(
@@ -73,16 +70,44 @@ class InternalSubagentCallFactory(Protocol):
         ...
 
     def await_subagent_call(self, session_id: str, call_id: str) -> List[Any]:
-        """Block until the identified call quiesces and return its outputs.
+        """Read the outputs of a completed call; fail if it is still running."""
+        ...
 
-        Must be invoked off the mailbox thread so the mailbox can dispatch the
-        child agent's actions while this waits.
-        """
+    def is_subagent_call_done(self, session_id: str, call_id: str) -> bool:
+        """Check completion on the mailbox without blocking a worker."""
         ...
 
     def subagent_failure_message(self, session_id: str, call_id: str) -> str | None:
         """Return the recorded failure summary, independent of bridge exceptions."""
         ...
+
+
+class InternalSubagentCall:
+    """Read a completed internal call on the mailbox through durable execution."""
+
+    def __init__(
+        self, ctx: InternalSubagentCallFactory, session_id: str, call_id: str
+    ) -> None:
+        """Keep the call identity independent of the currently active scope."""
+        self.ctx = ctx
+        self.session_id = session_id
+        self.call_id = call_id
+
+    def done(self) -> bool:
+        """Whether the operator has completed the child invocation."""
+        return self.ctx.is_subagent_call_done(self.session_id, self.call_id)
+
+    def __call__(self) -> SubagentResult:
+        """Read the ready result; preserve the recorded child failure summary."""
+        try:
+            output = self.ctx.await_subagent_call(self.session_id, self.call_id)
+        except Exception:
+            message = self.ctx.subagent_failure_message(self.session_id, self.call_id)
+            if message is None:
+                # Cancellation and runtime errors are not terminal child failures.
+                raise
+            return SubagentResult.error(message)
+        return SubagentResult.ok(output)
 
 
 class InternalSubagentSetup(DeferredSubagentSetup):
@@ -114,9 +139,8 @@ class InternalSubagentSetup(DeferredSubagentSetup):
         """Send the call event and return the prepared triple.
 
         Runs on the mailbox thread when the deferred handle is first resolved,
-        as sending the bootstrap event requires; the returned call only
-        awaits completion and runs off the mailbox thread so the operator can
-        dispatch the child agent's actions in between.
+        as sending the bootstrap event requires. The runtime yields until the
+        child finishes, then records its result without an async worker.
         """
         if not isinstance(ctx, InternalSubagentCallFactory):
             msg = (
@@ -129,17 +153,8 @@ class InternalSubagentSetup(DeferredSubagentSetup):
         # replayed send reproduces the same event attributes.
         ctx.bootstrap_subagent_call(scope, session_id, call_id, prompt)
 
-        def _call() -> SubagentResult:
-            # Runs off the mailbox thread (Python async worker), so the mailbox
-            # is free to dispatch the child agent's actions until the call
-            # quiesces. A child failure surfaces as a failed Result (mirroring
-            # Java's InternalSubagentSetup) rather than propagating out of the
-            # call.
-            try:
-                output = ctx.await_subagent_call(session_id, call_id)
-            except Exception as e:
-                message = ctx.subagent_failure_message(session_id, call_id)
-                return SubagentResult.error(message if message is not None else e)
-            return SubagentResult.ok(output)
-
-        return (f"{session_id}#{call_id}", _call, None)
+        return (
+            f"{session_id}#{call_id}",
+            InternalSubagentCall(ctx, session_id, call_id),
+            None,
+        )

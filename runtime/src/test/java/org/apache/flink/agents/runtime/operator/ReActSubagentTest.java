@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -238,6 +239,22 @@ public class ReActSubagentTest {
                 ReActSubagentTest.class.getMethod("invoke", Event.class, RunnerContext.class));
         resources(parent);
         return parent;
+    }
+
+    @Test
+    void concurrentCallsCompleteWithOneAsyncWorker() throws Exception {
+        AgentPlan plan = new AgentPlan(explicitParent());
+        plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                checkpointHarness(plan, new SnapshotStore())) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(1L));
+            harness.processElement(new StreamRecord<>(3L));
+            ((ActionExecutionOperator<Long, Object>) harness.getOperator())
+                    .waitInFlightEventsFinished();
+            assertThat(harness.getRecordOutput()).hasSize(2);
+            assertThat(TOOL_CALLS.get()).isEqualTo(2);
+        }
     }
 
     @Test
@@ -484,6 +501,7 @@ public class ReActSubagentTest {
 
     private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> checkpointHarness(
             AgentPlan plan, InMemoryActionStateStore store) throws Exception {
+        plan.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
         AgentPlan reconstructed =
                 MAPPER.readValue(MAPPER.writeValueAsString(plan), AgentPlan.class);
         return new KeyedOneInputStreamOperatorTestHarness<>(

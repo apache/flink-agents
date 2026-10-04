@@ -23,6 +23,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.Future;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -95,6 +96,11 @@ public class ContinuationActionExecutor {
         boolean[] started = new boolean[suppliers.size()];
         Arrays.fill(started, true);
         return new BatchExecutionResult<>(outcomes, started);
+    }
+
+    /** Internal mailbox waits require continuation support. */
+    public void awaitCompletion(ContinuationContext context, Future<?> completion) {
+        throw new IllegalStateException("Awaiting internal calls requires JDK 21 continuations.");
     }
 
     public void close() {}

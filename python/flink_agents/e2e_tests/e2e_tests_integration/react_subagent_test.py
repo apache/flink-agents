@@ -36,6 +36,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
@@ -217,6 +218,7 @@ def test_react_subagent_tool_loop(
     env.set_parallelism(1)
     env.set_python_executable(sys.executable)
     agents = AgentsExecutionEnvironment.get_execution_environment(env=env)
+    agents.get_config().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1)
     output = (
         agents.from_datastream(
             input=env.from_collection(["invalid" if failure else "hello"]),

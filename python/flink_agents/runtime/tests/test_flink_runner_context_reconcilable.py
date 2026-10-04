@@ -20,6 +20,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
 import cloudpickle
 import pytest
@@ -32,6 +33,10 @@ from flink_agents.runtime.durable_execution import (
     durable_identity_for_call,
 )
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+from flink_agents.runtime.internal_subagent import (
+    InternalSubagentCall,
+    InternalSubagentCallFactory,
+)
 
 
 @dataclass
@@ -1130,3 +1135,46 @@ def test_flink_runner_context_durable_execute_all_async_respects_max_parallelism
         "SUCCEEDED",
     ]
     assert j_runner_context.current_call_index == 4
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_internal_call_yields_without_a_worker_and_replays_its_result(
+    failed: bool,
+) -> None:
+    """A pending child leaves the only worker free and records one durable result."""
+    journal = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(journal, executor_workers=1)
+    child = MagicMock(spec=InternalSubagentCallFactory)
+    child.is_subagent_call_done.return_value = False
+    if failed:
+        child.await_subagent_call.side_effect = RuntimeError("bridge exception")
+        child.subagent_failure_message.return_value = "ValueError: invalid prompt"
+    else:
+        child.await_subagent_call.return_value = ["child answer"]
+    call = InternalSubagentCall(child, "session", "call")
+    try:
+        pending = ctx.durable_execute_async(call, durable_id="session#call").__await__()
+        assert next(pending) is None
+        assert next(pending) is None
+        assert journal.call_results == []
+        # This completes only if the parent's wait did not consume the worker.
+        assert (
+            ctx.executor.submit(lambda: "model work").result(timeout=2) == "model work"
+        )
+        child.is_subagent_call_done.return_value = True
+        with pytest.raises(StopIteration) as completed:
+            next(pending)
+        result = completed.value.value
+        assert result.success is not failed
+        assert len(journal.call_results) == 1
+        child.await_subagent_call.assert_called_once()
+
+        journal.current_call_index = 0
+        child.is_subagent_call_done.side_effect = AssertionError("replay must not wait")
+        with pytest.raises(StopIteration) as replayed:
+            next(ctx.durable_execute_async(call, durable_id="session#call").__await__())
+        assert replayed.value.value == result
+        assert len(journal.call_results) == 1
+        child.await_subagent_call.assert_called_once()
+    finally:
+        _close_runner_context(ctx)

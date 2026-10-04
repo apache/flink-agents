@@ -169,6 +169,16 @@ public class ContinuationActionExecutor {
         return (T) context.getAsyncResultRef().get();
     }
 
+    /** Suspend the action until an existing operation completes, without allocating a worker. */
+    public void awaitCompletion(ContinuationContext context, Future<?> completion) {
+        context.clearAsyncState();
+        context.setPendingFuture(completion);
+        while (!completion.isDone()) {
+            Continuation.yield(SCOPE);
+        }
+        context.setPendingFuture(null);
+    }
+
     /**
      * Executes all suppliers as one async batch and returns one {@link Outcome} per supplier.
      * Supplier failures are captured in their own outcome so one failed supplier does not abort the

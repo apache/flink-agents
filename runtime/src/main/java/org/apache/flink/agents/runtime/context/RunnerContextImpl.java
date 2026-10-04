@@ -222,8 +222,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * setup instance, so it passes the resource scope and this method resolves the materialized
      * {@link InternalSubagentSetup} from the cache in effect (a nested call resolves against the
      * caller's child plan). Must run on the mailbox thread (it sends the bootstrap event); the
-     * caller subsequently offloads {@link #awaitSubagentCall} onto a Python async worker so the
-     * mailbox stays free to dispatch the child agent's actions.
+     * caller subsequently yields until {@link #isSubagentCallDone} permits reading the result.
+     * Neither the mailbox nor an async worker is blocked by that wait.
      */
     public void bootstrapSubagentCallForScope(
             String scope, String sessionId, String callId, Object prompt) throws Exception {
@@ -238,11 +238,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     /**
-     * Blocks until the internal sub-agent call identified by {@code (sessionId, callId)} completes
-     * and returns its accumulated output.
+     * Reads a completed internal sub-agent call's output, rejecting an unfinished call.
      *
-     * <p>Cross-language (Python) entry point invoked over pemja off the mailbox thread; resolves
-     * the owning setup through the session index rather than the currently wired scope.
+     * <p>Python entry point invoked over pemja on the mailbox after a readiness check. Resolves the
+     * owning setup through the session index rather than the currently wired scope.
      */
     public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
         InternalSubagentSetup owner = internalCallOwners.get(sessionId);
@@ -252,6 +251,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 sessionId,
                 callId);
         return owner.awaitSubagentCall(sessionId, callId);
+    }
+
+    /** Mailbox-safe readiness probe used by Python's cooperative await. */
+    public boolean isSubagentCallDone(String sessionId, String callId) {
+        mailboxThreadChecker.run();
+        InternalSubagentSetup owner = internalCallOwners.get(sessionId);
+        InternalSubagentCallStatus status =
+                owner == null ? null : owner.getCallStatus(sessionId, callId);
+        Preconditions.checkNotNull(
+                status, "No internal sub-agent call registered: %s#%s", sessionId, callId);
+        return status.isDone();
     }
 
     /** Return the recorded summary to Python without adding a replay-exception wrapper. */

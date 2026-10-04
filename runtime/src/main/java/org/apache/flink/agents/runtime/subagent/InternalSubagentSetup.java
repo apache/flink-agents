@@ -33,6 +33,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.MailboxCallable;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -50,6 +51,8 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.Future;
 
 /**
  * Runtime setup for an internal sub-agent: a child {@link AgentPlan} compiled from an {@code Agent}
@@ -60,8 +63,8 @@ import java.util.Map;
  * <p>Execution mode is the deferred one, inherited from {@link BaseDeferredSubagentSetup}: {@link
  * #submit} returns a deferred handle whose request is prepared on first resolve. {@link #prepare}
  * then runs the mailbox-confined bootstrap — registering the call status and sending one {@code
- * InternalSubagentCallEvent} — and returns the durable callable that waits off the mailbox thread
- * for the child to quiesce, so the operator can dispatch the child agent's actions in between.
+ * InternalSubagentCallEvent} — and returns a mailbox callable. Its completion barrier suspends the
+ * caller without using an async worker; once ready, its result is recorded durably on the mailbox.
  *
  * <p>Orchestration state lives here, not in the operator: the per-call quiesce statuses, the
  * per-scope child resource caches, and the per-key session index used to clean up when a record
@@ -153,8 +156,8 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
     }
 
     /**
-     * The mailbox-confined bootstrap plus the off-mailbox wait. Sending the bootstrap event must
-     * happen before the wait releases the mailbox, so it runs here, on the resolving thread.
+     * Bootstrap on the mailbox, then await the child's completion barrier without using a worker.
+     * Reading the ready result stays inside the deferred handle's durable execution boundary.
      */
     @Override
     protected DurableCallable<SubagentResult> prepare(
@@ -166,7 +169,12 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             throw new IllegalStateException(
                     "Failed to bootstrap internal sub-agent call for scope " + scope, e);
         }
-        return new DurableCallable<SubagentResult>() {
+        return new MailboxCallable<SubagentResult>() {
+            @Override
+            public Future<?> completion() {
+                return getCallStatus(sessionId, callId).getResponseFuture();
+            }
+
             @Override
             public String getId() {
                 return sessionId + "#" + callId;
@@ -178,12 +186,13 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             }
 
             @Override
-            public SubagentResult call() {
-                // Runs off the mailbox thread, so the operator can dispatch the child's
-                // actions; failures converge into a failed SubagentResult like the other
-                // deferred setups.
+            public SubagentResult call() throws Exception {
+                // The continuation waits for completion without using the model/tool pool.
+                // Only reading and recording the ready result runs on the mailbox.
                 try {
                     return SubagentResult.ok(awaitSubagentCall(sessionId, callId));
+                } catch (InterruptedException | CancellationException e) {
+                    throw e;
                 } catch (Exception e) {
                     InternalSubagentCallStatus status = getCallStatus(sessionId, callId);
                     if (status != null && status.getFailureMessage() != null) {
@@ -337,6 +346,9 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
                             + sessionId
                             + ", callId="
                             + callId);
+        }
+        if (!cs.isDone()) {
+            throw new IllegalStateException("Internal sub-agent result is not ready: " + callId);
         }
         try {
             return cs.getResponseFuture().get();
