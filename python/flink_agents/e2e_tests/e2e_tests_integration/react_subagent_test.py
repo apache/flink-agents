@@ -134,6 +134,7 @@ class ScriptedConnection(BaseChatModelConnection):
             raise ValueError(msg)
         return ChatMessage.of(
             role=MessageRole.ASSISTANT,
+            content="",
             tool_calls=[
                 {
                     "id": "call-1",
