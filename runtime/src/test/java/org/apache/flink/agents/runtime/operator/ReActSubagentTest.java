@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -121,6 +122,9 @@ public class ReActSubagentTest {
                                 : model + " answer");
             }
             if (model.equals("child")) {
+                assertThat(messages)
+                        .extracting(ChatMessage::getContent)
+                        .doesNotContain("PARENT_ONLY_SCHEMA");
                 assertThat(messages.get(0).getContent()).isEqualTo("Literal {prompt} instructions");
                 assertThat(last.getContent()).isEqualTo("investigate");
                 assertThat(tools).extracting(Tool::getName).containsExactly("evidence");
@@ -255,6 +259,16 @@ public class ReActSubagentTest {
             assertThat(harness.getRecordOutput()).hasSize(2);
             assertThat(TOOL_CALLS.get()).isEqualTo(2);
         }
+    }
+
+    @Test
+    void plainChildDoesNotInheritParentOutputSchemaPrompt() throws Exception {
+        Agent parent = explicitParent();
+        parent.addResource(
+                "_default_schema_prompt",
+                ResourceType.PROMPT,
+                Prompt.fromText("PARENT_ONLY_SCHEMA"));
+        assertThat(run(new AgentPlan(parent), 1L)).containsExactly(List.of("child answer"));
     }
 
     @Test

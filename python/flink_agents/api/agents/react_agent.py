@@ -251,9 +251,15 @@ class ReActAgent(Agent):
             str_usr_input = {k: str(v) for k, v in usr_input.items()}
             usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
 
+        output_schema = ctx.get_action_config_value(key="output_schema")
         try:
-            schema_prompt = cast(
-                "Prompt", ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
+            schema_prompt = (
+                None
+                if output_schema is None
+                else cast(
+                    "Prompt",
+                    ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT),
+                )
             )
         except KeyError:
             schema_prompt = None
@@ -268,8 +274,6 @@ class ReActAgent(Agent):
             instruct = schema_prompt.format_messages()
             index = find_first_system_message(usr_msgs)
             usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
-
-        output_schema = ctx.get_action_config_value(key="output_schema")
 
         ctx.send_event(
             ChatRequestEvent(

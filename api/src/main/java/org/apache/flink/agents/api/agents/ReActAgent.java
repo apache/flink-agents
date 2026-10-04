@@ -223,9 +223,13 @@ public class ReActAgent extends Agent {
             inputMessages.add(0, new ChatMessage(MessageRole.SYSTEM, instructions));
         }
 
+        Object outputSchema = ctx.getActionConfigValue("output_schema");
         Prompt schmaPrompt;
         try {
-            schmaPrompt = (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
+            schmaPrompt =
+                    outputSchema == null
+                            ? null
+                            : (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
         } catch (Exception e) {
             schmaPrompt = null;
         }
@@ -235,8 +239,6 @@ public class ReActAgent extends Agent {
             int index = ChatMessage.findFirstSystemMessage(inputMessages);
             inputMessages.addAll(index + 1, instruct);
         }
-
-        Object outputSchema = ctx.getActionConfigValue("output_schema");
 
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }

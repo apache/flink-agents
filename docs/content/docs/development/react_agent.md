@@ -400,6 +400,6 @@ For model-driven delegation, add `subagents=["researcher"]` to the parent's Pyth
 
 Waiting for a child releases the mailbox without occupying an async worker, so nested calls and model/tool execution can make progress even with `num-async-threads=1`.
 
-Each invocation has its own conversation memory, shared across that child's actions and isolated from the parent and other invocations. Child resources take precedence over shared root resources, allowing a shared model connection alongside child-specific tools. Registration is explicit; constructing a ReActAgent does not automatically add a general-purpose child.
+Each invocation has its own conversation memory, shared across that child's actions and isolated from the parent and other invocations. Child resources take precedence over shared root resources, allowing a shared model connection alongside child-specific tools. A child without an output schema does not inherit the parent’s schema prompt. Registration is explicit; constructing a ReActAgent does not automatically add a general-purpose child.
 
 Checkpoints retain internal call state and memory committed by completed child actions, including nested calls. On recovery, unfinished actions restart and reconnect to those calls. Their uncommitted memory writes and terminal outputs are recreated by execution. Replay of recorded model/tool results requires a configured action-state store; external side effects outside durable calls can repeat when an action restarts.
