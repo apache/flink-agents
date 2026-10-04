@@ -745,6 +745,20 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             self.__scoped_resource_caches[plan_json] = entry
         return entry
 
+    def __active_plan(self) -> Any:
+        """The plan in effect: the child plan's while inside a sub-agent call, else
+        the root plan's.
+
+        Mirrors the Java context's ``currentPlan()``: action-config lookups must
+        resolve against the plan whose action is executing, so a child agent's
+        action reads its own config instead of failing on the root plan, which
+        does not carry that action.
+        """
+        plan_json = self._j_runner_context.getActiveScopePlanJson()
+        if plan_json is None:
+            return self.__agent_plan
+        return self.__scoped_plan_and_cache(plan_json)[0]
+
     def __observe_subagent_setup(self, resource: Any) -> None:
         """Wire a lazily materialized sub-agent handle into the task lifecycle.
 
@@ -880,14 +894,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def action_config(self) -> Dict[str, Any]:
         """Get config of the action."""
-        return self.__agent_plan.get_action_config(
+        return self.__active_plan().get_action_config(
             self._j_runner_context.getActionName()
         )
 
     @override
     def get_action_config_value(self, key: str) -> Any:
         """Get config of the action."""
-        return self.__agent_plan.get_action_config_value(
+        return self.__active_plan().get_action_config_value(
             action_name=self._j_runner_context.getActionName(), key=key
         )
 
