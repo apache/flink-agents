@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,6 +54,7 @@ public abstract class ActionTask implements Serializable {
     protected final Object key;
     protected final Event event;
     protected final Action action;
+    protected final boolean isSubagentEvent;
     /** Stable identifier for observations produced by this logical action execution. */
     protected String observationId;
 
@@ -116,6 +118,7 @@ public abstract class ActionTask implements Serializable {
         this.event = event;
         this.action = action;
         this.sequenceNumber = sequenceNumber;
+        this.isSubagentEvent = event instanceof InternalSubagentCallEvent;
         this.observationId = Objects.requireNonNull(observationId, "observationId");
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
     }
@@ -142,6 +145,21 @@ public abstract class ActionTask implements Serializable {
 
     public long getSequenceNumber() {
         return sequenceNumber;
+    }
+
+    public boolean isSubagentEvent() {
+        return isSubagentEvent;
+    }
+
+    /**
+     * Returns the delegate event for action invocation, unwrapping InternalSubagentCallEvent if
+     * needed.
+     */
+    public Event getDelegateEvent() {
+        if (isSubagentEvent) {
+            return ((InternalSubagentCallEvent) event).getDelegate();
+        }
+        return event;
     }
 
     public String getObservationId() {

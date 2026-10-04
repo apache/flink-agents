@@ -17,7 +17,9 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.plan.actions.Action;
 import org.junit.jupiter.api.Test;
 
@@ -41,6 +43,27 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class ActionStateUtilTest {
 
     private static final int MAX_PARALLELISM = 128;
+
+    @Test
+    public void testPolymorphicEventAttributesKeepTheirKeyAfterRecovery() throws Exception {
+        Action action = new NoOpAction("chat-action");
+        InputEvent original = new InputEvent(ChatMessage.user("same request"));
+        Event restored =
+                ActionStateSerde.deserialize(ActionStateSerde.serialize(new ActionState(original)))
+                        .getTaskEvent();
+
+        assertEquals(
+                generateKey("key", 1, action, original, MAX_PARALLELISM),
+                generateKey("key", 1, action, restored, MAX_PARALLELISM));
+        assertNotEquals(
+                generateKey("key", 1, action, original, MAX_PARALLELISM),
+                generateKey(
+                        "key",
+                        1,
+                        action,
+                        new InputEvent(ChatMessage.user("different request")),
+                        MAX_PARALLELISM));
+    }
 
     @Test
     public void testGenerateKeyConsistency() throws Exception {

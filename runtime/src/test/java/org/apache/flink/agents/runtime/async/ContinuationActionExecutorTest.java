@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.async;
 
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -32,9 +33,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assumptions.assumeThat;
 
 /** Tests the JDK<21 mailbox-lock handoff contract. */
 class ContinuationActionExecutorTest {
+
+    @BeforeEach
+    void requireNonContinuationExecutor() {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+    }
 
     @Test
     void executeAsyncReleasesAndReacquiresLockAndRestoresContext() throws Exception {

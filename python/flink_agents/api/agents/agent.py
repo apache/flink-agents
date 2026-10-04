@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 from flink_agents.api.function import Function, PythonFunction
 from flink_agents.api.resource import (
@@ -25,6 +25,7 @@ from flink_agents.api.resource import (
     SerializableResource,
     check_registrable_from_python,
 )
+from flink_agents.api.subagent import SubagentMetadata
 
 STRUCTURED_OUTPUT = "structured_output"
 
@@ -91,10 +92,24 @@ class Agent(ABC):
 
     def __init__(self) -> None:
         """Init method."""
+        self._subagent_metadata: SubagentMetadata | None = None
         self._actions = {}
         self._resources = {}
         for type in ResourceType:
             self._resources[type] = {}
+
+    @property
+    def subagent_metadata(self) -> SubagentMetadata | None:
+        """Describe this agent when registered as a model-callable resource."""
+        return self._subagent_metadata
+
+    def with_subagent_metadata(self, metadata: SubagentMetadata) -> "Agent":
+        """Set the callable description and schema for AGENT registration."""
+        if not isinstance(metadata, SubagentMetadata):
+            msg = "metadata must be a SubagentMetadata"
+            raise TypeError(msg)
+        self._subagent_metadata = metadata
+        return self
 
     @property
     def actions(
@@ -148,7 +163,7 @@ class Agent(ABC):
         self,
         name: str,
         resource_type: ResourceType,
-        instance: SerializableResource | ResourceDescriptor,
+        instance: Union[SerializableResource, ResourceDescriptor, "Agent"],
     ) -> "Agent":
         """Add resource to agent instance.
 
@@ -158,8 +173,10 @@ class Agent(ABC):
             The name of the prompt, should be unique in the same Agent.
         resource_type: ResourceType
             The type of the resource.
-        instance: SerializableResource | ResourceDescriptor
-            The serializable resource instance, or the descriptor of resource.
+        instance: SerializableResource | ResourceDescriptor | Agent
+            The serializable resource instance, the descriptor of resource,
+            or an Agent instance. For the AGENT resource type an ``Agent`` is
+            compiled into an internal sub-agent during plan construction.
 
         Returns:
         -------

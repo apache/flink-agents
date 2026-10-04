@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.api.subagent.SubagentMetadata;
 import org.apache.flink.api.java.tuple.Tuple3;
 
 import javax.annotation.Nullable;
@@ -31,12 +32,26 @@ import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 
 /** Base class for defining agent logic. */
 public class Agent {
     private final Map<String, Tuple3<String[], Function, Map<String, Object>>> actions;
 
     private final Map<ResourceType, Map<String, Object>> resources;
+
+    @Nullable private SubagentMetadata subagentMetadata;
+
+    /** Describe this agent when it is registered as a model-callable AGENT resource. */
+    public Agent withSubagentMetadata(SubagentMetadata metadata) {
+        this.subagentMetadata = Objects.requireNonNull(metadata);
+        return this;
+    }
+
+    @Nullable
+    public SubagentMetadata getSubagentMetadata() {
+        return subagentMetadata;
+    }
 
     public Agent() {
         this.resources = new HashMap<>();
@@ -113,7 +128,8 @@ public class Agent {
      *
      * @param name The name indicate the resource.
      * @param type The type of the resource.
-     * @param instance The serializable resource object, or the resource descriptor.
+     * @param instance The serializable resource object, the resource descriptor, or — for an {@code
+     *     AGENT} resource — an {@link Agent} to compile into an internal sub-agent.
      */
     public Agent addResource(String name, ResourceType type, Object instance) {
         if (resources.get(type).containsKey(name)) {
@@ -124,6 +140,8 @@ public class Agent {
         if (instance instanceof SerializableResource) {
             resources.get(type).put(name, instance);
         } else if (instance instanceof ResourceDescriptor) {
+            resources.get(type).put(name, instance);
+        } else if (instance instanceof Agent) {
             resources.get(type).put(name, instance);
         } else {
             throw new IllegalArgumentException(

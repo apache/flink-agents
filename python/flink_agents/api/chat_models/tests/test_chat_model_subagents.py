@@ -38,6 +38,42 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 CUSTOM_SCHEMA = '{"type":"object","properties":{"path":{"type":"string"}}}'
 
 
+@pytest.mark.parametrize("use_reference", [False, True])
+@pytest.mark.parametrize("extra_properties", [False, {"type": "integer", "minimum": 0}])
+def test_nested_delegation_schema_survives_provider_conversion(
+    use_reference: bool, extra_properties: Any,
+) -> None:
+    """Reconstructed metadata retains nested constraints in the provider request."""
+    from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
+
+    request = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1},
+            "mode": {"type": "string", "default": "fast"},
+        },
+        "required": ["prompt", "mode"],
+        "additionalProperties": extra_properties,
+    }
+    nested = {"$ref": "#/$defs/Request-Input"} if use_reference else request
+    schema = {
+        "type": "object",
+        "properties": {
+            "request": nested,
+            "followups": {"type": "array", "items": nested},
+        },
+        "required": ["request"],
+        "additionalProperties": False,
+    }
+    if use_reference:
+        schema["$defs"] = {"Request-Input": request}
+    tool = SubagentTool.of("researcher", "Research tasks", json.dumps(schema))
+    restored = ToolMetadata.model_validate_json(tool.metadata.model_dump_json())
+    for metadata in [tool.metadata, restored]:
+        assert to_openai_tool(metadata=metadata)["function"]["parameters"] == schema
+
+
 class _RecordingConnection(BaseChatModelConnection):
     """Connection that captures what the setup hands to the model."""
 

@@ -104,5 +104,6 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
                         });
         jsonGenerator.writeEndObject();
         jsonGenerator.writeEndObject();
+        jsonGenerator.writeEndObject();
     }
 }

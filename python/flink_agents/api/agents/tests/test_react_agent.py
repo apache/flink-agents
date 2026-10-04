@@ -99,3 +99,90 @@ def test_unsupported_output_schema_type_reports_the_type() -> None:
     """A schema of neither supported kind is rejected, named by the type received."""
     with pytest.raises(TypeError, match=r"<class 'str'> is not supported"):
         _agent("not-a-schema")
+
+
+def test_subagent_factory_validates_input_and_keeps_instructions_literal() -> None:
+    """The callable object schema matches the actual start-action contract."""
+    import json
+    from unittest.mock import Mock
+
+    from flink_agents.api.events.event import InputEvent
+    from flink_agents.api.runner_context import RunnerContext
+
+    child = ReActAgent.for_subagent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS),
+        description="Research a task",
+        instructions="Literal {prompt} instructions",
+    )
+    assert json.loads(child.subagent_metadata.input_schema) == {
+        "type": "object",
+        "properties": {"prompt": {"type": "string"}},
+        "required": ["prompt"],
+        "additionalProperties": False,
+    }
+    from flink_agents.api.chat_models.subagent_tool import SubagentTool
+    from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
+
+    callable_tool = SubagentTool.of(
+        "researcher",
+        child.subagent_metadata.description,
+        child.subagent_metadata.input_schema,
+    )
+    assert (
+        to_openai_tool(metadata=callable_tool.metadata)["function"]["parameters"][
+            "additionalProperties"
+        ]
+        is False
+    )
+    ctx = Mock(spec=RunnerContext)
+    ctx.get_action_config_value.side_effect = lambda key: child.actions["start_action"][
+        2
+    ].get(key)
+    ctx.get_resource.side_effect = lambda name, kind: child.resources[kind][name]
+    ReActAgent.start_action(InputEvent(input={"prompt": "investigate"}), ctx)
+    request = ctx.send_event.call_args.args[0]
+    assert [message.text for message in request.messages] == [
+        "Literal {prompt} instructions",
+        "investigate",
+    ]
+
+
+@pytest.mark.parametrize(
+    "value", [None, "task", {}, {"prompt": 1}, {"prompt": "task", "extra": 1}]
+)
+def test_subagent_rejects_input_outside_its_schema(value: Any) -> None:
+    """Invalid requests fail before any model request is emitted."""
+    from unittest.mock import Mock
+
+    from flink_agents.api.events.event import InputEvent
+    from flink_agents.api.runner_context import RunnerContext
+
+    child = ReActAgent.for_subagent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS), description="Research"
+    )
+    ctx = Mock(spec=RunnerContext)
+    ctx.get_action_config_value.side_effect = lambda key: child.actions["start_action"][
+        2
+    ].get(key)
+    with pytest.raises(ValueError, match="only a string 'prompt'"):
+        ReActAgent.start_action(InputEvent(input=value), ctx)
+    ctx.send_event.assert_not_called()
+
+
+@pytest.mark.parametrize("schema", ["{} {}", "[]", "null", '{"type":"string"}'])
+def test_subagent_metadata_requires_one_object_schema(schema: str) -> None:
+    """Reject schemas the model cannot use to construct object arguments."""
+    from flink_agents.api.subagent import SubagentMetadata
+
+    with pytest.raises(ValueError):
+        SubagentMetadata(description="Research", input_schema=schema)
+
+
+def test_subagent_factory_rejects_row_output_schema() -> None:
+    """The convenience accepts JSON-model schemas that delegation can normalize."""
+    with pytest.raises(TypeError, match="BaseModel subclass"):
+        ReActAgent.for_subagent(
+            chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS),
+            description="Research",
+            output_schema=Types.ROW_NAMED(["answer"], [Types.STRING()]),
+        )

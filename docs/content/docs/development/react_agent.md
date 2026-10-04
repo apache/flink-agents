@@ -332,3 +332,67 @@ RowTypeInfo myRowTypeInfo =
 
 {{< /tabs >}}
 
+
+## Use ReActAgent as a subagent
+
+`ReActAgent.for_subagent` (Python) and `ReActAgent.forSubagent` (Java) create a child agent that accepts an object containing one string field, `prompt`. Register it as an `AGENT` resource on the parent. The description tells the parent model when to delegate; instructions are literal system-message text for the child. Select the child's model, tools, and skills through its chat-model descriptor.
+
+{{< tabs "ReAct Subagent Registration" >}}
+{{< tab "Python" >}}
+```python
+child = ReActAgent.for_subagent(
+    chat_model=chat_model_descriptor,
+    description="Research a task and return an evidence-based answer.",
+    instructions="Use the available tools and explain your findings concisely.",
+)
+parent.add_resource("researcher", ResourceType.AGENT, child)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+ReActAgent child = ReActAgent.forSubagent(
+        chatModelDescriptor,
+        "Research a task and return an evidence-based answer.",
+        "Use the available tools and explain your findings concisely.",
+        null);
+parent.addResource("researcher", ResourceType.AGENT, child);
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+An action can resolve and invoke the child explicitly. Python calling actions must be `async`; Java internal-subagent calls require a runtime with JDK 21 or later and continuation support. On JDK 21, include `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` in the JVM options (for example, Flink’s `env.java.opts.all`).
+
+{{< tabs "ReAct Subagent Invocation" >}}
+{{< tab "Python" >}}
+```python
+child = ctx.get_resource("researcher", ResourceType.AGENT)
+result = await (await child.submit(ctx, {"prompt": "Investigate this incident."}))
+if result.success:
+    answer = result.result[0]
+else:
+    failure_reason = result.error_message
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+SubagentSetup child = (SubagentSetup) ctx.getResource("researcher", ResourceType.AGENT);
+SubagentResult result = child.submit(
+        ctx, Map.of("prompt", "Investigate this incident.")).await();
+if (result.isSuccess()) {
+    Object answer = ((List<?>) result.getResult()).get(0);
+} else {
+    String failureReason = result.getErrorMessage();
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+The Java invocation uses `SubagentSetup` and `SubagentResult` from `org.apache.flink.agents.api.subagent`, plus `java.util.Map` and `java.util.List`. Internal agents return a list of emitted outputs; an ordinary ReActAgent emits one answer. The factory also accepts an optional JSON-model output schema: a Python `BaseModel` subclass or a Java POJO class. Row-based output schemas remain available through the ordinary ReActAgent constructor.
+
+For model-driven delegation, add `subagents=["researcher"]` to the parent's Python chat-model descriptor, or `.addInitialArgument("subagents", List.of("researcher"))` to its Java descriptor builder. The framework advertises a callable named `_subagent_researcher` with the child's description and input schema. The child runs its own reasoning/tool loop, and its result becomes a tool response for the parent model. A failed child produces an error response for the parent to handle.
+
+Waiting for a child releases the mailbox without occupying an async worker, so nested calls and model/tool execution can make progress even with `num-async-threads=1`.
+
+Each invocation has its own conversation memory, shared across that child's actions and isolated from the parent and other invocations. Child resources take precedence over shared root resources, allowing a shared model connection alongside child-specific tools. A child without an output schema does not inherit the parent’s schema prompt. Registration is explicit; constructing a ReActAgent does not automatically add a general-purpose child.
+
+Checkpoints retain internal call state and memory committed by completed child actions, including nested calls. On recovery, unfinished actions restart and reconnect to those calls. Their uncommitted memory writes and terminal outputs are recreated by execution. Replay of recorded model/tool results requires a configured action-state store; external side effects outside durable calls can repeat when an action restarts.

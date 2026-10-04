@@ -1266,7 +1266,10 @@ public class ActionExecutionOperatorTest {
             assertThatThrownBy(() -> operator.waitInFlightEventsFinished())
                     .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class)
                     .rootCause()
-                    .hasMessageContaining("Current thread does not own the lock");
+                    .hasMessageContaining(
+                            ContinuationActionExecutor.isContinuationSupported()
+                                    ? "Expected to be running on the task mailbox thread"
+                                    : "Current thread does not own the lock");
         }
     }
 

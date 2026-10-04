@@ -26,6 +26,7 @@ import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.async.MailboxCallable;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
 import java.time.Duration;
@@ -277,6 +278,14 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     private <T> T executeAsyncCallable(DurableCallable<T> callable) throws Exception {
+        if (callable instanceof MailboxCallable) {
+            if (continuationExecutor == null || continuationContext == null) {
+                throw new IllegalStateException("Internal calls require a continuation context.");
+            }
+            continuationExecutor.awaitCompletion(
+                    continuationContext, ((MailboxCallable<?>) callable).completion());
+            return callable.call();
+        }
 
         Supplier<T> wrappedSupplier =
                 () -> {

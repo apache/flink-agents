@@ -74,6 +74,7 @@ class ResourceCache:
         self,
         resource_providers: Dict[ResourceType, Dict[str, ResourceProvider]],
         config: AgentConfiguration | None = None,
+        parent: "ResourceCache | None" = None,
     ) -> None:
         """Create a ResourceCache from the given resource providers and config.
 
@@ -83,7 +84,11 @@ class ResourceCache:
             Two-level mapping of resource type to resource name to provider.
         config : AgentConfiguration | None
             Agent configuration passed to providers during resource creation.
+        parent : ResourceCache | None
+            Fallback for resources not declared in this scope. The parent owns
+            their lifecycle; closing this cache only closes local resources.
         """
+        self._parent = parent
         self._resource_providers = resource_providers or {}
         self._config = config
         self._cache: Dict[ResourceType, Dict[str, Resource]] = {}
@@ -113,6 +118,8 @@ class ResourceCache:
             return cached
         providers = self._resource_providers.get(type)
         if providers is None or name not in providers:
+            if self._parent is not None:
+                return self._parent.get_resource(name, type)
             msg = f"Resource not found: '{name}' of type {type}"
             raise KeyError(msg)
         resource_provider = providers[name]
@@ -121,7 +128,9 @@ class ResourceCache:
         resource = resource_provider.provide(
             resource_context=self._resource_context, config=self._config
         )
-        if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
+        if isinstance(resource, FunctionTool) and isinstance(
+            resource.func, JavaFunction
+        ):
             resource.set_java_resource_adapter(self._j_resource_adapter)
         # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
         from flink_agents.runtime.base_subagent import BaseSubagentSetup

@@ -1,0 +1,264 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package org.apache.flink.agents.runtime.subagent;
+
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
+import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.api.common.typeutils.TypeSerializer;
+
+import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
+/**
+ * Self-coordinating quiesce state machine for a single sub-agent call. Completion is driven by two
+ * counters: {@code runningActions} (child actions executing) and {@code pendingEvents} (child
+ * events not yet dispatched). Every mutating method checks whether both reached zero and completes
+ * the response future itself, so callers never invoke a separate tryComplete step.
+ */
+public class InternalSubagentCallStatus {
+
+    private final String callId;
+    private final String scope;
+    private final String sessionId;
+    private final InternalSubagentSetup setup;
+    private final CompletableFuture<List<Object>> responseFuture = new CompletableFuture<>();
+    private final IsolatedCachedMemoryStore sensoryMemory = new IsolatedCachedMemoryStore();
+    private final IsolatedCachedMemoryStore shortTermMemory = new IsolatedCachedMemoryStore();
+    private volatile String failureMessage;
+    private int runningActions;
+    private int pendingEvents;
+    private final List<Object> output = new ArrayList<>();
+
+    /** Unfinished actions keep their writes private until the operator commits their memory. */
+    public RunnerContextImpl.MemoryContext newMemoryContext(
+            TypeSerializer<MemoryObjectImpl.MemoryItem> serializer) {
+        return new RunnerContextImpl.MemoryContext(
+                sensoryMemory.createActionStore(serializer),
+                shortTermMemory.createActionStore(serializer));
+    }
+
+    public InternalSubagentCallStatus(
+            String callId, String scope, String sessionId, InternalSubagentSetup setup) {
+        this.callId = callId;
+        this.scope = scope;
+        this.sessionId = sessionId;
+        this.setup = setup;
+    }
+
+    /** Captures call coordination and memory without retaining runtime resources or futures. */
+    public Snapshot snapshot() {
+        return new Snapshot(this);
+    }
+
+    /** Restores memory with the same serializer configuration as the operator's keyed state. */
+    public static InternalSubagentCallStatus restore(
+            Snapshot snapshot,
+            InternalSubagentSetup setup,
+            TypeSerializer<MemoryObjectImpl.MemoryItem> serializer) {
+        InternalSubagentCallStatus status =
+                new InternalSubagentCallStatus(
+                        snapshot.callId, snapshot.scope, snapshot.sessionId, setup);
+        status.sensoryMemory.restore(snapshot.sensoryMemory, serializer);
+        status.shortTermMemory.restore(snapshot.shortTermMemory, serializer);
+        status.runningActions = snapshot.runningActions;
+        status.pendingEvents = snapshot.pendingEvents;
+        status.output.addAll(status.copyOutput(snapshot.output));
+        status.failureMessage = snapshot.failureMessage;
+        if (snapshot.cancelled) {
+            status.responseFuture.cancel(false);
+        } else if (snapshot.failureMessage != null) {
+            status.responseFuture.completeExceptionally(
+                    new IllegalStateException(snapshot.failureMessage));
+        } else if (snapshot.completed) {
+            status.responseFuture.complete(status.copyOutput(snapshot.completedOutput));
+        }
+        return status;
+    }
+
+    private List<Object> copyOutput(List<Object> values) {
+        List<Object> copy = new ArrayList<>(values.size());
+        for (Object value : values) {
+            copy.add(sensoryMemory.copyValue(value));
+        }
+        return copy;
+    }
+
+    /** Serializable state for one call; its owning setup is resolved separately on restore. */
+    public static final class Snapshot implements Serializable {
+        private static final long serialVersionUID = 1L;
+
+        private final String callId;
+        private final String scope;
+        private final String sessionId;
+        private final Map<String, MemoryObjectImpl.MemoryItem> sensoryMemory;
+        private final Map<String, MemoryObjectImpl.MemoryItem> shortTermMemory;
+        private final int runningActions;
+        private final int pendingEvents;
+        private final List<Object> output;
+        private final String failureMessage;
+        private final boolean completed;
+        private final boolean cancelled;
+        private final List<Object> completedOutput;
+
+        private Snapshot(InternalSubagentCallStatus status) {
+            callId = status.callId;
+            scope = status.scope;
+            sessionId = status.sessionId;
+            sensoryMemory = status.sensoryMemory.snapshot();
+            shortTermMemory = status.shortTermMemory.snapshot();
+            runningActions = status.runningActions;
+            pendingEvents = status.pendingEvents;
+            output = status.copyOutput(status.output);
+            failureMessage = status.failureMessage;
+            completed = status.responseFuture.isDone();
+            cancelled = status.responseFuture.isCancelled();
+            completedOutput =
+                    completed && !status.responseFuture.isCompletedExceptionally()
+                            ? status.copyOutput(status.responseFuture.getNow(null))
+                            : null;
+        }
+
+        public String getCallId() {
+            return callId;
+        }
+
+        public String getScope() {
+            return scope;
+        }
+
+        public String getSessionId() {
+            return sessionId;
+        }
+    }
+
+    /**
+     * The sub-agent this call targets, resolved by the caller when the call was bootstrapped.
+     *
+     * <p>Carried here rather than re-resolved from the scope name at dispatch time: a nested call
+     * targets a scope registered in the caller's own child plan, which the root resource cache
+     * cannot see.
+     */
+    public InternalSubagentSetup getSetup() {
+        return setup;
+    }
+
+    public String getCallId() {
+        return callId;
+    }
+
+    public String getScope() {
+        return scope;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public CompletableFuture<List<Object>> getResponseFuture() {
+        return responseFuture;
+    }
+
+    public void emitEvent() {
+        pendingEvents++;
+    }
+
+    public void dispatchEvent(int triggeredActions) {
+        if (pendingEvents > 0) {
+            pendingEvents--;
+        }
+        runningActions += triggeredActions;
+        tryComplete();
+    }
+
+    /**
+     * Accounts for one envelope this call emitted being dispatched. The emitter and the envelope's
+     * target are different calls when the call is nested, so this (not {@link #dispatchEvent}) is
+     * what releases the emitter's pending count.
+     */
+    public void markEmittedEventDispatched() {
+        if (pendingEvents > 0) {
+            pendingEvents--;
+        }
+        tryComplete();
+    }
+
+    /** Adds actions triggered on behalf of this call (an envelope's target side). */
+    public void addTriggeredActions(int count) {
+        runningActions += count;
+        tryComplete();
+    }
+
+    public void completeAction() {
+        runningActions--;
+        tryComplete();
+    }
+
+    public void accumulateOutput(Object payload) {
+        output.add(payload);
+    }
+
+    public int getRunningActions() {
+        return runningActions;
+    }
+
+    public int getPendingEvents() {
+        return pendingEvents;
+    }
+
+    public String getFailureMessage() {
+        return failureMessage;
+    }
+
+    public void failAction(Throwable cause) {
+        if (!responseFuture.isDone()) {
+            failureMessage = cause.getClass().getName() + ": " + cause.getMessage();
+            responseFuture.completeExceptionally(cause);
+        }
+    }
+
+    /** Recreate a recorded failure without changing the summary returned to the caller. */
+    public void failAction(String message) {
+        if (!responseFuture.isDone()) {
+            failureMessage = message;
+            responseFuture.completeExceptionally(new IllegalStateException(message));
+        }
+    }
+
+    public void cancel() {
+        responseFuture.cancel(false);
+    }
+
+    public boolean isDone() {
+        return responseFuture.isDone();
+    }
+
+    private void tryComplete() {
+        if (responseFuture.isDone()) {
+            return;
+        }
+        if (runningActions != 0 || pendingEvents != 0) {
+            return;
+        }
+        responseFuture.complete(new ArrayList<>(output));
+    }
+}

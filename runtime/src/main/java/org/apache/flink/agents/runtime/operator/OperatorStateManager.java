@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.agents.ShortTermMemoryTtlVisibility;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.api.common.state.ListState;
 import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.MapState;
@@ -44,6 +45,7 @@ import org.apache.flink.runtime.state.VoidNamespaceSerializer;
 import javax.annotation.Nullable;
 
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 
 import static org.apache.flink.agents.runtime.utils.StateUtil.*;
@@ -56,6 +58,7 @@ import static org.apache.flink.agents.runtime.utils.StateUtil.*;
  *
  * <ul>
  *   <li>Keyed list state of pending {@link ActionTask}s for the current key.
+ *   <li>Keyed list state of internal sub-agent call trees at the checkpoint boundary.
  *   <li>Keyed list state of pending {@link Event}s buffered while another input is processing.
  *   <li>Keyed value state holding the per-key message sequence number.
  *   <li>Keyed map states for sensory and short-term memory.
@@ -80,6 +83,7 @@ class OperatorStateManager {
     static final String PENDING_INPUT_EVENT_STATE_NAME = "pendingInputEvents";
 
     private ListState<ActionTask> actionTasksKState;
+    private ListState<InternalSubagentSetup.Snapshot> internalCallsKState;
     private ListState<Event> pendingInputEventsKState;
     private ListState<Object> currentProcessingKeysOpState;
     private ValueState<Long> sequenceNumberKState;
@@ -128,6 +132,11 @@ class OperatorStateManager {
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
                                 ACTION_TASK_STATE_NAME, TypeInformation.of(ActionTask.class)));
+        internalCallsKState =
+                runtimeContext.getListState(
+                        new ListStateDescriptor<>(
+                                "internalSubagentCalls",
+                                TypeInformation.of(InternalSubagentSetup.Snapshot.class)));
         pendingInputEventsKState =
                 runtimeContext.getListState(
                         new ListStateDescriptor<>(
@@ -258,6 +267,19 @@ class OperatorStateManager {
 
     void addActionTask(ActionTask actionTask) throws Exception {
         actionTasksKState.add(actionTask);
+    }
+
+    void snapshotInternalCalls(List<InternalSubagentSetup.Snapshot> snapshots) throws Exception {
+        internalCallsKState.update(snapshots);
+    }
+
+    Iterable<InternalSubagentSetup.Snapshot> getInternalCallSnapshots() throws Exception {
+        Iterable<InternalSubagentSetup.Snapshot> snapshots = internalCallsKState.get();
+        return snapshots == null ? Collections.emptyList() : snapshots;
+    }
+
+    void clearInternalCallSnapshots() {
+        internalCallsKState.clear();
     }
 
     void addPendingInputEvent(Event event) throws Exception {

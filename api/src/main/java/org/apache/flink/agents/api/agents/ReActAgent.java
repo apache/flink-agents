@@ -35,6 +35,7 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadata;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -57,6 +58,37 @@ public class ReActAgent extends Agent {
     private static final String DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt";
     private static final String DEFAULT_USER_PROMPT = "_default_user_prompt";
     private static final ObjectMapper mapper = new ObjectMapper();
+
+    private static final String SUBAGENT_INPUT = "_subagent_input";
+    private static final String SUBAGENT_INSTRUCTIONS = "_subagent_instructions";
+    private static final String SUBAGENT_INPUT_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}},"
+                    + "\"required\":[\"prompt\"],\"additionalProperties\":false}";
+
+    /** Create a child accepting {@code {"prompt": "task"}} through either invocation path. */
+    public static ReActAgent forSubagent(ResourceDescriptor chatModel, String description) {
+        return forSubagent(chatModel, description, null, null);
+    }
+
+    /**
+     * Create a general-purpose child with literal system instructions and optional structured
+     * output. Register the returned agent through {@code addResource(name, AGENT, child)}. Its
+     * result uses the internal sub-agent's list of output payloads.
+     */
+    public static ReActAgent forSubagent(
+            ResourceDescriptor chatModel,
+            String description,
+            @Nullable String instructions,
+            @Nullable Class<?> outputSchema) {
+        ReActAgent child = new ReActAgent(chatModel, Prompt.fromText("{prompt}"), outputSchema);
+        child.withSubagentMetadata(new SubagentMetadata(description, SUBAGENT_INPUT_SCHEMA));
+        Map<String, Object> config = child.getActions().get("startAction").f2;
+        config.put(SUBAGENT_INPUT, true);
+        if (instructions != null) {
+            config.put(SUBAGENT_INSTRUCTIONS, instructions);
+        }
+        return child;
+    }
 
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
@@ -131,6 +163,14 @@ public class ReActAgent extends Agent {
     public static void startAction(Event event, RunnerContext ctx) {
         InputEvent inputEvent = InputEvent.fromEvent(event);
         Object input = inputEvent.getInput();
+        if (Boolean.TRUE.equals(ctx.getActionConfigValue(SUBAGENT_INPUT))) {
+            if (!(input instanceof Map)
+                    || ((Map<?, ?>) input).size() != 1
+                    || !(((Map<?, ?>) input).get("prompt") instanceof String)) {
+                throw new IllegalArgumentException(
+                        "ReAct sub-agent input must be an object containing only a string 'prompt'.");
+            }
+        }
 
         Prompt userPrompt;
         try {
@@ -140,7 +180,7 @@ public class ReActAgent extends Agent {
         }
 
         List<ChatMessage> inputMessages = new ArrayList<>();
-        if (ClassUtils.isPrimitiveOrWrapper(input.getClass())) {
+        if (input instanceof String || ClassUtils.isPrimitiveOrWrapper(input.getClass())) {
             if (userPrompt != null) {
                 inputMessages =
                         userPrompt.formatMessages(
@@ -178,9 +218,18 @@ public class ReActAgent extends Agent {
             inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
         }
 
+        String instructions = (String) ctx.getActionConfigValue(SUBAGENT_INSTRUCTIONS);
+        if (instructions != null) {
+            inputMessages.add(0, new ChatMessage(MessageRole.SYSTEM, instructions));
+        }
+
+        Object outputSchema = ctx.getActionConfigValue("output_schema");
         Prompt schmaPrompt;
         try {
-            schmaPrompt = (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
+            schmaPrompt =
+                    outputSchema == null
+                            ? null
+                            : (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
         } catch (Exception e) {
             schmaPrompt = null;
         }
@@ -190,8 +239,6 @@ public class ReActAgent extends Agent {
             int index = ChatMessage.findFirstSystemMessage(inputMessages);
             inputMessages.addAll(index + 1, instruct);
         }
-
-        Object outputSchema = ctx.getActionConfigValue("output_schema");
 
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
     }

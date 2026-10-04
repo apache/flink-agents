@@ -201,6 +201,24 @@ class SubagentFutures(ABC):
         """
 
 
+class SubagentMetadata(BaseModel):
+    """Callable description and object input schema for an internal agent."""
+
+    model_config = {"frozen": True}
+
+    description: str
+    input_schema: str
+
+    @field_validator("input_schema")
+    @classmethod
+    def _validate_schema(cls, value: str) -> str:
+        schema = json.loads(value)
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            msg = "Sub-agent input schema must describe a JSON object."
+            raise ValueError(msg)
+        return value
+
+
 class SubagentSetup(SerializableResource):
     """Caller-facing definition of a sub-agent, registered as an AGENT resource.
 

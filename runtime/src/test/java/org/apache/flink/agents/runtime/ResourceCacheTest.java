@@ -25,7 +25,10 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -43,6 +46,10 @@ import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
+import org.apache.flink.agents.plan.routing.ResolvedModelRoute;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.agents.runtime.skill.AgentSkill;
@@ -50,14 +57,18 @@ import org.apache.flink.agents.runtime.skill.SkillManager;
 import org.apache.flink.agents.runtime.skill.SkillRepository;
 import org.apache.flink.agents.runtime.skill.SkillSourceRegistry;
 import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
+import org.apache.flink.metrics.groups.UnregisteredMetricsGroup;
 import org.junit.jupiter.api.Test;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -288,6 +299,93 @@ public class ResourceCacheTest {
         assertThatThrownBy(() -> cache.getResource("non-existent", ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Resource not found: non-existent");
+    }
+
+    @Test
+    void testInheritedResourceAvailabilityIsLazyAndKeepsLocalPrecedence() throws Exception {
+        Map<String, ResourceProvider> rootTools =
+                Map.of(
+                        "inherited",
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        "inherited", ResourceType.TOOL, new TestTool("root")),
+                        "overridden",
+                                JavaSerializableResourceProvider.createResourceProvider(
+                                        "overridden", ResourceType.TOOL, new TestTool("root")));
+        ClassLoader loader = getClass().getClassLoader();
+        try (ResourceCache root = new ResourceCache(Map.of(ResourceType.TOOL, rootTools));
+                ResourceCache child =
+                        new ResourceCache(
+                                Map.of(
+                                        ResourceType.TOOL,
+                                        Map.of(
+                                                "overridden",
+                                                JavaSerializableResourceProvider
+                                                        .createResourceProvider(
+                                                                "overridden",
+                                                                ResourceType.TOOL,
+                                                                new TestTool("child")))),
+                                loader,
+                                root);
+                ResourceCache grandchild = new ResourceCache(Map.of(), loader, child)) {
+            root.put("cached", ResourceType.CHAT_MODEL, new TestSerializableChatModel("cached"));
+            assertThat(grandchild.hasResource("inherited", ResourceType.TOOL)).isTrue();
+            assertThat(grandchild.hasResource("overridden", ResourceType.TOOL)).isTrue();
+            assertThat(grandchild.hasResource("cached", ResourceType.CHAT_MODEL)).isTrue();
+            assertThat(grandchild.hasResource("missing", ResourceType.TOOL)).isFalse();
+            assertThat(grandchild.hasResource("inherited", ResourceType.CHAT_MODEL)).isFalse();
+            assertThat(root.materializedResources(ResourceType.TOOL)).isEmpty();
+            assertThat(child.materializedResources(ResourceType.TOOL)).isEmpty();
+            assertThat(
+                            ((TestTool) grandchild.getResource("overridden", ResourceType.TOOL))
+                                    .getName())
+                    .isEqualTo("child");
+            assertThat(grandchild.getResource("inherited", ResourceType.TOOL))
+                    .isSameAs(root.getResource("inherited", ResourceType.TOOL));
+            assertThat(grandchild.getResource("cached", ResourceType.CHAT_MODEL))
+                    .isSameAs(root.getResource("cached", ResourceType.CHAT_MODEL));
+        }
+    }
+
+    @Test
+    void testChildContextRoutesThroughInheritedModelRouter() throws Exception {
+        try (ResourceCache root = new ResourceCache(Map.of());
+                ResourceCache child =
+                        new ResourceCache(Map.of(), getClass().getClassLoader(), root)) {
+            ModelRouter router =
+                    new ModelRouter(
+                            ModelRouter.of("selected")
+                                    .strategy(Strategies.rules(Map.of("selected", ".*")))
+                                    .build(),
+                            null);
+            root.put("shared-router", ResourceType.MODEL_ROUTER, router);
+            TestSerializableChatModel selected = new TestSerializableChatModel("selected");
+            root.put("selected", ResourceType.CHAT_MODEL, selected);
+            AgentPlan plan = new AgentPlan(new Agent());
+            FlinkAgentsMetricGroupImpl metrics =
+                    new FlinkAgentsMetricGroupImpl(new UnregisteredMetricsGroup());
+            RunnerContextImpl context =
+                    new RunnerContextImpl(metrics, () -> {}, plan, root, "test");
+            context.switchActionContext("route", null, new ArrayList<>(), "key", null, false, null);
+            context.setSubagentScope(
+                    new RunnerContextImpl.SubagentScope(
+                            metrics,
+                            plan,
+                            child,
+                            new InternalSubagentCallStatus("call", "child", "session", null)));
+
+            ResolvedModelRoute route =
+                    ModelRoutingResolver.resolve(
+                            UUID.randomUUID(),
+                            "shared-router",
+                            List.of(new ChatMessage(MessageRole.USER, "route this request")),
+                            Map.of(),
+                            context);
+
+            assertThat(route.isRouter()).isTrue();
+            assertThat(route.getSelectedModel()).isEqualTo("selected");
+            assertThat(context.getResource(route.getSelectedModel(), ResourceType.CHAT_MODEL))
+                    .isSameAs(selected);
+        }
     }
 
     @Test

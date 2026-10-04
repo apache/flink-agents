@@ -20,21 +20,32 @@ package org.apache.flink.agents.api.agents;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadata;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class ReActAgentTest {
     @Test
@@ -95,6 +106,25 @@ public class ReActAgentTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("java.lang.String")
                 .hasMessageContaining("must be a RowTypeInfo or a Pojo class");
+    }
+
+    @Test
+    void plainStringInputNeedsNoPromptTemplate() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getResource(anyString(), eq(ResourceType.PROMPT)))
+                .thenThrow(new IllegalArgumentException("No prompt"));
+        ReActAgent.startAction(new InputEvent("task"), ctx);
+        ArgumentCaptor<ChatRequestEvent> request = ArgumentCaptor.forClass(ChatRequestEvent.class);
+        verify(ctx).sendEvent(request.capture());
+        assertThat(request.getValue().getMessages().get(0).getText()).isEqualTo("task");
+    }
+
+    @Test
+    void callableSchemaMustBeOneJsonObjectSchema() {
+        for (String schema : List.of("{} {}", "[]", "null", "{\"type\":\"string\"}")) {
+            assertThatThrownBy(() -> new SubagentMetadata("Research", schema))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     private static ReActAgent agentWithSchema(Object outputSchema) {

@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 from typing import cast
 
 from pydantic import (
@@ -37,11 +38,14 @@ from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.subagent import SubagentMetadata
 
 _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
 _DEFAULT_USER_PROMPT = "_default_user_prompt"
 _OUTPUT_SCHEMA = "_output_schema"
+_SUBAGENT_INPUT = "_subagent_input"
+_SUBAGENT_INSTRUCTIONS = "_subagent_instructions"
 
 
 class ReActAgent(Agent):
@@ -96,6 +100,51 @@ class ReActAgent(Agent):
             )
     """
 
+    @classmethod
+    def for_subagent(
+        cls,
+        *,
+        chat_model: ResourceDescriptor,
+        description: str,
+        instructions: str | None = None,
+        output_schema: type[BaseModel] | None = None,
+    ) -> "ReActAgent":
+        """Create a general-purpose child accepting ``{"prompt": "task"}``.
+
+        Register the returned agent with ``add_resource(name, AGENT, child)``.
+        Instructions are literal system-message text. The routing description
+        is advertised to the parent model, separately from child instructions.
+        Results use the internal sub-agent's list of output payloads.
+        """
+        if output_schema is not None and not (
+            isinstance(output_schema, type) and issubclass(output_schema, BaseModel)
+        ):
+            msg = "ReAct sub-agent output schema must be a BaseModel subclass."
+            raise TypeError(msg)
+        child = cls(
+            chat_model=chat_model,
+            prompt=Prompt.from_text("{prompt}"),
+            output_schema=output_schema,
+        )
+        child.with_subagent_metadata(
+            SubagentMetadata(
+                description=description,
+                input_schema=json.dumps(
+                    {
+                        "type": "object",
+                        "properties": {"prompt": {"type": "string"}},
+                        "required": ["prompt"],
+                        "additionalProperties": False,
+                    }
+                ),
+            )
+        )
+        config = child.actions["start_action"][2]
+        config[_SUBAGENT_INPUT] = True
+        if instructions is not None:
+            config[_SUBAGENT_INSTRUCTIONS] = instructions
+        return child
+
     def __init__(
         self,
         *,
@@ -148,13 +197,22 @@ class ReActAgent(Agent):
             name="start_action",
             trigger_conditions=[InputEvent.EVENT_TYPE],
             func=self.start_action,
-            output_schema=OutputSchema(output_schema=output_schema) if output_schema else None,
+            output_schema=OutputSchema(output_schema=output_schema)
+            if output_schema
+            else None,
         )
 
     @staticmethod
     def start_action(event: Event, ctx: RunnerContext) -> None:
         """Start action to format user input and send chat request event."""
         usr_input = InputEvent.from_event(event).input
+        if ctx.get_action_config_value(key=_SUBAGENT_INPUT) is True and (
+            not isinstance(usr_input, dict)
+            or set(usr_input) != {"prompt"}
+            or not isinstance(usr_input["prompt"], str)
+        ):
+            msg = "ReAct sub-agent input must be an object containing only a string 'prompt'."
+            raise ValueError(msg)
 
         try:
             prompt = cast(
@@ -188,19 +246,29 @@ class ReActAgent(Agent):
             str_usr_input = {k: str(v) for k, v in usr_input.items()}
             usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
 
+        output_schema = ctx.get_action_config_value(key="output_schema")
         try:
-            schema_prompt = cast(
-                "Prompt", ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
+            schema_prompt = (
+                None
+                if output_schema is None
+                else cast(
+                    "Prompt",
+                    ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT),
+                )
             )
         except KeyError:
             schema_prompt = None
+
+        instructions = ctx.get_action_config_value(key=_SUBAGENT_INSTRUCTIONS)
+        if instructions is not None:
+            usr_msgs.insert(
+                0, ChatMessage.system(instructions)
+            )
 
         if schema_prompt:
             instruct = schema_prompt.format_messages()
             index = find_first_system_message(usr_msgs)
             usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
-
-        output_schema = ctx.get_action_config_value(key="output_schema")
 
         ctx.send_event(
             ChatRequestEvent(

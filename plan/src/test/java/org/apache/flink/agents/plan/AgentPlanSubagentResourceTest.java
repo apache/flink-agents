@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -25,6 +26,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.subagent.TestSubagentSetup;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.junit.jupiter.api.Test;
 
@@ -83,7 +85,97 @@ public class AgentPlanSubagentResourceTest {
 
         assertThatThrownBy(() -> new AgentPlan(agent))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must be a SubagentSetup or a ResourceDescriptor");
+                .hasMessageContaining("must be a SubagentSetup, a ResourceDescriptor, or an Agent");
+    }
+
+    @Test
+    void childAgentCompilesIntoInternalProvider() throws Exception {
+        Agent root = new Agent();
+        Agent child = new Agent();
+        root.addResource("child", ResourceType.AGENT, child);
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        assertThat(agentProviders).containsKey("child");
+        assertThat(agentProviders.get("child")).isInstanceOf(InternalSubagentProvider.class);
+        InternalSubagentProvider provider = (InternalSubagentProvider) agentProviders.get("child");
+        assertThat(provider.getScope()).isEqualTo("child");
+        assertThat(provider.getChildPlan()).isNotNull();
+    }
+
+    @Test
+    void nestedPlanSerializationKeepsTheProviderFieldsOutsideTheChild() throws Exception {
+        Agent root = new Agent();
+        root.addResource("child", ResourceType.AGENT, new Agent());
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(new AgentPlan(root));
+        assertThat(
+                        mapper.readTree(json)
+                                .path("resource_providers")
+                                .path("agent")
+                                .path("child")
+                                .path("__resource_provider_type__")
+                                .asText())
+                .isEqualTo("InternalSubagentProvider");
+        AgentPlan restored = mapper.readValue(json, AgentPlan.class);
+        assertThat(restored.getResourceProviders().get(ResourceType.AGENT).get("child"))
+                .isInstanceOf(InternalSubagentProvider.class);
+    }
+
+    @Test
+    void sharedChildAgentCompilesToSinglePlan() throws Exception {
+        Agent root = new Agent();
+        Agent child = new Agent();
+        root.addResource("first", ResourceType.AGENT, child);
+        root.addResource("second", ResourceType.AGENT, child);
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        InternalSubagentProvider first = (InternalSubagentProvider) agentProviders.get("first");
+        InternalSubagentProvider second = (InternalSubagentProvider) agentProviders.get("second");
+        assertThat(first.getChildPlan()).isSameAs(second.getChildPlan());
+    }
+
+    @Test
+    void cycleNotThroughRootIsRejectedWithCyclePath() {
+        Agent root = new Agent();
+        Agent a = new Agent();
+        Agent b = new Agent();
+        root.addResource("a", ResourceType.AGENT, a);
+        a.addResource("b", ResourceType.AGENT, b);
+        b.addResource("a", ResourceType.AGENT, a);
+
+        assertThatThrownBy(() -> new AgentPlan(root))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cyclic sub-agent definition detected: a -> b -> a");
+    }
+
+    @Test
+    void cycleThroughRootIsRejected() {
+        Agent root = new Agent();
+        Agent b = new Agent();
+        root.addResource("b", ResourceType.AGENT, b);
+        b.addResource("root", ResourceType.AGENT, root);
+
+        assertThatThrownBy(() -> new AgentPlan(root))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cyclic sub-agent definition detected")
+                .hasMessageContaining("<root> -> b -> root");
+    }
+
+    @Test
+    void selfReferenceIsRejected() {
+        Agent root = new Agent();
+        root.addResource("itself", ResourceType.AGENT, root);
+
+        assertThatThrownBy(() -> new AgentPlan(root))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cyclic sub-agent definition detected")
+                .hasMessageContaining("<root> -> itself");
     }
 
     /**
