@@ -42,6 +42,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.skills import Skills
 from flink_agents.api.tools.tool import Tool
 
 
@@ -82,7 +83,13 @@ class ScriptedConnection(BaseChatModelConnection):
         model = kwargs["model"]
         last = messages[-1]
         if last.role == MessageRole.TOOL:
-            expected = "child evidence" if model.startswith("child") else "child answer"
+            expected = (
+                "child-only-evidence"
+                if model == "child_skill"
+                else "child evidence"
+                if model.startswith("child")
+                else "child answer"
+            )
             if expected not in last.content:
                 msg = f"Wrong scoped result: {last.content}"
                 raise ValueError(msg)
@@ -92,20 +99,37 @@ class ScriptedConnection(BaseChatModelConnection):
             content = (
                 '{"answer":"child answer"}'
                 if model == "child_json"
+                else "child answer"
+                if model == "child_skill"
                 else f"{model} answer"
             )
             return ChatMessage(role=MessageRole.ASSISTANT, content=content)
         if model.startswith("child"):
             if (
-                messages[0].content != "Literal {prompt} instructions"
+                not any(
+                    message.content == "Literal {prompt} instructions"
+                    for message in messages
+                )
                 or last.content != "investigate"
             ):
                 msg = "Child instructions or input were not preserved"
                 raise ValueError(msg)
-            name, arguments = "evidence", {}
+            if model == "child_skill":
+                assert any(
+                    "Child research instructions" in message.content
+                    for message in messages
+                )
+                assert all(
+                    "Parent private instructions" not in message.content
+                    for message in messages
+                )
+                name, arguments = "load_skill", {"name": "research"}
+            else:
+                name, arguments = "evidence", {}
         else:
             name, arguments = "_subagent_researcher", {"prompt": "investigate"}
-        if [tool.name for tool in tools] != [name]:
+        expected_tools = ["load_skill", "bash"] if model == "child_skill" else [name]
+        if [tool.name for tool in tools] != expected_tools:
             msg = "Callable metadata was not resolved in the current scope"
             raise ValueError(msg)
         return ChatMessage(
@@ -159,14 +183,21 @@ class ExplicitParent(Agent):
         )
 
 
-def parent_agent(model_driven: bool, structured: bool = False) -> Agent:
+def parent_agent(
+    model_driven: bool, structured: bool = False, skills_path: Path | None = None
+) -> Agent:
     """Build a parent and a child with colliding model/tool resource names."""
     child = ReActAgent.for_subagent(
         chat_model=ResourceDescriptor(
             clazz=f"{ScriptedSetup.__module__}.{ScriptedSetup.__name__}",
             connection="connection",
-            model="child_json" if structured else "child",
-            tools=["evidence"],
+            model="child_skill"
+            if skills_path
+            else "child_json"
+            if structured
+            else "child",
+            tools=[] if skills_path else ["evidence"],
+            skills=["research"] if skills_path else None,
         ),
         description="Research a task",
         instructions="Literal {prompt} instructions",
@@ -197,23 +228,46 @@ def parent_agent(model_driven: bool, structured: bool = False) -> Agent:
     parent.add_resource(
         "evidence", ResourceType.TOOL, Tool.from_callable(ParentTools.evidence)
     )
+    if skills_path:
+        child.add_resource(
+            "skills",
+            ResourceType.SKILLS,
+            Skills.from_local_dir(str(skills_path / "child")),
+        )
+        parent.add_resource(
+            "skills",
+            ResourceType.SKILLS,
+            Skills.from_local_dir(str(skills_path / "parent")),
+        )
     parent.add_resource("researcher", ResourceType.AGENT, child)
     return parent
 
 
 @pytest.mark.parametrize(
-    ("model_driven", "structured", "failure"),
+    ("model_driven", "structured", "failure", "skills"),
     [
-        (False, False, False),
-        (True, False, False),
-        (True, True, False),
-        (False, False, True),
+        (False, False, False, False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (False, False, True, False),
+        (False, False, False, True),
+        (True, False, False, True),
     ],
 )
 def test_react_subagent_tool_loop(
-    tmp_path: Path, model_driven: bool, structured: bool, failure: bool
+    tmp_path: Path, model_driven: bool, structured: bool, failure: bool, skills: bool
 ) -> None:
     """Both invocation paths run the child loop and resume the parent."""
+    if skills:
+        for scope, description, evidence in [
+            ("child", "Child research instructions", "child-only-evidence"),
+            ("parent", "Parent private instructions", "parent-only-evidence"),
+        ]:
+            directory = tmp_path / scope / "research"
+            directory.mkdir(parents=True)
+            (directory / "SKILL.md").write_text(
+                f"---\nname: research\ndescription: {description}\n---\n{evidence}\n"
+            )
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
     env.set_python_executable(sys.executable)
@@ -224,7 +278,7 @@ def test_react_subagent_tool_loop(
             input=env.from_collection(["invalid" if failure else "hello"]),
             key_selector=InputKeySelector(),
         )
-        .apply(parent_agent(model_driven, structured))
+        .apply(parent_agent(model_driven, structured, tmp_path if skills else None))
         .to_datastream()
     )
     destination = tmp_path / "results"
