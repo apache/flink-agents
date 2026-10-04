@@ -34,7 +34,11 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
-from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
+from flink_agents.api.subagent import (
+    CALLABLE_NAME_PREFIX,
+    SubagentMetadataProvider,
+    SubagentSetup,
+)
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan import subagent as _subagent
@@ -505,13 +509,28 @@ def _get_resource_providers(
             # runtime. The live child plan rides in the serialized map and is
             # dumped lazily. This branch carries the child plan itself, so it
             # appends its own provider instead of the shared descriptor one.
+            #
+            # A child Agent may declare the caller-facing metadata through the
+            # SubagentMetadataProvider capability; it rides in the serialized
+            # map so the materialized setup carries it and a chat model can
+            # route and call the sub-agent as a tool.
+            description = None
+            input_schema = None
+            if isinstance(value, SubagentMetadataProvider):
+                description = value.get_subagent_description()
+                input_schema = value.get_subagent_input_schema()
             resource_providers.append(
                 PythonSerializableResourceProvider(
                     name=name,
                     type=ResourceType.AGENT,
                     module="flink_agents.runtime.internal_subagent",
                     clazz="InternalSubagentSetup",
-                    serialized={"child_plan": child_plan, "scope": name},
+                    serialized={
+                        "child_plan": child_plan,
+                        "scope": name,
+                        "description": description or "",
+                        "input_schema": input_schema,
+                    },
                 )
             )
             continue

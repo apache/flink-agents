@@ -43,6 +43,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.api.subagent.SubagentMetadataProvider;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
@@ -677,7 +678,19 @@ public class AgentPlan implements Serializable {
                         AgentPlan childPlan =
                                 InternalSubagentCompilationHelper.getOrCompile(
                                         child, name, a -> new AgentPlan(a, this.config));
-                        addResourceProvider(new InternalSubagentProvider(name, childPlan));
+                        // An Agent may declare the caller-facing metadata of its compiled
+                        // sub-agent; without it the sub-agent stays callable from actions
+                        // only.
+                        String description = null;
+                        String inputSchema = null;
+                        if (child instanceof SubagentMetadataProvider) {
+                            SubagentMetadataProvider metadata = (SubagentMetadataProvider) child;
+                            description = metadata.getSubagentDescription();
+                            inputSchema = metadata.getSubagentInputSchema();
+                        }
+                        addResourceProvider(
+                                new InternalSubagentProvider(
+                                        name, childPlan, description, inputSchema));
                     } else {
                         throw new IllegalArgumentException(
                                 "AGENT resource '"

@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -106,11 +107,29 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
     private transient String childPlanJson;
 
     public InternalSubagentSetup(String scope, AgentPlan childPlan) {
+        this(scope, childPlan, null, null);
+    }
+
+    /**
+     * Construction additionally declaring the caller-facing metadata a chat model routes and calls
+     * this sub-agent by. Both are optional; the base constructor normalizes them like any other
+     * sub-agent setup (default empty description, blank schema rejected).
+     */
+    public InternalSubagentSetup(
+            String scope,
+            AgentPlan childPlan,
+            @Nullable String description,
+            @Nullable String inputSchema) {
         // An internal sub-agent is built from a compiled child plan rather than a caller
         // descriptor, so it carries a synthetic self-named descriptor to satisfy the base
         // rebuild contract; that contract never reads the resource context, so it stays null.
+        // The declared metadata rides in the descriptor's arguments, the same channel a
+        // declared setup's own descriptor uses, so it is normalized uniformly and survives
+        // the rebuild contract untouched.
         super(
                 ResourceDescriptor.Builder.newBuilder(InternalSubagentSetup.class.getName())
+                        .addInitialArgument(SubagentSetup.FIELD_DESCRIPTION, description)
+                        .addInitialArgument(SubagentSetup.FIELD_INPUT_SCHEMA, inputSchema)
                         .build(),
                 null);
         this.scope = scope;

@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 
+import javax.annotation.Nullable;
+
 /**
  * Plan-side descriptor of an internal sub-agent: the compiled child plan plus its scope name,
  * produced during {@link AgentPlan} compilation when an {@code Agent} is registered as an {@code
@@ -45,10 +47,26 @@ public class InternalSubagentProvider extends ResourceProvider {
 
     private final AgentPlan childPlan;
 
+    /** Caller-facing description of the sub-agent, or {@code null} when none was declared. */
+    @Nullable private final String description;
+
+    /** Declared JSON Schema of the sub-agent's arguments, or {@code null} when none was. */
+    @Nullable private final String inputSchema;
+
     public InternalSubagentProvider(String name, AgentPlan childPlan) {
+        this(name, childPlan, null, null);
+    }
+
+    public InternalSubagentProvider(
+            String name,
+            AgentPlan childPlan,
+            @Nullable String description,
+            @Nullable String inputSchema) {
         super(name, ResourceType.AGENT);
         this.scope = name;
         this.childPlan = childPlan;
+        this.description = description;
+        this.inputSchema = inputSchema;
     }
 
     public String getScope() {
@@ -59,12 +77,23 @@ public class InternalSubagentProvider extends ResourceProvider {
         return childPlan;
     }
 
+    @Nullable
+    public String getDescription() {
+        return description;
+    }
+
+    @Nullable
+    public String getInputSchema() {
+        return inputSchema;
+    }
+
     @Override
     public Resource provide(ResourceContext resourceContext) throws Exception {
         Class<?> clazz =
                 Class.forName(
                         RUNTIME_SETUP_CLASS, true, Thread.currentThread().getContextClassLoader());
         return (Resource)
-                clazz.getConstructor(String.class, AgentPlan.class).newInstance(scope, childPlan);
+                clazz.getConstructor(String.class, AgentPlan.class, String.class, String.class)
+                        .newInstance(scope, childPlan, description, inputSchema);
     }
 }

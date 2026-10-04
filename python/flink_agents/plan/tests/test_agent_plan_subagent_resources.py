@@ -21,7 +21,7 @@ import pytest
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
-from flink_agents.api.subagent import SubagentSetup
+from flink_agents.api.subagent import SubagentMetadataProvider, SubagentSetup
 from flink_agents.api.tests.subagent_test_utils import TestSubagentSetup
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -123,6 +123,45 @@ def test_child_agent_compiles_into_internal_provider() -> None:
     assert provider.clazz == "InternalSubagentSetup"
     assert provider.serialized["scope"] == "child"
     assert provider.serialized["child_plan"] is not None
+    # An agent without the metadata capability compiles to the normalized
+    # defaults, not to missing keys.
+    assert provider.serialized["description"] == ""
+    assert provider.serialized["input_schema"] is None
+
+
+def test_metadata_child_agent_compiles_with_declared_metadata() -> None:
+    """A child Agent declaring SubagentMetadataProvider carries its metadata.
+
+    The metadata rides in the serialized map and reaches the materialized
+    setup, which is what a chat model routes and calls the sub-agent by.
+    """
+
+    class MetadataAgent(Agent, SubagentMetadataProvider):
+        def get_subagent_description(self) -> str:
+            return "Reviews pull requests and reports findings"
+
+        def get_subagent_input_schema(self) -> str:
+            return '{"type":"object","properties":{"diff":{"type":"string"}}}'
+
+    root = Agent()
+    root.add_resource("reviewer", ResourceType.AGENT, MetadataAgent())
+
+    plan = AgentPlan.from_agent(root, AgentConfiguration())
+
+    provider = plan.resource_providers[ResourceType.AGENT]["reviewer"]
+    assert provider.serialized["description"] == (
+        "Reviews pull requests and reports findings"
+    )
+    assert provider.serialized["input_schema"] == (
+        '{"type":"object","properties":{"diff":{"type":"string"}}}'
+    )
+
+    setup = provider.provide(resource_context=None, config=AgentConfiguration())
+    assert setup.description == "Reviews pull requests and reports findings"
+    assert setup.input_schema == (
+        '{"type":"object","properties":{"diff":{"type":"string"}}}'
+    )
+    assert setup.scope == "reviewer"
 
 
 def test_shared_child_agent_compiles_to_single_plan() -> None:

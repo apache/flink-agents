@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadataProvider;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.subagent.TestSubagentSetup;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -103,6 +104,40 @@ public class AgentPlanSubagentResourceTest {
         InternalSubagentProvider provider = (InternalSubagentProvider) agentProviders.get("child");
         assertThat(provider.getScope()).isEqualTo("child");
         assertThat(provider.getChildPlan()).isNotNull();
+        assertThat(provider.getDescription()).isNull();
+        assertThat(provider.getInputSchema()).isNull();
+    }
+
+    /** A child agent implementing the metadata capability compiles its declaration through. */
+    private static class MetadataChildAgent extends Agent implements SubagentMetadataProvider {
+
+        @Override
+        public String getSubagentDescription() {
+            return "Reviews pull requests and reports findings";
+        }
+
+        @Override
+        public String getSubagentInputSchema() {
+            return "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}";
+        }
+    }
+
+    @Test
+    void metadataChildAgentCompilesIntoProviderCarryingMetadata() throws Exception {
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, new MetadataChildAgent());
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider) agentProviders.get("reviewer");
+        assertThat(provider.getScope()).isEqualTo("reviewer");
+        assertThat(provider.getDescription())
+                .isEqualTo("Reviews pull requests and reports findings");
+        assertThat(provider.getInputSchema())
+                .isEqualTo("{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}");
     }
 
     /**
