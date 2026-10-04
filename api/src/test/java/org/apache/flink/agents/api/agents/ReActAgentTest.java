@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.agents;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
@@ -196,6 +197,79 @@ public class ReActAgentTest {
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("Row, Map or Pojo")
                 .hasMessageContaining("FieldLess");
+    }
+
+    // --- sub-agent metadata ---
+
+    @Test
+    @DisplayName("A bare agent declares the default sub-agent metadata")
+    public void testBareAgentDeclaresDefaultSubagentMetadata() throws Exception {
+        ReActAgent agent = bareAgent();
+
+        assertThat(agent.getSubagentDescription()).contains("general-purpose");
+        // The schema must be well-formed and name the single field the prompt-free map path
+        // passes through, or a model-driven call would arrive in a shape the agent rejects.
+        JsonNode schema = new ObjectMapper().readTree(agent.getSubagentInputSchema());
+        assertThat(schema.get("properties").get("input")).isNotNull();
+        assertThat(schema.get("required").toString()).contains("input");
+    }
+
+    @Test
+    @DisplayName("Declared sub-agent metadata overrides both defaults")
+    public void testDeclaredSubagentMetadataOverridesDefaults() {
+        ReActAgent agent =
+                new ReActAgent(
+                        chatModelDescriptor(),
+                        null,
+                        null,
+                        "Reviews pull requests",
+                        "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}");
+
+        assertThat(agent.getSubagentDescription()).isEqualTo("Reviews pull requests");
+        assertThat(agent.getSubagentInputSchema())
+                .isEqualTo("{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}");
+    }
+
+    @Test
+    @DisplayName("A partially declared metadata keeps the other default")
+    public void testPartiallyDeclaredMetadataKeepsOtherDefault() throws Exception {
+        ReActAgent agent =
+                new ReActAgent(chatModelDescriptor(), null, null, "Reviews pull requests", null);
+
+        assertThat(agent.getSubagentDescription()).isEqualTo("Reviews pull requests");
+        JsonNode schema = new ObjectMapper().readTree(agent.getSubagentInputSchema());
+        assertThat(schema.get("properties").get("input")).isNotNull();
+    }
+
+    @Test
+    @DisplayName("A single-input map without a prompt passes the value through")
+    public void testSingleInputMapWithoutPromptBecomesUserMessage() {
+        RunnerContext ctx = mock(RunnerContext.class);
+
+        ReActAgent.startAction(new InputEvent(Map.of("input", "analyze this review")), ctx);
+
+        assertThat(soleUserMessage(ctx).getText()).isEqualTo("analyze this review");
+    }
+
+    @Test
+    @DisplayName("A multi-key map without a prompt still reports that a prompt is required")
+    public void testMultiKeyMapWithoutPromptStillReportsPromptRequirement() {
+        RunnerContext ctx = mock(RunnerContext.class);
+
+        assertThatThrownBy(
+                        () ->
+                                ReActAgent.startAction(
+                                        new InputEvent(Map.of("input", "x", "other", "y")), ctx))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("not primitive types");
+    }
+
+    private static ReActAgent bareAgent() {
+        return new ReActAgent(chatModelDescriptor(), null, null);
+    }
+
+    private static ResourceDescriptor chatModelDescriptor() {
+        return ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build();
     }
 
     private static RunnerContext contextWithPrompt(Prompt prompt) throws Exception {

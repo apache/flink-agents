@@ -15,7 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import json
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -25,6 +27,8 @@ from flink_agents.api.agents.react_agent import (
     _DEFAULT_SCHEMA_PROMPT,
     ReActAgent,
 )
+from flink_agents.api.chat_message import MessageRole
+from flink_agents.api.events.event import InputEvent
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 
 # Named rather than imported so building an agent needs no chat model on the path;
@@ -67,6 +71,94 @@ def _schema_prompt(agent: ReActAgent) -> str:
 
 def _expected_prompt(rendered: Any) -> str:
     return f"The final response should be json format, and match the schema {rendered}."
+
+
+def _bare_agent() -> ReActAgent:
+    """A ReActAgent with no prompt, schema, or declared sub-agent metadata."""
+    return ReActAgent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS, model="qwen3:8b")
+    )
+
+
+def _context_without_prompt() -> tuple[MagicMock, list]:
+    """A mock context owning no prompt resource, collecting sent events."""
+    ctx = MagicMock()
+    ctx.get_resource = MagicMock(side_effect=KeyError("no such resource"))
+    ctx.get_action_config_value = MagicMock(return_value=None)
+    sent_events: list = []
+    ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
+    return ctx, sent_events
+
+
+def _sole_user_text(sent_events: list) -> str:
+    """The text of the single user message of the emitted chat request."""
+    assert len(sent_events) == 1
+    messages = sent_events[0].messages
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.USER
+    return messages[0].text
+
+
+# --- sub-agent metadata ---
+
+
+def test_bare_agent_declares_default_subagent_metadata() -> None:
+    """A bare agent declares the default sub-agent metadata."""
+    agent = _bare_agent()
+
+    assert "general-purpose" in agent.get_subagent_description()
+    # The schema must be well-formed and name the single field the prompt-free map
+    # path passes through, or a model-driven call would arrive in a shape it rejects.
+    schema = json.loads(agent.get_subagent_input_schema())
+    assert schema["properties"]["input"] is not None
+    assert "input" in schema["required"]
+
+
+def test_declared_subagent_metadata_overrides_defaults() -> None:
+    """Declared sub-agent metadata overrides both defaults."""
+    agent = ReActAgent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS, model="qwen3:8b"),
+        subagent_description="Reviews pull requests",
+        subagent_input_schema='{"type":"object","properties":{"diff":{"type":"string"}}}',
+    )
+
+    assert agent.get_subagent_description() == "Reviews pull requests"
+    assert (
+        agent.get_subagent_input_schema()
+        == '{"type":"object","properties":{"diff":{"type":"string"}}}'
+    )
+
+
+def test_partially_declared_metadata_keeps_other_default() -> None:
+    """A partially declared metadata keeps the other default."""
+    agent = ReActAgent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS, model="qwen3:8b"),
+        subagent_description="Reviews pull requests",
+    )
+
+    assert agent.get_subagent_description() == "Reviews pull requests"
+    schema = json.loads(agent.get_subagent_input_schema())
+    assert schema["properties"]["input"] is not None
+
+
+# --- start_action input dispatch ---
+
+
+def test_single_input_map_without_prompt_becomes_user_message() -> None:
+    """A single-input map without a prompt passes the value through."""
+    ctx, sent_events = _context_without_prompt()
+
+    ReActAgent.start_action(InputEvent(input={"input": "analyze this review"}), ctx)
+
+    assert _sole_user_text(sent_events) == "analyze this review"
+
+
+def test_multi_key_map_without_prompt_still_reports_prompt_requirement() -> None:
+    """A multi-key map without a prompt still reports that a prompt is required."""
+    ctx, _ = _context_without_prompt()
+
+    with pytest.raises(RuntimeError, match="not primitive types"):
+        ReActAgent.start_action(InputEvent(input={"input": "x", "other": "y"}), ctx)
 
 
 def test_unrenderable_output_schema_raises_naming_the_model() -> None:

@@ -17,9 +17,12 @@
 ################################################################################
 """Tests for compiling AGENT resources (SubagentSetup) into the agent plan."""
 
+from typing import Any
+
 import pytest
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.agents.react_agent import ReActAgent
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.subagent import SubagentMetadataProvider, SubagentSetup
 from flink_agents.api.tests.subagent_test_utils import TestSubagentSetup
@@ -162,6 +165,59 @@ def test_metadata_child_agent_compiles_with_declared_metadata() -> None:
         '{"type":"object","properties":{"diff":{"type":"string"}}}'
     )
     assert setup.scope == "reviewer"
+
+
+def test_bare_react_agent_compiles_with_default_metadata() -> None:
+    """A bare ReActAgent carries its default metadata through compilation.
+
+    The defaults must survive compilation, or registering a bare ReActAgent
+    would compile into an internal sub-agent that fails the parent chat
+    model's open() check.
+    """
+    root = Agent()
+    root.add_resource("reviewer", ResourceType.AGENT, _react_agent())
+
+    plan = AgentPlan.from_agent(root, AgentConfiguration())
+
+    provider = plan.resource_providers[ResourceType.AGENT]["reviewer"]
+    assert "general-purpose" in provider.serialized["description"]
+    assert '"input"' in provider.serialized["input_schema"]
+
+    setup = provider.provide(resource_context=None, config=AgentConfiguration())
+    assert "general-purpose" in setup.description
+    assert '"input"' in setup.input_schema
+
+
+def test_react_agent_compiles_with_declared_metadata() -> None:
+    """A ReActAgent's declared metadata overrides the defaults in the plan."""
+    root = Agent()
+    root.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        _react_agent(
+            subagent_description="Reviews pull requests",
+            subagent_input_schema='{"type":"object","properties":{"diff":{"type":"string"}}}',
+        ),
+    )
+
+    plan = AgentPlan.from_agent(root, AgentConfiguration())
+
+    provider = plan.resource_providers[ResourceType.AGENT]["reviewer"]
+    assert provider.serialized["description"] == "Reviews pull requests"
+    assert provider.serialized["input_schema"] == (
+        '{"type":"object","properties":{"diff":{"type":"string"}}}'
+    )
+
+
+def _react_agent(**kwargs: Any) -> ReActAgent:
+    """Build a ReActAgent with a named-but-unresolved chat model descriptor."""
+    return ReActAgent(
+        chat_model=ResourceDescriptor(
+            clazz="flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup",
+            model="qwen3:8b",
+        ),
+        **kwargs,
+    )
 
 
 def test_shared_child_agent_compiles_to_single_plan() -> None:

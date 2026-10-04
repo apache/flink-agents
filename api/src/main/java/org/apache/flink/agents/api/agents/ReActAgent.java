@@ -35,6 +35,7 @@ import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadataProvider;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -50,7 +51,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /** Built-in ReAct Agent implementation based on the function call ability of llm. . */
-public class ReActAgent extends Agent {
+public class ReActAgent extends Agent implements SubagentMetadataProvider {
     private static final Logger LOG = LoggerFactory.getLogger(ReActAgent.class);
 
     private static final String DEFAULT_CHAT_MODEL = "_default_chat_model";
@@ -58,8 +59,36 @@ public class ReActAgent extends Agent {
     private static final String DEFAULT_USER_PROMPT = "_default_user_prompt";
     private static final ObjectMapper mapper = new ObjectMapper();
 
+    /** Caller-facing description when running as a sub-agent, used unless overridden. */
+    private static final String DEFAULT_SUBAGENT_DESCRIPTION =
+            "A general-purpose agent that completes a delegated task using its tools.";
+
+    /**
+     * Caller-facing input schema when running as a sub-agent, used unless overridden. It names the
+     * single "input" field the default prompt-free map path of {@link #startAction} passes through
+     * as the user message, so a model-driven delegation call works out of the box.
+     */
+    private static final String DEFAULT_SUBAGENT_INPUT_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"input\":{\"type\":\"string\"}},"
+                    + "\"required\":[\"input\"]}";
+
+    @Nullable private final String subagentDescription;
+
+    @Nullable private final String subagentInputSchema;
+
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
+        this(descriptor, prompt, outputSchema, null, null);
+    }
+
+    public ReActAgent(
+            ResourceDescriptor descriptor,
+            @Nullable Prompt prompt,
+            @Nullable Object outputSchema,
+            @Nullable String subagentDescription,
+            @Nullable String subagentInputSchema) {
+        this.subagentDescription = subagentDescription;
+        this.subagentInputSchema = subagentInputSchema;
         this.addResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, descriptor);
         Map<String, Object> actionConfig = new HashMap<>();
 
@@ -128,6 +157,27 @@ public class ReActAgent extends Agent {
         }
     }
 
+    @Override
+    public String getSubagentDescription() {
+        return subagentDescription != null ? subagentDescription : DEFAULT_SUBAGENT_DESCRIPTION;
+    }
+
+    @Override
+    public String getSubagentInputSchema() {
+        return subagentInputSchema != null ? subagentInputSchema : DEFAULT_SUBAGENT_INPUT_SCHEMA;
+    }
+
+    /**
+     * Whether {@code input} is the single "input"-keyed map the default sub-agent input schema
+     * declares - the one structured shape {@link #startAction} converts without a user-supplied
+     * prompt. Keyed by equals, so a non-String key never matches.
+     */
+    private static boolean isDefaultSubagentInputMap(Object input) {
+        return input instanceof Map
+                && ((Map<?, ?>) input).size() == 1
+                && ((Map<?, ?>) input).containsKey("input");
+    }
+
     public static void startAction(Event event, RunnerContext ctx) {
         // Built-in events reach an action as their concrete subclass (restored at the JSON
         // boundary), so the dispatched InputEvent is cast directly.
@@ -155,45 +205,60 @@ public class ReActAgent extends Agent {
             }
         } else {
             if (userPrompt == null) {
-                throw new RuntimeException(
-                        String.format(
-                                "The input type is %s, which is not primitive types,"
-                                        + " user should provide prompt to help convert it to ChatMessage",
-                                input.getClass()));
-            }
-
-            Map<String, String> fields = new HashMap<>();
-            if (input instanceof Row) {
-                Row userInput = (Row) input;
-                for (String name : Objects.requireNonNull(userInput.getFieldNames(true))) {
-                    fields.put(name, String.valueOf(userInput.getField(name)));
+                if (isDefaultSubagentInputMap(input)) {
+                    // The one structured shape that works without a user-supplied prompt: a
+                    // single "input" entry, the shape the default sub-agent input schema
+                    // declares. The value becomes the user message directly, mirroring the
+                    // prompt-less primitive branch, so a model-driven delegation call works
+                    // out of the box.
+                    inputMessages.add(
+                            new ChatMessage(
+                                    MessageRole.USER,
+                                    String.valueOf(((Map<?, ?>) input).get("input"))));
+                } else {
+                    throw new RuntimeException(
+                            String.format(
+                                    "The input type is %s, which is not primitive types,"
+                                            + " user should provide prompt to help convert it to"
+                                            + " ChatMessage",
+                                    input.getClass()));
                 }
-            } else if (input instanceof Map) {
-                for (Map.Entry<?, ?> entry : ((Map<?, ?>) input).entrySet()) {
-                    fields.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
-                }
-            } else { // regard as pojo
-                ObjectMapper objectMapper = new ObjectMapper();
-                try {
-                    // A read into the raw Map.class ignores the declared String values, so JSON
-                    // numbers and booleans come back as Integer/Boolean. Stringify every value
-                    // like the Map branch above, otherwise Prompt#format fails with a bare
-                    // ClassCastException when it casts a placeholder value to String.
-                    Map<?, ?> pojoFields =
-                            mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
-                    for (Map.Entry<?, ?> entry : pojoFields.entrySet()) {
+            } else {
+                Map<String, String> fields = new HashMap<>();
+                if (input instanceof Row) {
+                    Row userInput = (Row) input;
+                    for (String name : Objects.requireNonNull(userInput.getFieldNames(true))) {
+                        fields.put(name, String.valueOf(userInput.getField(name)));
+                    }
+                } else if (input instanceof Map) {
+                    for (Map.Entry<?, ?> entry : ((Map<?, ?>) input).entrySet()) {
                         fields.put(
                                 String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
                     }
-                } catch (JsonProcessingException e) {
-                    throw new RuntimeException(
-                            String.format(
-                                    "Input must be primitive type, Row, Map or Pojo, but is %s",
-                                    input.getClass()));
+                } else { // regard as pojo
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    try {
+                        // A read into the raw Map.class ignores the declared String values, so JSON
+                        // numbers and booleans come back as Integer/Boolean. Stringify every value
+                        // like the Map branch above, otherwise Prompt#format fails with a bare
+                        // ClassCastException when it casts a placeholder value to String.
+                        Map<?, ?> pojoFields =
+                                mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
+                        for (Map.Entry<?, ?> entry : pojoFields.entrySet()) {
+                            fields.put(
+                                    String.valueOf(entry.getKey()),
+                                    String.valueOf(entry.getValue()));
+                        }
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(
+                                String.format(
+                                        "Input must be primitive type, Row, Map or Pojo, but is %s",
+                                        input.getClass()));
+                    }
                 }
-            }
 
-            inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
+                inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
+            }
         }
 
         Prompt schmaPrompt;
