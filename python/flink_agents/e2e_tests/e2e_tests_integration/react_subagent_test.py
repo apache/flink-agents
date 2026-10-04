@@ -243,6 +243,7 @@ def test_react_subagent_tool_loop(
     ]
     if failure:
         assert "\n".join(lines).startswith("failed:")
+        assert "only a string 'prompt'" in "\n".join(lines)
         return
     assert lines == [
         "parent_json answer"

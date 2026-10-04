@@ -170,12 +170,8 @@ def test_python_internal_subagent_failure_surfaces_via_result(tmp_path: Path) ->
     """A failing child action is reported through the caller's ``Result``."""
     contents = _run_and_collect(FailingChildAgent(), tmp_path)
 
-    # The child failure surfaces as a failed Result (the caller emits
-    # "failed:...") instead of failing the job. The child's original message is
-    # not asserted: it crosses the pemja boundary, which wraps it in a generic
-    # PythonException whose message does not carry the cause's text (unlike
-    # Java's in-process stack trace).
     assert "failed:" in contents, f"failure not reported; collected: {contents!r}"
+    assert "child refused hello" in contents
 
 
 def test_python_internal_subagent_nested_call(tmp_path: Path) -> None:
