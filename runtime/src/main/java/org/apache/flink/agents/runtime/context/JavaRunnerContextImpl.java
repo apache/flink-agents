@@ -69,7 +69,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
         if (durableExecutionContext != null) {
             Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
@@ -86,7 +86,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     @Override
-    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
             throws Exception {
         if (callables.isEmpty()) {
             return List.of();
@@ -229,7 +229,7 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
     }
 
     private <T> List<Outcome<T>> executeAllWithoutDurableState(List<DurableCallable<T>> callables)
-            throws InterruptedException {
+            throws Exception {
         List<Callable<T>> suppliers = new ArrayList<>();
         for (DurableCallable<T> callable : callables) {
             suppliers.add(callable::call);
@@ -247,7 +247,8 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         return outcomes;
     }
 
-    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers) {
+    private <T> BatchExecutionResult<T> executeOutcomeSuppliers(List<Callable<T>> suppliers)
+            throws Exception {
         if (suppliers.isEmpty()) {
             return new BatchExecutionResult<>(List.of(), new boolean[0]);
         }

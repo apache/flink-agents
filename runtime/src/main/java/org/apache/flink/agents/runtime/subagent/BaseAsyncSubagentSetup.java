@@ -76,7 +76,7 @@ public abstract class BaseAsyncSubagentSetup extends BaseSubagentSetup {
     @Override
     public final SubagentFuture submit(
             RunnerContext ctx, Object prompt, String sessionId, String callId) throws Exception {
-        ctx.durableExecuteAsync(submitRequest(ctx, sessionId, callId, prompt));
+        ctx.durableExecuteAsync(submitRequest(ctx, sessionId, callId, prompt)).await();
         return new AsyncSubagentFuture(this, ctx, sessionId, callId, currentTaskRegistry());
     }
 

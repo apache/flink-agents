@@ -58,9 +58,9 @@ public final class YamlCrossLanguageActions {
     public static void processChatResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
         ChatMessage response = chatResponse.getResponse();
-        if (response == null || response.getContent() == null) {
+        if (response == null || response.getText() == null) {
             return;
         }
-        ctx.sendEvent(new OutputEvent(response.getContent()));
+        ctx.sendEvent(new OutputEvent(response.getText()));
     }
 }

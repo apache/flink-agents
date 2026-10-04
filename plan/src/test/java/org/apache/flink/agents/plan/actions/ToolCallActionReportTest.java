@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
@@ -62,7 +63,6 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -215,24 +215,20 @@ class ToolCallActionReportTest {
         when(tool.call(any())).thenThrow(failure);
         RunnerContext ctx = parallelContext(tool);
         if (wrappedByFuture) {
-            doAnswer(
-                            invocation -> {
-                                List<DurableCallable<ToolResponse>> callables =
-                                        invocation.getArgument(0);
-                                CompletableFuture<Outcome<ToolResponse>> first =
-                                        CompletableFuture.supplyAsync(
-                                                () -> {
-                                                    try {
-                                                        return Outcome.success(
-                                                                callables.get(0).call());
-                                                    } catch (Exception e) {
-                                                        return Outcome.failure(e);
-                                                    }
-                                                });
-                                return List.of(first.join());
-                            })
-                    .when(ctx)
-                    .durableExecuteAllAsync(any());
+            stubParallelExecution(
+                    ctx,
+                    callables -> {
+                        CompletableFuture<Outcome<ToolResponse>> first =
+                                CompletableFuture.supplyAsync(
+                                        () -> {
+                                            try {
+                                                return Outcome.success(callables.get(0).call());
+                                            } catch (Exception e) {
+                                                return Outcome.failure(e);
+                                            }
+                                        });
+                        return List.of(first.join());
+                    });
         }
 
         assertThatThrownBy(() -> ToolCallAction.processToolRequest(parallelRequest(), ctx))
@@ -308,21 +304,7 @@ class ToolCallActionReportTest {
                         });
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 3));
-        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
-                .thenAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
-                            for (DurableCallable<ToolResponse> callable : callables) {
-                                try {
-                                    outcomes.add(Outcome.success(callable.call()));
-                                } catch (Exception e) {
-                                    outcomes.add(Outcome.failure(e));
-                                }
-                            }
-                            return outcomes;
-                        });
+        stubParallelExecution(ctx, ToolCallActionReportTest::executeAll);
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(ctx).sendEvent(any());
 
         ToolCallAction.processToolRequest(
@@ -385,18 +367,15 @@ class ToolCallActionReportTest {
                         });
         RunnerContext ctx = parallelContext(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
-        doAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            now.set(base);
-                            ToolResponse first = callables.get(0).call();
-                            now.set(base.plusMillis(100));
-                            ToolResponse second = callables.get(1).call();
-                            return List.of(Outcome.success(first), Outcome.success(second));
-                        })
-                .when(ctx)
-                .durableExecuteAllAsync(any());
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    now.set(base);
+                    ToolResponse first = callables.get(0).call();
+                    now.set(base.plusMillis(100));
+                    ToolResponse second = callables.get(1).call();
+                    return List.of(Outcome.success(first), Outcome.success(second));
+                });
 
         try (MockedStatic<Instant> clock = mockStatic(Instant.class)) {
             clock.when(Instant::now).thenAnswer(invocation -> now.get());
@@ -468,12 +447,13 @@ class ToolCallActionReportTest {
                             invocation.<DurableCallable<ToolResponse>>getArgument(0).call();
                             throw failure;
                         });
-        when(ctx.<ToolResponse>durableExecuteAsync(any()))
-                .thenAnswer(
+        doAnswer(
                         invocation -> {
                             invocation.<DurableCallable<ToolResponse>>getArgument(0).call();
                             throw failure;
-                        });
+                        })
+                .when(ctx)
+                .durableExecuteAsync(any());
 
         ToolCallAction.processToolRequest(parallelRequest(), ctx);
 
@@ -494,19 +474,13 @@ class ToolCallActionReportTest {
         Tool tool = mock(Tool.class);
         when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
         RunnerContext ctx = parallelContext(tool);
-        doAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
-                            for (DurableCallable<ToolResponse> callable : callables) {
-                                outcomes.add(Outcome.success(callable.call()));
-                            }
-                            outcomes.set(1, Outcome.failure(failure));
-                            return outcomes;
-                        })
-                .when(ctx)
-                .durableExecuteAllAsync(any());
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    List<Outcome<ToolResponse>> outcomes = executeAll(callables);
+                    outcomes.set(1, Outcome.failure(failure));
+                    return outcomes;
+                });
 
         ToolCallAction.processToolRequest(parallelRequest(), ctx);
 
@@ -530,9 +504,11 @@ class ToolCallActionReportTest {
     void parallelBatchFailureBeforeInvocationRetainsCreatedExecutions() throws Exception {
         Tool tool = mock(Tool.class);
         RunnerContext ctx = parallelContext(tool);
-        doThrow(new IllegalStateException("batch failed before invocation"))
-                .when(ctx)
-                .durableExecuteAllAsync(any());
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    throw new IllegalStateException("batch failed before invocation");
+                });
 
         ToolCallAction.processToolRequest(parallelRequest(), ctx);
 
@@ -576,14 +552,15 @@ class ToolCallActionReportTest {
                         });
         RunnerContext ctx = parallelContext(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 1));
-        when(ctx.<ToolResponse>durableExecuteAsync(any()))
-                .thenAnswer(
+        doAnswer(
                         invocation -> {
                             DurableCallable<ToolResponse> callable = invocation.getArgument(0);
                             pending.set(worker.submit(callable::call));
                             assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
                             throw failure;
-                        });
+                        })
+                .when(ctx)
+                .durableExecuteAsync(any());
         doAnswer(
                         invocation -> {
                             reportingStartedAt.set(Instant.now());
@@ -647,21 +624,18 @@ class ToolCallActionReportTest {
                             return ToolResponse.success("late result");
                         });
         RunnerContext ctx = parallelContext(tool);
-        doAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            ToolResponse response = callables.get(0).call();
-                            pending.add(workers.submit(callables.get(1)::call));
-                            pending.add(workers.submit(callables.get(2)::call));
-                            assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
-                            return List.of(
-                                    Outcome.success(response),
-                                    Outcome.failure(failure),
-                                    Outcome.failure(failure));
-                        })
-                .when(ctx)
-                .durableExecuteAllAsync(any());
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    ToolResponse response = callables.get(0).call();
+                    pending.add(workers.submit(callables.get(1)::call));
+                    pending.add(workers.submit(callables.get(2)::call));
+                    assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+                    return List.of(
+                            Outcome.success(response),
+                            Outcome.failure(failure),
+                            Outcome.failure(failure));
+                });
         doAnswer(
                         invocation -> {
                             if (completeDuringReporting) {
@@ -715,20 +689,17 @@ class ToolCallActionReportTest {
         Tool tool = mock(Tool.class);
         when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
         RunnerContext ctx = parallelContext(tool);
-        doAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            ToolResponse first = callables.get(0).call();
-                            delayed.addAll(callables.subList(1, callables.size()));
-                            now.set(observedAt);
-                            return List.of(
-                                    Outcome.success(first),
-                                    Outcome.failure(failure),
-                                    Outcome.failure(failure));
-                        })
-                .when(ctx)
-                .durableExecuteAllAsync(any());
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    ToolResponse first = callables.get(0).call();
+                    delayed.addAll(callables.subList(1, callables.size()));
+                    now.set(observedAt);
+                    return List.of(
+                            Outcome.success(first),
+                            Outcome.failure(failure),
+                            Outcome.failure(failure));
+                });
         doAnswer(
                         invocation -> {
                             Map<String, Object> metadata = invocation.getArgument(2);
@@ -775,27 +746,56 @@ class ToolCallActionReportTest {
                         Map.of("call-1", true, "call-2", false, "call-3", false));
     }
 
+    private static void stubParallelExecution(RunnerContext ctx, BatchExecution execution)
+            throws Exception {
+        List<DurableCallable<ToolResponse>> callables = new ArrayList<>();
+        doAnswer(
+                        invocation -> {
+                            DurableCallable<ToolResponse> callable = invocation.getArgument(0);
+                            callables.add(callable);
+                            return new TestDurableFuture<>(callable.getId(), callable::call);
+                        })
+                .when(ctx)
+                .durableExecuteAsync(any());
+        doAnswer(
+                        invocation -> {
+                            List<? extends DurableFuture<ToolResponse>> futures =
+                                    invocation.getArgument(0);
+                            assertThat(futures).hasSameSizeAs(callables);
+                            List<DurableCallable<ToolResponse>> batch = List.copyOf(callables);
+                            return new TestDurableFuture<>(
+                                    "gather", () -> execution.execute(batch));
+                        })
+                .when(ctx)
+                .gather(any());
+    }
+
+    private static List<Outcome<ToolResponse>> executeAll(
+            List<DurableCallable<ToolResponse>> callables) {
+        List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
+        for (DurableCallable<ToolResponse> callable : callables) {
+            try {
+                outcomes.add(Outcome.success(callable.call()));
+            } catch (Exception e) {
+                outcomes.add(Outcome.failure(e));
+            }
+        }
+        return outcomes;
+    }
+
     private static RunnerContext parallelContext(Tool tool) throws Exception {
         RunnerContext ctx =
                 mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 3));
-        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
-                .thenAnswer(
-                        invocation -> {
-                            List<DurableCallable<ToolResponse>> callables =
-                                    invocation.getArgument(0);
-                            List<Outcome<ToolResponse>> outcomes = new ArrayList<>();
-                            for (DurableCallable<ToolResponse> callable : callables) {
-                                try {
-                                    outcomes.add(Outcome.success(callable.call()));
-                                } catch (Exception e) {
-                                    outcomes.add(Outcome.failure(e));
-                                }
-                            }
-                            return outcomes;
-                        });
+        stubParallelExecution(ctx, ToolCallActionReportTest::executeAll);
         return ctx;
+    }
+
+    @FunctionalInterface
+    private interface BatchExecution {
+        List<Outcome<ToolResponse>> execute(List<DurableCallable<ToolResponse>> callables)
+                throws Exception;
     }
 
     private static ToolRequestEvent parallelRequest() {
@@ -965,15 +965,14 @@ class ToolCallActionReportTest {
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig(true, 2));
         when(tool.call(any())).thenReturn(ToolResponse.success("ok"));
-        when(ctx.<ToolResponse>durableExecuteAllAsync(any()))
-                .thenAnswer(
-                        inv -> {
-                            List<DurableCallable<ToolResponse>> callables = inv.getArgument(0);
-                            for (DurableCallable<ToolResponse> callable : callables) {
-                                callable.call();
-                            }
-                            throw new InterruptedException("cancelled");
-                        });
+        stubParallelExecution(
+                ctx,
+                callables -> {
+                    for (DurableCallable<ToolResponse> callable : callables) {
+                        callable.call();
+                    }
+                    throw new InterruptedException("cancelled");
+                });
 
         Thread.interrupted();
         assertThatThrownBy(

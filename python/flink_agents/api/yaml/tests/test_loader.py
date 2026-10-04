@@ -223,7 +223,7 @@ def test_build_agents_loads_tools_and_prompts() -> None:
     assert isinstance(msg_prompt, LocalPrompt)
     assert len(msg_prompt.template) == 2
     assert msg_prompt.template[0].role == MessageRole.SYSTEM
-    assert msg_prompt.template[1].content == "{q}"
+    assert msg_prompt.template[1].text == "{q}"
 
 
 def test_build_agents_handles_shared_resources_and_actions() -> None:

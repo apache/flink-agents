@@ -142,16 +142,26 @@ class BaseChatModelSetupSubagentTest {
         }
 
         StubSubagentSetup(String description, String inputSchema) {
-            this(StubSubagentSetup.class, description, inputSchema);
+            this(metadataDescriptor(StubSubagentSetup.class, description, inputSchema), null);
         }
 
-        StubSubagentSetup(Class<?> clazz, String description, String inputSchema) {
-            super(
-                    ResourceDescriptor.Builder.newBuilder(clazz.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, description)
-                            .addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema)
-                            .build(),
-                    null);
+        StubSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        /**
+         * Builds the metadata-only descriptor naming {@code concreteClass}, so a subclass that adds
+         * no configuration of its own still carries a descriptor naming its own concrete type.
+         */
+        static ResourceDescriptor metadataDescriptor(
+                Class<?> concreteClass, String description, String inputSchema) {
+            ResourceDescriptor.Builder builder =
+                    ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                            .addInitialArgument(FIELD_DESCRIPTION, description);
+            if (inputSchema != null) {
+                builder.addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema);
+            }
+            return builder.build();
         }
 
         @Override
@@ -177,7 +187,7 @@ class BaseChatModelSetupSubagentTest {
         private static final long serialVersionUID = 1L;
 
         TypedStubSubagentSetup(String description) {
-            super(TypedStubSubagentSetup.class, description, null);
+            super(metadataDescriptor(TypedStubSubagentSetup.class, description, null), null);
         }
 
         @Override
@@ -350,7 +360,7 @@ class BaseChatModelSetupSubagentTest {
                                 new ChatMessage(MessageRole.USER, "review it"))));
 
         assertThat(connection.capturedMessages).hasSize(2);
-        assertThat(connection.capturedMessages.get(0).getContent()).isEqualTo("You are helpful.");
+        assertThat(connection.capturedMessages.get(0).getText()).isEqualTo("You are helpful.");
         assertThat(connection.capturedTools).hasSize(2);
     }
 
@@ -369,9 +379,8 @@ class BaseChatModelSetupSubagentTest {
         setup.chat(new ArrayList<>(List.of(new ChatMessage(MessageRole.USER, "review it"))));
 
         assertThat(connection.capturedMessages).hasSize(2);
-        assertThat(connection.capturedMessages.get(0).getContent())
-                .startsWith("<available_skills>");
-        assertThat(connection.capturedMessages.get(1).getContent()).isEqualTo("review it");
+        assertThat(connection.capturedMessages.get(0).getText()).startsWith("<available_skills>");
+        assertThat(connection.capturedMessages.get(1).getText()).isEqualTo("review it");
     }
 
     @Test

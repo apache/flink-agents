@@ -74,6 +74,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -385,6 +386,27 @@ public class ResourceCacheTest {
             assertThat(context.getResource(route.getSelectedModel(), ResourceType.CHAT_MODEL))
                     .isSameAs(selected);
         }
+    }
+
+    @Test
+    public void getResourceClosesUncachedResourceWhenOpenFails() throws Exception {
+        RuntimeException openFailure = new RuntimeException("open failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        Resource resource = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        when(provider.provide(org.mockito.ArgumentMatchers.any())).thenReturn(resource);
+        doThrow(openFailure).when(resource).open();
+        doThrow(closeFailure).when(resource).close();
+        ResourceCache cache =
+                new ResourceCache(Map.of(ResourceType.TOOL, Map.of("tool", provider)));
+
+        assertThatThrownBy(() -> cache.getResource("tool", ResourceType.TOOL))
+                .isSameAs(openFailure)
+                .satisfies(
+                        thrown -> assertThat(thrown.getSuppressed()).containsExactly(closeFailure));
+
+        verify(resource).close();
+        assertThat(cachedResources(cache)).isEmpty();
     }
 
     @Test

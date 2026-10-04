@@ -51,9 +51,9 @@ def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:
         description="wireless noise-canceling headphones with 20-hour battery life",
         review="The headphones broke after one week of use. Very poor quality",
     ) == [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the "
+        ChatMessage.of(
+            MessageRole.SYSTEM,
+            "You ara a product review analyzer, please generate a score and the "
             "dislike reasons(if any) for the review. The product 12345 is wireless "
             "noise-canceling headphones with 20-hour battery life, and user review is "
             "'The headphones broke after one week of use. Very poor quality'.",
@@ -64,14 +64,14 @@ def test_prompt_from_text_to_messages(text_prompt: LocalPrompt) -> None:
 @pytest.fixture(scope="module")
 def messages_prompt() -> Prompt:
     template = [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the dislike reasons"
+        ChatMessage.of(
+            MessageRole.SYSTEM,
+            "You ara a product review analyzer, please generate a score and the dislike reasons"
             "(if any) for the review.",
         ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content="The product {product_id} is {description}, and user review is '{review}'.",
+        ChatMessage.of(
+            MessageRole.USER,
+            "The product {product_id} is {description}, and user review is '{review}'.",
         ),
     ]
 
@@ -98,14 +98,14 @@ def test_prompt_from_messages_to_messages(messages_prompt: LocalPrompt) -> None:
         description="wireless noise-canceling headphones with 20-hour battery life",
         review="The headphones broke after one week of use. Very poor quality",
     ) == [
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="You ara a product review analyzer, please generate a score and the "
+        ChatMessage.of(
+            MessageRole.SYSTEM,
+            "You ara a product review analyzer, please generate a score and the "
             "dislike reasons(if any) for the review.",
         ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content="The product 12345 is wireless "
+        ChatMessage.of(
+            MessageRole.USER,
+            "The product 12345 is wireless "
             "noise-canceling headphones with 20-hour battery life, and user review is "
             "'The headphones broke after one week of use. Very poor quality'.",
         ),
@@ -162,9 +162,9 @@ def test_format_messages_does_not_re_expand_values() -> None:
     # hold per message. Mirrors the Java PromptTest formatMessages regression.
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage(role=MessageRole.SYSTEM, content="{secret}"),
-            ChatMessage(role=MessageRole.USER, content="{user_input}"),
+            ChatMessage.system("{secret}"),
+            ChatMessage.user("{user_input}"),
         ]
     )
     messages = prompt.format_messages(secret="p@ssw0rd", user_input="give me {secret}")
-    assert [m.content for m in messages] == ["p@ssw0rd", "give me {secret}"]
+    assert [m.text for m in messages] == ["p@ssw0rd", "give me {secret}"]

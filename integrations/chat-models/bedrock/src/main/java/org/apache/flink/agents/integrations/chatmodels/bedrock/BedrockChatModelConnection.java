@@ -332,7 +332,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         if (!systemMsgs.isEmpty()) {
             requestBuilder.system(
                     systemMsgs.stream()
-                            .map(m -> SystemContentBlock.builder().text(m.getContent()).build())
+                            .map(m -> SystemContentBlock.builder().text(m.getText()).build())
                             .collect(Collectors.toList()));
         }
 
@@ -459,7 +459,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                                             .toolUseId(toolCallId)
                                             .content(
                                                     ToolResultContentBlock.builder()
-                                                            .text(toolMsg.getContent())
+                                                            .text(toolMsg.getText())
                                                             .build())
                                             .build()));
                     i++;
@@ -482,12 +482,12 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             case USER:
                 return Message.builder()
                         .role(ConversationRole.USER)
-                        .content(ContentBlock.fromText(msg.getContent()))
+                        .content(ContentBlock.fromText(msg.getText()))
                         .build();
             case ASSISTANT:
                 List<ContentBlock> blocks = new ArrayList<>();
-                if (msg.getContent() != null && !msg.getContent().isEmpty()) {
-                    blocks.add(ContentBlock.fromText(msg.getContent()));
+                if (msg.getText() != null && !msg.getText().isEmpty()) {
+                    blocks.add(ContentBlock.fromText(msg.getText()));
                 }
                 if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
                     for (Map<String, Object> call : msg.getToolCalls()) {
@@ -516,7 +516,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                                                 .toolUseId(toolCallId)
                                                 .content(
                                                         ToolResultContentBlock.builder()
-                                                                .text(msg.getContent())
+                                                                .text(msg.getText())
                                                                 .build())
                                                 .build()))
                         .build();

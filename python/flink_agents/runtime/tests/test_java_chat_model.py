@@ -33,7 +33,7 @@ class _JavaResourceAdapter:
 
 def test_to_java_chat_message_extracts_java_safe_fields() -> None:
     adapter = _JavaResourceAdapter()
-    message = ChatMessage(
+    message = ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content="hello",
         tool_calls=[
@@ -49,9 +49,10 @@ def test_to_java_chat_message_extracts_java_safe_fields() -> None:
     result = _to_java_chat_message(adapter, message)
 
     assert result is adapter.result
+    # Content crosses as block maps in the wire shape, never as a flattened string.
     assert adapter.arguments == (
         "assistant",
-        "hello",
+        [{"type": "text", "text": "hello"}],
         [
             {
                 "id": "7",

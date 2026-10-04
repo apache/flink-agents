@@ -116,7 +116,7 @@ public class ReActAgentTest {
         ReActAgent.startAction(new InputEvent("task"), ctx);
         ArgumentCaptor<ChatRequestEvent> request = ArgumentCaptor.forClass(ChatRequestEvent.class);
         verify(ctx).sendEvent(request.capture());
-        assertThat(request.getValue().getMessages().get(0).getContent()).isEqualTo("task");
+        assertThat(request.getValue().getMessages().get(0).getText()).isEqualTo("task");
     }
 
     @Test

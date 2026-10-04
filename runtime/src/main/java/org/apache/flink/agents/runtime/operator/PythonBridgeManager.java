@@ -186,7 +186,8 @@ class PythonBridgeManager implements AutoCloseable {
                     new PythonInterpreterManager(
                             ownerInterpreter,
                             env::getInterpreter,
-                            agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
+                            agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS),
+                            mailboxThreadChecker);
             pythonRunnerContext =
                     new PythonRunnerContextImpl(
                             metricGroup,

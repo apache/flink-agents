@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.Outcome;
@@ -745,15 +746,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+    public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+        return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
+    }
+
+    @Override
+    public <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures) {
+        return new GatherDurableFuture<>(this, futures);
+    }
+
+    /**
+     * Resolves one deferred durable call. Java contexts override this with Continuation support.
+     */
+    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
         LOG.debug(
                 "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
                 callable.getId());
         return durableExecute(callable);
     }
 
-    @Override
-    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+    /** Resolves a durable batch. Java contexts override this with Continuation support. */
+    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
             throws Exception {
         List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
         for (DurableCallable<T> callable : callables) {
@@ -791,10 +804,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
         }
 
-        Optional<T> cachedResult =
+        Optional<Outcome<T>> cachedResult =
                 tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
         if (cachedResult.isPresent()) {
-            return cachedResult.get();
+            return cachedResult.get().getValue();
         }
 
         T result = null;
@@ -1087,7 +1100,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return null;
     }
 
-    protected <T> Optional<T> tryGetCachedResult(
+    /**
+     * Returns the recorded outcome of the next durable call when it matches and has finished, or an
+     * empty {@code Optional} when there is nothing to replay. A recorded failure is rethrown. A
+     * recorded success may carry a {@code null} value (for example a {@code Void} call), so the
+     * presence of the outcome, not its value, marks the hit.
+     */
+    protected <T> Optional<Outcome<T>> tryGetCachedResult(
             String functionId, String argsDigest, Class<T> resultClass) throws Exception {
         Object[] cached = matchNextOrClearSubsequentCallResult(functionId, argsDigest);
         if (cached != null && (Boolean) cached[0]) {
@@ -1099,9 +1118,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         OBJECT_MAPPER.readValue(exceptionPayload, DurableExecutionException.class);
                 throw cachedException.toException();
             } else if (resultPayload != null) {
-                return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
+                return Optional.of(
+                        Outcome.success(OBJECT_MAPPER.readValue(resultPayload, resultClass)));
             } else {
-                return Optional.of(null);
+                return Optional.of(Outcome.success(null));
             }
         }
         return Optional.empty();
@@ -1149,10 +1169,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
 
         if (!current.isPending()) {
-            Optional<T> cachedResult =
+            Optional<Outcome<T>> cachedResult =
                     tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
             if (cachedResult.isPresent()) {
-                return cachedResult.get();
+                return cachedResult.get().getValue();
             }
             throw new IllegalStateException(
                     String.format(

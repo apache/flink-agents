@@ -115,7 +115,7 @@ class ReviewAnalysisAgent(Agent):
         # pipeline: raise to fail the input (as below), emit an OutputEvent
         # carrying an error sentinel, or send a custom error event so
         # downstream operators can detect the failure.
-        json_content = json.loads(chat_response.response.content)
+        json_content = json.loads(chat_response.response.text)
         ctx.send_event(
             OutputEvent(
                 output=ProductReviewAnalysisRes(

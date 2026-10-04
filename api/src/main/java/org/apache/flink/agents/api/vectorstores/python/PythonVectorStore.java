@@ -168,53 +168,6 @@ public class PythonVectorStore extends BaseVectorStore implements PythonResource
         }
     }
 
-    /** Embed query text via the configured model (no numpy, so it stays on the async pool). */
-    public float[] embedQuery(String text) {
-        return getEmbeddingModel().embed(text);
-    }
-
-    /**
-     * Convert the raw embedding to the Python store's native vector form. This runs the numpy
-     * conversion on the mailbox thread: numpy releases/re-acquires the GIL during the copy, and
-     * pemja keeps a single PyThreadState, so doing it on an async worker thread can stall the
-     * interpreter (observed as a hang in CI; benign with spare cores locally). The returned Python
-     * object is forwarded back into {@link #queryNormalized}. See
-     * https://github.com/apache/flink-agents/issues/844.
-     */
-    public Object normalizeEmbedding(float[] embedding) {
-        List<Float> embeddingList = new ArrayList<>(embedding.length);
-        for (float v : embedding) {
-            embeddingList.add(v);
-        }
-        Map<String, Object> kwargs = new HashMap<>();
-        kwargs.put("embeddings", embeddingList);
-        return adapter.callMethod(vectorStore, "_normalize_embeddings", kwargs);
-    }
-
-    /** Query with a pre-normalized embedding; numpy-free, so it stays on the async pool. */
-    @SuppressWarnings("unchecked")
-    public List<Document> queryNormalized(
-            Object normalizedEmbedding,
-            int limit,
-            @Nullable String collection,
-            @Nullable Map<String, Object> filters,
-            Map<String, Object> args) {
-        Map<String, Object> kwargs = new HashMap<>(args);
-        kwargs.put("embedding", normalizedEmbedding);
-        kwargs.put("limit", limit);
-        if (collection != null) {
-            kwargs.put("collection_name", collection);
-        }
-        if (filters != null) {
-            kwargs.put("filters", filters);
-        }
-        try (PythonObjectScope scope = new PythonObjectScope()) {
-            Object pythonDocuments =
-                    scope.own(adapter.callMethod(vectorStore, "_query_embedding", kwargs));
-            return adapter.fromPythonDocuments((List<PyObject>) pythonDocuments);
-        }
-    }
-
     @Override
     @SuppressWarnings("unchecked")
     public List<String> addEmbedding(

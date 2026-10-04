@@ -110,10 +110,10 @@ public class ReActSubagentTest {
             ChatMessage last = messages.get(messages.size() - 1);
             CALLS.add(model + ":" + last.getRole().getValue());
             if (last.getRole() == MessageRole.TOOL) {
-                assertThat(last.getContent())
+                assertThat(last.getText())
                         .contains(model.equals("child") ? "child evidence" : "child answer");
                 if (structured && model.equals("parent")) {
-                    assertThat(last.getContent()).isEqualTo("[{\"answer\":\"child answer\"}]");
+                    assertThat(last.getText()).isEqualTo("[{\"answer\":\"child answer\"}]");
                 }
                 return new ChatMessage(
                         MessageRole.ASSISTANT,
@@ -123,10 +123,10 @@ public class ReActSubagentTest {
             }
             if (model.equals("child")) {
                 assertThat(messages)
-                        .extracting(ChatMessage::getContent)
+                        .extracting(ChatMessage::getText)
                         .doesNotContain("PARENT_ONLY_SCHEMA");
-                assertThat(messages.get(0).getContent()).isEqualTo("Literal {prompt} instructions");
-                assertThat(last.getContent()).isEqualTo("investigate");
+                assertThat(messages.get(0).getText()).isEqualTo("Literal {prompt} instructions");
+                assertThat(last.getText()).isEqualTo("investigate");
                 assertThat(tools).extracting(Tool::getName).containsExactly("evidence");
                 return request("evidence", Map.of());
             }

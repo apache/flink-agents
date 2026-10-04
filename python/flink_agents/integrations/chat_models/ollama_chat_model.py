@@ -15,15 +15,24 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import base64
+import binascii
 import uuid
 from typing import Any, Dict, List, Literal, Sequence
 
-from ollama import Client, Message
+from ollama import Client, Image, Message
 from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    Base64Source,
+    ChatMessage,
+    ImageBlock,
+    MediaBlock,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -226,9 +235,9 @@ class OllamaChatModelConnection(BaseChatModelConnection):
             extra_args["promptTokens"] = response.prompt_eval_count
             extra_args["completionTokens"] = response.eval_count
 
-        return ChatMessage(
-            role=MessageRole(response.message.role),
-            content=content,
+        return ChatMessage.of(
+            MessageRole(response.message.role),
+            content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )
@@ -237,7 +246,11 @@ class OllamaChatModelConnection(BaseChatModelConnection):
     def __convert_to_ollama_messages(messages: Sequence[ChatMessage]) -> List[Message]:
         ollama_messages = []
         for message in messages:
-            ollama_message = Message(role=message.role.value, content=message.content)
+            ollama_message = Message(
+                role=message.role.value,
+                content=message.text,
+                images=_ollama_images(message),
+            )
             if len(message.tool_calls) > 0:
                 ollama_tool_calls = []
                 for tool_call in message.tool_calls:
@@ -252,6 +265,42 @@ class OllamaChatModelConnection(BaseChatModelConnection):
                 ollama_message.tool_calls = ollama_tool_calls
             ollama_messages.append(ollama_message)
         return ollama_messages
+
+
+def _unsupported(block: MediaBlock, reason: str) -> UnsupportedContentBlockError:
+    return UnsupportedContentBlockError.for_block("Ollama", block, reason)
+
+
+def _ollama_images(message: ChatMessage) -> List[Image] | None:
+    """Return the images of a user message, in block order.
+
+    Ollama takes inline image data only, attached to the message rather than
+    interleaved with its text; any other media raises
+    UnsupportedContentBlockError. Returns None when the message has no media,
+    so a text-only request is unchanged.
+    """
+    images = []
+    for block in message.blocks:
+        if not isinstance(block, MediaBlock):
+            continue
+        if message.role != MessageRole.USER:
+            reason = (
+                f"only user messages can carry media, not {message.role.value} messages"
+            )
+            raise _unsupported(block, reason)
+        if not isinstance(block, ImageBlock):
+            raise _unsupported(block, "Ollama accepts images only")
+        if not isinstance(block.source, Base64Source):
+            raise _unsupported(block, "Ollama takes base64 image data, not a URL")
+        try:
+            # Bytes rather than the string: the client re-encodes bytes, whereas a
+            # string is first tried as a file path.
+            data = base64.b64decode(block.source.data, validate=True)
+        except binascii.Error as e:
+            msg = "An image block's base64 data could not be decoded."
+            raise ValueError(msg) from e
+        images.append(Image(value=data))
+    return images or None
 
 
 class OllamaChatModelSetup(BaseChatModelSetup):

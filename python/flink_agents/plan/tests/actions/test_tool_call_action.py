@@ -76,6 +76,32 @@ def _expected_durable_function_id(
     return function_id
 
 
+class _TestDurableFuture:
+    def __init__(
+        self, func: Any, args: tuple[Any, ...], kwargs: dict[str, Any]
+    ) -> None:
+        self.func = func
+        self.args = args
+        self.kwargs = kwargs
+
+    async def _execute(self) -> Any:
+        return self.func(*self.args, **self.kwargs)
+
+    def __await__(self) -> Any:
+        return self._execute().__await__()
+
+
+def _stub_gather(ctx: Any, execute_all: Any) -> None:
+    ctx.durable_execute_async = lambda func, *args, **kwargs: _TestDurableFuture(
+        func, args, kwargs
+    )
+
+    async def gather(*futures: _TestDurableFuture) -> list[Outcome]:
+        return await execute_all(list(futures))
+
+    ctx.gather = gather
+
+
 class _Context:
     def __init__(
         self,
@@ -97,8 +123,8 @@ class _Context:
         self.sent_events = []
         self.durable_execute_calls = []
         self.durable_execute_async_calls = []
-        self.durable_execute_all_async_calls = []
-        self.durable_execute_all_async_outcomes = None
+        self.gather_calls = []
+        self.gather_outcomes = None
 
     def get_resource(self, name: str, type: ResourceType) -> FunctionTool:
         assert type == ResourceType.TOOL
@@ -114,18 +140,30 @@ class _Context:
         self.durable_execute_calls.append((func, args, kwargs))
         return func(*args, **kwargs)
 
-    async def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
+    def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_async_calls.append((func, args, kwargs))
-        return func(*args, **kwargs)
 
-    async def durable_execute_all_async(self, callables: list[Any]) -> list[Outcome]:
-        self.durable_execute_all_async_calls.append(callables)
-        if self.durable_execute_all_async_outcomes is not None:
-            return self.durable_execute_all_async_outcomes
-        return [
-            Outcome.success(call.func(*call.args, **(call.kwargs or {})))
-            for call in callables
-        ]
+        async def execute() -> Any:
+            return func(*args, **kwargs)
+
+        return execute()
+
+    async def gather(self, *futures: Any) -> list[Outcome]:
+        call_count = len(futures)
+        self.gather_calls.append(
+            self.durable_execute_async_calls[-call_count:] if call_count else []
+        )
+        if self.gather_outcomes is not None:
+            for future in futures:
+                future.close()
+            return self.gather_outcomes
+        outcomes = []
+        for future in futures:
+            try:
+                outcomes.append(Outcome.success(await future))
+            except Exception as error:  # noqa: PERF203
+                outcomes.append(Outcome.failure(error))
+        return outcomes
 
     def send_event(self, event: Any) -> None:
         self.sent_events.append(event)
@@ -196,7 +234,7 @@ def test_tool_call_action_injects_args_from_config_without_mutating_request() ->
     assert arguments == {"order_id": "order-1"}
 
 
-def test_tool_call_action_injected_arg_overrides_model_argument() -> None:
+def test_tool_call_action_overrides_model_supplied_injected_argument() -> None:
     ctx = _Context()
     arguments = {"order_id": "order-1", "tenant_id": "model-tenant"}
     event = ToolRequestEvent(
@@ -213,8 +251,10 @@ def test_tool_call_action_injected_arg_overrides_model_argument() -> None:
     asyncio.run(process_tool_request(event, ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "tenant-1:order-1"
     assert response.success["call-1"] is True
+    assert response.responses["call-1"] == "tenant-1:order-1"
+    assert response.error == {}
+    assert arguments == {"order_id": "order-1", "tenant_id": "model-tenant"}
 
 
 def test_tool_call_action_injects_args_from_sensory_memory() -> None:
@@ -257,7 +297,7 @@ def test_tool_call_action_reports_missing_config_injected_arg() -> None:
                 "type": "function",
                 "function": {
                     "name": "query_order",
-                    "arguments": {"order_id": "order-1"},
+                    "arguments": {"order_id": "order-1", "tenant_id": "model-tenant"},
                 },
             }
         ],
@@ -363,16 +403,16 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
         "call-2": "tenant-1:order-call-2",
     }
     assert response.success == {"call-1": True, "call-2": True}
-    assert len(ctx.durable_execute_all_async_calls) == 1
+    assert len(ctx.gather_calls) == 1
     expected_id = _expected_durable_function_id("order-call-1")
     assert [
-        durable_identity_for_call(call.func, call.args, call.kwargs)[0]
-        for call in ctx.durable_execute_all_async_calls[0]
+        durable_identity_for_call(func, args, kwargs)[0]
+        for func, args, kwargs in ctx.gather_calls[0]
     ] == [
         expected_id,
         expected_id,
     ]
-    assert ctx.durable_execute_async_calls == []
+    assert len(ctx.durable_execute_async_calls) == 2
 
 
 def test_parallel_tool_calls_report_independent_occurrences() -> None:
@@ -413,7 +453,7 @@ def test_parallel_tool_calls_report_independent_occurrences() -> None:
                 outcomes.append(Outcome.failure(error))
         return outcomes
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
 
     request = ToolRequestEvent(
         model="model-a",
@@ -483,7 +523,7 @@ def test_parallel_tool_calls_report_their_own_completion_timestamps() -> None:
         second = callables[1].func(*callables[1].args, **(callables[1].kwargs or {}))
         return [Outcome.success(first), Outcome.success(second)]
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
     request = ToolRequestEvent(
         model="model-a",
         tool_calls=[
@@ -527,7 +567,7 @@ def test_response_processing_failure_does_not_repeat_occurrences() -> None:
             for call in callables
         ]
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
     with patch(
         "flink_agents.plan.actions.tool_call_action._record_outcome",
         side_effect=[None, RuntimeError("response processing failed")],
@@ -575,7 +615,8 @@ def test_durable_failure_is_reported_as_tool_failure(mode: str) -> None:
 
     ctx.durable_execute = execute
     ctx.durable_execute_async = execute_async
-    ctx.durable_execute_all_async = execute_all
+    if mode == "parallel":
+        _stub_gather(ctx, execute_all)
 
     asyncio.run(process_tool_request(parallel_trace_request(), ctx))
 
@@ -605,7 +646,7 @@ def test_parallel_batch_failure_before_invocation_retains_created_executions() -
     async def execute_all(callables: list[Any]) -> list[Outcome]:
         raise RuntimeError(failure_message)
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
 
     asyncio.run(process_tool_request(parallel_trace_request(), ctx))
 
@@ -734,7 +775,7 @@ def test_parallel_timeout_timestamp_precedes_response_processing_and_reporting(
                 Outcome.failure(failure),
             ]
 
-        ctx.durable_execute_all_async = execute_all
+        _stub_gather(ctx, execute_all)
         try:
             asyncio.run(process_tool_request(parallel_trace_request(), ctx))
             timestamps = [
@@ -794,7 +835,7 @@ def test_parallel_timeout_omits_starts_after_result_observation(
             for call in delayed:
                 call.func(*call.args, **(call.kwargs or {}))
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
     ctx.report_execution_started_at.side_effect = report_started
     with patch.object(tool_call_action, "datetime") as datetime_mock:
         datetime_mock.now.side_effect = lambda tz: clock[0]
@@ -832,7 +873,7 @@ def test_partial_cache_replay_only_reports_start_for_invoked_tool() -> None:
             Outcome.success("cached"),
         ]
 
-    ctx.durable_execute_all_async = execute_all
+    _stub_gather(ctx, execute_all)
 
     asyncio.run(process_tool_request(parallel_trace_request(), ctx))
 
@@ -884,7 +925,7 @@ def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
-    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.gather_calls == []
     assert len(ctx.durable_execute_async_calls) == 2
 
 
@@ -896,7 +937,7 @@ def test_tool_call_action_does_not_batch_single_tool() -> None:
 
     asyncio.run(process_tool_request(tool_request("call-1"), ctx))
 
-    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.gather_calls == []
     assert len(ctx.durable_execute_async_calls) == 1
 
 
@@ -912,7 +953,7 @@ def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
     assert response.success["call-1"] is True
     assert response.success["missing"] is False
     assert len(ctx.durable_execute_async_calls) == 1
-    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.gather_calls == []
 
 
 def test_tool_call_action_records_parallel_outcome_failure() -> None:
@@ -920,7 +961,7 @@ def test_tool_call_action_records_parallel_outcome_failure() -> None:
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
     config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
-    ctx.durable_execute_all_async_outcomes = [
+    ctx.gather_outcomes = [
         Outcome.success("ok"),
         Outcome.failure(ValueError("boom")),
     ]
@@ -940,7 +981,7 @@ def test_tool_call_action_records_parallel_tool_response_failure() -> None:
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
     config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
     ctx = _Context(config=config)
-    ctx.durable_execute_all_async_outcomes = [
+    ctx.gather_outcomes = [
         Outcome.success("ok"),
         Outcome.success(ToolResponse.error("business failure")),
     ]
@@ -960,7 +1001,7 @@ def test_tool_call_action_uses_sync_when_async_disabled_multi_tool() -> None:
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
 
-    assert ctx.durable_execute_all_async_calls == []
+    assert ctx.gather_calls == []
     assert ctx.durable_execute_async_calls == []
     assert len(ctx.durable_execute_calls) == 2
 
@@ -987,9 +1028,9 @@ def test_tool_call_action_records_infrastructure_failure_for_all_parallel_tools(
     None
 ):
     class _FailingBatchContext(_Context):
-        async def durable_execute_all_async(
-            self, callables: list[Any]
-        ) -> list[Outcome]:
+        async def gather(self, *futures: Any) -> list[Outcome]:
+            for future in futures:
+                future.close()
             msg = "persist failed"
             raise RuntimeError(msg)
 

@@ -32,7 +32,7 @@ from pyflink.table import DataTypes, Schema, StreamTableEnvironment, TableDescri
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.react_agent import ReActAgent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.core_options import AgentExecutionOptions, ErrorHandlingStrategy
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.decorators import (
     action,
     chat_model_connection,
@@ -99,9 +99,9 @@ class SkillTestAgent(Agent):
     def system_prompt() -> Prompt:
         return Prompt.from_messages(
             messages=[
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="You are a help assistant. Use the math-calculator skill when asked to evaluate "
+                ChatMessage.of(
+                    MessageRole.SYSTEM,
+                    "You are a help assistant. Use the math-calculator skill when asked to evaluate "
                     "an expression. You **must load the skill first** and strictly follow the instructions "
                     "of the skill.",
                 )
@@ -118,9 +118,9 @@ class SkillTestAgent(Agent):
                 ChatRequestEvent(
                     model="openai_setup",
                     messages=[
-                        ChatMessage(
-                            role=MessageRole.USER,
-                            content=f"Please evaluate the expression: ({input.a} ^ {input.b})",
+                        ChatMessage.of(
+                            MessageRole.USER,
+                            f"Please evaluate the expression: ({input.a} ^ {input.b})",
                         )
                     ],
                 )
@@ -131,9 +131,9 @@ class SkillTestAgent(Agent):
                 ChatRequestEvent(
                     model="openai_setup",
                     messages=[
-                        ChatMessage(
-                            role=MessageRole.USER,
-                            content=input,
+                        ChatMessage.of(
+                            MessageRole.USER,
+                            input,
                         )
                     ],
                 )
@@ -143,7 +143,7 @@ class SkillTestAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
-        ctx.send_event(OutputEvent(output=chat_response.response.content))
+        ctx.send_event(OutputEvent(output=chat_response.response.text))
 
 
 @pytest.mark.skipif(not API_KEY, reason="openai api key is required.")
@@ -252,10 +252,6 @@ def test_react_agent_with_skills(tmp_path: Path) -> None:
         env=stream_env, t_env=t_env
     )
 
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
-    )
-
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
     # register resource to execution environment
@@ -279,15 +275,15 @@ def test_react_agent_with_skills(tmp_path: Path) -> None:
     # prepare prompt
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content="You are a math calculate assistant. Use the math-calculator skill when asked to evaluate "
+            ChatMessage.of(
+                MessageRole.SYSTEM,
+                "You are a math calculate assistant. Use the math-calculator skill when asked to evaluate "
                 "an expression. You **must load the skill first** and strictly follow the instructions "
                 "of the skill.",
             ),
-            ChatMessage(
-                role=MessageRole.USER,
-                content="Please evaluate the expression: {a} ^ {b}",
+            ChatMessage.of(
+                MessageRole.USER,
+                "Please evaluate the expression: {a} ^ {b}",
             ),
         ],
     )

@@ -50,7 +50,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.apache.flink.agents.api.agents.AgentExecutionOptions.ERROR_HANDLING_STRATEGY;
 import static org.apache.flink.agents.api.agents.AgentExecutionOptions.MAX_RETRIES;
 import static org.apache.flink.agents.integration.test.OllamaPreparationUtils.pullModel;
 
@@ -112,7 +111,6 @@ public class ReActAgentTest {
                                 ReActAgentTest.class.getMethod(
                                         "multiply", Double.class, Double.class)));
 
-        agentsEnv.getConfig().set(ERROR_HANDLING_STRATEGY, ReActAgent.ErrorHandlingStrategy.RETRY);
         agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
         // Declare the ReAct agent.
@@ -190,7 +188,6 @@ public class ReActAgentTest {
                                 ReActAgentTest.class.getMethod(
                                         "multiply", Double.class, Double.class)));
 
-        agentsEnv.getConfig().set(ERROR_HANDLING_STRATEGY, ReActAgent.ErrorHandlingStrategy.RETRY);
         agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
         // Declare the ReAct agent without an output schema.

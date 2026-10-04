@@ -23,8 +23,10 @@ import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
@@ -131,29 +133,29 @@ public class TaskLifecycleListenerNotificationTest {
             Long input = (Long) InputEvent.fromEvent(event).getInput();
             Long result =
                     context.durableExecuteAsync(
-                            new DurableCallable<Long>() {
-                                @Override
-                                public String getId() {
-                                    return "lifecycle-notification";
-                                }
+                                    new DurableCallable<Long>() {
+                                        @Override
+                                        public String getId() {
+                                            return "lifecycle-notification";
+                                        }
 
-                                @Override
-                                public Class<Long> getResultClass() {
-                                    return Long.class;
-                                }
+                                        @Override
+                                        public Class<Long> getResultClass() {
+                                            return Long.class;
+                                        }
 
-                                @Override
-                                public Long call() {
-                                    try {
-                                        // Force the action to yield before the call completes,
-                                        // so the task is suspended and transferred.
-                                        Thread.sleep(50);
-                                    } catch (InterruptedException e) {
-                                        Thread.currentThread().interrupt();
-                                    }
-                                    return input * 2;
-                                }
-                            });
+                                        @Override
+                                        public Long call() {
+                                            try {
+                                                // Force the action to yield, suspend, and transfer.
+                                                Thread.sleep(50);
+                                            } catch (InterruptedException e) {
+                                                Thread.currentThread().interrupt();
+                                            }
+                                            return input * 2;
+                                        }
+                                    })
+                            .await();
             context.sendEvent(new OutputEvent(result));
         }
     }
@@ -369,7 +371,11 @@ public class TaskLifecycleListenerNotificationTest {
 
     @Test
     void resumedInFlightRecordReEmitsRecordStart() throws Exception {
-        AgentPlan plan = new AgentPlan(new SyncAgent());
+        // Force serial: the parallel engine drains in-flight tasks before checkpoint, so no
+        // in-flight record survives the snapshot — this test exercises the serial restore path.
+        AgentConfiguration serialConfig = new AgentConfiguration();
+        serialConfig.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        AgentPlan plan = new AgentPlan(new SyncAgent(), serialConfig);
         OperatorSubtaskState snapshot;
 
         // First execution: admit the record but snapshot before its tasks run, so the record

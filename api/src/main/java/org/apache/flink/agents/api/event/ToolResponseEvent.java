@@ -75,6 +75,8 @@ public class ToolResponseEvent extends Event {
         }
         Map<String, ?> rawResponses = (Map<String, ?>) attributes.get("responses");
         if (rawResponses != null) {
+            Object rawSuccess = attributes.get("success");
+            Map<?, ?> success = rawSuccess instanceof Map ? (Map<?, ?>) rawSuccess : Map.of();
             Map<String, ToolResponse> responses = new HashMap<>();
             for (Map.Entry<String, ?> entry : rawResponses.entrySet()) {
                 Object v = entry.getValue();
@@ -82,6 +84,11 @@ public class ToolResponseEvent extends Event {
                     responses.put(entry.getKey(), (ToolResponse) v);
                 } else if (v instanceof Map) {
                     responses.put(entry.getKey(), MAPPER.convertValue(v, ToolResponse.class));
+                } else if (Boolean.FALSE.equals(success.get(entry.getKey()))) {
+                    // The Python runtime records a failed call as the text it shows the model in
+                    // `responses`, with `success` false and the diagnostic in `error`. Keep that
+                    // text as the error so Java consumers show the model the same thing.
+                    responses.put(entry.getKey(), ToolResponse.error(String.valueOf(v)));
                 } else {
                     responses.put(entry.getKey(), ToolResponse.success(v));
                 }
@@ -146,9 +153,10 @@ public class ToolResponseEvent extends Event {
                 + getRequestId()
                 + ", response="
                 + getResponses()
-                + ", success=true"
+                + ", success="
+                + getAttr("success")
                 + ", timestamp="
-                + getTimestamp()
+                + getAttr("timestamp")
                 + '}';
     }
 }

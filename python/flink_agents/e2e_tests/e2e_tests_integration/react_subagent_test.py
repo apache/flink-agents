@@ -90,11 +90,11 @@ class ScriptedConnection(BaseChatModelConnection):
                 if model.startswith("child")
                 else "child answer"
             )
-            if expected not in last.content:
-                msg = f"Wrong scoped result: {last.content}"
+            if expected not in last.text:
+                msg = f"Wrong scoped result: {last.text}"
                 raise ValueError(msg)
-            if model == "parent_json" and last.content != '[{"answer":"child answer"}]':
-                msg = f"Structured child output lost its JSON shape: {last.content}"
+            if model == "parent_json" and last.text != '[{"answer":"child answer"}]':
+                msg = f"Structured child output lost its JSON shape: {last.text}"
                 raise ValueError(msg)
             content = (
                 '{"answer":"child answer"}'
@@ -103,24 +103,24 @@ class ScriptedConnection(BaseChatModelConnection):
                 if model == "child_skill"
                 else f"{model} answer"
             )
-            return ChatMessage(role=MessageRole.ASSISTANT, content=content)
+            return ChatMessage.of(role=MessageRole.ASSISTANT, content=content)
         if model.startswith("child"):
             if (
                 not any(
-                    message.content == "Literal {prompt} instructions"
+                    message.text == "Literal {prompt} instructions"
                     for message in messages
                 )
-                or last.content != "investigate"
+                or last.text != "investigate"
             ):
                 msg = "Child instructions or input were not preserved"
                 raise ValueError(msg)
             if model == "child_skill":
                 assert any(
-                    "Child research instructions" in message.content
+                    "Child research instructions" in message.text
                     for message in messages
                 )
                 assert all(
-                    "Parent private instructions" not in message.content
+                    "Parent private instructions" not in message.text
                     for message in messages
                 )
                 name, arguments = "load_skill", {"name": "research"}
@@ -132,7 +132,7 @@ class ScriptedConnection(BaseChatModelConnection):
         if [tool.name for tool in tools] != expected_tools:
             msg = "Callable metadata was not resolved in the current scope"
             raise ValueError(msg)
-        return ChatMessage(
+        return ChatMessage.of(
             role=MessageRole.ASSISTANT,
             tool_calls=[
                 {

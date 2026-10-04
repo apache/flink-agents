@@ -126,6 +126,7 @@ public final class Aliases {
         Map<String, String> embConnJava = new HashMap<>();
         embConnJava.put("ollama", ResourceName.EmbeddingModel.OLLAMA_CONNECTION);
         embConnJava.put("bedrock", ResourceName.EmbeddingModel.BEDROCK_CONNECTION);
+        embConnJava.put("openai", ResourceName.EmbeddingModel.OPENAI_CONNECTION);
         Map<String, String> embConnPython = new HashMap<>();
         embConnPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION);
         embConnPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_CONNECTION);
@@ -138,6 +139,7 @@ public final class Aliases {
         Map<String, String> embJava = new HashMap<>();
         embJava.put("ollama", ResourceName.EmbeddingModel.OLLAMA_SETUP);
         embJava.put("bedrock", ResourceName.EmbeddingModel.BEDROCK_SETUP);
+        embJava.put("openai", ResourceName.EmbeddingModel.OPENAI_SETUP);
         Map<String, String> embPython = new HashMap<>();
         embPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP);
         embPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_SETUP);

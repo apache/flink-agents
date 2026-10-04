@@ -18,6 +18,7 @@
 package org.apache.flink.agents.api.context;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -150,11 +151,15 @@ public interface RunnerContext {
     <T> T durableExecute(DurableCallable<T> callable) throws Exception;
 
     /**
-     * Asynchronously executes the provided callable with durable execution support.
+     * Creates a deferred asynchronous durable call.
      *
-     * <p>On JDK 21+, this method uses Continuation to yield the current action execution, submits
-     * the callable to a thread pool, and resumes when complete. On JDK &lt; 21, this falls back to
-     * synchronous execution.
+     * <p>Creating the returned handle does not execute the callable or reserve durable state. Use
+     * {@link DurableFuture#await()} to execute a single call, or {@link #gather(List)} to compose
+     * multiple calls into one durable batch.
+     *
+     * <p>Creating multiple handles, or awaiting them one at a time, does not execute them in
+     * parallel. To run calls concurrently, compose their handles with {@link #gather(List)} and
+     * await the returned batch future.
      *
      * <p>The result will be stored and returned from cache during job recovery.
      *
@@ -163,22 +168,21 @@ public interface RunnerContext {
      *
      * <p>Access to memory and sendEvent are prohibited within the callable.
      */
-    <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception;
+    <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable);
 
     /**
-     * Executes multiple durable callables as one batch and returns outcomes in input order.
+     * Composes deferred durable calls into one deferred batch.
      *
-     * <p>On JDK 21+, implementations may submit uncached calls concurrently and yield the current
-     * action execution until the batch completes. On JDK &lt; 21, this falls back to serial durable
-     * execution.
+     * <p>The input order defines result order. Resolving the returned future reuses locally
+     * completed outcomes, then reserves all required durable slots for unresolved calls before
+     * submitting them. Individual callable failures are represented as {@link
+     * Outcome#failure(Exception)} values.
      *
-     * <p>The callable list must be deterministic across recovery: same order and same {@link
-     * DurableCallable#getId()} values.
-     *
-     * <p>Access to memory and sendEvent are prohibited within the callables.
+     * <p>On JDK 21+, resolving the returned future executes eligible uncached calls concurrently,
+     * bounded by {@link AgentExecutionOptions#TOOL_CALL_PARALLELISM}. On JDK &lt; 21, batch
+     * execution falls back to serial execution regardless of that setting.
      */
-    <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-            throws Exception;
+    <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures);
 
     /** Clean up the resource. */
     void close() throws Exception;

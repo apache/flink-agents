@@ -41,9 +41,7 @@ import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserialize
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
 
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.lang.reflect.Parameter;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +57,7 @@ public class FunctionTool extends Tool {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final Function function;
+    @JsonIgnore private transient FunctionSchema schema;
     private Map<String, ToolParameterInjection> injectedArgs;
 
     @JsonIgnore private transient PythonResourceAdapter pythonResourceAdapter;
@@ -72,56 +71,53 @@ public class FunctionTool extends Tool {
             ToolMetadata metadata,
             Function function,
             Map<String, ToolParameterInjection> injectedArgs) {
-        super(metadata);
+        super(
+                metadata == null && function instanceof JavaFunction
+                        ? new ToolMetadata("", "", "{}")
+                        : metadata);
         this.function = function;
         this.injectedArgs = normalizeInjectedArgs(injectedArgs);
+        if (function instanceof JavaFunction) {
+            Method method;
+            try {
+                method = ((JavaFunction) function).getMethod();
+            } catch (ReflectiveOperationException error) {
+                throw new IllegalArgumentException("Cannot resolve function tool", error);
+            }
+            this.injectedArgs =
+                    mergeInjectedArgs(getInjectedArgs(method), this.injectedArgs, method.getName());
+            schema = new FunctionSchema(method, this.injectedArgs.keySet());
+            ToolMetadata derived = schema.getMetadata();
+            setMetadata(
+                    new ToolMetadata(
+                            metadata == null ? derived.getName() : metadata.getName(),
+                            metadata == null ? derived.getDescription() : metadata.getDescription(),
+                            derived.getInputSchema()));
+        }
     }
 
     /** Create a FunctionTool from a static method annotated with @Tool */
     public static FunctionTool fromStaticMethod(Method method) throws Exception {
-        if (!Modifier.isStatic(method.getModifiers())) {
-            throw new IllegalArgumentException(
-                    "FunctionTool only supports static methods. Method: " + method.getName());
-        }
-
-        org.apache.flink.agents.api.annotation.Tool toolAnnotation =
-                method.getAnnotation(org.apache.flink.agents.api.annotation.Tool.class);
-        String name = method.getName();
-        String description = toolAnnotation != null ? toolAnnotation.description() : "";
-        Map<String, ToolParameterInjection> injectedArgs = getInjectedArgs(method);
-
-        ToolMetadata metadata =
-                new ToolMetadata(
-                        name,
-                        description,
-                        SchemaUtils.generateSchema(method, injectedArgs.keySet()));
-        JavaFunction javaFunction =
-                new JavaFunction(
-                        method.getDeclaringClass(), method.getName(), method.getParameterTypes());
-
-        return new FunctionTool(metadata, javaFunction, injectedArgs);
+        return fromStaticMethod(null, method);
     }
 
-    /**
-     * Create a FunctionTool from a static method with explicit description. This does not require a
-     * method-level @Tool annotation.
-     */
+    /** Create a function tool with an optional explicit description. */
     public static FunctionTool fromStaticMethod(String description, Method method)
             throws Exception {
-        if (!Modifier.isStatic(method.getModifiers())) {
-            throw new IllegalArgumentException(
-                    "FunctionTool only supports static methods. Method: " + method.getName());
+        FunctionTool tool =
+                new FunctionTool(
+                        null,
+                        new JavaFunction(
+                                method.getDeclaringClass(),
+                                method.getName(),
+                                method.getParameterTypes()),
+                        getInjectedArgs(method));
+        if (description != null) {
+            ToolMetadata metadata = tool.getMetadata();
+            tool.setMetadata(
+                    new ToolMetadata(metadata.getName(), description, metadata.getInputSchema()));
         }
-        Map<String, ToolParameterInjection> injectedArgs = getInjectedArgs(method);
-        ToolMetadata metadata =
-                new ToolMetadata(
-                        method.getName(),
-                        description != null ? description : "",
-                        SchemaUtils.generateSchema(method, injectedArgs.keySet()));
-        JavaFunction javaFunction =
-                new JavaFunction(
-                        method.getDeclaringClass(), method.getName(), method.getParameterTypes());
-        return new FunctionTool(metadata, javaFunction, injectedArgs);
+        return tool;
     }
 
     @Override
@@ -131,61 +127,31 @@ public class FunctionTool extends Tool {
 
     @Override
     public ToolResponse call(ToolParameters parameters) {
+        Map<String, Object> arguments = new LinkedHashMap<>();
+        for (String name : parameters.getParameterNames()) {
+            arguments.put(name, parameters.getParameter(name));
+        }
         try {
             if (function instanceof PythonFunction) {
-                return callPython((PythonFunction) function, parameters);
-            }
-            return callJava(parameters);
-        } catch (Exception e) {
-            return ToolResponse.error(e);
-        }
-    }
-
-    private ToolResponse callJava(ToolParameters parameters) throws Exception {
-        // Map ToolParameters to method arguments by name and type
-        Method method = ((JavaFunction) function).getMethod();
-        Parameter[] methodParams = method.getParameters();
-        Object[] args = new Object[methodParams.length];
-        for (int i = 0; i < methodParams.length; i++) {
-            Parameter p = methodParams[i];
-            String paramName = p.getName();
-            if (p.isAnnotationPresent(ToolParam.class)) {
-                ToolParam ann = p.getAnnotation(ToolParam.class);
-                if (!ann.name().isEmpty()) {
-                    paramName = ann.name();
+                PythonFunction pf = (PythonFunction) function;
+                if (pythonResourceAdapter == null) {
+                    throw new IllegalStateException("Python tool has no PythonResourceAdapter");
                 }
+                Object result =
+                        pythonResourceAdapter.invokePythonTool(
+                                pf.getModule(), pf.getQualName(), arguments);
+                return PythonToolResultConverter.fromBridgeResult(result);
             }
-            Object value = parameters.getParameter(paramName, p.getType());
-            if (value == null && p.isAnnotationPresent(ToolParam.class)) {
-                ToolParam ann = p.getAnnotation(ToolParam.class);
-                if (ann.required() && ann.defaultValue().isEmpty()) {
-                    throw new IllegalArgumentException("Missing required parameter: " + paramName);
-                }
-            }
-            args[i] = value;
+            Object result = function.call(schema.bind(arguments));
+            return ToolResponse.success(result);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new java.util.concurrent.CancellationException("Function tool interrupted");
+        } catch (java.util.concurrent.CancellationException error) {
+            throw error;
+        } catch (Exception error) {
+            return ToolResponse.error(error);
         }
-        Object result = function.call(args);
-        return ToolResponse.success(result);
-    }
-
-    private ToolResponse callPython(PythonFunction pf, ToolParameters parameters) {
-        if (pythonResourceAdapter == null) {
-            return ToolResponse.error(
-                    new IllegalStateException(
-                            "Python tool '"
-                                    + pf.getQualName()
-                                    + "' has no PythonResourceAdapter; runtime should inject one"
-                                    + " before invocation."));
-        }
-        // ToolCallAction resolves injected parameters before FunctionTool is invoked; this adapter
-        // only forwards the final keyword arguments across the language boundary.
-        Map<String, Object> kwargs = new HashMap<>();
-        for (String name : parameters.getParameterNames()) {
-            kwargs.put(name, parameters.getParameter(name));
-        }
-        Object result =
-                pythonResourceAdapter.invokePythonTool(pf.getModule(), pf.getQualName(), kwargs);
-        return PythonToolResultConverter.fromBridgeResult(result);
     }
 
     public Function getFunction() {

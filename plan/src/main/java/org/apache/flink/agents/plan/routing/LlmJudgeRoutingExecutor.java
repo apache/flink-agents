@@ -17,8 +17,6 @@
  */
 package org.apache.flink.agents.plan.routing;
 
-import org.apache.flink.agents.api.agents.Agent;
-import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -52,10 +50,8 @@ import java.util.regex.Pattern;
  * decision from the verdict as a pure function.
  *
  * <p>Failure policy: an unparseable or non-candidate verdict abstains to the router's default
- * model. A judge call that exhausts its retries honors the request's error-handling strategy,
- * exactly like a throwing rule/custom strategy: {@code FAIL} surfaces the outage loudly, {@code
- * IGNORE} degrades to the default with the cause recorded. Cancellation propagates and is never
- * persisted as a routing outcome.
+ * model. A judge call that exhausts its retries fails the request, like a throwing rule/custom
+ * strategy. Cancellation propagates and is never persisted as a routing outcome.
  *
  * <p>The judge must be a plain chat model (no prompt, tools, or skills) — enforced at plan
  * construction for descriptor-carried bindings; a setup that binds them dynamically without
@@ -88,10 +84,8 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     @Override
     public RoutingDecision route(
             RoutingStrategy strategy, RoutingContext context, RunnerContext ctx) throws Exception {
-        Agent.ErrorHandlingStrategy errorStrategy =
-                ctx.getConfig().get(AgentExecutionOptions.ERROR_HANDLING_STRATEGY);
-        int numRetries = ChatModelInvoker.configuredRetries(ctx, errorStrategy);
-        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx, errorStrategy);
+        int numRetries = ChatModelInvoker.configuredRetries(ctx);
+        int retryWaitIntervalSec = ChatModelInvoker.configuredRetryWaitSec(ctx);
         String judgeModel = judgeModel(strategy);
         List<String> candidateNames = candidateNames(context);
 
@@ -121,7 +115,6 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                             Map.of(),
                             null,
                             ctx,
-                            errorStrategy,
                             numRetries,
                             retryWaitIntervalSec);
             ChatModelAction.recordAttemptRetryStats(
@@ -140,7 +133,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                 judgeMetadata.put("judge_prompt_tokens", promptTokens);
                 judgeMetadata.put("judge_completion_tokens", completionTokens);
             }
-            verdictModel = parseVerdict(reply.getContent(), candidateNames).orElse(null);
+            verdictModel = parseVerdict(reply.getText(), candidateNames).orElse(null);
             abstainReason = verdictModel == null ? "judge verdict was not a candidate name" : null;
         } catch (InterruptedException cancellation) {
             // Cancellation surfacing from the between-retries backoff sleep.
@@ -159,12 +152,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                 Thread.currentThread().interrupt();
                 throw failure;
             }
-            // A judge that exhausted its retries honors the request's error-handling strategy,
-            // exactly like a throwing rule/custom strategy (see class javadoc).
-            if (errorStrategy != Agent.ErrorHandlingStrategy.IGNORE) {
-                throw failure;
-            }
-            abstainReason = "judge call failed: " + failure.error;
+            throw failure;
         }
 
         if (verdictModel != null) {
@@ -325,7 +313,7 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             List<ChatMessage> messages, Set<Integer> pinnedIndices) {
         for (int i = 0; i < messages.size(); i++) {
             ChatMessage message = messages.get(i);
-            boolean hasText = message.getContent() != null && !message.getContent().isEmpty();
+            boolean hasText = !message.getText().isEmpty();
             if (hasText && (message.getRole() == MessageRole.USER || pinnedIndices.contains(i))) {
                 return true;
             }
@@ -394,15 +382,15 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
     }
 
     private static long length(ChatMessage message) {
-        return message.getContent() == null ? 0 : message.getContent().length();
+        return message.getText().length();
     }
 
     /** Serializes the conversation as role-labeled lines, framed as data for the judge. */
     private static String renderConversation(List<ChatMessage> messages) {
         StringBuilder rendered = new StringBuilder();
         for (ChatMessage message : messages) {
-            String content = message.getContent();
-            if (content == null || content.isEmpty()) {
+            String content = message.getText();
+            if (content.isEmpty()) {
                 continue;
             }
             if (rendered.length() > 0) {

@@ -419,16 +419,15 @@ Model availability and specifications may change. Always check the official Olla
 
 OpenAI provides cloud-based embedding models with state-of-the-art performance.
 
-{{< hint info >}}
-OpenAI embedding models are currently supported in the Python API only. To use OpenAI from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
-{{< /hint >}}
-
 #### Prerequisites
 
 1. Get an API key from [OpenAI Platform](https://platform.openai.com/)
 
 #### Usage Example
 
+{{< tabs "OpenAI Embedding Usage Example" >}}
+
+{{< tab "Python" >}}
 ```python
 class MyAgent(Agent):
 
@@ -453,28 +452,106 @@ class MyAgent(Agent):
             encoding_format="float"
         )
 ```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+
+    @EmbeddingModelConnection
+    public static ResourceDescriptor openaiConnection() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OPENAI_CONNECTION)
+                .addInitialArgument("api_key", System.getenv("OPENAI_API_KEY"))
+                .addInitialArgument("request_timeout", 30)
+                .addInitialArgument("max_retries", 3)
+                .build();
+    }
+
+    @EmbeddingModelSetup
+    public static ResourceDescriptor openaiEmbedding() {
+        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.OPENAI_SETUP)
+                .addInitialArgument("connection", "openaiConnection")
+                .addInitialArgument("model", "text-embedding-3-small")
+                .addInitialArgument("dimensions", 512)
+                .build();
+    }
+
+    ...
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### OpenAIEmbeddingModelConnection Parameters
 
+{{< tabs "OpenAIEmbeddingModelConnection Parameters" >}}
+
+{{< tab "Python" >}}
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `api_key` | str | Required | OpenAI API key for authentication |
+| `api_key` | str | Required | OpenAI API key for authentication; a blank key is passed through to the SDK for unauthenticated OpenAI-compatible servers (the Java connection rejects a blank key) |
 | `base_url` | str | `"https://api.openai.com/v1"` | OpenAI API base URL |
-| `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
+| `request_timeout` | float | `30.0` | HTTP request timeout in seconds; `0` disables the timeout |
 | `max_retries` | int | `3` | Maximum number of retry attempts |
-| `organization` | str | None | Optional organization ID |
-| `project` | str | None | Optional project ID |
+| `organization` | str | None | Optional organization ID; when unset or blank the Python SDK may read `OPENAI_ORG_ID` from the environment (the Java connection sends no organization) |
+| `project` | str | None | Optional project ID; when unset or blank the Python SDK may read `OPENAI_PROJECT_ID` from the environment (the Java connection sends no project) |
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `api_key` | String | Required | OpenAI API key for authentication |
+| `base_url` | String | `"https://api.openai.com/v1"` | OpenAI API base URL |
+| `request_timeout` | Number | `30` | HTTP request timeout in seconds; `0` disables the timeout |
+| `max_retries` | Number | `3` | Maximum number of retry attempts, a non-negative integer |
+| `organization` | String | None | Optional organization ID |
+| `project` | String | None | Optional project ID |
+
+{{< /tab >}}
+
+{{< /tabs >}}
 
 #### OpenAIEmbeddingModelSetup Parameters
+
+{{< tabs "OpenAIEmbeddingModelSetup Parameters" >}}
+
+{{< tab "Python" >}}
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
 | `model` | str | Required | OpenAI embedding model name |
-| `encoding_format` | str | `"float"` | Return format ("float" or "base64") |
+| `encoding_format` | str | `"float"` | Wire format, `"float"` or `"base64"`; base64 responses are decoded to floats |
 | `dimensions` | int | None | Output dimensions (text-embedding-3 models only) |
 | `user` | str | None | End-user identifier for monitoring |
-| `additional_kwargs` | dict | `{}` | Additional parameters for the OpenAI embeddings API |
+| `additional_kwargs` | dict | `{}` | Extra request body properties sent with every embeddings request; keys may not be `model`, `input`, `encoding_format`, `dimensions` or `user`. A per-call `additional_kwargs` replaces this map |
+
+`additional_kwargs` entries are sent to the API as request body properties; an entry that repeats a typed field fails validation (set the typed argument instead), and `dimensions` must be an integer.
+
+{{< /tab >}}
+
+{{< tab "Java" >}}
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `connection` | String | Required | Reference to connection method name |
+| `model` | String | Required | OpenAI embedding model name |
+| `encoding_format` | String | `"float"` | Wire format, `"float"` or `"base64"`; base64 responses are decoded to floats |
+| `dimensions` | Number | None | Output dimensions, a positive integer (text-embedding-3 models only) |
+| `user` | String | None | End-user identifier for monitoring |
+| `additional_kwargs` | Map | `{}` | Extra request body properties sent with every embeddings request; keys may not be `model`, `input`, `encoding_format`, `dimensions` or `user`. A per-call `additional_kwargs` replaces this map |
+
+
+`additional_kwargs` entries that repeat a typed field fail validation instead of overriding it (set the typed argument instead), and `dimensions` must be a positive integer.
+{{< /tab >}}
+
+{{< /tabs >}}
+
+A batch of texts is embedded in a single request, so it must stay within OpenAI's per-request limits (2048 inputs at the time of writing); split larger batches before calling. Token usage reported by the API is available through `embedWithUsage` in Java and `embed_with_usage` in Python.
 
 #### Available Models
 
@@ -559,7 +636,7 @@ Model availability and specifications may change. Always check the official Dash
 
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., OpenAI embedding is currently Python-only).
+Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., Tongyi embedding is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**

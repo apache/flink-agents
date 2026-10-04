@@ -43,11 +43,11 @@ def test_tongyi_chat() -> None:
     """Test basic chat functionality of TongyiChatModelConnection."""
     connection = TongyiChatModelConnection()
     response = connection.chat(
-        [ChatMessage(role=MessageRole.USER, content="Hello!")], model=test_model
+        [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
     assert response is not None
-    assert response.content is not None
-    assert response.content.strip() != ""
+    assert response.text is not None
+    assert response.text.strip() != ""
     assert response.role == MessageRole.ASSISTANT
 
 
@@ -99,9 +99,9 @@ def test_tongyi_chat_with_tools() -> None:
 
     response = llm.chat(
         [
-            ChatMessage(
-                role=MessageRole.USER,
-                content="Could you help me calculate the sum of 1 and 2?",
+            ChatMessage.of(
+                MessageRole.USER,
+                "Could you help me calculate the sum of 1 and 2?",
             )
         ]
     )
@@ -164,13 +164,13 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     llm.open()
 
     response = llm.chat(
-        [ChatMessage(role=MessageRole.USER, content="What's the meaning of life?")]
+        [ChatMessage.of(MessageRole.USER, "What's the meaning of life?")]
     )
 
     mock_call.assert_called_once()
 
     assert (
-        response.content
+        response.text
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
     assert "reasoning" in response.extra_args
@@ -189,3 +189,55 @@ def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
     setup = TongyiChatModelSetup(connection="conn")
     assert setup.model == DEFAULT_MODEL
+
+
+def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The DashScope call id reaches both the assistant call and the tool result."""
+    tool_call_response = SimpleNamespace(
+        status_code=200,
+        output={
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_abc",
+                                "type": "function",
+                                "function": {
+                                    "name": "add",
+                                    "arguments": '{"a": 1, "b": 2}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+        usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+    )
+    mock_call = MagicMock(return_value=tool_call_response)
+    monkeypatch.setattr(
+        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        mock_call,
+    )
+    connection = TongyiChatModelConnection(api_key="fake-key")
+
+    response = connection.chat(
+        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")], model=test_model
+    )
+    # The tool call action reads this key into the tool result's external_id.
+    assert response.tool_calls[0]["original_id"] == "call_abc"
+
+    tool_result = ChatMessage.of(
+        MessageRole.TOOL, "3", extra_args={"external_id": "call_abc"}
+    )
+    connection.chat(
+        [ChatMessage.of(MessageRole.USER, "What is 1 + 2?"), response, tool_result],
+        model=test_model,
+    )
+
+    sent = mock_call.call_args.kwargs["messages"]
+    assert sent[1]["tool_calls"][0]["id"] == "call_abc"
+    assert sent[2] == {"role": "tool", "content": "3", "tool_call_id": "call_abc"}

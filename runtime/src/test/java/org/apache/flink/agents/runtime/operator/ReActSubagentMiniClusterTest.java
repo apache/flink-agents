@@ -68,18 +68,18 @@ class ReActSubagentMiniClusterTest {
                 assertThat(tools).extracting(Tool::getName).containsExactly("load_skill", "bash");
                 assertThat(messages.toString()).doesNotContain("Parent private instructions");
                 if (last.getRole() == MessageRole.TOOL) {
-                    assertThat(last.getContent()).contains("child-only-evidence");
+                    assertThat(last.getText()).contains("child-only-evidence");
                     return new ChatMessage(MessageRole.ASSISTANT, "child answer");
                 }
                 assertThat(messages)
                         .anySatisfy(
                                 message ->
-                                        assertThat(message.getContent())
+                                        assertThat(message.getText())
                                                 .contains("Child research instructions"));
                 return request("load_skill", Map.of("name", "research"));
             }
             if (last.getRole() == MessageRole.TOOL) {
-                assertThat(last.getContent()).contains("child answer");
+                assertThat(last.getText()).contains("child answer");
                 return new ChatMessage(MessageRole.ASSISTANT, "parent answer");
             }
             assertThat(tools).extracting(Tool::getName).containsExactly("_subagent_researcher");

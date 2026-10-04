@@ -329,7 +329,7 @@ actions:
   - name: action2
     function: my_pkg.actions:action2
     trigger_conditions:
-      - "type == EventType.ChatResponseEvent && response.content != ''"
+      - "type == EventType.ChatResponseEvent && size(response.blocks) > 0"
     type: python
   - action3                       # shared action reference (declared at file level)
 ```
@@ -585,7 +585,7 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 | Alias     | `type: python` | `type: java`   |
 | --------- | -------------- | -------------- |
 | `ollama`  | Ollama         | Ollama         |
-| `openai`  | OpenAI         | —              |
+| `openai`  | OpenAI         | OpenAI (Java)  |
 | `tongyi`  | Tongyi         | —              |
 | `bedrock` | —              | Bedrock (Java) |
 

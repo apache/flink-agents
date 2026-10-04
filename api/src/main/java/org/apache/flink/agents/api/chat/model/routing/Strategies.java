@@ -58,8 +58,7 @@ public final class Strategies {
      * {@code CHAT_MODEL} resource — reads the request and picks one candidate. The engine executes
      * the judge call on its durable, metered, observable chat path; the verdict is constrained to
      * candidate names. An unparseable or non-candidate verdict abstains to the router's default
-     * model; a judge call that exhausts its retries honors the request's error-handling strategy
-     * ({@code FAIL} surfaces it, {@code IGNORE} abstains with the cause recorded). Candidate {@code
+     * model; a judge call that exhausts its retries fails the request. Candidate {@code
      * describe(...)} descriptions become the judge's decision criteria.
      *
      * <p><b>Judge model contract:</b> the judge must be a plain chat model — no prompt, tools, or

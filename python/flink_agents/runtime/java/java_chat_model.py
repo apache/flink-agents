@@ -31,17 +31,21 @@ from flink_agents.runtime.java.java_resource_wrapper import (
     set_java_resource_metric_group,
 )
 from flink_agents.runtime.python_java_utils import (
+    dump_blocks,
     from_java_chat_message,
     normalize_tool_call_id,
 )
 
 
 def _to_java_chat_message(j_resource_adapter: Any, message: ChatMessage) -> Any:
-    """Build a Java message from fields extracted on the Python calling thread."""
+    """Build a Java message from fields extracted on the Python calling thread.
+
+    Content crosses as block maps so media blocks survive the bridge.
+    """
     tool_calls = [normalize_tool_call_id(call) for call in message.tool_calls]
     return j_resource_adapter.fromPythonChatMessage(
         message.role.value,
-        message.content,
+        dump_blocks(message),
         tool_calls,
         message.extra_args,
     )

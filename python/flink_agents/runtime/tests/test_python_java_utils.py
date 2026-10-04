@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+from typing import Any
 
 import cloudpickle
 
@@ -176,3 +177,21 @@ def test_to_python_memory_set_carries_the_action_context() -> None:
     assert memory_set.partition_key == "owner"
     assert memory_set.observation_id == "owner-action"
     assert memory_set.observation_suppressed is True
+
+
+def test_bridge_uses_function_tool_call() -> None:
+    from unittest.mock import patch
+
+    from flink_agents.plan.tools.function_tool import FunctionTool
+
+    original = FunctionTool.call
+    calls = []
+
+    def recording_call(self: FunctionTool, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return original(self, *args, **kwargs)
+
+    with patch.object(FunctionTool, "call", recording_call):
+        result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
+    assert calls == [{"value": "raw"}]
+    assert result["__flink_agents_tool_result__"] == "raw"

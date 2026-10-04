@@ -18,8 +18,7 @@
 import json
 from typing import Any
 
-from docstring_parser import parse
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from typing_extensions import override
 
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
@@ -29,11 +28,11 @@ from flink_agents.api.tools.tool_parameter_injection import (
     normalize_injected_args,
     validate_injected_arg_names,
 )
-from flink_agents.api.tools.utils import (
-    create_model_from_java_tool_schema_str,
-    create_schema_from_function,
+from flink_agents.plan.function import (
+    JavaFunction,
+    PythonFunction,
 )
-from flink_agents.plan.function import JavaFunction, PythonFunction
+from flink_agents.plan.tools.function_schema import FunctionSchema
 
 
 class FunctionTool(Tool):
@@ -48,6 +47,7 @@ class FunctionTool(Tool):
 
     func: PythonFunction | JavaFunction
     injected_args: dict[str, InjectedArg] = Field(default_factory=dict)
+    _schema: FunctionSchema | None = PrivateAttr(default=None)
 
     @model_validator(mode="before")
     @classmethod
@@ -58,7 +58,7 @@ class FunctionTool(Tool):
         return data
 
     @model_validator(mode="after")
-    def _eager_derive_python_metadata(self) -> "FunctionTool":
+    def _bind_function(self) -> "FunctionTool":
         if isinstance(self.func, PythonFunction):
             callable_ = self.func.as_callable()
             self.injected_args = merge_injected_args(
@@ -67,8 +67,15 @@ class FunctionTool(Tool):
                 tool_name=callable_.__qualname__,
             )
             validate_injected_arg_names(callable_, self.injected_args)
-        if self.metadata is None and isinstance(self.func, PythonFunction):
-            self.metadata = _python_metadata(self.func, list(self.injected_args))
+            self._schema = FunctionSchema(callable_, list(self.injected_args))
+            derived = self._schema.metadata
+            self.metadata = ToolMetadata(
+                name=self.metadata.name if self.metadata else derived.name,
+                description=self.metadata.description
+                if self.metadata
+                else derived.description,
+                args_schema=derived.args_schema,
+            )
         return self
 
     def set_java_resource_adapter(self, adapter: Any) -> None:
@@ -81,7 +88,7 @@ class FunctionTool(Tool):
         if not isinstance(self.func, JavaFunction):
             return
         self.func.set_java_resource_adapter(adapter)
-        metadata, annotated_args = _java_metadata(self.func, list(self.injected_args))
+        metadata, annotated_args = _java_metadata(adapter, self.func, list(self.injected_args))
         self.injected_args = merge_injected_args(
             annotated_args,
             self.injected_args,
@@ -97,47 +104,33 @@ class FunctionTool(Tool):
 
     @override
     def call(self, *args: Any, **kwargs: Any) -> Any:
-        """Invoke the underlying function."""
-        return self.func(*args, **kwargs)
-
-
-def _python_metadata(func: PythonFunction, injected_args: list[str] | None = None) -> ToolMetadata:
-    callable_ = func.as_callable()
-    description = parse(callable_.__doc__).description or ""
-    return ToolMetadata(
-        name=callable_.__name__,
-        description=description,
-        args_schema=create_schema_from_function(
-            callable_.__name__, func=callable_, injected_args=injected_args
-        ),
-    )
+        """Validate and execute the complete arguments supplied by the caller."""
+        if args:
+            if self._schema is None:
+                msg = "Java tools require named arguments"
+                raise TypeError(msg)
+            kwargs = self._schema.signature.bind_partial(*args, **kwargs).arguments
+        if self._schema is not None:
+            values = self._schema.bind(kwargs)
+            positional = []
+            for name, parameter in self._schema.signature.parameters.items():
+                if parameter.kind is parameter.POSITIONAL_ONLY:
+                    positional.append(values.pop(name))
+            return self.func(*positional, **values)
+        return self.func(**kwargs)
 
 
 def _java_metadata(
-    func: JavaFunction, injected_args: list[str] | None = None
+    adapter: Any, func: JavaFunction, injected_names: list[str]
 ) -> tuple[ToolMetadata, dict[str, InjectedArg]]:
-    adapter = func._j_resource_adapter
-    if adapter is None:
-        msg = (
-            "Java function tool metadata requires the JVM resource adapter; "
-            "not set on the underlying JavaFunction. The runtime should "
-            "inject it via FunctionTool.set_java_resource_adapter before "
-            "metadata access."
-        )
-        raise RuntimeError(msg)
     flat = adapter.getJavaToolMetadata(
-        func.qualname,
-        func.method_name,
-        func.parameter_types,
-        injected_args or [],
+        func.qualname, func.method_name, func.parameter_types, injected_names
     )
     name = flat["name"]
     metadata = ToolMetadata(
         name=name,
         description=flat.get("description", ""),
-        args_schema=create_model_from_java_tool_schema_str(
-            name, flat.get("inputSchema", "{}")
-        ),
+        args_schema=json.loads(flat.get("inputSchema", "{}")),
     )
     return metadata, _parse_injected_args_json(flat.get("injectedArgs"))
 

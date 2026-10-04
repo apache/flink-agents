@@ -69,7 +69,7 @@ class AgentPlanDeclareChatModelTest {
         @Override
         public ChatMessage chat(List<ChatMessage> messages) {
             // Return a deterministic response based on prompt name to assert on.
-            return new ChatMessage(MessageRole.ASSISTANT, "ok:" + messages.get(0).getContent());
+            return new ChatMessage(MessageRole.ASSISTANT, "ok:" + messages.get(0).getText());
         }
     }
 
@@ -131,7 +131,7 @@ class AgentPlanDeclareChatModelTest {
         ChatMessage reply = model.chat(prompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertEquals(MessageRole.ASSISTANT, reply.getRole());
-        assertEquals("ok:Hello world", reply.getContent());
+        assertEquals("ok:Hello world", reply.getText());
     }
 
     @Test
@@ -154,7 +154,7 @@ class AgentPlanDeclareChatModelTest {
                                                 }));
         ChatMessage reply =
                 model.chat(Prompt.fromText("Hi").formatMessages(MessageRole.USER, new HashMap<>()));
-        assertEquals("ok:Hi", reply.getContent());
+        assertEquals("ok:Hi", reply.getText());
     }
 
     @Test

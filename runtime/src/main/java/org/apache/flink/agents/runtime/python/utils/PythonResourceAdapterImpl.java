@@ -141,7 +141,10 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
-        return (PyObject) interpreterManager.invoke(CREATE_RESOURCE, module, clazz, kwargs);
+        // Resource wrappers live in the operator-level cache and may outlive the managed worker
+        // that observes the cache miss. Bind their root handles to the owner interpreter instead of
+        // that worker's disposable interpreter.
+        return (PyObject) interpreterManager.invokeOnOwner(CREATE_RESOURCE, module, clazz, kwargs);
     }
 
     @Override

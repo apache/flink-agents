@@ -19,7 +19,6 @@
 package org.apache.flink.agents.api.subagent;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -44,21 +43,17 @@ public abstract class SubagentSetup extends SerializableResource {
     public static final String CALLABLE_NAME_PREFIX = "_subagent_";
 
     /**
-     * Tells a caller what this sub-agent is for, so that it can decide whether to delegate to it.
-     * This is routing information for the caller, not an instruction for the sub-agent itself.
+     * Descriptor argument key carrying the caller-facing {@link #getDescription()}. It is the
+     * single source of truth shared by the constructor that reads it back and the subclasses whose
+     * descriptors write it, and the cross-language wire key the Python side reads.
      */
-    @JsonProperty("description")
-    private String description;
+    public static final String FIELD_DESCRIPTION = "description";
 
     /**
-     * JSON Schema of the arguments this sub-agent accepts, as declared explicitly. Null when it was
-     * not, in which case {@link #getInputSchema()} derives it from {@link #getInputType()}.
+     * Descriptor argument key carrying the explicitly declared {@link #getInputSchema()}, absent
+     * when it was not declared. Shared like {@link #FIELD_DESCRIPTION} across the write and read
+     * ends so they cannot drift apart.
      */
-    @JsonProperty("input_schema")
-    @Nullable
-    private String inputSchema;
-
-    public static final String FIELD_DESCRIPTION = "description";
     public static final String FIELD_INPUT_SCHEMA = "input_schema";
 
     /**
@@ -70,11 +65,28 @@ public abstract class SubagentSetup extends SerializableResource {
     private final ResourceDescriptor descriptor;
 
     /**
+     * Tells a caller what this sub-agent is for, so that it can decide whether to delegate to it.
+     * This is routing information for the caller, not an instruction for the sub-agent itself. It
+     * travels as the descriptor's {@value #FIELD_DESCRIPTION} argument, so a remote task reads it
+     * back instead of losing it with the live object.
+     */
+    private final String description;
+
+    /**
+     * JSON Schema of the arguments this sub-agent accepts, as declared explicitly. Null when it was
+     * not, in which case {@link #getInputSchema()} derives it from {@link #getInputType()}. It
+     * travels as the descriptor's {@value #FIELD_INPUT_SCHEMA} argument.
+     */
+    @Nullable private final String inputSchema;
+
+    /**
      * Constructs the setup from the descriptor carrying its configuration. This is the only
      * construction path: concrete subclasses expose a public form of it so the framework can
      * rebuild them from a descriptor on a remote task. The descriptor must name this setup's own
      * concrete type as its clazz, because that name is what the remote rebuild reflects over; a
-     * mismatch is rejected here rather than surfacing as a wrong-class rebuild on a far task.
+     * mismatch is rejected here rather than surfacing as a wrong-class rebuild on a far task. The
+     * caller-facing metadata travels as descriptor arguments, so it is read back here rather than
+     * passed alongside the descriptor.
      */
     protected SubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         this.descriptor =
@@ -89,11 +101,13 @@ public abstract class SubagentSetup extends SerializableResource {
                                     + " names %s; a remote task would rebuild the wrong class.",
                             getClass().getName(), this.descriptor.getClazz()));
         }
-        this.description = descriptor.getArgument(FIELD_DESCRIPTION, "");
-        this.inputSchema = descriptor.getArgument(FIELD_INPUT_SCHEMA);
-        if (inputSchema != null && inputSchema.isBlank()) {
+        String declaredDescription = this.descriptor.getArgument(FIELD_DESCRIPTION);
+        this.description = declaredDescription == null ? "" : declaredDescription;
+        String declaredInputSchema = this.descriptor.getArgument(FIELD_INPUT_SCHEMA);
+        if (declaredInputSchema != null && declaredInputSchema.isBlank()) {
             throw new IllegalArgumentException("Sub-agent input schema must not be blank.");
         }
+        this.inputSchema = declaredInputSchema;
     }
 
     /** The descriptor this setup is rebuilt from on a remote task. */

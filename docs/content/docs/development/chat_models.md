@@ -53,6 +53,55 @@ Chat models communicate through built-in events:
 
 A `ChatRequestEvent` can name a model router instead of a chat model to pick the model per request; see [Model Routing]({{< ref "docs/development/model_routing" >}}).
 
+### Message content blocks
+
+Use `ChatMessage.blocks` to combine text and media in a single message, in the
+order you want them presented. Supported block types are `TextBlock`, `ImageBlock`,
+`AudioBlock`, `VideoBlock`, and `DocumentBlock`. For example, a message can contain
+a question followed by an image:
+
+**Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
+and vLLM integrations built on it, send media blocks to the model; see
+[Multimodal Input](#multimodal-input) for what each block becomes. Ollama sends
+Base64 images; see its section. The other built-in integrations, including the
+OpenAI Responses integration, currently send only the text portion of a message.
+
+{{< tabs "Message content blocks" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_message import ChatMessage, ImageBlock, TextBlock
+
+message = ChatMessage.user([
+    TextBlock(text="Describe this image"),
+    ImageBlock.from_url("image/png", "https://example.org/image.png"),
+])
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+ChatMessage message = ChatMessage.user(List.of(
+        TextBlock.of("Describe this image"),
+        ImageBlock.fromUrl("image/png", "https://example.org/image.png")));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Each media block requires a MIME type such as `image/png` and a media source.
+Use `from_url` (Python) or `fromUrl` (Java) for an external URL, as above. For
+inline data, use `from_base64(media_type, data)` or `fromBase64(mediaType, data)`
+with an already Base64-encoded string. The framework does not encode the data or
+verify that its contents match the declared media type. Choose a concrete block
+such as `ImageBlock`, rather than constructing the shared `MediaBlock` base class.
+
+Media blocks also accept optional metadata: `name` for a file name, `size_bytes`
+for the media size in bytes, and `sha256` for a content checksum.
+
+To read only the text, use `.text` (Python) or `getText()` (Java). These concatenate
+the text blocks and exclude media.
+
 ### Usage Example
 
 Here's how to define and use chat models in a workflow agent:
@@ -87,10 +136,7 @@ class MyAgent(Agent):
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
         # Create a chat request with user message
-        user_message = ChatMessage(
-            role=MessageRole.USER,
-            content=f"input: {input_event.input}"
-        )
+        user_message = ChatMessage.user(f"input: {input_event.input}")
         ctx.send_event(
             ChatRequestEvent(model="ollama_chat_model", messages=[user_message])
         )
@@ -99,7 +145,7 @@ class MyAgent(Agent):
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
-        response_content = chat_response.response.content
+        response_content = chat_response.response.text
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -135,7 +181,7 @@ public class MyAgent extends Agent {
     public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        String response = chatResponse.getResponse().getContent();
+        String response = chatResponse.getResponse().getText();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -550,6 +596,8 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+Azure OpenAI sends media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input).
+
 #### Available Models
 
 Azure OpenAI supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
@@ -796,6 +844,8 @@ public class MyAgent extends Agent {
 {{< /tabs >}}
 
 
+**Multimodal input.** The `ImageBlock`s of a user message are sent as the message's `images`, in block order, next to its text; Ollama's API does not interleave images with text. The images must be Base64 data, and the model must support vision. Images given by URL, other media, and media in system, assistant or tool messages raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
+
 #### Available Models
 
 Visit the [Ollama Models Library](https://ollama.com/library) for the complete and up-to-date list of available chat models.
@@ -958,6 +1008,20 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+#### Multimodal Input
+
+The Chat Completions connections (OpenAI, Azure OpenAI and vLLM) send the media blocks of a user message as content parts, in block order:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | a `text` part |
+| `ImageBlock` | an `image_url` part: the URL, or a `data:` URI for Base64 data |
+| `AudioBlock` | an `input_audio` part, for Base64 data in `audio/wav` or `audio/mpeg` (WAV or MP3) |
+| `DocumentBlock` | a `file` part: the Base64 data as a `data:` URI, with the block's `name` as the file name (`document` when unset). OpenAI accepts PDF documents only |
+| `VideoBlock` | not supported |
+
+A user message with only text blocks is still sent as a plain string. Media in system, assistant or tool messages, audio or documents given by URL, other audio types, and video raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. Whether a model accepts a given part depends on the model and the server.
 
 #### Responses API
 
@@ -1237,6 +1301,8 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+vLLM receives media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input). The model must be multimodal; see the [vLLM multimodal inputs docs](https://docs.vllm.ai/en/stable/features/multimodal_inputs/).
+
 #### Available Models
 
 A vLLM server serves the model(s) it was started with. Query `GET /v1/models` on the server to list them; the `model` value in the setup must match one of the returned names.
@@ -1470,10 +1536,7 @@ class MyAgent(Agent):
     def process_input(event: Event, ctx: RunnerContext) -> None:
         input_event = InputEvent.from_event(event)
         # Create a chat request with user message
-        user_message = ChatMessage(
-            role=MessageRole.USER,
-            content=f"input: {input_event.input}"
-        )
+        user_message = ChatMessage.user(f"input: {input_event.input}")
         ctx.send_event(
             ChatRequestEvent(model="java_chat_model", messages=[user_message])
         )
@@ -1482,7 +1545,7 @@ class MyAgent(Agent):
     @staticmethod
     def process_response(event: Event, ctx: RunnerContext) -> None:
         chat_response = ChatResponseEvent.from_event(event)
-        response_content = chat_response.response.content
+        response_content = chat_response.response.text
         # Handle the LLM's response
         # Process the response as needed for your use case
 ```
@@ -1536,7 +1599,7 @@ public class MyAgent extends Agent {
     public static void processResponse(Event event, RunnerContext ctx)
             throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        String response = chatResponse.getResponse().getContent();
+        String response = chatResponse.getResponse().getText();
         // Handle the LLM's response
         // Process the response as needed for your use case
     }
@@ -1654,6 +1717,16 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 {{< /tabs >}}
 
 ## Built-in Events and Actions
+
+`ChatResponseEvent` represents a terminal `SUCCESS` or `FAILED` result. A success carries a `ChatMessage` in `response`; a failure carries an `error` string containing the exception type and message. The two payloads are mutually exclusive. Error text is diagnostic information, not a stable error code; exception objects and stack traces are not stored in the event.
+
+Check `event.is_failed` (Python) or `event.isFailed()` (Java) to handle a failed request. Reading `event.response` or `event.getResponse()` on a failed event raises `ChatResponseError` or `ChatResponseEvent.ChatResponseException`, respectively, with the original request ID and error text. Reading `error` on a successful event also raises. Serialization and event logging do not invoke these accessors. The built-in ReAct agent reads the response directly, so an unhandled failed response propagates from its consumer Action; applications that want to recover should handle the failed event explicitly.
+
+Ordinary provider, resource-resolution, response-validation and structured-output errors produce a failed response after configured retries and routing fallbacks are exhausted. `max-retries` controls the number of additional attempts (default: 0), and `retry-wait-interval` controls exponential backoff. These settings also apply to routing judge calls. A judge call failure fails the request rather than selecting the default model; a normal abstaining verdict still selects the default. Intermediate attempts and Tool rounds do not emit terminal responses, and the final response always refers to the initial request ID.
+
+Cancellation, interruption and fatal errors propagate. Durable persistence/recovery, required Tool context, and event-delivery failures also propagate to Flink rather than becoming Chat failures. A response cannot be guaranteed during cancellation or an unrecoverable runtime failure. Recovery may replay physical events; consumers must correlate by request ID and complete idempotently.
+
+Create results with `ChatResponseEvent.success(...)` or `ChatResponseEvent.failed(...)`. This is a breaking event and durable-call format change: `status` is mandatory, and old events and old persisted Chat/routing call results are not supported. Update custom producers, consumers, and stored fixtures together.
 
 The built-in `chat_model_action` listens to `ChatRequestEvent` and `ToolResponseEvent`. To request a chat completion, send a `ChatRequestEvent`. If the model returns a final answer, the action sends a `ChatResponseEvent`.
 

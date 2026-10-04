@@ -76,7 +76,7 @@ def test_child_configuration_and_resources_are_used_then_parent_is_restored(
             emitted = []
             ctx.send_event = emitted.append
             ReActAgent.start_action(InputEvent(input={"prompt": "investigate"}), ctx)
-            assert [message.content for message in emitted[0].messages] == [
+            assert [message.text for message in emitted[0].messages] == [
                 "child instructions",
                 "investigate",
             ]

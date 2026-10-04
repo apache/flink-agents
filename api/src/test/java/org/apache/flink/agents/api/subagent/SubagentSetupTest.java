@@ -18,9 +18,11 @@
 
 package org.apache.flink.agents.api.subagent;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.Test;
 
@@ -33,7 +35,13 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Pins the routing metadata {@link SubagentSetup} carries for a caller. */
+/**
+ * Pins the construction contract of {@link SubagentSetup} and the routing metadata it carries for a
+ * caller. Every setup carries the descriptor a remote task rebuilds it from, and that descriptor
+ * names the setup's own type, so a registered sub-agent is always rebuildable into the right class.
+ * The metadata travels as descriptor arguments, the single wire both a remote task and the Python
+ * side read, so it is pinned there rather than on a serialized object.
+ */
 public class SubagentSetupTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -52,16 +60,27 @@ public class SubagentSetupTest {
         }
 
         MetadataOnlySetup(String description, @Nullable String inputSchema) {
-            this(MetadataOnlySetup.class, description, inputSchema);
+            this(metadataDescriptor(MetadataOnlySetup.class, description, inputSchema), null);
         }
 
-        MetadataOnlySetup(Class<?> clazz, String description, String inputSchema) {
-            super(
-                    ResourceDescriptor.Builder.newBuilder(clazz.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, description)
-                            .addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema)
-                            .build(),
-                    null);
+        /** Descriptor-based construction, the path a remote task rebuilds the setup through. */
+        MetadataOnlySetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        /**
+         * Builds the metadata-only descriptor naming {@code concreteClass}, so a subclass that adds
+         * no configuration of its own still carries a descriptor naming its own concrete type.
+         */
+        static ResourceDescriptor metadataDescriptor(
+                Class<?> concreteClass, String description, @Nullable String inputSchema) {
+            ResourceDescriptor.Builder builder =
+                    ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                            .addInitialArgument(FIELD_DESCRIPTION, description);
+            if (inputSchema != null) {
+                builder.addInitialArgument(FIELD_INPUT_SCHEMA, inputSchema);
+            }
+            return builder.build();
         }
 
         @Override
@@ -90,7 +109,7 @@ public class SubagentSetupTest {
         private final Class<?> resultType;
 
         TypedSetup(Class<?> inputType, Class<?> resultType) {
-            super(TypedSetup.class, "Reviews a file.", null);
+            super(metadataDescriptor(TypedSetup.class, "Reviews a file.", null), null);
             this.inputType = inputType;
             this.resultType = resultType;
         }
@@ -131,6 +150,69 @@ public class SubagentSetupTest {
 
         public Cyclic getNext() {
             return next;
+        }
+    }
+
+    /** A value object one level down, so alignment has to recurse to reach it. */
+    public static class Nested {
+        private String name;
+        private int count;
+        private byte[] blob;
+
+        public String getName() {
+            return name;
+        }
+
+        public int getCount() {
+            return count;
+        }
+
+        public byte[] getBlob() {
+            return blob;
+        }
+    }
+
+    /**
+     * Holds a {@link Nested} object, whose own required list and {@code byte[]} sit one level in.
+     */
+    public static class WithNested {
+        private String id;
+        private Nested nested;
+
+        public String getId() {
+            return id;
+        }
+
+        public Nested getNested() {
+            return nested;
+        }
+    }
+
+    /**
+     * Properties whose name in the schema is not the Java field name: a {@code boolean isActive}
+     * the schema calls {@code active}, a getter renamed with {@link JsonProperty}, and a getter
+     * with no field behind it. All three are primitives, so all three are optional; matching on the
+     * field name finds none of them and wrongly marks each one required.
+     */
+    public static class Naming {
+        private boolean isActive;
+        private String label;
+
+        public boolean isActive() {
+            return isActive;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+
+        @JsonProperty("renamed")
+        public int getCount() {
+            return 0;
+        }
+
+        public boolean isReady() {
+            return true;
         }
     }
 
@@ -192,6 +274,47 @@ public class SubagentSetupTest {
         assertThat(properties.path("payload").path("format").asText()).isEqualTo("binary");
     }
 
+    /**
+     * Alignment recurses: a nested object gets the same step as the top level, so it carries its
+     * own {@code required} list ({@code name} and {@code blob}, not the primitive {@code count})
+     * and its {@code byte[]} is rewritten to {@code string}/{@code binary} rather than left an
+     * array of the non-standard {@code byte} type. This is the shape pydantic gives the same model,
+     * which the cross-language contract pins.
+     */
+    @Test
+    void aNestedObjectIsAlignedLikeTheTopLevel() throws Exception {
+        JsonNode schema =
+                MAPPER.readTree(new TypedSetup(WithNested.class, Object.class).getInputSchema());
+        JsonNode nested = schema.path("properties").path("nested");
+
+        assertThat(textValues(schema.path("required"))).containsExactlyInAnyOrder("id", "nested");
+        assertThat(textValues(nested.path("required"))).containsExactlyInAnyOrder("name", "blob");
+        assertThat(nested.path("properties").path("count").path("type").asText())
+                .isEqualTo("integer");
+        assertThat(nested.path("properties").path("blob").path("type").asText())
+                .isEqualTo("string");
+        assertThat(nested.path("properties").path("blob").path("format").asText())
+                .isEqualTo("binary");
+    }
+
+    /**
+     * A property is judged optional by whether its Java type is a primitive, matched on the name it
+     * carries in the schema. {@code active} (from {@code isActive}), {@code renamed} (a getter with
+     * {@link JsonProperty}), and {@code ready} (a getter with no field) are all primitives that a
+     * field-name lookup never finds, so only the {@code String label} is required.
+     */
+    @Test
+    void aPrimitiveIsOptionalWhateverItsSchemaName() throws Exception {
+        JsonNode schema =
+                MAPPER.readTree(new TypedSetup(Naming.class, Object.class).getInputSchema());
+        JsonNode properties = schema.path("properties");
+
+        assertThat(textValues(schema.path("required"))).containsExactly("label");
+        assertThat(properties.path("active").path("type").asText()).isEqualTo("boolean");
+        assertThat(properties.path("renamed").path("type").asText()).isEqualTo("integer");
+        assertThat(properties.path("ready").path("type").asText()).isEqualTo("boolean");
+    }
+
     @Test
     void anExplicitInputSchemaWinsOverTheInputType() {
         String declared = "{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}}}";
@@ -215,32 +338,34 @@ public class SubagentSetupTest {
                 .hasMessageContaining("is self-referential");
     }
 
-    /** The declared types drive behavior, so they must not leak into the cross-language plan. */
+    /**
+     * The declared types drive behavior, so they are not descriptor state: they never travel to a
+     * remote task or across to Python, which reads only the descriptor's arguments.
+     */
     @Test
-    void theDeclaredTypesStayOutOfThePlanJson() throws Exception {
-        String json = MAPPER.writeValueAsString(new TypedSetup(Review.class, Review.class));
+    void theDeclaredTypesStayOutOfTheDescriptor() {
+        Map<String, Object> arguments =
+                new TypedSetup(Review.class, Review.class).getDescriptor().getInitialArguments();
 
-        assertThat(json).doesNotContain("inputType").doesNotContain("resultType");
+        assertThat(arguments).doesNotContainKeys("inputType", "resultType");
     }
 
     /**
-     * The plan JSON is a cross-language contract: these two keys are what the Python side reads, so
-     * they are pinned literally rather than through the getters.
+     * The descriptor's arguments are the cross-language wire the Python side reads, so the metadata
+     * keys are pinned literally there rather than through the getters, and the descriptor names the
+     * concrete type a remote task reflects over to rebuild the setup.
      */
     @Test
-    void theMetadataSerializesUnderTheCrossLanguageKeys() throws Exception {
+    void theMetadataTravelsUnderTheCrossLanguageDescriptorKeys() {
         String customSchema =
                 "{\"type\":\"object\",\"properties\":{\"path\":{\"type\":\"string\"}}}";
 
-        String json =
-                MAPPER.writeValueAsString(new MetadataOnlySetup("Reviews a file.", customSchema));
+        MetadataOnlySetup setup = new MetadataOnlySetup("Reviews a file.", customSchema);
+        Map<String, Object> arguments = setup.getDescriptor().getInitialArguments();
 
-        assertThat(json)
-                .contains("\"description\":\"Reviews a file.\"")
-                .contains("\"input_schema\"");
-        assertThat(json).doesNotContain("inputSchema");
-        Map<String, Object> parsed = MAPPER.readValue(json, Map.class);
-        assertThat(parsed).containsEntry("input_schema", customSchema);
+        assertThat(arguments).containsEntry("description", "Reviews a file.");
+        assertThat(arguments).containsEntry("input_schema", customSchema);
+        assertThat(setup.getDescriptor().getClazz()).isEqualTo(MetadataOnlySetup.class.getName());
     }
 
     @Test

@@ -42,22 +42,25 @@ services:
       - flink-agents-milvus
 
   milvus-minio:
-    image: quay.io/minio/minio:RELEASE.2023-03-20T20-16-18Z
+    # MinIO no longer serves its community image anonymously from Docker Hub or Quay, so use
+    # Bitnami's frozen legacy build. Its entrypoint starts the server on 9000 with the console on
+    # 9001; the credentials match Milvus' default MinIO access key and secret.
+    image: bitnamilegacy/minio:2025.7.23
     container_name: flink-agents-milvus-minio
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-    command: minio server /minio_data --console-address ":9001"
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
       - "9000:9000"
       - "9001:9001"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      # The image does not guarantee curl; probe the API port with bash instead.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9000"]
       interval: 30s
       timeout: 20s
       retries: 3
     volumes:
-      - milvus_minio_data:/minio_data
+      - milvus_minio_data:/bitnami/minio/data
     networks:
       - flink-agents-milvus
 

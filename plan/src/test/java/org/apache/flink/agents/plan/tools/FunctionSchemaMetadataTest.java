@@ -28,23 +28,22 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class SchemaUtilsTest {
+class FunctionSchemaMetadataTest {
 
     private static class TestClass {
-        public void methodWithBasicTypes(
+        public static void methodWithBasicTypes(
                 @ToolParam(name = "stringParam", description = "A string parameter")
                         String strParam,
                 @ToolParam(
                                 name = "intParam",
                                 description = "An integer parameter",
-                                required = false)
+                                required = false,
+                                defaultValue = "0")
                         int intParam,
                 @ToolParam(name = "boolParam", description = "A boolean parameter")
                         boolean boolParam) {}
 
-        public void methodWithoutAnnotations(String param1, int param2) {}
-
-        public void methodWithWideNumericTypes(
+        public static void methodWithWideNumericTypes(
                 @ToolParam(name = "longParam", description = "A long parameter") long longParam,
                 @ToolParam(name = "boxedLongParam", description = "A boxed long") Long boxedLong,
                 @ToolParam(name = "floatParam", description = "A float parameter") float floatParam,
@@ -53,11 +52,11 @@ class SchemaUtilsTest {
                 @ToolParam(name = "shortParam", description = "A short parameter") short shortParam,
                 @ToolParam(name = "byteParam", description = "A byte parameter") byte byteParam) {}
 
-        public void methodWithCustomObject(
+        public static void methodWithCustomObject(
                 @ToolParam(name = "objectParam", description = "A custom object parameter")
                         Object customObject) {}
 
-        public void methodWithExternallyInjectedRequiredParam(
+        public static void methodWithExternallyInjectedRequiredParam(
                 @ToolParam(name = "order_id", description = "The order id") String orderId,
                 @ToolParam(name = "tenant_id", description = "The tenant id") String tenantId) {}
     }
@@ -75,7 +74,7 @@ class SchemaUtilsTest {
                         Float.class,
                         short.class,
                         byte.class);
-        String schema = SchemaUtils.generateSchema(method);
+        String schema = new FunctionSchema(method, Set.of()).getMetadata().getInputSchema();
         final JsonNode jsonNode = mapper.readTree(schema);
         JsonNode properties = jsonNode.get("properties");
 
@@ -97,7 +96,7 @@ class SchemaUtilsTest {
         Method method =
                 TestClass.class.getMethod(
                         "methodWithBasicTypes", String.class, int.class, boolean.class);
-        String schema = SchemaUtils.generateSchema(method);
+        String schema = new FunctionSchema(method, Set.of()).getMetadata().getInputSchema();
         final JsonNode jsonNode = mapper.readTree(schema);
 
         // Validate basic schema structure
@@ -133,7 +132,7 @@ class SchemaUtilsTest {
         // stringParam and boolParam should be required (default is true)
         assertTrue(required.toString().contains("stringParam"));
         assertTrue(required.toString().contains("boolParam"));
-        // intParam should not be required (explicitly set to false)
+        // intParam has a declared default and need not be supplied
         assertFalse(required.toString().contains("intParam"));
     }
 
@@ -142,7 +141,8 @@ class SchemaUtilsTest {
         Method method =
                 TestClass.class.getMethod(
                         "methodWithBasicTypes", String.class, int.class, boolean.class);
-        String schema = SchemaUtils.generateSchema(method, Set.of("intParam"));
+        String schema =
+                new FunctionSchema(method, Set.of("intParam")).getMetadata().getInputSchema();
         JsonNode jsonNode = mapper.readTree(schema);
 
         JsonNode properties = jsonNode.get("properties");
@@ -157,7 +157,8 @@ class SchemaUtilsTest {
         Method method =
                 TestClass.class.getMethod(
                         "methodWithExternallyInjectedRequiredParam", String.class, String.class);
-        String schema = SchemaUtils.generateSchema(method, Set.of("tenant_id"));
+        String schema =
+                new FunctionSchema(method, Set.of("tenant_id")).getMetadata().getInputSchema();
         JsonNode jsonNode = mapper.readTree(schema);
 
         JsonNode properties = jsonNode.get("properties");
@@ -170,13 +171,13 @@ class SchemaUtilsTest {
     @Test
     void testGenerateSchemaWithCustomObject() throws Exception {
         Method method = TestClass.class.getMethod("methodWithCustomObject", Object.class);
-        String schema = SchemaUtils.generateSchema(method);
+        String schema = new FunctionSchema(method, Set.of()).getMetadata().getInputSchema();
         JsonNode jsonNode = mapper.readTree(schema);
 
         // Validate custom object type
         JsonNode properties = jsonNode.get("properties");
         assertTrue(properties.has("objectParam"));
-        assertEquals("object", properties.get("objectParam").get("type").asText());
+        assertFalse(properties.get("objectParam").has("type"));
         assertEquals(
                 "A custom object parameter",
                 properties.get("objectParam").get("description").asText());

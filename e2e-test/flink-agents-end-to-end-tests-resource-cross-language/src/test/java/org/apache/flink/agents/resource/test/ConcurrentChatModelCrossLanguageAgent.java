@@ -70,8 +70,7 @@ public class ConcurrentChatModelCrossLanguageAgent extends Agent {
             }
 
             ChatMessage request = messages.get(messages.size() - 1);
-            return new ChatMessage(
-                    MessageRole.ASSISTANT, "java-connection:" + request.getContent());
+            return new ChatMessage(MessageRole.ASSISTANT, "java-connection:" + request.getText());
         }
     }
 
@@ -103,6 +102,6 @@ public class ConcurrentChatModelCrossLanguageAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void emitResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent response = ChatResponseEvent.fromEvent(event);
-        ctx.sendEvent(new OutputEvent(response.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(response.getResponse().getText()));
     }
 }

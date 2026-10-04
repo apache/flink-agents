@@ -85,7 +85,9 @@ def _connection(
 
 def _chat(conn: AzureOpenAIChatModelConnection, **kwargs: object) -> ChatMessage:
     return conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")], model=DEPLOYMENT, **kwargs
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
+        model=DEPLOYMENT,
+        **kwargs,
     )
 
 

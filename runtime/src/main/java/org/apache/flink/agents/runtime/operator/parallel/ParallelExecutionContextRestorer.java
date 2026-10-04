@@ -15,17 +15,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.flink.agents.runtime.operator.parallel;
 
-package org.apache.flink.agents.api.annotation;
+import org.apache.flink.agents.runtime.operator.ActionTask;
 
 /**
- * Python target descriptor used inside {@link Action#target()}. Empty {@link #module()} = no
- * cross-language target (action stays native Java). When non-empty, the Java method body is never
- * invoked — throw {@link UnsupportedOperationException} from the stub so direct calls outside the
- * framework fail loud.
+ * Restores the shared runner context to a resuming action task. Called by the async executor after
+ * a worker re-acquires the lock, so the shared context is repointed at the task's key, memory,
+ * continuation, and durable-execution contexts before control returns to user code.
  */
-public @interface PythonFunction {
-    String module() default "";
+@FunctionalInterface
+public interface ParallelExecutionContextRestorer {
 
-    String qualname() default "";
+    void restore(Object key, ActionTask actionTask);
 }

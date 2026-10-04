@@ -52,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -71,6 +72,9 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
     private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
+    private static final String FIXED_TOOL_CALL_ID_FAILED = "call_dddd";
+    private static final String FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed.";
+    private static final String FIXED_TOOL_ERROR = "ValueError: boom";
     private static final String MEMORY_REF_ATTACHMENT_EVENT_TYPE = "_memory_ref_attachment_event";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
@@ -221,7 +225,7 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(1, typed.getMessages().size(), "Expected one message.");
         ChatMessage msg = typed.getMessages().get(0);
         assertEquals(MessageRole.USER, msg.getRole(), "Role mismatch on Python-produced message.");
-        assertEquals("hello world", msg.getContent());
+        assertEquals("hello world", msg.getText());
     }
 
     /**
@@ -256,6 +260,8 @@ class CrossLanguageEventSnapshotTest {
 
     private static ChatResponseEvent buildChatResponseEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("status", ChatResponseEvent.SUCCESS);
+        attrs.put("error", null);
         attrs.put("request_id", FIXED_REQUEST_ID);
         attrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
         attrs.put("retry_count", 0);
@@ -274,6 +280,35 @@ class CrossLanguageEventSnapshotTest {
         assertJavaSnapshotStable("chat_response_event.json", buildChatResponseEvent());
     }
 
+    private static ChatResponseEvent buildFailedChatResponseEvent() {
+        ChatResponseEvent failed =
+                ChatResponseEvent.failed(FIXED_REQUEST_ID, "TimeoutError: timed out", 2, 3);
+        return new ChatResponseEvent(FIXED_EVENT_ID, failed.getAttributes());
+    }
+
+    @Test
+    void regenerateFailedChatResponseEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("chat_response_failed_event.json", buildFailedChatResponseEvent());
+    }
+
+    @Test
+    void failedChatResponseEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable("chat_response_failed_event.json", buildFailedChatResponseEvent());
+    }
+
+    @Test
+    void javaCanDeserializeFailedChatResponseFromPythonSnapshot() throws Exception {
+        ChatResponseEvent typed =
+                ChatResponseEvent.fromEvent(readPythonSnapshot("chat_response_failed_event.json"));
+        assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
+        assertTrue(typed.isFailed());
+        assertEquals("TimeoutError: timed out", typed.getError());
+        assertEquals(2, typed.getRetryCount());
+        org.junit.jupiter.api.Assertions.assertThrows(
+                ChatResponseEvent.ChatResponseException.class, typed::getResponse);
+    }
+
     @Test
     void javaCanDeserializeChatResponseEventFromPythonSnapshot() throws Exception {
         Event base = readPythonSnapshot("chat_response_event.json");
@@ -285,7 +320,7 @@ class CrossLanguageEventSnapshotTest {
         ChatMessage response = typed.getResponse();
         assertNotNull(response, "response field is null.");
         assertEquals(MessageRole.ASSISTANT, response.getRole(), "Role mismatch on response.");
-        assertEquals("hi there", response.getContent());
+        assertEquals("hi there", response.getText());
     }
 
     // ── ToolRequestEvent ───────────────────────────────────────────────────
@@ -375,8 +410,25 @@ class CrossLanguageEventSnapshotTest {
 
         Map<String, Object> attrs = typed.getAttributes();
         assertEquals(Boolean.TRUE, typed.getSuccess().get(FIXED_TOOL_CALL_ID));
-        assertTrue(typed.getError().isEmpty());
+        assertEquals(Map.of(FIXED_TOOL_CALL_ID_FAILED, FIXED_TOOL_ERROR), typed.getError());
         assertFalse(attrs.containsKey("timestamp"));
+    }
+
+    @Test
+    void pythonToolResponseEventKeepsFailedCallsAsErrors() throws Exception {
+        Event base = readPythonSnapshot("tool_response_event.json");
+        ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
+
+        ToolResponse failed = typed.getResponses().get(FIXED_TOOL_CALL_ID_FAILED);
+        assertNotNull(failed);
+        assertTrue(failed.isError(), "A call Python marked as failed must not read as a success.");
+        // The response keeps the text Python shows the model; the diagnostic stays in getError().
+        assertEquals(FIXED_TOOL_FAILURE_TEXT, failed.getError());
+        assertEquals(FIXED_TOOL_ERROR, typed.getError().get(FIXED_TOOL_CALL_ID_FAILED));
+        assertEquals(Boolean.FALSE, typed.getSuccess().get(FIXED_TOOL_CALL_ID_FAILED));
+
+        String printed = assertDoesNotThrow(typed::toString);
+        assertTrue(printed.contains(FIXED_TOOL_CALL_ID_FAILED + "=false"), printed);
     }
 
     // ── ContextRetrievalRequestEvent ───────────────────────────────────────

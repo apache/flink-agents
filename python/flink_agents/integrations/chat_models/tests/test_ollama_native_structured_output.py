@@ -63,7 +63,7 @@ def _chat_call_kwargs(conn: OllamaChatModelConnection) -> Dict[str, Any]:
 
 
 def _messages() -> list[ChatMessage]:
-    return [ChatMessage(role=MessageRole.USER, content="hi")]
+    return [ChatMessage.of(role=MessageRole.USER, content="hi")]
 
 
 def test_native_applied_for_base_model() -> None:
@@ -148,7 +148,7 @@ def test_schema_accepted_not_rejected() -> None:
     response = conn.chat(
         _messages(), model="qwen3", output_schema=OutputSchema(output_schema=row_type)
     )
-    assert response.content == "ok"
+    assert response.text == "ok"
 
 
 def _judging_connection() -> tuple[OllamaChatModelConnection, list]:

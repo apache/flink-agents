@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -285,11 +286,11 @@ class ToolCallActionSubagentTest {
 
     /**
      * Under the batched path, sub-agent calls split off from the tool batch and run on their own
-     * track, then the tool batch runs through {@code durableExecuteAllAsync} against a list built
-     * alongside {@code toolExecutions}. Each call id must land on its own result: if the two lists
-     * drift against each other, one call's response ends up under another call's id, and neither a
-     * sub-agent-only nor a tool-only case can see it. Two tools keep the reverse-index shape of the
-     * drift observable.
+     * track, then the tool batch runs through {@code gather} against a list built alongside {@code
+     * toolExecutions}. Each call id must land on its own result: if the two lists drift against
+     * each other, one call's response ends up under another call's id, and neither a sub-agent-only
+     * nor a tool-only case can see it. Two tools keep the reverse-index shape of the drift
+     * observable.
      */
     @Test
     void parallelDispatchKeepsToolAndSubagentResultsOnTheirOwnIds() throws Exception {
@@ -383,6 +384,12 @@ class ToolCallActionSubagentTest {
                 .startsWith("Sub-agent _subagent_b execute failed");
     }
 
+    /**
+     * A resolved delegation is reported under the sub-agent scope keyed by the registered agent
+     * name -- not the reserved callable name and not the tool scope -- and carries a start
+     * occurrence, so the runtime attributes a latency window to it instead of bucketing it as an
+     * unknown tool with no latency.
+     */
     @Test
     void reportsAResolvedSubagentDelegationUnderTheSubagentScope() throws Exception {
         RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("done"));
@@ -491,6 +498,17 @@ class ToolCallActionSubagentTest {
                                 Map.of("name", secondTool, "arguments", Map.of("q", "y")))));
     }
 
+    /**
+     * Builds a metadata-only descriptor naming {@code concreteClass}, so each in-process double
+     * carries a descriptor naming its own type as the {@link SubagentSetup} constructor requires.
+     */
+    private static ResourceDescriptor subagentDescriptor(
+            Class<?> concreteClass, String description) {
+        return ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                .addInitialArgument(SubagentSetup.FIELD_DESCRIPTION, description)
+                .build();
+    }
+
     /** Captures every prompt it is handed and resolves to a preset outcome. */
     private static class RecordingSubagentSetup extends SubagentSetup {
         private final SubagentResult outcome;
@@ -498,15 +516,11 @@ class ToolCallActionSubagentTest {
         private Exception submitFailure;
 
         RecordingSubagentSetup(SubagentResult outcome) {
-            this(RecordingSubagentSetup.class, outcome);
+            this(subagentDescriptor(RecordingSubagentSetup.class, "Reviews a diff."), outcome);
         }
 
-        RecordingSubagentSetup(Class<?> clazz, SubagentResult outcome) {
-            super(
-                    ResourceDescriptor.Builder.newBuilder(clazz.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, "Reviews a diff.")
-                            .build(),
-                    null);
+        RecordingSubagentSetup(ResourceDescriptor descriptor, SubagentResult outcome) {
+            super(descriptor, null);
             this.outcome = outcome;
         }
 
@@ -536,7 +550,9 @@ class ToolCallActionSubagentTest {
     /** Declares a result type, so its result is read through it. */
     private static class TypedRecordingSubagentSetup extends RecordingSubagentSetup {
         TypedRecordingSubagentSetup(SubagentResult outcome) {
-            super(TypedRecordingSubagentSetup.class, outcome);
+            super(
+                    subagentDescriptor(TypedRecordingSubagentSetup.class, "Reviews a diff."),
+                    outcome);
         }
 
         @Override
@@ -604,12 +620,7 @@ class ToolCallActionSubagentTest {
         private final List<String> ops;
 
         OrderRecordingSubagentSetup(String label, List<String> ops) {
-            super(
-                    ResourceDescriptor.Builder.newBuilder(
-                                    OrderRecordingSubagentSetup.class.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, "Orders a diff.")
-                            .build(),
-                    null);
+            super(subagentDescriptor(OrderRecordingSubagentSetup.class, "Orders a diff."), null);
             this.label = label;
             this.ops = ops;
         }
@@ -672,9 +683,7 @@ class ToolCallActionSubagentTest {
 
         InterruptingSubagentSetup(String label, List<String> ops) {
             super(
-                    ResourceDescriptor.Builder.newBuilder(InterruptingSubagentSetup.class.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, "Interrupts on await.")
-                            .build(),
+                    subagentDescriptor(InterruptingSubagentSetup.class, "Interrupts on await."),
                     null);
             this.label = label;
             this.ops = ops;
@@ -734,11 +743,7 @@ class ToolCallActionSubagentTest {
     /** Its await overflows the stack, to drive the {@link StackOverflowError} absorption path. */
     private static class OverflowingSubagentSetup extends SubagentSetup {
         OverflowingSubagentSetup() {
-            super(
-                    ResourceDescriptor.Builder.newBuilder(OverflowingSubagentSetup.class.getName())
-                            .addInitialArgument(FIELD_DESCRIPTION, "Overflows on await.")
-                            .build(),
-                    null);
+            super(subagentDescriptor(OverflowingSubagentSetup.class, "Overflows on await."), null);
         }
 
         @Override
@@ -801,8 +806,8 @@ class ToolCallActionSubagentTest {
     }
 
     private static class FakeRunnerContext implements RunnerContext, ExecutionReporter {
-        private final List<ExecutionReport> reports = new ArrayList<>();
         private final List<Event> sentEvents = new ArrayList<>();
+        private final List<ExecutionReport> reports = new ArrayList<>();
         private final Map<String, Resource> tools = new LinkedHashMap<>();
         private final Map<String, Resource> agents = new LinkedHashMap<>();
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
@@ -887,20 +892,33 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-            durableExecutions++;
-            return callable.call();
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+            // A deferred handle: the callable runs only when the future is awaited, directly
+            // or as part of gather, so the count reflects executions, not handle creations.
+            return new TestDurableFuture<>(
+                    callable.getId(),
+                    () -> {
+                        durableExecutions++;
+                        return callable.call();
+                    });
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-            for (DurableCallable<T> callable : callables) {
-                durableExecutions++;
-                outcomes.add(Outcome.success(callable.call()));
-            }
-            return outcomes;
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            return new TestDurableFuture<>(
+                    "gather",
+                    () -> {
+                        List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
+                        for (DurableFuture<T> future : futures) {
+                            try {
+                                outcomes.add(Outcome.success(future.await()));
+                            } catch (Exception e) {
+                                outcomes.add(Outcome.failure(e));
+                            }
+                        }
+                        return outcomes;
+                    });
         }
 
         @Override
@@ -963,6 +981,7 @@ class ToolCallActionSubagentTest {
         @Override
         public void close() {}
     }
+
     /** One lifecycle report captured by {@link FakeRunnerContext}, for scope assertions. */
     private static final class ExecutionReport {
         private final String phase;

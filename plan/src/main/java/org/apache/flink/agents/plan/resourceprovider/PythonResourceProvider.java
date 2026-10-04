@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
+import org.apache.flink.util.ExceptionUtils;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
@@ -114,15 +115,25 @@ public class PythonResourceProvider extends ResourceProvider {
         }
 
         PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
-        Constructor<?> constructor =
-                clazz.getConstructor(
-                        PythonResourceAdapter.class,
-                        PyObject.class,
-                        ResourceDescriptor.class,
-                        ResourceContext.class);
-        return (Resource)
-                constructor.newInstance(
-                        pythonResourceAdapter, pyResource, descriptor, resourceContext);
+        try {
+            Constructor<?> constructor =
+                    clazz.getConstructor(
+                            PythonResourceAdapter.class,
+                            PyObject.class,
+                            ResourceDescriptor.class,
+                            ResourceContext.class);
+            return (Resource)
+                    constructor.newInstance(
+                            pythonResourceAdapter, pyResource, descriptor, resourceContext);
+        } catch (Throwable constructionFailure) {
+            try {
+                pyResource.close();
+            } catch (Throwable closeFailure) {
+                constructionFailure.addSuppressed(closeFailure);
+            }
+            ExceptionUtils.rethrowException(constructionFailure);
+            throw new AssertionError("Unreachable after rethrowing resource construction failure");
+        }
     }
 
     @Override

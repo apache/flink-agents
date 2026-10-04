@@ -57,9 +57,9 @@ class OverlappingPythonChatModelConnection(BaseChatModelConnection):
             message = "Timed out waiting for concurrent cross-language chat request."
             raise RuntimeError(message) from error
 
-        return ChatMessage(
+        return ChatMessage.of(
             role=MessageRole.ASSISTANT,
-            content=f"python-connection:{messages[-1].content}",
+            content=f"python-connection:{messages[-1].text}",
         )
 
 
@@ -97,7 +97,7 @@ class ConcurrentChatModelCrossLanguageAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="java_chat_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=input_value)],
+                messages=[ChatMessage.of(role=MessageRole.USER, content=input_value)],
             )
         )
 
@@ -106,4 +106,4 @@ class ConcurrentChatModelCrossLanguageAgent(Agent):
     def emit_response(event: Event, ctx: RunnerContext) -> None:
         """Emit the cross-language chat response."""
         response = ChatResponseEvent.from_event(event).response
-        ctx.send_event(OutputEvent(output=response.content))
+        ctx.send_event(OutputEvent(output=response.text))

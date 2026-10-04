@@ -24,7 +24,6 @@ from typing_extensions import override
 
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
-from flink_agents.api.tools.utils import create_model_from_schema
 
 
 class SubagentTool(Tool):
@@ -64,11 +63,7 @@ class SubagentTool(Tool):
                     description or f"Delegate a standalone task to sub-agent {name}"
                 )
                 + " This is subagent.",
-                # The cross-language contract carries a JSON schema string, while
-                # tool metadata holds a model type, so it is built here.
-                args_schema=create_model_from_schema(
-                    callable_name, json.loads(input_schema)
-                ),
+                args_schema=json.loads(input_schema),
             )
         )
 

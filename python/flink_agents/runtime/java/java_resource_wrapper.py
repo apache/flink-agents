@@ -90,11 +90,13 @@ class JavaPrompt(Prompt):
             j_MessageRole.fromValue(role.value), kwargs
         )
         chatMessages = [
-            ChatMessage(
-                role=MessageRole(j_chat_message.getRole().getValue()),
-                content=j_chat_message.getContent(),
-                tool_calls=j_chat_message.getToolCalls(),
-                extra_args=j_chat_message.getExtraArgs(),
+            ChatMessage.model_validate(
+                {
+                    "role": MessageRole(j_chat_message.getRole().getValue()),
+                    "blocks": j_chat_message.getBlocksAsMaps(),
+                    "tool_calls": j_chat_message.getToolCalls(),
+                    "extra_args": j_chat_message.getExtraArgs(),
+                }
             )
             for j_chat_message in j_chat_messages
         ]

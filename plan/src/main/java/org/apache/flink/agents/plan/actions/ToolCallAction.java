@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.Outcome;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -113,7 +114,9 @@ public class ToolCallAction {
             String id = String.valueOf(toolCall.get("id"));
             Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
             String name = (String) function.get("name");
-            Map<String, Object> arguments = (Map<String, Object>) function.get("arguments");
+            Object rawArguments = function.get("arguments");
+            Map<String, Object> arguments =
+                    rawArguments instanceof Map ? (Map<String, Object>) rawArguments : null;
             Map<String, Object> mergedArguments =
                     arguments == null ? new HashMap<>() : new HashMap<>(arguments);
 
@@ -123,7 +126,11 @@ public class ToolCallAction {
 
             Tool tool = null;
             SubagentSetup agent = null;
-            Exception preparationError = null;
+            Exception preparationError =
+                    arguments == null
+                            ? new IllegalArgumentException(
+                                    "INVALID_ARGUMENT /: type (expected object)")
+                            : null;
             // The reserved _subagent_ prefix separates the two namespaces: tool
             // registration rejects the prefix, so a prefixed callable name can only
             // address a sub-agent. Matched once here and carried down, because resolving
@@ -147,8 +154,6 @@ public class ToolCallAction {
             // unchanged.
             if (tool != null) {
                 try {
-                    // Framework-owned injected args must win over model-provided values so hidden
-                    // context such as tenant ids cannot be spoofed by a tool call payload.
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
                 } catch (Exception e) {
                     preparationError = e;
@@ -260,15 +265,15 @@ public class ToolCallAction {
             }
         }
         dispatchAgentExecutions(agentExecutions, ctx, success, error, responses);
-        List<DurableCallable<ToolResponse>> callables = new ArrayList<>(toolExecutions.size());
+        List<DurableFuture<ToolResponse>> futures = new ArrayList<>(toolExecutions.size());
         for (ToolCallExecution execution : toolExecutions) {
-            callables.add(execution.callable);
+            futures.add(ctx.durableExecuteAsync(execution.callable));
         }
         List<Outcome<ToolResponse>> outcomes = List.of();
         Instant resultObservedAt = null;
         Error fatalError = null;
         try {
-            outcomes = ctx.durableExecuteAllAsync(callables);
+            outcomes = ctx.gather(futures).await();
             resultObservedAt = Instant.now();
             for (int i = 0; i < outcomes.size(); i++) {
                 recordOutcome(toolExecutions.get(i), outcomes.get(i), success, error, responses);
@@ -327,7 +332,7 @@ public class ToolCallAction {
             try {
                 ToolResponse response =
                         toolCallAsync
-                                ? ctx.durableExecuteAsync(execution.callable)
+                                ? ctx.durableExecuteAsync(execution.callable).await()
                                 : ctx.durableExecute(execution.callable);
                 resultObservedAt = Instant.now();
                 outcome = Outcome.success(response);

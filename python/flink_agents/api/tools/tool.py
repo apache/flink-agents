@@ -17,10 +17,11 @@
 #################################################################################
 import typing
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Type
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, field_serializer, model_validator
+from pydantic import BaseModel, field_validator
 from typing_extensions import override
 
 from flink_agents.api.resource import ResourceType, SerializableResource
@@ -30,7 +31,6 @@ from flink_agents.api.tools.tool_parameter_injection import (
     normalize_injected_args,
     validate_injected_arg_names,
 )
-from flink_agents.api.tools.utils import create_model_from_schema
 
 if TYPE_CHECKING:
     from flink_agents.api.tools.function_tool import FunctionTool
@@ -69,51 +69,24 @@ class ToolMetadata(BaseModel):
         The name of the tools.
     description : str
         The description of the tools, tells what the tools does.
-    args_schema : Type[BaseModel]
-        The schema of the arguments passed to the tools.
+    args_schema : dict
+        Complete JSON Schema for model-visible arguments.
     """
 
     name: str
     description: str
-    args_schema: Type[BaseModel]
+    args_schema: dict[str, Any]
 
-    @field_serializer("args_schema")
-    def __serialize_args_schema(self, args_schema: Type[BaseModel]) -> dict[str, Any]:
-        return args_schema.model_json_schema()
-
-    @model_validator(mode="before")
-    def __custom_deserialize(self) -> "ToolMetadata":
-        args_schema = self["args_schema"]
-        if isinstance(args_schema, dict):
-            title = args_schema.get("title", "default")
-            self["args_schema"] = create_model_from_schema(title, args_schema)
-        return self
-
-    def __eq__(self, other: "ToolMetadata") -> bool:
-        return (
-            other.name == self.name
-            and other.description == self.description
-            and other.args_schema.model_json_schema()
-            == self.args_schema.model_json_schema()
-        )
+    @field_validator("args_schema", mode="before")
+    @classmethod
+    def _schema_data(cls, value: Any) -> dict:
+        if isinstance(value, type) and issubclass(value, BaseModel):
+            return value.model_json_schema()
+        return deepcopy(value)
 
     def get_parameters_dict(self) -> dict:
-        """Get the parameters of the tool."""
-        parameters = self.args_schema.model_json_schema()
-        parameters = {
-            k: v
-            for k, v in parameters.items()
-            if k
-            in [
-                "type",
-                "properties",
-                "required",
-                "additionalProperties",
-                "definitions",
-                "$defs",
-            ]
-        }
-        return parameters
+        """Return the complete schema without dropping validation keywords."""
+        return deepcopy(self.args_schema)
 
 
 class Tool(SerializableResource, ABC):

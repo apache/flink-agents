@@ -22,6 +22,9 @@ import org.apache.flink.agents.api.context.Outcome;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -34,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.function.Supplier;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,10 +56,19 @@ public class ContinuationActionExecutor {
     private final AsyncExecutorThreadFactory asyncThreadFactory;
 
     public ContinuationActionExecutor(int numAsyncThreads) {
-        this(numAsyncThreads, () -> {});
+        this(numAsyncThreads, () -> {}, null, null);
     }
 
-    public ContinuationActionExecutor(int numAsyncThreads, Runnable threadCleanup) {
+    /**
+     * Constructor kept signature-compatible with the base (JDK&lt;21) executor for multi-release
+     * uniformity. Continuation execution owns its own async thread pool and never uses the mailbox
+     * lock or context restorer, so both are ignored here.
+     */
+    public ContinuationActionExecutor(
+            int numAsyncThreads,
+            Runnable threadCleanup,
+            ParallelExecutionLock parallelExecutionLock,
+            ParallelExecutionContextRestorer contextRestorer) {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
         this.asyncThreadFactory = new AsyncExecutorThreadFactory(threadCleanup);
         this.asyncExecutor =

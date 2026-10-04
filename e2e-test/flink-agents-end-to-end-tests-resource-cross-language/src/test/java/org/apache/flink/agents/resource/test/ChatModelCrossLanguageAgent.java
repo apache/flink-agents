@@ -170,6 +170,6 @@ public class ChatModelCrossLanguageAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getText()));
     }
 }

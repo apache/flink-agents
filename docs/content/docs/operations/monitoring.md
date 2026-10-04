@@ -68,8 +68,8 @@ LLM and Tool outcome and latency metrics are derived from execution lifecycle Ev
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsSucceeded | The number of framework-observed model invocations that returned successfully. | Count |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.numOfLlmCallsFailed | The number of framework-observed model invocations that failed. | Count |
 | **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.llmCallLatencyMs | Latency of each framework-observed model invocation, excluding structured-output parsing and retry wait time. | Histogram |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated when `ErrorHandlingStrategy.RETRY` is configured. Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
-| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated when `ErrorHandlingStrategy.RETRY` is configured. Only recorded when at least one retry occurs. | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryCount | The number of additional model invocations initiated when retries are enabled (`max-retries > 0`). Only recorded when at least one retry occurs. See [retry-wait-interval]({{< ref "docs/operations/configuration#core-options" >}}). | Count |
+| **Model Resource** | action.\<action_name\>.model_resource.\<resource_name\>.retryWaitSec | The total backoff time, in seconds, accumulated when retries are enabled (`max-retries > 0`). Only recorded when at least one retry occurs. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsSucceeded | The number of successful calls to the Tool. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.numOfToolCallsFailed | The number of failed calls to the Tool. | Count |
 | **Tool** | action.\<action_name\>.tool.\<tool_name\>.toolCallLatencyMs | Time spent invoking the individual Tool, excluding time waiting for other calls in the same parallel batch. | Histogram |
@@ -414,9 +414,14 @@ Each event type is logged at a configurable verbosity. Three levels are supporte
 |------------|----------------------------------------------------------------------------------------------------------------|
 | `OFF`      | Events of this type are not logged.                                                                            |
 | `STANDARD` | Events are logged, but the payload may be truncated or summarized to keep logs concise. **This is the default.** |
-| `VERBOSE`  | Events are logged with the full, untruncated payload.                                                          |
+| `VERBOSE`  | Events are logged without truncation, after applicable media sanitization.                                    |
 
-The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; the contract is only that `STANDARD` keeps logs concise while `VERBOSE` preserves the full payload.
+The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; `VERBOSE` disables truncation but does not disable media sanitization.
+
+**Media sanitization.** When logging `ChatMessage` objects, all enabled log levels
+omit inline Base64 media data and remove userinfo, query strings, and fragments
+from media URLs. Media metadata is retained. Message text is not automatically
+redacted.
 
 **Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, trace fields such as `inputRunId` and `executionId`, `eventId`, `eventType`, and lifecycle fields such as `status` and `problemCategory`. Truncation only applies to large nested content under `eventAttributes` (long strings, big arrays, deeply nested objects).
 
@@ -442,8 +447,8 @@ Example record at `STANDARD` with a long string and a large array truncated:
     "model": "gpt-4",
     "messages": {
       "truncatedList": [
-        {"role": "system", "content": "You are a helpful assistant..."},
-        {"role": "user", "content": {"truncatedString": "Analyze this doc...", "omittedChars": 1000}}
+        {"role": "system", "blocks": [{"type": "text", "text": "You are a helpful assistant..."}]},
+        {"role": "user", "blocks": [{"type": "text", "text": {"truncatedString": "Analyze this doc...", "omittedChars": 1000}}]}
       ],
       "omittedElements": 30
     }

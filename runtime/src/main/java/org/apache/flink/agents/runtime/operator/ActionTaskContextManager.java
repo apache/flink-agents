@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.state.MapState;
@@ -66,12 +67,18 @@ import java.util.function.Function;
  * <p>The manager is fully constructed in the operator's {@code open()} with the configured
  * async-thread count from the agent plan, so it has no separate open step.
  *
- * <p>No manager-to-manager references are held here, so cross-cutting data flows in as method
- * parameters. The Python {@link RunnerContextImpl} stays owned by {@link PythonBridgeManager} and
- * the durable-execution context stays on {@link DurableExecutionManager}, and both are passed in
+ * <p>The Python {@link RunnerContextImpl} stays owned by {@link PythonBridgeManager} is passed in
  * when a method needs them.
+ *
+ * <p>This manager holds a back-reference to the owning {@link ActionExecutionOperator} (so it can
+ * restore the current Flink key while restoring a runner context) and to the {@link
+ * DurableExecutionManager} (so {@link #restore} can resolve the durable-execution context without
+ * threading it through as a parameter).
  */
 class ActionTaskContextManager implements AutoCloseable {
+
+    private final ActionExecutionOperator<?, ?> operator;
+    private final DurableExecutionManager durableExecManager;
 
     private RunnerContextImpl runnerContext;
 
@@ -80,26 +87,34 @@ class ActionTaskContextManager implements AutoCloseable {
     private ContinuationActionExecutor continuationActionExecutor;
     private final TypeSerializer<MemoryObjectImpl.MemoryItem> memoryItemSerializer;
 
-    ActionTaskContextManager(int numAsyncThreads) {
-        this(numAsyncThreads, () -> {});
-    }
-
-    ActionTaskContextManager(int numAsyncThreads, Runnable asyncThreadCleanup) {
+    ActionTaskContextManager(
+            ActionExecutionOperator<?, ?> operator,
+            DurableExecutionManager durableExecManager,
+            int numAsyncThreads) {
         this(
+                operator,
+                durableExecManager,
                 numAsyncThreads,
-                asyncThreadCleanup,
+                () -> {},
+                null,
                 TypeInformation.of(MemoryObjectImpl.MemoryItem.class)
                         .createSerializer(new ExecutionConfig().getSerializerConfig()));
     }
 
     ActionTaskContextManager(
+            ActionExecutionOperator<?, ?> operator,
+            DurableExecutionManager durableExecManager,
             int numAsyncThreads,
             Runnable asyncThreadCleanup,
+            @Nullable ParallelExecutionLock parallelExecutionLock,
             TypeSerializer<MemoryObjectImpl.MemoryItem> memoryItemSerializer) {
+        this.operator = operator;
+        this.durableExecManager = durableExecManager;
         this.memoryItemSerializer = memoryItemSerializer;
         this.actionTaskContexts = new HashMap<>();
         this.continuationActionExecutor =
-                new ContinuationActionExecutor(numAsyncThreads, asyncThreadCleanup);
+                new ContinuationActionExecutor(
+                        numAsyncThreads, asyncThreadCleanup, parallelExecutionLock, this::restore);
     }
 
     /**
@@ -113,6 +128,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private RunnerContextImpl.SubagentScope subagentScope;
         private List<Event> pendingEvents = new ArrayList<>();
         @Nullable private List<ComponentExecutionListener> componentListeners;
+        @Nullable private String contextKey;
     }
 
     private boolean hasContexts(ActionTask actionTask) {
@@ -312,6 +328,7 @@ class ActionTaskContextManager implements AutoCloseable {
             putMemoryContext(actionTask, memoryContext);
         }
 
+        requireContexts(actionTask).contextKey = contextKey;
         context.switchActionContext(
                 actionTask.action.getName(),
                 memoryContext,
@@ -341,6 +358,46 @@ class ActionTaskContextManager implements AutoCloseable {
             // be null, signaling that the awaitable was lost and needs re-execution.
             String awaitableRef = this.getPythonAwaitableRef(actionTask);
             ((PythonRunnerContextImpl) context).setPythonAwaitableRef(awaitableRef);
+        }
+        actionTask.setRunnerContext(context);
+    }
+
+    /**
+     * Restores the shared runner context to the already-pinned contexts of a task, first
+     * re-establishing its Flink key. Also invoked (as the async executor's restorer) after a worker
+     * re-acquires the lock. Deliberately does not create missing contexts: a missing mapping means
+     * the task was not prepared correctly or its transient execution context was lost.
+     */
+    public void restore(Object key, ActionTask actionTask) {
+        operator.setCurrentKey(key);
+        RunnerContextImpl.MemoryContext memoryContext =
+                Preconditions.checkNotNull(
+                        getMemoryContext(actionTask), "Missing memory context for action task");
+        ContinuationContext continuationContext = getContinuationContext(actionTask);
+        RunnerContextImpl context =
+                Preconditions.checkNotNull(
+                        actionTask.getRunnerContext(), "Missing runner context for action task");
+
+        context.switchActionContext(
+                actionTask.action.getName(),
+                memoryContext,
+                requireContexts(actionTask).pendingEvents,
+                requireContexts(actionTask).contextKey,
+                actionTask.getObservationId(),
+                MemoryEvent.isMemoryType(actionTask.event.getType()),
+                requireContexts(actionTask).componentListeners);
+        if (context instanceof JavaRunnerContextImpl) {
+            Preconditions.checkNotNull(
+                    continuationContext, "Missing continuation context for Java action task");
+            ((JavaRunnerContextImpl) context).setContinuationContext(continuationContext);
+        }
+
+        RunnerContextImpl.DurableExecutionContext durableContext =
+                durableExecManager.getDurableContext(actionTask);
+        if (durableContext == null) {
+            context.clearDurableExecutionContext();
+        } else {
+            context.setDurableExecutionContext(durableContext);
         }
         actionTask.setRunnerContext(context);
     }

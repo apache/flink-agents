@@ -43,6 +43,21 @@ class Verdict(BaseModel):
     note: str = ""
 
 
+class Nested(BaseModel):
+    """A value object one level down, mirroring the Java nested case."""
+
+    name: str
+    count: int = 0
+    blob: bytes
+
+
+class WithNested(BaseModel):
+    """Holds a :class:`Nested` object one level in, mirroring the Java case."""
+
+    id: str
+    nested: Nested
+
+
 class TestSubagentSetup(SubagentSetup):
     """Shared ``SubagentSetup`` test double, constructible directly or from a
     resource descriptor (the YAML shape).
@@ -78,3 +93,12 @@ class TypedTestSubagentSetup(TestSubagentSetup):
     def result_type(cls) -> type:
         """Return the declared result type."""
         return Verdict
+
+
+class NestedTypedTestSubagentSetup(TestSubagentSetup):
+    """Types its arguments as a model holding a nested object."""
+
+    @classmethod
+    def input_type(cls) -> type:
+        """Return the declared argument type."""
+        return WithNested

@@ -183,7 +183,17 @@ public class ResourceCache implements AutoCloseable {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
         }
 
-        resource.open();
+        try {
+            resource.open();
+        } catch (Throwable openFailure) {
+            try {
+                resource.close();
+            } catch (Throwable closeFailure) {
+                openFailure.addSuppressed(closeFailure);
+            }
+            ExceptionUtils.rethrowException(openFailure);
+            throw new AssertionError("Unreachable after rethrowing resource open failure");
+        }
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
     }

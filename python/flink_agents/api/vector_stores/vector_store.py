@@ -54,7 +54,7 @@ class VectorStoreQuery(BaseModel):
     query_text : str
         Text query to be converted to embedding for semantic search.
     limit : int
-        Maximum number of results to return (default: 10).
+        Maximum number of results to return; must be positive (default: 10).
     collection_name : str
         The collection to apply the query. Optional.
     extra_args : Dict[str, Any]
@@ -69,7 +69,9 @@ class VectorStoreQuery(BaseModel):
     query_text: str = Field(
         description="Text query to be converted to embedding for semantic search."
     )
-    limit: int = Field(default=10, description="Maximum number of results to return.")
+    limit: int = Field(
+        default=10, gt=0, description="Maximum number of results to return."
+    )
     collection_name: str | None = Field(
         default=None, description="The collection to apply the query."
     )
@@ -396,16 +398,6 @@ class BaseVectorStore(Resource, ABC):
                 :class:`BaseVectorStore`). ``None`` = no filter.
             **kwargs: Vector store specific parameters.
         """
-
-    @staticmethod
-    def _normalize_embeddings(embeddings: list[float]) -> Any:
-        """Pre-process a query embedding before the search call.
-
-        Hook for backends whose query path performs CPU/numpy work that must run
-        on the mailbox thread rather than an async cross-language worker (see the
-        ChromaDB override). Default is identity.
-        """
-        return embeddings
 
     @abstractmethod
     def _query_embedding(

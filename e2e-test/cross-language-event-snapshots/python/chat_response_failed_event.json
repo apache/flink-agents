@@ -1,0 +1,13 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_chat_response_event",
+  "attributes": {
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "status": "FAILED",
+    "response": null,
+    "error": "TimeoutError: timed out",
+    "retry_count": 2,
+    "total_retry_wait_sec": 3
+  },
+  "attachments": {}
+}

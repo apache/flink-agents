@@ -47,6 +47,9 @@ _FIXED_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TOOL_CALL_ID = "call_aaaa"
 _FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb"
 _FIXED_TOOL_CALL_ID_BOOL = "call_cccc"
+_FIXED_TOOL_CALL_ID_FAILED = "call_dddd"
+_FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed."
+_FIXED_TOOL_ERROR = "ValueError: boom"
 
 
 def _regenerate_enabled() -> bool:
@@ -141,7 +144,7 @@ def test_python_can_deserialize_output_event_from_java_snapshot() -> None:
 def _build_chat_request_event() -> ChatRequestEvent:
     event = ChatRequestEvent(
         model="test-model",
-        messages=[ChatMessage(role=MessageRole.USER, content="hello world")],
+        messages=[ChatMessage.of(MessageRole.USER, "hello world")],
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -165,7 +168,7 @@ def test_python_can_deserialize_chat_request_event_from_java_snapshot() -> None:
     assert len(typed.messages) == 1
     msg = typed.messages[0]
     assert msg.role == MessageRole.USER, f"Role mismatch: got {msg.role!r}"
-    assert msg.content == "hello world"
+    assert msg.text == "hello world"
 
 
 def test_chat_request_row_type_info_output_schema_is_not_portable_across_languages_known_gap() -> (
@@ -190,7 +193,7 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
     )
     event = ChatRequestEvent(
         model="test-model",
-        messages=[ChatMessage(role=MessageRole.USER, content="hi")],
+        messages=[ChatMessage.of(MessageRole.USER, "hi")],
         output_schema=schema,
     )
     payload = event.model_dump_json()
@@ -204,9 +207,9 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
 
 
 def _build_chat_response_event() -> ChatResponseEvent:
-    event = ChatResponseEvent(
+    event = ChatResponseEvent.success(
         request_id=_FIXED_REQUEST_ID,
-        response=ChatMessage(role=MessageRole.ASSISTANT, content="hi there"),
+        response=ChatMessage.of(MessageRole.ASSISTANT, "hi there"),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -223,6 +226,39 @@ def test_chat_response_event_python_snapshot_is_stable() -> None:
     )
 
 
+def _build_failed_chat_response_event() -> Event:
+    return _force_id(
+        ChatResponseEvent.failed(_FIXED_REQUEST_ID, "TimeoutError: timed out", 2, 3),
+        _FIXED_EVENT_ID,
+    )
+
+
+def test_regenerate_failed_chat_response_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "chat_response_failed_event.json", _build_failed_chat_response_event()
+    )
+
+
+def test_failed_chat_response_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "chat_response_failed_event.json", _build_failed_chat_response_event()
+    )
+
+
+def test_python_can_deserialize_failed_chat_response_from_java_snapshot() -> None:
+    typed = ChatResponseEvent.from_event(
+        _read_java_snapshot("chat_response_failed_event.json")
+    )
+    assert typed.request_id == _FIXED_REQUEST_ID
+    assert typed.is_failed
+    assert typed.error == "TimeoutError: timed out"
+    assert typed.retry_count == 2
+    with pytest.raises(RuntimeError, match="TimeoutError: timed out"):
+        _ = typed.response
+
+
 def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None:
     base = _read_java_snapshot("chat_response_event.json")
     typed = ChatResponseEvent.from_event(base)
@@ -237,7 +273,7 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
     assert typed.response.role == MessageRole.ASSISTANT, (
         f"Response role mismatch: got {typed.response.role!r}"
     )
-    assert typed.response.content == "hi there"
+    assert typed.response.text == "hi there"
 
 
 # ── ToolRequestEvent ────────────────────────────────────────────────────
@@ -279,19 +315,30 @@ def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
 def _build_tool_response_event() -> ToolResponseEvent:
     # Mixed scalar value types pin the Python -> Java round-trip on the Java
     # ToolResponseEvent.fromEvent fall-through that wraps non-ToolResponse/Map
-    # values via ToolResponse.success(v).
+    # values via ToolResponse.success(v). The failed call is shaped the way
+    # ToolCallAction records a raised exception: the text shown to the model in
+    # `responses`, `success` False, and the diagnostic in `error`.
     event = ToolResponseEvent(
         request_id=_FIXED_REQUEST_ID,
         responses={
             _FIXED_TOOL_CALL_ID: "pong",
             _FIXED_TOOL_CALL_ID_NUMERIC: 42,
             _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_FAILURE_TEXT,
         },
         external_ids={
             _FIXED_TOOL_CALL_ID: None,
             _FIXED_TOOL_CALL_ID_NUMERIC: None,
             _FIXED_TOOL_CALL_ID_BOOL: None,
+            _FIXED_TOOL_CALL_ID_FAILED: None,
         },
+        success={
+            _FIXED_TOOL_CALL_ID: True,
+            _FIXED_TOOL_CALL_ID_NUMERIC: True,
+            _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: False,
+        },
+        error={_FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_ERROR},
     )
     return _force_id(event, _FIXED_EVENT_ID)
 

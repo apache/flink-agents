@@ -59,7 +59,7 @@ from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
 
-os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
+os.environ.setdefault("PYTHONPATH", sysconfig.get_paths()["purelib"])
 
 CHILD_SCOPE = "reviewer"
 GRANDCHILD_SCOPE = "speller"

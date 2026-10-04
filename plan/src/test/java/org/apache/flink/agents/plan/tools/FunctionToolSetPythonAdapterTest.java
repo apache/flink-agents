@@ -106,6 +106,7 @@ class FunctionToolSetPythonAdapterTest {
                         "stubMethod",
                         new Class<?>[] {int.class});
         FunctionTool tool = new FunctionTool(original, jf);
+        original = tool.getMetadata();
 
         PythonResourceAdapter adapter = Mockito.mock(PythonResourceAdapter.class);
         tool.setPythonResourceAdapter(adapter);

@@ -121,9 +121,8 @@ For more control, create prompts from a sequence of `ChatMessage` objects using 
 ```python
 review_analysis_prompt = Prompt.from_messages(
     messages=[
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content="""
+        ChatMessage.system(
+            """
             Analyze the user review and product information to determine a
             satisfaction score (1-5) and potential reasons for dissatisfaction.
 
@@ -139,14 +138,13 @@ review_analysis_prompt = Prompt.from_messages(
                 "score": 1,
                 "reasons": ["poor quality"]
             }
-            """,
+            """
         ),
-        ChatMessage(
-            role=MessageRole.USER,
-            content="""
+        ChatMessage.user(
+            """
             "input":
             {input}
-            """,
+            """
         ),
     ],
 )
@@ -201,9 +199,8 @@ class ReviewAnalysisAgent(Agent):
         """Prompt for review analysis."""
         return Prompt.from_messages(
             messages=[
-                ChatMessage(
-                    role=MessageRole.SYSTEM,
-                    content="""
+                ChatMessage.system(
+                    """
             Analyze the user review and product information to determine a
             satisfaction score (1-5) and potential reasons for dissatisfaction.
 
@@ -219,14 +216,13 @@ class ReviewAnalysisAgent(Agent):
                 "score": 1,
                 "reasons": ["poor quality"]
             }
-            """,
+            """
                 ),
-                ChatMessage(
-                    role=MessageRole.USER,
-                    content="""
+                ChatMessage.user(
+                    """
             "input":
             {input}
-            """,
+            """
                 ),
             ],
         )

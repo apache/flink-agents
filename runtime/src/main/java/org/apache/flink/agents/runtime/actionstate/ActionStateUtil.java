@@ -37,6 +37,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.function.IntPredicate;
 import java.util.function.LongPredicate;
@@ -342,8 +343,11 @@ public final class ActionStateUtil {
     }
 
     private static String generateUUIDForEvent(Event event) throws IOException {
-        return String.valueOf(
-                UUID.nameUUIDFromBytes(MAPPER.writeValueAsBytes(event.getAttributes())));
+        // Normalize beans to their JSON map representation before sorting. Polymorphic beans
+        // emit type discriminators before their properties, while restored maps sort every key.
+        // Both representations must hash identically for a persisted action to be found on replay.
+        Map<?, ?> attributes = MAPPER.convertValue(event.getAttributes(), Map.class);
+        return String.valueOf(UUID.nameUUIDFromBytes(MAPPER.writeValueAsBytes(attributes)));
     }
 
     private static String generateUUIDForAction(Action action) throws IOException {

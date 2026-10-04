@@ -366,6 +366,10 @@ class ResourceName:
             BEDROCK_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelConnection"
             BEDROCK_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup"
 
+            # OpenAI
+            OPENAI_CONNECTION = "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelConnection"
+            OPENAI_SETUP = "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelSetup"
+
     class VectorStore:
         """VectorStore resource names."""
 

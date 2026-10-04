@@ -141,7 +141,7 @@ def test_subagent_factory_validates_input_and_keeps_instructions_literal() -> No
     ctx.get_resource.side_effect = lambda name, kind: child.resources[kind][name]
     ReActAgent.start_action(InputEvent(input={"prompt": "investigate"}), ctx)
     request = ctx.send_event.call_args.args[0]
-    assert [message.content for message in request.messages] == [
+    assert [message.text for message in request.messages] == [
         "Literal {prompt} instructions",
         "investigate",
     ]

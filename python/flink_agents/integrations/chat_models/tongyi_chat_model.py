@@ -310,6 +310,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
                     args = json.loads(args)
             tool_call_dict = {
                 "id": uuid.uuid4(),
+                # The provider's id, under the key the tool call action reads to
+                # pass it back as the tool result's external_id.
+                "original_id": tc.get("id"),
                 "type": "function",
                 "function": {
                     "name": fn.get("name"),
@@ -325,9 +328,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         if extract_reasoning and reasoning_content:
             extra_args["reasoning"] = reasoning_content
 
-        return ChatMessage(
-            role=MessageRole(response_message.get("role", "assistant")),
-            content=content,
+        return ChatMessage.of(
+            MessageRole(response_message.get("role", "assistant")),
+            content,
             tool_calls=tool_calls,
             extra_args=extra_args,
         )
@@ -340,16 +343,14 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         for message in messages:
             msg_dict: Dict[str, Any] = {
                 "role": message.role.value,
-                "content": message.content,
+                "content": message.text,
             }
 
             if message.tool_calls:
                 if message.role == MessageRole.ASSISTANT:
                     msg_dict["tool_calls"] = [
                         {
-                            "id": tc.get("additional_kwargs", {}).get(
-                                "original_tool_call_id", str(tc.get("id", ""))
-                            ),
+                            "id": _provider_tool_call_id(tc),
                             "type": "function",
                             "function": {
                                 "name": tc["function"]["name"],
@@ -359,17 +360,26 @@ class TongyiChatModelConnection(BaseChatModelConnection):
                         for tc in message.tool_calls
                     ]
                 elif message.role == MessageRole.TOOL:
-                    tool_call_info = message.tool_calls[0]
-                    original_id = tool_call_info.get("additional_kwargs", {}).get(
-                        "original_tool_call_id"
+                    msg_dict["tool_call_id"] = _provider_tool_call_id(
+                        message.tool_calls[0]
                     )
-                    if original_id:
-                        msg_dict["tool_call_id"] = original_id
-                    elif "id" in tool_call_info:
-                        msg_dict["tool_call_id"] = str(tool_call_info["id"])
+
+            if message.role == MessageRole.TOOL and message.extra_args.get(
+                "external_id"
+            ):
+                # The tool call action records the provider's call id here.
+                msg_dict["tool_call_id"] = str(message.extra_args["external_id"])
 
             tongyi_messages.append(msg_dict)
         return cast("List[Dict[str, Any]]", tongyi_messages)
+
+
+def _provider_tool_call_id(tool_call: Dict[str, Any]) -> str:
+    """Return the DashScope id of a tool call, falling back to the framework id."""
+    original_id = tool_call.get("original_id") or tool_call.get(
+        "additional_kwargs", {}
+    ).get("original_tool_call_id")
+    return str(original_id) if original_id else str(tool_call.get("id", ""))
 
 
 class TongyiChatModelSetup(BaseChatModelSetup):

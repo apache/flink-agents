@@ -535,21 +535,16 @@ class BaseChatModelSetup(Resource):
             prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
 
             # append meaningful messages
+            # any block counts, so image-only messages survive
             for msg in messages:
-                if (
-                    msg.content is not None and msg.content != ""
-                ) or msg.role == MessageRole.ASSISTANT:
+                if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
             messages = prompt_messages
 
         if self.skill_discovery_prompt:
             # Right after the first system message, or at the head when there is none.
             index = find_first_system_message(messages) + 1
-            injected = [
-                ChatMessage(
-                    role=MessageRole.SYSTEM, content=self.skill_discovery_prompt
-                )
-            ]
+            injected = [ChatMessage.system(self.skill_discovery_prompt)]
             messages = list(messages[:index]) + injected + list(messages[index:])
 
         # Call chat model connection to execute chat

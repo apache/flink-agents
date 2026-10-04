@@ -17,6 +17,7 @@
 ################################################################################
 """Covers how a setup declares its AGENT resources to a chat model."""
 
+import json
 from typing import Any, Dict, List, Sequence
 
 import pytest
@@ -37,6 +38,42 @@ from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 CUSTOM_SCHEMA = '{"type":"object","properties":{"path":{"type":"string"}}}'
 
 
+@pytest.mark.parametrize("use_reference", [False, True])
+@pytest.mark.parametrize("extra_properties", [False, {"type": "integer", "minimum": 0}])
+def test_nested_delegation_schema_survives_provider_conversion(
+    use_reference: bool, extra_properties: Any,
+) -> None:
+    """Reconstructed metadata retains nested constraints in the provider request."""
+    from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
+
+    request = {
+        "type": "object",
+        "properties": {
+            "prompt": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1},
+            "mode": {"type": "string", "default": "fast"},
+        },
+        "required": ["prompt", "mode"],
+        "additionalProperties": extra_properties,
+    }
+    nested = {"$ref": "#/$defs/Request-Input"} if use_reference else request
+    schema = {
+        "type": "object",
+        "properties": {
+            "request": nested,
+            "followups": {"type": "array", "items": nested},
+        },
+        "required": ["request"],
+        "additionalProperties": False,
+    }
+    if use_reference:
+        schema["$defs"] = {"Request-Input": request}
+    tool = SubagentTool.of("researcher", "Research tasks", json.dumps(schema))
+    restored = ToolMetadata.model_validate_json(tool.metadata.model_dump_json())
+    for metadata in [tool.metadata, restored]:
+        assert to_openai_tool(metadata=metadata)["function"]["parameters"] == schema
+
+
 class _RecordingConnection(BaseChatModelConnection):
     """Connection that captures what the setup hands to the model."""
 
@@ -53,7 +90,7 @@ class _RecordingConnection(BaseChatModelConnection):
         """Record the request and answer with a fixed message."""
         self.captured_messages = list(messages)
         self.captured_tools = list(tools or [])
-        return ChatMessage(role=MessageRole.ASSISTANT, content="ok")
+        return ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
 
 
 class _StubSetup(BaseChatModelSetup):
@@ -189,9 +226,7 @@ def test_declared_subagents_reach_the_model_as_callables_after_the_tools() -> No
     delegated = connection.captured_tools[1]
     assert isinstance(delegated, SubagentTool)
     assert delegated.metadata.description == "Reviews a file. This is subagent."
-    assert delegated.metadata.get_parameters_dict()["properties"] == {
-        "path": {"title": "Path", "type": "string"}
-    }
+    assert delegated.metadata.get_parameters_dict() == json.loads(CUSTOM_SCHEMA)
 
 
 def test_an_undescribed_subagent_is_still_delegable() -> None:
@@ -208,9 +243,7 @@ def test_an_undescribed_subagent_is_still_delegable() -> None:
     assert tool.metadata.description == (
         "Delegate a standalone task to sub-agent reviewer This is subagent."
     )
-    assert tool.metadata.get_parameters_dict()["properties"] == {
-        "path": {"title": "Path", "type": "string"}
-    }
+    assert tool.metadata.get_parameters_dict() == json.loads(CUSTOM_SCHEMA)
 
 
 def test_a_typed_subagent_is_declared_with_the_derived_schema() -> None:
@@ -349,13 +382,13 @@ def test_declared_subagents_inject_no_listing_message() -> None:
 
     setup.chat(
         [
-            ChatMessage(role=MessageRole.SYSTEM, content="You are helpful."),
-            ChatMessage(role=MessageRole.USER, content="review it"),
+            ChatMessage.of(role=MessageRole.SYSTEM, content="You are helpful."),
+            ChatMessage.of(role=MessageRole.USER, content="review it"),
         ]
     )
 
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content == "You are helpful."
+    assert connection.captured_messages[0].text == "You are helpful."
     assert len(connection.captured_tools) == 2
 
 
@@ -371,11 +404,11 @@ def test_only_the_skill_listing_is_injected_when_subagents_are_declared() -> Non
     setup, connection = _build(store, subagents=["reviewer"], skills=["github"])
     setup.open()
 
-    setup.chat([ChatMessage(role=MessageRole.USER, content="review it")])
+    setup.chat([ChatMessage.of(role=MessageRole.USER, content="review it")])
 
     assert len(connection.captured_messages) == 2
-    assert connection.captured_messages[0].content.startswith("<available_skills>")
-    assert connection.captured_messages[1].content == "review it"
+    assert connection.captured_messages[0].text.startswith("<available_skills>")
+    assert connection.captured_messages[1].text == "review it"
 
 
 def test_a_setup_without_subagents_injects_nothing() -> None:
@@ -383,7 +416,7 @@ def test_a_setup_without_subagents_injects_nothing() -> None:
     setup, connection = _build({})
     setup.open()
 
-    setup.chat([ChatMessage(role=MessageRole.USER, content="hi")])
+    setup.chat([ChatMessage.of(role=MessageRole.USER, content="hi")])
 
     assert len(connection.captured_messages) == 1
     assert connection.captured_tools == []

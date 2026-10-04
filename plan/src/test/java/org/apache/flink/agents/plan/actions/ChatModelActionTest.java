@@ -19,7 +19,9 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -27,9 +29,11 @@ import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -42,6 +46,23 @@ import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
 class ChatModelActionTest {
+
+    @Test
+    void structuredOutputPreservesOriginalBlocks() throws Exception {
+        ChatMessage original =
+                new ChatMessage(
+                        MessageRole.ASSISTANT,
+                        List.of(
+                                new TextBlock("```json\n{\"answer\":42}\n```"),
+                                ImageBlock.fromBase64("image/png", "aGk=")),
+                        List.of(),
+                        Map.of("provider", "test"));
+        ChatMessage parsed = ChatModelAction.generateStructuredOutput(original, Map.class);
+        assertEquals(original.getBlocks(), parsed.getBlocks());
+        assertEquals(Map.of("answer", 42), parsed.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
+        assertEquals("test", parsed.getExtraArgs().get("provider"));
+        assertFalse(original.getExtraArgs().containsKey(Agent.STRUCTURED_OUTPUT));
+    }
 
     private static final String PARSEABLE_CONTENT = "{\"answer\":\"42\"}";
 

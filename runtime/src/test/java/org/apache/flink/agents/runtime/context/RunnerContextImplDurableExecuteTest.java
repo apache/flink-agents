@@ -82,6 +82,50 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
+    void failedChatOutcomeReplaysThroughRuntimeState() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome outcome =
+                new org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome();
+        outcome.error = "IllegalArgumentException: invalid model";
+        TestDurableCallable<org.apache.flink.agents.plan.actions.ChatModelInvoker.InvocationOutcome>
+                callable =
+                        new TestDurableCallable<>(
+                                "chat:model",
+                                org.apache.flink.agents.plan.actions.ChatModelInvoker
+                                        .InvocationOutcome.class,
+                                () -> outcome);
+        context.durableExecute(callable);
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        RunnerContextImpl replay = createContext(restored);
+        assertEquals(outcome.error, replay.durableExecute(callable).error);
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, persistCallCount.get());
+    }
+
+    @Test
+    void nullResultReplaysThroughRuntimeStateWithoutReExecution() throws Exception {
+        RunnerContextImpl context = createContext(new ActionState(new Event("test")));
+        TestDurableCallable<Void> callable =
+                new TestDurableCallable<>("void-call", Void.class, () -> null);
+        assertNull(context.durableExecute(callable));
+
+        ActionState restored =
+                org.apache.flink.agents.runtime.actionstate.ActionStateSerde.deserialize(
+                        org.apache.flink.agents.runtime.actionstate.ActionStateSerde.serialize(
+                                lastPersistedState));
+        RunnerContextImpl replay = createContext(restored);
+
+        assertNull(replay.durableExecute(callable));
+        assertEquals(1, callable.getCallCount());
+        assertEquals(1, persistCallCount.get());
+        assertEquals(1, replay.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(1, replay.getDurableExecutionContext().getActionState().getCallResultCount());
+    }
+
+    @Test
     void testDurableExecuteCompletionOnlyDoesNotPersistInterruption() {
         RunnerContextImpl context = createContext(new ActionState(null));
         TestDurableCallable<String> callable =
@@ -129,7 +173,7 @@ class RunnerContextImplDurableExecuteTest {
     }
 
     @Test
-    void testDurableExecuteAllAsyncStopsBatchOnInterruptionInsteadOfRecordingFailure() {
+    void testGatherStopsBatchOnInterruptionInsteadOfRecordingFailure() {
         RunnerContextImpl context = createContext(new ActionState(null));
         TestDurableCallable<String> first =
                 new TestDurableCallable<>("batch-call-1", String.class, () -> "ok");
@@ -150,7 +194,13 @@ class RunnerContextImplDurableExecuteTest {
 
         assertThrows(
                 InterruptedException.class,
-                () -> context.durableExecuteAllAsync(List.of(first, second, third)));
+                () ->
+                        context.gather(
+                                        List.of(
+                                                context.durableExecuteAsync(first),
+                                                context.durableExecuteAsync(second),
+                                                context.durableExecuteAsync(third)))
+                                .await());
 
         assertTrue(Thread.interrupted(), "interrupt status should be restored on the thread");
         assertEquals(1, first.getCallCount());
@@ -158,7 +208,7 @@ class RunnerContextImplDurableExecuteTest {
         assertEquals(0, third.getCallCount(), "callables after the interrupted one must not run");
         // batch-call-1 genuinely completed before the interruption, so it's correctly persisted;
         // batch-call-2's interruption must not be recorded as a failed Outcome, though — it
-        // should propagate out of durableExecuteAllAsync instead, same as any other
+        // should propagate out of gather instead, same as any other
         // durableExecute call, leaving nothing persisted for it.
         assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
         CallResult persisted =
@@ -199,7 +249,7 @@ class RunnerContextImplDurableExecuteTest {
                         () -> "ok",
                         () -> fail("reconcile should not be called on initial async fallback"));
 
-        String result = context.durableExecuteAsync(callable);
+        String result = context.durableExecuteAsync(callable).await();
 
         assertEquals("ok", result);
         assertEquals(1, callable.getCallCount());
@@ -256,6 +306,26 @@ class RunnerContextImplDurableExecuteTest {
         assertEquals(0, callable.getReconcileCount());
         assertEquals(0, persistCallCount.get());
         assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
+    void testDurableExecuteReconcilableReplayNullSuccess() throws Exception {
+        ActionState actionState = new ActionState(null);
+        actionState.addCallResult(new CallResult("recon-call", "", null, null));
+        RunnerContextImpl context = createContext(actionState);
+        TestReconcilableCallable<String> callable =
+                new TestReconcilableCallable<>(
+                        "recon-call",
+                        String.class,
+                        () -> fail("call should not be re-executed"),
+                        () -> fail("reconcile should not be called for terminal slot"));
+
+        assertNull(context.durableExecute(callable));
+        assertEquals(0, callable.getCallCount());
+        assertEquals(0, callable.getReconcileCount());
+        assertEquals(0, persistCallCount.get());
+        assertEquals(1, context.getDurableExecutionContext().getCurrentCallIndex());
+        assertEquals(1, context.getDurableExecutionContext().getActionState().getCallResultCount());
     }
 
     @Test

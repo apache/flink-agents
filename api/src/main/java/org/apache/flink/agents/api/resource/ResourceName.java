@@ -173,6 +173,12 @@ public final class ResourceName {
         public static final String BEDROCK_SETUP =
                 "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup";
 
+        // OpenAI
+        public static final String OPENAI_CONNECTION =
+                "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelConnection";
+        public static final String OPENAI_SETUP =
+                "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelSetup";
+
         // Python Wrapper
         public static final String PYTHON_WRAPPER_CONNECTION =
                 "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection";

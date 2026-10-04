@@ -547,7 +547,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         Part[] parts =
                 messages.stream()
                         .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                        .map(m -> Part.fromText(Optional.ofNullable(m.getContent()).orElse("")))
+                        .map(m -> Part.fromText(Optional.ofNullable(m.getText()).orElse("")))
                         .toArray(Part[]::new);
         return parts.length == 0 ? null : Content.fromParts(parts);
     }
@@ -555,7 +555,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     // Package-visible for unit testing of the message conversion.
     Content convertToContent(ChatMessage message, Map<String, String> toolCallIdToName) {
         MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getContent()).orElse("");
+        String content = Optional.ofNullable(message.getText()).orElse("");
 
         switch (role) {
             case USER:
