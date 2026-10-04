@@ -115,6 +115,47 @@ class BuiltInExecutionMetricsTest {
     }
 
     @Test
+    void recordsSubagentOutcomeByRegisteredAgentName() {
+        ExecutionTraceContext success =
+                execution(ExecutionReporter.EntityTypes.SUBAGENT, "reviewer", Map.of());
+        observe(ExecutionLifecycleEvents.executionStarted(), success, 0);
+        observe(ExecutionLifecycleEvents.executionFinished(), success, 25);
+
+        ExecutionTraceContext failure =
+                execution(ExecutionReporter.EntityTypes.SUBAGENT, "reviewer", Map.of());
+        observe(ExecutionLifecycleEvents.executionStarted(), failure, 100);
+        observe(
+                ExecutionLifecycleEvents.executionFailed(new RuntimeException("failed")),
+                failure,
+                140);
+
+        FlinkAgentsMetricGroupImpl subagent =
+                actionMetricGroup().getSubGroup("subagent", "reviewer");
+        assertThat(
+                        subagent.getCounter(
+                                        SubagentExecutionMetricRecorder
+                                                .NUM_SUBAGENT_CALLS_SUCCEEDED)
+                                .getCount())
+                .isEqualTo(1);
+        assertThat(
+                        subagent.getCounter(
+                                        SubagentExecutionMetricRecorder.NUM_SUBAGENT_CALLS_FAILED)
+                                .getCount())
+                .isEqualTo(1);
+        assertThat(
+                        subagent.getHistogram(
+                                        SubagentExecutionMetricRecorder.SUBAGENT_CALL_LATENCY_MS)
+                                .getCount())
+                .isEqualTo(2);
+        assertThat(
+                        subagent.getHistogram(
+                                        SubagentExecutionMetricRecorder.SUBAGENT_CALL_LATENCY_MS)
+                                .getStatistics()
+                                .getMax())
+                .isEqualTo(40L);
+    }
+
+    @Test
     void aggregatesUnregisteredToolNamesIntoUnknownScope() {
         ExecutionTraceContext first =
                 execution(ExecutionReporter.EntityTypes.TOOL, "hallucinated_one", Map.of());
