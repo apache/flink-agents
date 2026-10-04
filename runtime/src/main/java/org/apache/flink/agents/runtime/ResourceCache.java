@@ -123,7 +123,7 @@ public class ResourceCache implements AutoCloseable {
     /**
      * Checks whether a resource of the given name and type is available, without creating it.
      * Covers both registered providers and resources inserted directly into the cache via {@link
-     * #put} (which have no provider).
+     * #put} (which have no provider), including resources inherited from a parent cache.
      *
      * @param name the resource name
      * @param type the resource type
@@ -135,7 +135,10 @@ public class ResourceCache implements AutoCloseable {
             return true;
         }
         Map<String, ResourceProvider> providers = resourceProviders.get(type);
-        return providers != null && providers.containsKey(name);
+        if (providers != null && providers.containsKey(name)) {
+            return true;
+        }
+        return parent != null && parent.hasResource(name, type);
     }
 
     /**
