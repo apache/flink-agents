@@ -80,6 +80,7 @@ class ScriptedConnection(BaseChatModelConnection):
         **kwargs: Any,
     ) -> ChatMessage:
         """Validate scope and return the next scripted response."""
+        self._reject_unsupported_output_schema(output_schema)
         model = kwargs["model"]
         last = messages[-1]
         if last.role == MessageRole.TOOL:

@@ -27,6 +27,7 @@ from flink_agents.api.chat_models import java_chat_model as api_java_chat_model
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
 from flink_agents.e2e_tests.e2e_tests_integration import (
     mock_chat_model_agent,
+    react_subagent_test,
     tool_parameter_injection_agent,
 )
 from flink_agents.integrations.chat_models import ollama_chat_model, tongyi_chat_model
@@ -46,6 +47,7 @@ _MODULES_DEFINING_CONNECTIONS = (
     mock_chat_model_agent,
     ollama_chat_model,
     openai_chat_model,
+    react_subagent_test,
     runtime_java_chat_model,
     tongyi_chat_model,
     tool_parameter_injection_agent,
