@@ -270,7 +270,7 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        return doChat(messages, tools, modelParams, null);
+        return chat(messages, tools, modelParams, null);
     }
 
     /**

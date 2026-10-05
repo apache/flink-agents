@@ -968,10 +968,15 @@ class WatsonxChatModelConnectionTest {
                                         TextBlock.of("Describe this"),
                                         ImageBlock.fromBase64("image/png", "aGVsbG8="))));
 
+        String expected =
+                "IBM watsonx.ai cannot send an image block (image/png, base64 source): this"
+                        + " integration sends text only.";
         assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
                 .isInstanceOf(UnsupportedContentBlockException.class)
-                .hasMessage(
-                        "IBM watsonx.ai cannot send an image block (image/png, base64 source): this"
-                                + " integration sends text only.");
+                .hasMessage(expected);
+        // The three-argument overload is what BaseChatModelSetup calls.
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>()))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(expected);
     }
 }
