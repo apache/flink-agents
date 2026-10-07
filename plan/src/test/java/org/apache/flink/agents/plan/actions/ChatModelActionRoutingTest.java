@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -367,6 +368,29 @@ public class ChatModelActionRoutingTest {
                 .hasMessage("delivery failed");
         assertThat(ctx.sentEvents).hasSize(1);
         assertThat(ctx.chatResponse().isFailed()).isTrue();
+    }
+
+    /**
+     * Follow-up (review: consumers cast the concrete event instead of calling {@code fromEvent}): a
+     * built-in event crossing the JSON boundary is restored to its concrete subclass by {@link
+     * Event#fromJson}, so the bare cast in {@link ChatModelAction#processChatRequestOrToolResponse}
+     * succeeds. Were restoration to degrade to a generic {@link Event}, both the instanceof
+     * assertion and the cast would fail.
+     */
+    @Test
+    void restoredChatRequestReachesActionAsConcreteType() throws Exception {
+        String wireJson =
+                new ObjectMapper()
+                        .writeValueAsString(
+                                new ChatRequestEvent("small", List.of(ChatMessage.user("hi"))));
+
+        Event restored = Event.fromJson(wireJson);
+
+        assertThat(restored).isInstanceOf(ChatRequestEvent.class);
+        FakeRunnerContext ctx = new FakeRunnerContext(null).register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(restored, ctx);
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
     }
 
     private static ModelRouter router() throws Exception {

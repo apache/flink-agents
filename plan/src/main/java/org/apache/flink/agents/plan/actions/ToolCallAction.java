@@ -76,7 +76,9 @@ public class ToolCallAction {
 
     public static void processToolRequest(Event event, RunnerContext ctx)
             throws InterruptedException {
-        ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
+        // Built-in events reach an action as their concrete subclass (restored at the JSON
+        // boundary), so the dispatched ToolRequestEvent is cast directly.
+        ToolRequestEvent toolRequest = (ToolRequestEvent) event;
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
         int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
 

@@ -53,8 +53,10 @@ public class ContextRetrievalAction {
         if (ContextRetrievalRequestEvent.EVENT_TYPE.equals(event.getType())) {
             boolean ragAsync = ctx.getConfig().get(AgentExecutionOptions.RAG_ASYNC);
 
+            // The type check above guarantees the concrete subclass: built-in events are restored
+            // at the JSON boundary before reaching an action.
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
-                    ContextRetrievalRequestEvent.fromEvent(event);
+                    (ContextRetrievalRequestEvent) event;
 
             final BaseVectorStore vectorStore =
                     (BaseVectorStore)

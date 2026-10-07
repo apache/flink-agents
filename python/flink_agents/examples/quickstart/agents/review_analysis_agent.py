@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -25,8 +26,8 @@ from flink_agents.api.decorators import (
     prompt,
     tool,
 )
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.event import Event, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
@@ -37,6 +38,10 @@ from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     notify_shipping_manager,
     review_analysis_prompt,
 )
+
+if TYPE_CHECKING:
+    from flink_agents.api.events.chat_event import ChatResponseEvent
+    from flink_agents.api.events.event import InputEvent
 
 
 class ReviewAnalysisAgent(Agent):
@@ -88,7 +93,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send chat request for review analysis."""
-        input = ProductReview.model_validate(InputEvent.from_event(event).input)
+        input = ProductReview.model_validate(cast("InputEvent", event).input)
         ctx.short_term_memory.set("id", input.id)
 
         content = f"""
@@ -108,7 +113,7 @@ class ReviewAnalysisAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        chat_response = ChatResponseEvent.from_event(event)
+        chat_response = cast("ChatResponseEvent", event)
         # Fail fast on a malformed LLM response: a parse error here propagates
         # and fails the agent, so a dropped input is surfaced instead of
         # silently lost. In production, choose the handling that fits your

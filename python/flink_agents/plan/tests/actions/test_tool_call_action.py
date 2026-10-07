@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.events.event import Event
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryObject
 from flink_agents.api.resource import ResourceType
@@ -211,6 +212,25 @@ class _WrongConfig:
             AgentExecutionOptions.TOOL_CALL_PARALLELISM,
         )
         return False
+
+
+def test_restored_tool_request_reaches_action_as_concrete_type() -> None:
+    """A built-in event restored from JSON reaches the action as concrete.
+
+    Follow-up (review: consumers use the concrete event directly instead of
+    ``from_event``): the runtime restores built-in events at the JSON boundary,
+    so ``process_tool_request`` reads ``tool_calls``/``model`` off the concrete
+    subclass. If restoration degraded to a generic ``Event``, the isinstance
+    assertion and the attribute access inside the action would both fail.
+    """
+    restored = Event.from_json(tool_request().model_dump_json())
+
+    assert isinstance(restored, ToolRequestEvent)
+    ctx = _Context()
+    asyncio.run(process_tool_request(restored, ctx))
+    response = ToolResponseEvent.from_event(ctx.sent_events[0])
+    assert response.responses["call-1"] == "tenant-1:order-1"
+    assert response.success["call-1"] is True
 
 
 def test_tool_call_action_injects_args_from_config_without_mutating_request() -> None:

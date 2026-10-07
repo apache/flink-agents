@@ -17,7 +17,7 @@
 #################################################################################
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pyflink.datastream import KeySelector
 
@@ -29,8 +29,8 @@ from flink_agents.api.decorators import (
     prompt,
     tool,
 )
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.event import Event, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
@@ -40,6 +40,10 @@ from flink_agents.examples.quickstart.agents.custom_types_and_resources import (
     notify_shipping_manager,
     review_analysis_prompt,
 )
+
+if TYPE_CHECKING:
+    from flink_agents.api.events.chat_event import ChatResponseEvent
+    from flink_agents.api.events.event import InputEvent
 
 
 class TableKeySelector(KeySelector):
@@ -117,7 +121,7 @@ class TableReviewAnalysisAgent(Agent):
         When using from_table(), the input is a dictionary with keys matching
         the table column names.
         """
-        input_dict = InputEvent.from_event(event).input
+        input_dict = cast("InputEvent", event).input
         product_id = str(input_dict["id"])
         review_text = str(input_dict["review"])
 
@@ -140,7 +144,7 @@ class TableReviewAnalysisAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        chat_response = ChatResponseEvent.from_event(event)
+        chat_response = cast("ChatResponseEvent", event)
         # Fail fast on a malformed LLM response: a parse error here propagates
         # and fails the agent, so a dropped input is surfaced instead of
         # silently lost. In production, choose the handling that fits your

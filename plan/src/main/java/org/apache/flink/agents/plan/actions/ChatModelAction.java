@@ -730,10 +730,13 @@ public class ChatModelAction {
     public static void processChatRequestOrToolResponse(Event event, RunnerContext ctx)
             throws Exception {
         MemoryObject sensoryMem = ctx.getSensoryMemory();
+        // Built-in events reach an action as their concrete subclass: the runtime restores them at
+        // the JSON boundary (Event.fromJson) and passes in-process events by reference, so each
+        // type-string check below guarantees the corresponding cast.
         if (ChatRequestEvent.EVENT_TYPE.equals(event.getType())) {
-            processChatRequest(ChatRequestEvent.fromEvent(event), ctx);
+            processChatRequest((ChatRequestEvent) event, ctx);
         } else if (ToolResponseEvent.EVENT_TYPE.equals(event.getType())) {
-            processToolResponse(ToolResponseEvent.fromEvent(event), ctx);
+            processToolResponse((ToolResponseEvent) event, ctx);
         } else {
             throw new RuntimeException(String.format("Unexpected type event %s", event));
         }

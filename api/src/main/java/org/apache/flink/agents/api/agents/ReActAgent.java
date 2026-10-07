@@ -129,7 +129,9 @@ public class ReActAgent extends Agent {
     }
 
     public static void startAction(Event event, RunnerContext ctx) {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
+        // Built-in events reach an action as their concrete subclass (restored at the JSON
+        // boundary), so the dispatched InputEvent is cast directly.
+        InputEvent inputEvent = (InputEvent) event;
         Object input = inputEvent.getInput();
 
         Prompt userPrompt;
@@ -198,7 +200,8 @@ public class ReActAgent extends Agent {
 
     @Action(EventType.ChatResponseEvent)
     public static void stopAction(Event event, RunnerContext ctx) {
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        // See startAction: the dispatched ChatResponseEvent is already the concrete subclass.
+        ChatResponseEvent chatResponse = (ChatResponseEvent) event;
         ChatMessage response = chatResponse.getResponse();
 
         Object output;

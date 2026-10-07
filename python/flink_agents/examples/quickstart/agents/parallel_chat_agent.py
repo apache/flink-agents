@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 import os
-from typing import Dict
+from typing import Dict, cast
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
 from flink_agents.api.agents.types import OutputSchema
@@ -122,7 +122,7 @@ class ParallelChatAgent(Agent):
     @staticmethod
     def request_aspect_judgments(event: Event, ctx: RunnerContext) -> None:
         """Process input event and dispatch SentimentInputEvent to aspect handlers."""
-        payload = InputEvent.from_event(event).input
+        payload = cast("InputEvent", event).input
         # Primitive types (int, str) cross the Pemja JVM boundary without serialization.
         ctx.sensory_memory.set("id", payload["id"])
         ctx.sensory_memory.set("text", payload["text"])
@@ -153,7 +153,7 @@ class ParallelChatAgent(Agent):
     @staticmethod
     def handle_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send output event."""
-        response_event = ChatResponseEvent.from_event(event)
+        response_event = cast("ChatResponseEvent", event)
         parsed = response_event.response.extra_args[STRUCTURED_OUTPUT]
         if isinstance(parsed, dict):
             parsed = (

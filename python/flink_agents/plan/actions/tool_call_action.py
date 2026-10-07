@@ -20,7 +20,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import wraps
-from typing import Any
+from typing import Any, cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.event import Event
@@ -128,7 +128,9 @@ class _ToolCallExecution:
 
 async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing tool call requests."""
-    event = ToolRequestEvent.from_event(event)
+    # Built-in events reach an action as their concrete subclass (restored at the JSON
+    # boundary), so the dispatched ToolRequestEvent is used directly.
+    event = cast("ToolRequestEvent", event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
     tool_call_parallelism = ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
 

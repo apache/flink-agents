@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import logging
+from typing import cast
 
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.context_retrieval_event import (
@@ -36,7 +37,9 @@ _logger = logging.getLogger(__name__)
 
 async def process_context_retrieval_request(event: Event, ctx: RunnerContext) -> None:
     """Built-in action for processing context retrieval requests."""
-    event = ContextRetrievalRequestEvent.from_event(event)
+    # Built-in events reach an action as their concrete subclass (restored at the
+    # JSON boundary), so the dispatched ContextRetrievalRequestEvent is used directly.
+    event = cast("ContextRetrievalRequestEvent", event)
     vector_store = ctx.get_resource(event.vector_store, ResourceType.VECTOR_STORE)
 
     query = VectorStoreQuery(query_text=event.query, limit=event.max_results)

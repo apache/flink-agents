@@ -15,16 +15,22 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from typing import TYPE_CHECKING, cast
+
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.decorators import action, chat_model_setup, prompt, skills
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.event import Event, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.skills import Skills
+
+if TYPE_CHECKING:
+    from flink_agents.api.events.chat_event import ChatResponseEvent
+    from flink_agents.api.events.event import InputEvent
 
 
 class MathAgent(Agent):
@@ -84,7 +90,7 @@ class MathAgent(Agent):
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process input event and send a chat request to evaluate the question."""
-        question: str = InputEvent.from_event(event).input
+        question: str = cast("InputEvent", event).input
         ctx.send_event(
             ChatRequestEvent(
                 model="math_model",
@@ -96,5 +102,5 @@ class MathAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat response event and send the answer as output."""
-        chat_response = ChatResponseEvent.from_event(event)
+        chat_response = cast("ChatResponseEvent", event)
         ctx.send_event(OutputEvent(output=chat_response.response.text))

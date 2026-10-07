@@ -137,7 +137,7 @@ public class ParallelChatAgent extends Agent {
     /** Process input event and dispatch a SentimentInputEvent for each aspect handler. */
     @Action(EventType.InputEvent)
     public static void requestAspectJudgments(Event event, RunnerContext ctx) throws Exception {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
+        InputEvent inputEvent = (InputEvent) event;
         CustomTypesAndResources.SentimentRequest request =
                 (CustomTypesAndResources.SentimentRequest) inputEvent.getInput();
         ctx.getSensoryMemory().set("id", request.getId());
@@ -167,7 +167,7 @@ public class ParallelChatAgent extends Agent {
     /** Process chat response event. */
     @Action(EventType.ChatResponseEvent)
     public static void handleResponse(Event event, RunnerContext ctx) throws Exception {
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ChatResponseEvent chatResponse = (ChatResponseEvent) event;
         Object parsed = chatResponse.getResponse().getExtraArgs().get(STRUCTURED_OUTPUT);
 
         if (parsed instanceof CustomTypesAndResources.SummaryResponse) {

@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
@@ -671,6 +672,27 @@ public class ToolCallActionTest {
 
         assertThat(Thread.interrupted()).as("interrupt status should be restored").isTrue();
         assertThat(ctx.sentEvents).isEmpty();
+    }
+
+    /**
+     * Follow-up (review: consumers cast the concrete event instead of calling {@code fromEvent}): a
+     * built-in {@link ToolRequestEvent} crossing the JSON boundary is restored to its concrete
+     * subclass by {@link Event#fromJson}, so the bare cast in {@link
+     * ToolCallAction#processToolRequest} succeeds. Were restoration to degrade to a generic {@link
+     * Event}, both the instanceof assertion and the cast would fail.
+     */
+    @Test
+    void restoredToolRequestReachesActionAsConcreteType() throws Exception {
+        String wireJson = new ObjectMapper().writeValueAsString(toolRequest("queryOrder"));
+
+        Event restored = Event.fromJson(wireJson);
+
+        assertThat(restored).isInstanceOf(ToolRequestEvent.class);
+        FakeRunnerContext ctx = new FakeRunnerContext();
+        ToolCallAction.processToolRequest(restored, ctx);
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
+        assertThat(response.getResponses().get("call-1").isSuccess()).isTrue();
+        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
     }
 
     private static ToolRequestEvent toolRequest(String toolName) {

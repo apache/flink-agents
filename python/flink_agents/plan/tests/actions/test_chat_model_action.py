@@ -15,7 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -28,6 +29,8 @@ from flink_agents.api.chat_message import (
     MessageRole,
     TextBlock,
 )
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.event import Event
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
@@ -38,6 +41,7 @@ from flink_agents.plan.actions.chat_model_action import (
     _get_tool_request_event_context,
     _save_tool_request_event_context,
     _update_tool_call_context,
+    process_chat_request_or_tool_response,
 )
 from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
@@ -251,3 +255,25 @@ def test_accepted_finish_reason_reports_parser_execution():
     ctx.report_execution_started.assert_called_once()
     ctx.report_execution_succeeded.assert_called_once()
     ctx.report_execution_failed.assert_not_called()
+
+
+def test_restored_chat_request_reaches_action_as_concrete_type() -> None:
+    """A built-in event restored from JSON reaches the dispatcher as concrete.
+
+    Follow-up (review: consumers use the concrete event directly instead of
+    ``from_event``): the dispatcher routes by type string and hands the concrete
+    event to its handler. If restoration degraded to a generic ``Event``, the
+    isinstance assertions below would fail.
+    """
+    original = ChatRequestEvent(
+        model="m", messages=[ChatMessage.of(MessageRole.USER, "hi")]
+    )
+    restored = Event.from_json(original.model_dump_json())
+
+    assert isinstance(restored, ChatRequestEvent)
+    with patch(
+        "flink_agents.plan.actions.chat_model_action._process_chat_request"
+    ) as handler:
+        asyncio.run(process_chat_request_or_tool_response(restored, MagicMock()))
+        handler.assert_awaited_once()
+        assert isinstance(handler.await_args.args[0], ChatRequestEvent)

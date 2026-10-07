@@ -75,7 +75,7 @@ public class ProductSuggestionAgent extends Agent {
     /** Process input event. */
     @Action(EventType.InputEvent)
     public static void processInput(Event event, RunnerContext ctx) throws Exception {
-        InputEvent inputEvent = InputEvent.fromEvent(event);
+        InputEvent inputEvent = (InputEvent) event;
         String input = (String) inputEvent.getInput();
 
         ProductReviewSummary summary = MAPPER.readValue(input, ProductReviewSummary.class);
@@ -98,7 +98,7 @@ public class ProductSuggestionAgent extends Agent {
     /** Process chat response event. */
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
-        ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
+        ChatResponseEvent chatResponse = (ChatResponseEvent) event;
         // Fail fast on a malformed LLM response: a parse error here propagates and fails the
         // agent, so a dropped input is surfaced instead of silently lost. In production, choose
         // the handling that fits your pipeline: raise to fail the input (as below), emit an

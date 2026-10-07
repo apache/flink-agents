@@ -18,6 +18,7 @@
 import os
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -28,12 +29,9 @@ from flink_agents.api.decorators import (
     prompt,
     vector_store,
 )
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
-from flink_agents.api.events.context_retrieval_event import (
-    ContextRetrievalRequestEvent,
-    ContextRetrievalResponseEvent,
-)
-from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.context_retrieval_event import ContextRetrievalRequestEvent
+from flink_agents.api.events.event import Event, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
@@ -42,6 +40,13 @@ from flink_agents.api.resource import (
     ResourceType,
 )
 from flink_agents.api.runner_context import RunnerContext
+
+if TYPE_CHECKING:
+    from flink_agents.api.events.chat_event import ChatResponseEvent
+    from flink_agents.api.events.context_retrieval_event import (
+        ContextRetrievalResponseEvent,
+    )
+    from flink_agents.api.events.event import InputEvent
 
 OLLAMA_CHAT_MODEL = os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:8b")
 OLLAMA_EMBEDDING_MODEL = os.environ.get("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
@@ -114,7 +119,7 @@ Please provide a helpful answer based on the context provided."""
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
         """Process user input and retrieve relevant context."""
-        user_query = str(InputEvent.from_event(event).input)
+        user_query = str(cast("InputEvent", event).input)
         ctx.send_event(
             ContextRetrievalRequestEvent(
                 query=user_query,
@@ -127,7 +132,7 @@ Please provide a helpful answer based on the context provided."""
     @staticmethod
     def process_retrieved_context(event: Event, ctx: RunnerContext) -> None:
         """Process retrieved context and create enhanced chat request."""
-        retrieval_event = ContextRetrievalResponseEvent.from_event(event)
+        retrieval_event = cast("ContextRetrievalResponseEvent", event)
         user_query = retrieval_event.query
         retrieved_docs = retrieval_event.documents
 
@@ -153,6 +158,6 @@ Please provide a helpful answer based on the context provided."""
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat model response and generate output."""
-        chat_response = ChatResponseEvent.from_event(event)
+        chat_response = cast("ChatResponseEvent", event)
         if chat_response.response and chat_response.response.text:
             ctx.send_event(OutputEvent(output=chat_response.response.text))

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from pydantic import (
     BaseModel,
@@ -31,12 +31,15 @@ from flink_agents.api.chat_message import (
     find_first_system_message,
 )
 from flink_agents.api.decorators import action
-from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
+from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+
+if TYPE_CHECKING:
+    from flink_agents.api.events.chat_event import ChatResponseEvent
 
 _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
@@ -154,7 +157,9 @@ class ReActAgent(Agent):
     @staticmethod
     def start_action(event: Event, ctx: RunnerContext) -> None:
         """Start action to format user input and send chat request event."""
-        usr_input = InputEvent.from_event(event).input
+        # Built-in events reach an action as their concrete subclass (restored
+        # at the JSON boundary), so the dispatched InputEvent is used directly.
+        usr_input = cast("InputEvent", event).input
 
         try:
             prompt = cast(
@@ -214,7 +219,8 @@ class ReActAgent(Agent):
     @staticmethod
     def stop_action(event: Event, ctx: RunnerContext) -> None:
         """Stop action to output result."""
-        response = ChatResponseEvent.from_event(event).response
+        # See start_action: the dispatched ChatResponseEvent is already concrete.
+        response = cast("ChatResponseEvent", event).response
 
         if STRUCTURED_OUTPUT in response.extra_args:
             output = response.extra_args[STRUCTURED_OUTPUT]

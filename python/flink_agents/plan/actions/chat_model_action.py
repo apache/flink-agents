@@ -629,10 +629,12 @@ async def process_chat_request_or_tool_response(
     """
     # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.
     logging.debug("Processing chat request asynchronously.")
+    # Built-in events reach an action as their concrete subclass (restored at the JSON
+    # boundary), so the dispatched event is used directly.
     if event.type == ChatRequestEvent.EVENT_TYPE:
-        await _process_chat_request(ChatRequestEvent.from_event(event), ctx)
+        await _process_chat_request(cast("ChatRequestEvent", event), ctx)
     elif event.type == ToolResponseEvent.EVENT_TYPE:
-        await _process_tool_response(ToolResponseEvent.from_event(event), ctx)
+        await _process_tool_response(cast("ToolResponseEvent", event), ctx)
 
 
 CHAT_MODEL_ACTION = Action(
