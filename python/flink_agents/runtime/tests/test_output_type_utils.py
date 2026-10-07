@@ -23,6 +23,7 @@ from pyflink.common import Row
 from pyflink.common.typeinfo import ExternalTypeInfo, RowTypeInfo, Types
 from pyflink.table import DataTypes, Schema
 
+from flink_agents.api.events.event import Event, OutputEvent
 from flink_agents.runtime.output_type_utils import (
     infer_row_type_info,
     is_structured_declaration,
@@ -86,12 +87,48 @@ def test_schema_to_row_type_info():
     assert [str(t) for t in typeinfo.get_field_types()] == ["Long", "String"]
 
 
+def test_schema_to_row_type_info_sql_type_strings():
+    """A column declared with a SQL type string resolves like a ``DataTypes`` one.
+
+    ``column("id", "BIGINT")`` stores an ``UnresolvedDataType``; resolving it
+    before the legacy conversion yields the same row type as the equivalent
+    ``DataTypes`` declaration, for scalars and a nested ``ROW`` alike.
+    """
+    schema = (
+        Schema.new_builder()
+        .column("id", "BIGINT")
+        .column("label", "STRING")
+        .column("nested", "ROW<x INT, y STRING>")
+        .build()
+    )
+    typeinfo = schema_to_row_type_info(schema)
+    assert typeinfo.get_field_names() == ["id", "label", "nested"]
+    assert [str(t) for t in typeinfo.get_field_types()[:2]] == ["Long", "String"]
+    nested = typeinfo.get_field_types()[2]
+    assert isinstance(nested, RowTypeInfo)
+    assert nested.get_field_names() == ["x", "y"]
+
+    # The SQL strings agree with the equivalent ``DataTypes`` object columns.
+    object_schema = (
+        Schema.new_builder()
+        .column("id", DataTypes.BIGINT())
+        .column("label", DataTypes.STRING())
+        .build()
+    )
+    sql_schema = (
+        Schema.new_builder().column("id", "BIGINT").column("label", "STRING").build()
+    )
+    assert _row_spec(schema_to_row_type_info(sql_schema)) == _row_spec(
+        schema_to_row_type_info(object_schema)
+    )
+
+
 def test_schema_to_row_type_info_skips_computed_and_metadata_columns():
     """Only physical columns feed the derived row type.
 
     Computed and metadata columns are planner-derived rather than read from the
-    agent output, so ``schema_to_row_type_info`` skips them; this mirrors Java
-    ``toTable(Schema)``, which passes the Schema straight to the planner.
+    agent output, so ``schema_to_row_type_info`` skips them; this mirrors the
+    Java ``toTable(Schema)`` conversion.
     """
     schema = (
         Schema.new_builder()
@@ -202,6 +239,19 @@ def test_reconstruct_instance_from_dict():
     assert reconstruct_instance(TdOutput, data) == data
     instance = reconstruct_instance(ModelOutput, {"id": 1, "label": "a", "score": 1.5})
     assert isinstance(instance, ModelOutput)
+
+
+def test_reconstruct_named_tuple_through_output_event_boundary():
+    """A ``NamedTuple`` degrades to a positional array across the JSON boundary.
+
+    The agent emits ``NtOutput``; ``OutputEvent.model_dump_json`` serializes the
+    tuple as a JSON array, so the value ``reconstruct_instance`` receives is
+    ``[1, "good"]`` rather than a mapping and must be rebuilt by field order.
+    """
+    event = OutputEvent(output=NtOutput(1, "good"))
+    degraded = Event.from_json(event.model_dump_json()).attributes["output"]
+    assert degraded == [1, "good"]
+    assert reconstruct_instance(NtOutput, degraded) == NtOutput(1, "good")
 
 
 def test_reconstruct_instance_from_row():

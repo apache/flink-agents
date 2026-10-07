@@ -73,6 +73,11 @@ _PY_TO_TYPEINFO: dict[type, TypeInformation] = {
 }
 
 
+def _is_named_tuple(cls: Any) -> bool:
+    """Whether ``cls`` is a ``NamedTuple`` class (a tuple subclass with fields)."""
+    return isinstance(cls, type) and issubclass(cls, tuple) and hasattr(cls, "_fields")
+
+
 def _field_types(cls: Any) -> list[tuple[str, Any]]:
     """Return ordered ``(field_name, python_type)`` pairs for a structured type.
 
@@ -83,7 +88,7 @@ def _field_types(cls: Any) -> list[tuple[str, Any]]:
     if isinstance(cls, type) and dataclasses.is_dataclass(cls):
         hints = get_type_hints(cls)
         return [(f.name, hints[f.name]) for f in dataclasses.fields(cls)]
-    if isinstance(cls, type) and issubclass(cls, tuple) and hasattr(cls, "_fields"):
+    if _is_named_tuple(cls):
         hints = get_type_hints(cls)
         return [(name, hints[name]) for name in cls._fields]
     if is_typeddict(cls):
@@ -177,13 +182,43 @@ def row_type_info_to_schema(typeinfo: RowTypeInfo) -> Schema:
     return Schema.new_builder().from_row_data_type(row_data_type).build()
 
 
+def _resolve_data_type(abstract_type: Any) -> Any:
+    """Resolve a schema column's ``AbstractDataType`` to a concrete ``DataType``.
+
+    A column declared with a ``DataTypes`` object is already a resolved
+    ``DataType`` and is returned as-is. A column declared with a SQL type string
+    (for example ``column("id", "BIGINT")``) is an ``UnresolvedDataType`` that
+    ``TypeConversions.fromDataTypeToLegacyInfo`` rejects, so its SQL text is
+    parsed through Flink's ``LogicalTypeParser`` first -- the same resolution
+    PyFlink applies when the schema is handed to ``from_data_stream``.
+    """
+    gateway = get_gateway()
+    data_type_class = abstract_type.getClass().forName(
+        "org.apache.flink.table.types.DataType"
+    )
+    if data_type_class.isInstance(abstract_type):
+        return abstract_type
+    sql_type = abstract_type.toString()
+    if sql_type.startswith("[") and sql_type.endswith("]"):
+        sql_type = sql_type[1:-1]
+    type_conversions = gateway.jvm.org.apache.flink.table.types.utils.TypeConversions
+    logical_type_parser = (
+        gateway.jvm.org.apache.flink.table.types.logical.utils.LogicalTypeParser
+    )
+    class_loader = gateway.jvm.java.lang.Thread.currentThread().getContextClassLoader()
+    logical_type = logical_type_parser.parse(sql_type, class_loader)
+    return type_conversions.fromLogicalToDataType(logical_type)
+
+
 def schema_to_row_type_info(schema: Schema) -> RowTypeInfo:
     """Derive a ``RowTypeInfo`` from the physical columns of a Table ``Schema``.
 
-    Each column ``DataType`` becomes a legacy ``TypeInformation`` through Flink's
-    ``TypeConversions.fromDataTypeToLegacyInfo`` and the assembled Java
-    ``RowTypeInfo`` is mapped back by PyFlink's ``_from_java_type``, so nested
-    ``ROW``, array, and temporal columns are preserved.
+    Each column type is resolved to a concrete ``DataType`` -- a SQL type string
+    such as ``"BIGINT"`` is parsed first -- then converted to a legacy
+    ``TypeInformation`` through Flink's ``fromDataTypeToLegacyInfo``. The
+    assembled Java ``RowTypeInfo`` is mapped back by PyFlink's
+    ``_from_java_type``, so nested ``ROW``, array, and temporal columns are
+    preserved.
     """
     gateway = get_gateway()
     type_conversions = gateway.jvm.org.apache.flink.table.types.utils.TypeConversions
@@ -193,8 +228,7 @@ def schema_to_row_type_info(schema: Schema) -> RowTypeInfo:
 
     # Only physical columns feed the DataStream Row; computed and metadata
     # columns are derived by the Table planner rather than read from the agent
-    # output, mirroring Java toTable(Schema), which passes the Schema straight
-    # to fromDataStream.
+    # output, mirroring the Java toTable(Schema) conversion.
     columns = [
         column
         for column in schema._j_schema.getColumns()
@@ -203,7 +237,8 @@ def schema_to_row_type_info(schema: Schema) -> RowTypeInfo:
     j_types = gateway.new_array(j_type_info, len(columns))
     j_names = gateway.new_array(j_string, len(columns))
     for i, column in enumerate(columns):
-        j_types[i] = type_conversions.fromDataTypeToLegacyInfo(column.getDataType())
+        data_type = _resolve_data_type(column.getDataType())
+        j_types[i] = type_conversions.fromDataTypeToLegacyInfo(data_type)
         j_names[i] = column.getName()
     return _from_java_type(j_row_type_info(j_types, j_names))
 
@@ -249,11 +284,11 @@ def reconstruct_instance(cls: Any, data: Any) -> Any:
     """Rebuild an instance of a structured declaration from its emitted form.
 
     This is the payload of the typed ``to_datastream`` conversion operator. A
-    Pydantic model / dataclass / named tuple degrades to a dict across the JSON
-    output boundary (only ``Row`` is reconstructed there), so the declared type
-    is restored here; a ``Row`` is adapted through its field mapping, a
-    ``TypedDict`` declaration is already satisfied by a dict, and a value that is
-    already an instance is passed through.
+    Pydantic model / dataclass degrades to a dict across the JSON output boundary
+    (only ``Row`` is reconstructed there) while a ``NamedTuple`` degrades to a
+    positional array, so the declared type is restored here; a ``Row`` is adapted
+    through its field mapping, a ``TypedDict`` declaration is already satisfied
+    by a dict, and a value that is already an instance is passed through.
     """
     if isinstance(data, Row):
         data = data.as_dict()
@@ -264,6 +299,10 @@ def reconstruct_instance(cls: Any, data: Any) -> Any:
         return data
     if isinstance(cls, type) and isinstance(data, cls):
         return data
+    if _is_named_tuple(cls) and isinstance(data, list | tuple):
+        # A NamedTuple crosses the OutputEvent JSON boundary as a positional
+        # array, so rebuild it by field order instead of by name.
+        return cls(*data)
     if not isinstance(data, dict):
         msg = (
             f"cannot reconstruct {cls!r} from {type(data).__name__}; expected a "
