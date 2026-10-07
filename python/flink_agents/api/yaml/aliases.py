@@ -64,7 +64,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "ollama": ResourceName.ChatModel.OLLAMA_CONNECTION,
             "openai": ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             "anthropic": ResourceName.ChatModel.ANTHROPIC_CONNECTION,
-            "tongyi": ResourceName.ChatModel.TONGYI_CONNECTION,
+            "dashscope": ResourceName.ChatModel.DASHSCOPE_CONNECTION,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             "vllm": ResourceName.ChatModel.VLLM_CONNECTION,
             "watsonx": ResourceName.ChatModel.WATSONX_CONNECTION,
@@ -86,7 +86,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "ollama": ResourceName.ChatModel.OLLAMA_SETUP,
             "openai": ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             "anthropic": ResourceName.ChatModel.ANTHROPIC_SETUP,
-            "tongyi": ResourceName.ChatModel.TONGYI_SETUP,
+            "dashscope": ResourceName.ChatModel.DASHSCOPE_SETUP,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_SETUP,
             "vllm": ResourceName.ChatModel.VLLM_SETUP,
             "watsonx": ResourceName.ChatModel.WATSONX_SETUP,
@@ -107,7 +107,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "python": {
             "ollama": ResourceName.EmbeddingModel.OLLAMA_CONNECTION,
             "openai": ResourceName.EmbeddingModel.OPENAI_CONNECTION,
-            "tongyi": ResourceName.EmbeddingModel.TONGYI_CONNECTION,
+            "dashscope": ResourceName.EmbeddingModel.DASHSCOPE_CONNECTION,
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
@@ -119,7 +119,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "python": {
             "ollama": ResourceName.EmbeddingModel.OLLAMA_SETUP,
             "openai": ResourceName.EmbeddingModel.OPENAI_SETUP,
-            "tongyi": ResourceName.EmbeddingModel.TONGYI_SETUP,
+            "dashscope": ResourceName.EmbeddingModel.DASHSCOPE_SETUP,
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,

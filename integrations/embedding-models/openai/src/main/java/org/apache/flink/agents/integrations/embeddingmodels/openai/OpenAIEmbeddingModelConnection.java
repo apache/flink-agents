@@ -509,7 +509,7 @@ public class OpenAIEmbeddingModelConnection extends BaseEmbeddingModelConnection
 
     /**
      * Tolerates servers that omit {@code usage} or some of its fields. Embedding requests have no
-     * completion tokens, so a missing side of the usage equals the other side (as the Tongyi
+     * completion tokens, so a missing side of the usage equals the other side (as the DashScope
      * connection does) rather than being reported as zero.
      */
     private static EmbeddingTokenUsage extractTokenUsage(CreateEmbeddingResponse response) {

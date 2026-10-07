@@ -27,8 +27,8 @@ from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import NativeStructuredOutputSupport
 from flink_agents.api.tools.tool import Tool
-from flink_agents.integrations.chat_models.tongyi_chat_model import (
-    TongyiChatModelConnection,
+from flink_agents.integrations.chat_models.dashscope_chat_model import (
+    DashScopeChatModelConnection,
 )
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
@@ -72,8 +72,8 @@ class Unrenderable(BaseModel):
     cb: Callable[[int], int]
 
 
-def _connection() -> TongyiChatModelConnection:
-    return TongyiChatModelConnection(api_key="fake-key")
+def _connection() -> DashScopeChatModelConnection:
+    return DashScopeChatModelConnection(api_key="fake-key")
 
 
 def _messages() -> list[ChatMessage]:
@@ -107,7 +107,7 @@ def _patched_call(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """
     mock_call = MagicMock(return_value=_mocked_response())
     monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
         mock_call,
     )
     return mock_call
@@ -305,7 +305,7 @@ def test_row_type_info_leaves_a_caller_response_format_alone(monkeypatch) -> Non
 _DEFAULT_MODEL = "qwen-plus"
 
 
-def _judging_connection() -> tuple[TongyiChatModelConnection, list[str | None]]:
+def _judging_connection() -> tuple[DashScopeChatModelConnection, list[str | None]]:
     """A connection recording every model its request path judges for capability.
 
     Subclassing keeps the predicate itself under test rather than standing a stub in
@@ -313,7 +313,7 @@ def _judging_connection() -> tuple[TongyiChatModelConnection, list[str | None]]:
     """
     judged: list[str | None] = []
 
-    class _JudgingConnection(TongyiChatModelConnection):
+    class _JudgingConnection(DashScopeChatModelConnection):
         def _model_supports_native_structured_output(
             self, effective_model: str | None
         ) -> bool:
@@ -454,7 +454,7 @@ def test_feasibility_is_asked_with_the_unstripped_kwargs(monkeypatch) -> None:
     """
     asked: List[Mapping[str, Any] | None] = []
 
-    class _CapturingConnection(TongyiChatModelConnection):
+    class _CapturingConnection(DashScopeChatModelConnection):
         def _can_apply_native_structured_output(
             self,
             output_schema: OutputSchema | None,

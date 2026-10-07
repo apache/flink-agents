@@ -128,11 +128,11 @@ public final class ResourceName {
             public static final String OPENAI_COMPLETIONS_SETUP =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup";
 
-            // Tongyi
-            public static final String TONGYI_CONNECTION =
-                    "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection";
-            public static final String TONGYI_SETUP =
-                    "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup";
+            // DashScope
+            public static final String DASHSCOPE_CONNECTION =
+                    "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelConnection";
+            public static final String DASHSCOPE_SETUP =
+                    "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelSetup";
 
             // vLLM (OpenAI-compatible)
             public static final String VLLM_CONNECTION =
@@ -187,11 +187,11 @@ public final class ResourceName {
             public static final String OPENAI_SETUP =
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup";
 
-            // Tongyi
-            public static final String TONGYI_CONNECTION =
-                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection";
-            public static final String TONGYI_SETUP =
-                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup";
+            // DashScope
+            public static final String DASHSCOPE_CONNECTION =
+                    "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelConnection";
+            public static final String DASHSCOPE_SETUP =
+                    "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelSetup";
 
             private Python() {}
         }

@@ -39,6 +39,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -474,6 +475,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("Anthropic", messages);
         try {
             BuiltRequest built = buildRequest(messages, tools, modelParams, outputSchema);
             Message response = client.messages().create(built.params);

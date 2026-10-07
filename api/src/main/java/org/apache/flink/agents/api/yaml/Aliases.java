@@ -88,7 +88,7 @@ public final class Aliases {
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
         chatConnPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_CONNECTION);
-        chatConnPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_CONNECTION);
+        chatConnPython.put("dashscope", ResourceName.ChatModel.Python.DASHSCOPE_CONNECTION);
         chatConnPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_CONNECTION);
         chatConnPython.put("vllm", ResourceName.ChatModel.Python.VLLM_CONNECTION);
         chatConnPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_CONNECTION);
@@ -109,7 +109,7 @@ public final class Aliases {
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
         chatPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_SETUP);
-        chatPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_SETUP);
+        chatPython.put("dashscope", ResourceName.ChatModel.Python.DASHSCOPE_SETUP);
         chatPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_SETUP);
         chatPython.put("vllm", ResourceName.ChatModel.Python.VLLM_SETUP);
         chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
@@ -123,7 +123,7 @@ public final class Aliases {
         Map<String, String> embConnPython = new HashMap<>();
         embConnPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION);
         embConnPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_CONNECTION);
-        embConnPython.put("tongyi", ResourceName.EmbeddingModel.Python.TONGYI_CONNECTION);
+        embConnPython.put("dashscope", ResourceName.EmbeddingModel.Python.DASHSCOPE_CONNECTION);
         ca.put(
                 ResourceType.EMBEDDING_MODEL_CONNECTION,
                 buildLangBuckets(embConnJava, embConnPython));
@@ -136,7 +136,7 @@ public final class Aliases {
         Map<String, String> embPython = new HashMap<>();
         embPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP);
         embPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_SETUP);
-        embPython.put("tongyi", ResourceName.EmbeddingModel.Python.TONGYI_SETUP);
+        embPython.put("dashscope", ResourceName.EmbeddingModel.Python.DASHSCOPE_SETUP);
         ca.put(ResourceType.EMBEDDING_MODEL, buildLangBuckets(embJava, embPython));
 
         // VECTOR_STORE

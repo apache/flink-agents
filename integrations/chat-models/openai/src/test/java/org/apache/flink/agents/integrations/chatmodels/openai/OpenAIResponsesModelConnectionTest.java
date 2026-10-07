@@ -20,7 +20,10 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.openai.errors.BadRequestException;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -271,5 +274,22 @@ class OpenAIResponsesModelConnectionTest {
                             })
                     .hasMessageContaining(FakeOpenAIErrorEndpoint.ERROR_MESSAGE);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>()))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "OpenAI Responses cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

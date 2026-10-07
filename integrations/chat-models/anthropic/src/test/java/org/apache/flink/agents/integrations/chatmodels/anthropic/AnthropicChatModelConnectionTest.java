@@ -31,7 +31,9 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -1179,5 +1181,23 @@ class AnthropicChatModelConnectionTest {
         public ToolResponse call(ToolParameters parameters) {
             return ToolResponse.success(null);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        org.apache.flink.agents.api.chat.messages.TextBlock.of(
+                                                "Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "Anthropic cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

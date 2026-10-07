@@ -373,7 +373,7 @@ class OpenAIEmbeddingModelConnection(BaseEmbeddingModelConnection):
             prompt_tokens = _usage_count(getattr(usage, "prompt_tokens", None))
             total_tokens = _usage_count(getattr(usage, "total_tokens", None))
             # Embedding requests have no completion tokens, so a missing side of the
-            # usage equals the other side (as the Tongyi connection does).
+            # usage equals the other side (as the DashScope connection does).
             if prompt_tokens is None:
                 prompt_tokens = total_tokens
             if prompt_tokens is not None:

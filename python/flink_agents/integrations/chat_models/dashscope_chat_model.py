@@ -26,7 +26,11 @@ from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
@@ -127,15 +131,15 @@ def to_dashscope_tool(
     }
 
 
-class TongyiChatModelConnection(BaseChatModelConnection):
-    """Tongyi ChatModelConnection which manages the connection to the Tongyi API server.
+class DashScopeChatModelConnection(BaseChatModelConnection):
+    """Manage the connection to the DashScope API server.
 
     Attributes:
     ----------
     api_key : str
         Your DashScope API key.
     request_timeout : float
-        The timeout for making http request to Tongyi API server.
+        The timeout for making http request to DashScope API server.
     """
 
     api_key: str = Field(
@@ -144,7 +148,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
     )
     request_timeout: float = Field(
         default=DEFAULT_REQUEST_TIMEOUT,
-        description="The timeout for making http request to Tongyi API server.",
+        description="The timeout for making http request to DashScope API server.",
     )
 
     def __init__(
@@ -297,6 +301,8 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message.
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("DashScope", messages)
         # Snapshotted before the pops below, so the feasibility check is asked with
         # the parameters as they arrived rather than with a mapping this path has
         # already stripped. No term of today's answer reads them; the shape is what
@@ -304,9 +310,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         # being built.
         raw_kwargs = dict(kwargs)
 
-        tongyi_messages = self.__convert_to_tongyi_messages(messages)
+        dashscope_messages = self.__convert_to_dashscope_messages(messages)
 
-        tongyi_tools: List[Dict[str, Any]] | None = (
+        dashscope_tools: List[Dict[str, Any]] | None = (
             [to_dashscope_tool(tool.metadata) for tool in tools] if tools else None
         )
 
@@ -346,8 +352,8 @@ class TongyiChatModelConnection(BaseChatModelConnection):
 
         response = Generation.call(
             model=model_name,
-            messages=tongyi_messages,
-            tools=tongyi_tools,
+            messages=dashscope_messages,
+            tools=dashscope_tools,
             result_format="message",
             timeout=self.request_timeout,
             api_key=req_api_key,
@@ -404,10 +410,10 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         )
 
     @staticmethod
-    def __convert_to_tongyi_messages(
+    def __convert_to_dashscope_messages(
         messages: Sequence[ChatMessage],
     ) -> List[Dict[str, Any]]:
-        tongyi_messages: List[Dict[str, Any]] = []
+        dashscope_messages: List[Dict[str, Any]] = []
         for message in messages:
             msg_dict: Dict[str, Any] = {
                 "role": message.role.value,
@@ -438,8 +444,8 @@ class TongyiChatModelConnection(BaseChatModelConnection):
                 # The tool call action records the provider's call id here.
                 msg_dict["tool_call_id"] = str(message.extra_args["external_id"])
 
-            tongyi_messages.append(msg_dict)
-        return cast("List[Dict[str, Any]]", tongyi_messages)
+            dashscope_messages.append(msg_dict)
+        return cast("List[Dict[str, Any]]", dashscope_messages)
 
 
 def _provider_tool_call_id(tool_call: Dict[str, Any]) -> str:
@@ -450,9 +456,9 @@ def _provider_tool_call_id(tool_call: Dict[str, Any]) -> str:
     return str(original_id) if original_id else str(tool_call.get("id", ""))
 
 
-class TongyiChatModelSetup(BaseChatModelSetup):
-    """Tongyi chat model setup which manages chat configuration and will internally
-    call Tongyi chat model connection to do chat.
+class DashScopeChatModelSetup(BaseChatModelSetup):
+    """DashScope chat model setup which manages chat configuration and will internally
+    call DashScope chat model connection to do chat.
 
     Attributes:
     ----------
@@ -468,7 +474,7 @@ class TongyiChatModelSetup(BaseChatModelSetup):
     temperature : float
         The temperature to use for sampling.
     additional_kwargs : Dict[str, Any]
-        Additional model parameters for the Tongyi API.
+        Additional model parameters for the DashScope API.
     extract_reasoning : bool
         If True, extracts reasoning content from the response and stores it
         in additional_kwargs.
@@ -482,7 +488,7 @@ class TongyiChatModelSetup(BaseChatModelSetup):
     )
     additional_kwargs: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional model parameters for the Tongyi API.",
+        description="Additional model parameters for the DashScope API.",
     )
     extract_reasoning: bool = Field(
         default=False,
@@ -512,7 +518,7 @@ class TongyiChatModelSetup(BaseChatModelSetup):
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
-        """Return Tongyi model configuration."""
+        """Return DashScope model configuration."""
         base_kwargs = {
             "model": self.model,
             "temperature": self.temperature,

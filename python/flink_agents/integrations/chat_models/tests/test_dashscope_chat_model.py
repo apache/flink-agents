@@ -24,24 +24,24 @@ import pytest
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
-from flink_agents.integrations.chat_models.tongyi_chat_model import (
+from flink_agents.integrations.chat_models.dashscope_chat_model import (
     DEFAULT_MODEL,
-    TongyiChatModelConnection,
-    TongyiChatModelSetup,
+    DashScopeChatModelConnection,
+    DashScopeChatModelSetup,
 )
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
 pytestmark = pytest.mark.integration
 
-test_model = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
+test_model = os.environ.get("DASHSCOPE_CHAT_MODEL", "qwen-plus")
 api_key_available = "DASHSCOPE_API_KEY" in os.environ
 
 
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
-def test_tongyi_chat() -> None:
-    """Test basic chat functionality of TongyiChatModelConnection."""
-    connection = TongyiChatModelConnection()
+def test_dashscope_chat() -> None:
+    """Test basic chat functionality of DashScopeChatModelConnection."""
+    connection = DashScopeChatModelConnection()
     response = connection.chat(
         [ChatMessage.of(MessageRole.USER, "Hello!")], model=test_model
     )
@@ -75,9 +75,9 @@ def get_tool(name: str, type: ResourceType) -> FunctionTool:
 
 
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
-def test_tongyi_chat_with_tools() -> None:
+def test_dashscope_chat_with_tools() -> None:
     """Test chat functionality with tool calling."""
-    connection = TongyiChatModelConnection()
+    connection = DashScopeChatModelConnection()
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.TOOL:
@@ -88,9 +88,9 @@ def test_tongyi_chat_with_tools() -> None:
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource
 
-    llm = TongyiChatModelSetup(
+    llm = DashScopeChatModelSetup(
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         tools=["add"],
         resource_context=mock_ctx,
     )
@@ -112,7 +112,7 @@ def test_tongyi_chat_with_tools() -> None:
     assert add(**tool_call["function"]["arguments"]) == 3
 
 
-def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashscope_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test that extract_reasoning functionality works correctly (mock DashScope)."""
     content = "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     reasoning_content = (
@@ -140,11 +140,11 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     mock_call = MagicMock(return_value=mocked_response)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
         mock_call,
     )
 
-    connection = TongyiChatModelConnection(
+    connection = DashScopeChatModelConnection(
         api_key=os.environ.get("DASHSCOPE_API_KEY", "fake-key"),
     )
 
@@ -154,9 +154,9 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
     mock_ctx = MagicMock(spec=ResourceContext)
     mock_ctx.get_resource = get_resource
 
-    llm = TongyiChatModelSetup(
+    llm = DashScopeChatModelSetup(
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         extract_reasoning=True,
         resource_context=mock_ctx,
     )
@@ -180,14 +180,14 @@ def test_tongyi_chat_with_extract_reasoning(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_model_field_roundtrip() -> None:
     """Verify `model` is preserved through pydantic dump/validate round-trip."""
-    setup = TongyiChatModelSetup(connection="conn", model="test-model")
-    restored = TongyiChatModelSetup.model_validate(setup.model_dump())
+    setup = DashScopeChatModelSetup(connection="conn", model="test-model")
+    restored = DashScopeChatModelSetup.model_validate(setup.model_dump())
     assert restored.model == "test-model"
 
 
 def test_default_model_when_omitted() -> None:
     """Verify per-integration default applies when `model` is omitted from __init__."""
-    setup = TongyiChatModelSetup(connection="conn")
+    setup = DashScopeChatModelSetup(connection="conn")
     assert setup.model == DEFAULT_MODEL
 
 
@@ -219,10 +219,10 @@ def test_tool_call_ids_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     mock_call = MagicMock(return_value=tool_call_response)
     monkeypatch.setattr(
-        "flink_agents.integrations.chat_models.tongyi_chat_model.Generation.call",
+        "flink_agents.integrations.chat_models.dashscope_chat_model.Generation.call",
         mock_call,
     )
-    connection = TongyiChatModelConnection(api_key="fake-key")
+    connection = DashScopeChatModelConnection(api_key="fake-key")
 
     response = connection.chat(
         [ChatMessage.of(MessageRole.USER, "What is 1 + 2?")], model=test_model

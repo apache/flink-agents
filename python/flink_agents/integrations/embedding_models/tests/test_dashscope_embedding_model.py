@@ -24,14 +24,14 @@ import pytest
 
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
-from flink_agents.integrations.embedding_models.tongyi_embedding_model import (
-    TongyiEmbeddingModelConnection,
-    TongyiEmbeddingModelSetup,
+from flink_agents.integrations.embedding_models.dashscope_embedding_model import (
+    DashScopeEmbeddingModelConnection,
+    DashScopeEmbeddingModelSetup,
 )
 
 pytestmark = pytest.mark.integration
 
-test_model = os.environ.get("TONGYI_EMBEDDING_MODEL", "text-embedding-v4")
+test_model = os.environ.get("DASHSCOPE_EMBEDDING_MODEL", "text-embedding-v4")
 api_key_available = "DASHSCOPE_API_KEY" in os.environ
 
 
@@ -42,9 +42,9 @@ def _make_ctx(get_resource) -> ResourceContext:
 
 
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
-def test_tongyi_embedding_model() -> None:
-    """Test basic embedding functionality of TongyiEmbeddingModelConnection."""
-    connection = TongyiEmbeddingModelConnection(name="tongyi")
+def test_dashscope_embedding_model() -> None:
+    """Test basic embedding functionality of DashScopeEmbeddingModelConnection."""
+    connection = DashScopeEmbeddingModelConnection(name="dashscope")
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
@@ -53,10 +53,10 @@ def test_tongyi_embedding_model() -> None:
             msg = f"Unknown resource type: {type}"
             raise ValueError(msg)
 
-    embedding_model = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         resource_context=_make_ctx(get_resource),
     )
     embedding_model.open()
@@ -71,9 +71,9 @@ def test_tongyi_embedding_model() -> None:
 
 
 @pytest.mark.skipif(not api_key_available, reason="DashScope API key is not set")
-def test_tongyi_embedding_with_text_type() -> None:
+def test_dashscope_embedding_with_text_type() -> None:
     """Test embedding with text_type parameter."""
-    connection = TongyiEmbeddingModelConnection(name="tongyi")
+    connection = DashScopeEmbeddingModelConnection(name="dashscope")
 
     def get_resource(name: str, type: ResourceType) -> Resource:
         if type == ResourceType.EMBEDDING_MODEL_CONNECTION:
@@ -82,10 +82,10 @@ def test_tongyi_embedding_with_text_type() -> None:
             msg = f"Unknown resource type: {type}"
             raise ValueError(msg)
 
-    embedding_model_query = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model_query = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         text_type="query",
         resource_context=_make_ctx(get_resource),
     )
@@ -96,10 +96,10 @@ def test_tongyi_embedding_with_text_type() -> None:
     assert isinstance(response_query, list)
     assert len(response_query) > 0
 
-    embedding_model_doc = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model_doc = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         text_type="document",
         resource_context=_make_ctx(get_resource),
     )
@@ -111,7 +111,7 @@ def test_tongyi_embedding_with_text_type() -> None:
     assert len(response_doc) > 0
 
 
-def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashscope_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test embedding functionality with mocked DashScope API."""
     mock_embedding = [0.1, 0.2, 0.3, 0.4, 0.5]
 
@@ -124,12 +124,12 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_call = MagicMock(return_value=mocked_response)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        "flink_agents.integrations.embedding_models.dashscope_embedding_model.dashscope.TextEmbedding.call",
         mock_call,
     )
 
-    connection = TongyiEmbeddingModelConnection(
-        name="tongyi",
+    connection = DashScopeEmbeddingModelConnection(
+        name="dashscope",
         api_key="fake-key",
     )
 
@@ -140,10 +140,10 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
             msg = f"Unknown resource type: {type}"
             raise ValueError(msg)
 
-    embedding_model = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         resource_context=_make_ctx(get_resource),
     )
     embedding_model.open()
@@ -155,7 +155,7 @@ def test_tongyi_embedding_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 5
 
 
-def test_tongyi_embedding_returns_token_usage(
+def test_dashscope_embedding_returns_token_usage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test DashScope embedding usage is recorded as model token metrics."""
@@ -170,12 +170,12 @@ def test_tongyi_embedding_returns_token_usage(
     )
     mock_call = MagicMock(return_value=mocked_response)
     monkeypatch.setattr(
-        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        "flink_agents.integrations.embedding_models.dashscope_embedding_model.dashscope.TextEmbedding.call",
         mock_call,
     )
 
-    connection = TongyiEmbeddingModelConnection(
-        name="tongyi",
+    connection = DashScopeEmbeddingModelConnection(
+        name="dashscope",
         api_key="fake-key",
     )
 
@@ -186,10 +186,10 @@ def test_tongyi_embedding_returns_token_usage(
             msg = f"Unknown resource type: {type}"
             raise ValueError(msg)
 
-    embedding_model = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         resource_context=_make_ctx(get_resource),
     )
     embedding_model.open()
@@ -201,7 +201,7 @@ def test_tongyi_embedding_returns_token_usage(
     assert result.token_usage.total_tokens == 6
 
 
-def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashscope_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test batch embedding functionality with mocked DashScope API."""
     mock_embeddings = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
 
@@ -219,12 +219,12 @@ def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_call = MagicMock(return_value=mocked_response)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        "flink_agents.integrations.embedding_models.dashscope_embedding_model.dashscope.TextEmbedding.call",
         mock_call,
     )
 
-    connection = TongyiEmbeddingModelConnection(
-        name="tongyi",
+    connection = DashScopeEmbeddingModelConnection(
+        name="dashscope",
         api_key="fake-key",
     )
 
@@ -235,10 +235,10 @@ def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
             msg = f"Unknown resource type: {type}"
             raise ValueError(msg)
 
-    embedding_model = TongyiEmbeddingModelSetup(
-        name="tongyi",
+    embedding_model = DashScopeEmbeddingModelSetup(
+        name="dashscope",
         model=test_model,
-        connection="tongyi",
+        connection="dashscope",
         resource_context=_make_ctx(get_resource),
     )
     embedding_model.open()
@@ -250,7 +250,7 @@ def test_tongyi_embedding_batch_mock(monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(response) == 2
 
 
-def test_tongyi_embedding_error_handling(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashscope_embedding_error_handling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Test error handling when API call fails."""
     mocked_response = SimpleNamespace(
         status_code=HTTPStatus.BAD_REQUEST,
@@ -260,12 +260,12 @@ def test_tongyi_embedding_error_handling(monkeypatch: pytest.MonkeyPatch) -> Non
     mock_call = MagicMock(return_value=mocked_response)
 
     monkeypatch.setattr(
-        "flink_agents.integrations.embedding_models.tongyi_embedding_model.dashscope.TextEmbedding.call",
+        "flink_agents.integrations.embedding_models.dashscope_embedding_model.dashscope.TextEmbedding.call",
         mock_call,
     )
 
-    connection = TongyiEmbeddingModelConnection(
-        name="tongyi",
+    connection = DashScopeEmbeddingModelConnection(
+        name="dashscope",
         api_key="invalid-key",
     )
 
@@ -273,7 +273,7 @@ def test_tongyi_embedding_error_handling(monkeypatch: pytest.MonkeyPatch) -> Non
         connection.embed("Test text", model=test_model)
 
 
-def test_tongyi_embedding_without_api_key() -> None:
+def test_dashscope_embedding_without_api_key() -> None:
     """Test that ValueError is raised when API key is not provided."""
     original_api_key = os.environ.get("DASHSCOPE_API_KEY")
 
@@ -282,7 +282,7 @@ def test_tongyi_embedding_without_api_key() -> None:
 
     try:
         with pytest.raises(ValueError, match="DashScope API key is not provided"):
-            TongyiEmbeddingModelConnection(name="tongyi")
+            DashScopeEmbeddingModelConnection(name="dashscope")
     finally:
         if original_api_key is not None:
             os.environ["DASHSCOPE_API_KEY"] = original_api_key

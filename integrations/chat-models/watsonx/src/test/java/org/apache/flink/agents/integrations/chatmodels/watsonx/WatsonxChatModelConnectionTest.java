@@ -26,7 +26,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -1060,5 +1063,27 @@ class WatsonxChatModelConnectionTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        String expected =
+                "IBM watsonx.ai cannot send an image block (image/png, base64 source): this"
+                        + " integration sends text only.";
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(expected);
+        // The three-argument overload is what BaseChatModelSetup calls.
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>()))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(expected);
     }
 }

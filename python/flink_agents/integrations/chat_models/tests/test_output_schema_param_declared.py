@@ -28,7 +28,10 @@ from flink_agents.e2e_tests.e2e_tests_integration import (
     mock_chat_model_agent,
     tool_parameter_injection_agent,
 )
-from flink_agents.integrations.chat_models import ollama_chat_model, tongyi_chat_model
+from flink_agents.integrations.chat_models import (
+    dashscope_chat_model,
+    ollama_chat_model,
+)
 from flink_agents.integrations.chat_models.anthropic import anthropic_chat_model
 from flink_agents.integrations.chat_models.azure import azure_openai_chat_model
 from flink_agents.integrations.chat_models.openai import openai_chat_model
@@ -45,7 +48,7 @@ _MODULES_DEFINING_CONNECTIONS = (
     mock_chat_model_agent,
     ollama_chat_model,
     openai_chat_model,
-    tongyi_chat_model,
+    dashscope_chat_model,
     tool_parameter_injection_agent,
     watsonx_chat_model,
 )

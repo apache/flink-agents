@@ -329,9 +329,9 @@ class ResourceName:
         OPENAI_COMPLETIONS_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
         OPENAI_COMPLETIONS_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
 
-        # Tongyi
-        TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
-        TONGYI_SETUP = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
+        # DashScope
+        DASHSCOPE_CONNECTION = "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelConnection"
+        DASHSCOPE_SETUP = "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelSetup"
 
         # vLLM (OpenAI-compatible)
         VLLM_CONNECTION = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelConnection"
@@ -390,9 +390,9 @@ class ResourceName:
         OPENAI_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
         OPENAI_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
 
-        # Tongyi
-        TONGYI_CONNECTION = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection"
-        TONGYI_SETUP = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup"
+        # DashScope
+        DASHSCOPE_CONNECTION = "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelConnection"
+        DASHSCOPE_SETUP = "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelSetup"
 
         class Java:
             """Java implementations of EmbeddingModel."""

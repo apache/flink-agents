@@ -46,8 +46,8 @@ def _get_usage_value(obj: Any, *names: str) -> int | None:
     return None
 
 
-class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
-    """Tongyi Embedding Model Connection which manages connection to DashScope API.
+class DashScopeEmbeddingModelConnection(BaseEmbeddingModelConnection):
+    """DashScope Embedding Model Connection which manages connection to DashScope API.
 
     Visit https://dashscope.console.aliyun.com/ to get your API key.
 
@@ -56,7 +56,7 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
     api_key : str
         DashScope API key for authentication.
     request_timeout : float
-        The timeout for making http request to Tongyi API server.
+        The timeout for making http request to DashScope API server.
     """
 
     api_key: str | None = Field(
@@ -65,7 +65,7 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
     )
     request_timeout: float = Field(
         default=DEFAULT_REQUEST_TIMEOUT,
-        description="The timeout for making http request to Tongyi API server.",
+        description="The timeout for making http request to DashScope API server.",
     )
 
     def __init__(
@@ -147,8 +147,8 @@ class TongyiEmbeddingModelConnection(BaseEmbeddingModelConnection):
         )
 
 
-class TongyiEmbeddingModelSetup(BaseEmbeddingModelSetup):
-    """The settings for Tongyi embedding model.
+class DashScopeEmbeddingModelSetup(BaseEmbeddingModelSetup):
+    """The settings for DashScope embedding model.
 
     Attributes:
     ----------
@@ -205,7 +205,7 @@ class TongyiEmbeddingModelSetup(BaseEmbeddingModelSetup):
 
     @property
     def model_kwargs(self) -> Dict[str, Any]:
-        """Return Tongyi embedding model configuration."""
+        """Return DashScope embedding model configuration."""
         base_kwargs: Dict[str, Any] = {
             "model": self.model,
         }
