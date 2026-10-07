@@ -29,7 +29,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -126,10 +125,7 @@ public class ReActAgentTest {
                         Row.of(2131, 29847, 3));
 
         // Define output schema
-        Schema outputSchema =
-                Schema.newBuilder()
-                        .column("f0", DataTypes.ROW(DataTypes.FIELD("result", DataTypes.DOUBLE())))
-                        .build();
+        Schema outputSchema = Schema.newBuilder().column("result", DataTypes.DOUBLE()).build();
 
         // Apply agent to the Table
         Table outputTable =
@@ -142,10 +138,7 @@ public class ReActAgentTest {
                         .toTable(outputSchema);
 
         // Collect the results to fully display the data
-        CloseableIterator<Row> results =
-                tableEnv.toDataStream(outputTable)
-                        .map((MapFunction<Row, Row>) x -> (Row) x.getField("f0"))
-                        .collectAsync();
+        CloseableIterator<Row> results = tableEnv.toDataStream(outputTable).collectAsync();
 
         env.execute();
 

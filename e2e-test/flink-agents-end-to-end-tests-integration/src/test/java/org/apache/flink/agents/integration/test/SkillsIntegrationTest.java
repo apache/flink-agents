@@ -28,7 +28,6 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
-import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -198,10 +197,7 @@ public class SkillsIntegrationTest {
                                 DataTypes.FIELD("b", DataTypes.INT())),
                         Row.of(2, 3));
 
-        Schema outputSchema =
-                Schema.newBuilder()
-                        .column("f0", DataTypes.ROW(DataTypes.FIELD("result", DataTypes.INT())))
-                        .build();
+        Schema outputSchema = Schema.newBuilder().column("result", DataTypes.INT()).build();
 
         Table outputTable =
                 agentsEnv
@@ -212,10 +208,7 @@ public class SkillsIntegrationTest {
                         .apply(agent)
                         .toTable(outputSchema);
 
-        CloseableIterator<Row> results =
-                tableEnv.toDataStream(outputTable)
-                        .map((MapFunction<Row, Row>) x -> (Row) x.getField("f0"))
-                        .collectAsync();
+        CloseableIterator<Row> results = tableEnv.toDataStream(outputTable).collectAsync();
 
         env.execute();
 

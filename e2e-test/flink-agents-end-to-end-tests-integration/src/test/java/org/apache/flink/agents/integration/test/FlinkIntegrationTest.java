@@ -242,6 +242,35 @@ public class FlinkIntegrationTest {
         Assertions.assertEquals(List.of("10:item-1", "20:item-2", "30:item-3"), actual);
     }
 
+    @Test
+    public void testToTableWithMultiColumnSchema() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        DataStream<Integer> inputStream = env.fromData(1, 2, 3);
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+
+        // A POJO output materialized into the named columns declared by the schema.
+        Schema outputSchema =
+                Schema.newBuilder()
+                        .column("value", DataTypes.INT())
+                        .column("label", DataTypes.STRING())
+                        .build();
+
+        Table outputTable =
+                agentsEnv
+                        .fromDataStream(inputStream)
+                        .apply(new FlinkIntegrationAgent.TypedOutputAgent())
+                        .toTable(outputSchema);
+
+        Assertions.assertEquals(
+                List.of("value", "label"), outputTable.getResolvedSchema().getColumnNames());
+
+        List<String> actual = collectValueLabel(outputTable, 0, 1);
+        Assertions.assertEquals(List.of("10:item-1", "20:item-2", "30:item-3"), actual);
+    }
+
     private List<String> collectValueLabel(Table table, int valueIdx, int labelIdx)
             throws Exception {
         List<String> actual = new ArrayList<>();
