@@ -34,6 +34,7 @@ import com.openai.models.completions.CompletionUsage;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -359,66 +360,28 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Effective model is the model backing the deployment, not the deployment")
-    void testEffectiveModelForReturnsBackingModelNotDeployment() {
-        // params() addresses DEPLOYMENT under "model". Capability belongs to the model backing
-        // that deployment, which is why buildRequest feeds the predicate
-        // model_of_azure_deployment instead.
-        assertThat(connection().effectiveModelFor(params("gpt-4o-mini"))).isEqualTo("gpt-4o-mini");
+    @DisplayName("The query judges the model backing the deployment, never the deployment")
+    void testQueryJudgesTheBackingModelNotTheDeployment() {
+        // The deployment name is chosen by the user, so it is named after a capable model here to
+        // show it carries no weight. An unset backing model resolves to nothing at all rather than
+        // falling back to that name.
+        Map<String, Object> incapableBacking = new HashMap<>();
+        incapableBacking.put("model", "gpt-4o-mini");
+        incapableBacking.put("model_of_azure_deployment", "gpt-3.5-turbo");
+        Map<String, Object> unsetBacking = new HashMap<>();
+        unsetBacking.put("model", "gpt-4o-mini");
+
+        assertThat(support(connection(), incapableBacking))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(support(connection(), unsetBacking))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(support(connection(), params("gpt-4o-mini")))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
-    @Test
-    @DisplayName(
-            "The model the request builder judges is the one the hook names, never the deployment")
-    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
-        // The builder reads the backing model under its own key and feeds that to the predicate.
-        // Capturing the value it actually judges is what ties the hook to the request; comparing
-        // each against a literal would let the two drift in step.
-        AtomicReference<String> judged = new AtomicReference<>();
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("api_version", CAPABLE_API_VERSION)
-                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
-                        .build();
-        AzureOpenAIChatModelConnection connection =
-                new AzureOpenAIChatModelConnection(desc, NOOP) {
-                    @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-                        judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
-                    }
-                };
-
-        Map<String, Object> backed = params("gpt-4o-mini");
-        String named = connection.effectiveModelFor(backed);
-        connection.buildRequest(userMessage(), List.of(), backed, Person.class);
-        assertThat(judged.get()).isEqualTo(named).isNotEqualTo(DEPLOYMENT);
-
-        // The unset case has to agree too: the builder judges nothing, and so does the hook.
-        Map<String, Object> unbacked = params(null);
-        assertThat(connection.effectiveModelFor(unbacked)).isNull();
-        connection.buildRequest(userMessage(), List.of(), unbacked, Person.class);
-        assertThat(judged.get()).isNull();
-    }
-
-    @Test
-    @DisplayName("Effective model reads the backing model without consuming it")
-    void testEffectiveModelForDoesNotConsumeTheBackingModel() {
-        // The request builder removes this very key. An override copying that idiom would hand the
-        // builder a map with no backing model, and the native branch would silently disappear.
-        Map<String, Object> modelParams = params("gpt-4o-mini");
-
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gpt-4o-mini");
-        assertThat(modelParams).containsEntry("model_of_azure_deployment", "gpt-4o-mini");
-    }
-
-    @Test
-    @DisplayName("Effective model is null when the backing model is unset")
-    void testEffectiveModelForReturnsNullWhenBackingModelUnset() {
-        // Falling back to the deployment name would classify a user-chosen name on nothing but
-        // its spelling, so an unset backing model resolves to nothing at all.
-        assertThat(connection().effectiveModelFor(params(null))).isNull();
+    private static NativeStructuredOutputSupport support(
+            AzureOpenAIChatModelConnection connection, Map<String, Object> modelParams) {
+        return connection.supportsNativeStructuredOutput(Person.class, List.of(), modelParams);
     }
 
     @Test
@@ -550,11 +513,12 @@ class AzureOpenAIChatModelConnectionTest {
                 "o4-mini",
                 "o3"
             })
-    @DisplayName("Capability predicate accepts every documented capable Azure model name")
-    void testCapabilityPredicateAcceptsCapableModels(String model) {
+    @DisplayName("The query recommends native for every documented capable Azure model name")
+    void testQueryRecommendsNativeForCapableModels(String model) {
         // The list is the whole allowlist, so dropping an entry is caught rather than only
         // narrowing capability silently.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+        assertThat(support(connection(), params(model)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @ParameterizedTest
@@ -573,13 +537,14 @@ class AzureOpenAIChatModelConnectionTest {
                 "codex-mini",
                 "o3-pro"
             })
-    @DisplayName("Capability predicate rejects incapable, Responses-only, and empty names")
-    void testCapabilityPredicateRejectsIncapableModels(String model) {
+    @DisplayName("The query reports incapable, Responses-only and empty names feasible only")
+    void testQueryReportsIncapableModelsFeasible(String model) {
         // A version-suffixed value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name
         // Azure reports as the model behind a deployment. The codex, gpt-5-pro and o3-pro names do
         // support structured outputs but are served only on the Responses API, so they are
         // incapable on the chat completions API this connection calls.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(support(connection(), params(model)))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @Test
@@ -822,89 +787,82 @@ class AzureOpenAIChatModelConnectionTest {
                                 .build());
     }
 
-    /** A connection that records what the feasibility query answered on each request it built. */
-    private static AzureOpenAIChatModelConnection recordingConnection(
-            String apiVersion, AtomicReference<Boolean> answered) {
-        ResourceDescriptor desc =
-                connectionDescriptor()
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("api_version", apiVersion)
-                        .addInitialArgument("azure_endpoint", "https://example.openai.azure.com")
-                        .build();
-        return new AzureOpenAIChatModelConnection(desc, NOOP) {
-            @Override
-            protected boolean canApplyNativeStructuredOutput(
-                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
-                boolean answer =
-                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
-                answered.set(answer);
-                return answer;
-            }
-        };
+    /** The exact answer a request's feasibility and its effective model's capability imply. */
+    private static NativeStructuredOutputSupport expectedSupport(
+            boolean feasible, boolean capable) {
+        if (!feasible) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return capable
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
     }
 
     @Test
-    @DisplayName("The feasibility query answers exactly what the native branch decides")
-    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+    @DisplayName("The query recommends native exactly when the native branch applies")
+    void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
-        // literal, is what keeps the query and the branch from drifting in step. The backing model
-        // is capable throughout, so the api-version floor and the schema form are what move.
-        AtomicReference<Boolean> answered = new AtomicReference<>();
-
+        // literal, is what keeps the query and the branch from drifting in step. The api-version
+        // floor, the schema form and the backing model all move.
         for (String apiVersion : List.of(CAPABLE_API_VERSION, BELOW_FLOOR_API_VERSION)) {
-            AzureOpenAIChatModelConnection connection = recordingConnection(apiVersion, answered);
+            AzureOpenAIChatModelConnection connection = connection(apiVersion);
 
             for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
                 for (List<Tool> tools :
                         Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
-                    answered.set(null);
+                    for (String backing : Arrays.asList("gpt-4o-mini", "gpt-3.5-turbo", null)) {
+                        NativeStructuredOutputSupport answer =
+                                connection.supportsNativeStructuredOutput(
+                                        schema, tools, params(backing));
 
-                    ChatCompletionCreateParams request =
-                            connection.buildRequest(
-                                    userMessage(), tools, params("gpt-4o-mini"), schema);
+                        ChatCompletionCreateParams request =
+                                connection.buildRequest(
+                                        userMessage(), tools, params(backing), schema);
 
-                    // A null here means the branch never consulted the query at all, which is
-                    // the drift this test exists to catch. The value assertion below would fail
-                    // too, but on a null comparison that does not say why.
-                    assertThat(answered.get())
-                            .as("query reached for api-version %s, schema %s", apiVersion, schema)
-                            .isNotNull();
-                    assertThat(answered.get())
-                            .as("api-version %s, schema %s, tools %s", apiVersion, schema, tools)
-                            .isEqualTo(request.responseFormat().isPresent());
+                        NativeStructuredOutputSupport expected =
+                                expectedSupport(
+                                        schema == Person.class
+                                                && apiVersion.equals(CAPABLE_API_VERSION),
+                                        "gpt-4o-mini".equals(backing));
+                        String label =
+                                String.format(
+                                        "api-version %s, schema %s, tools %s, backing %s",
+                                        apiVersion, schema, tools, backing);
+
+                        assertThat(answer).as(label).isEqualTo(expected);
+                        assertThat(request.responseFormat().isPresent())
+                                .as(label)
+                                .isEqualTo(
+                                        expected
+                                                == NativeStructuredOutputSupport
+                                                        .NATIVE_RECOMMENDED);
+                    }
                 }
             }
         }
     }
 
     @Test
-    @DisplayName("The feasibility query reports an api-version below the floor infeasible")
-    void testFeasibilityQueryFollowsTheApiVersionFloor() {
-        // Pinning the answer itself, not just its agreement with the branch: an override that
-        // dropped this conjunct would drop it from the branch too, and the binding test would
-        // still see the two agree.
-        assertThat(
-                        connection(CAPABLE_API_VERSION)
-                                .canApplyNativeStructuredOutput(
-                                        Person.class, List.of(), params("gpt-4o-mini")))
-                .isTrue();
-        assertThat(
-                        connection(BELOW_FLOOR_API_VERSION)
-                                .canApplyNativeStructuredOutput(
-                                        Person.class, List.of(), params("gpt-4o-mini")))
-                .isFalse();
+    @DisplayName("The query reports an api-version below the floor infeasible")
+    void testQueryFollowsTheApiVersionFloor() {
+        // Pinning the answer itself, not just its agreement with the branch: dropping this
+        // conjunct from both would leave the two in agreement.
+        assertThat(support(connection(CAPABLE_API_VERSION), params("gpt-4o-mini")))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(connection(BELOW_FLOOR_API_VERSION), params("gpt-4o-mini")))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
     }
 
     @Test
-    @DisplayName("The feasibility query leaves the model's capability out of its answer")
-    void testFeasibilityQueryExcludesModelCapability() {
-        // Feasibility and capability are independent: the backing model is outside the allowlist,
-        // which the branch's own conjunct handles, and says nothing about whether this connection
-        // could translate the schema form at all.
+    @DisplayName("An incapable backing model leaves the request feasible rather than infeasible")
+    void testQuerySeparatesCapabilityFromFeasibility() {
+        // The backing model is outside the allowlist, which says nothing about whether this
+        // connection could translate the schema form at all. Folding capability into
+        // feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
         Map<String, Object> incapable = params("gpt-3.5-turbo");
 
-        assertThat(connection().canApplyNativeStructuredOutput(Person.class, List.of(), incapable))
-                .isTrue();
+        assertThat(support(connection(), incapable))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
         assertThat(
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
@@ -913,8 +871,8 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
-    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void testQueryDoesNotConsumeItsInputs() {
         // The request is built from the same tools and parameters the answer was about, and this
         // builder removes the backing model from its own copy, so a query copying that idiom would
         // answer about one request and build another. Both inputs are immutable, so a consuming
@@ -923,7 +881,7 @@ class AzureOpenAIChatModelConnectionTest {
         Map<String, Object> modelParams =
                 Map.of("model", DEPLOYMENT, "model_of_azure_deployment", "gpt-4o-mini");
 
-        connection().canApplyNativeStructuredOutput(Person.class, tools, modelParams);
+        connection().supportsNativeStructuredOutput(Person.class, tools, modelParams);
 
         assertThat(tools).hasSize(1);
         assertThat(modelParams)

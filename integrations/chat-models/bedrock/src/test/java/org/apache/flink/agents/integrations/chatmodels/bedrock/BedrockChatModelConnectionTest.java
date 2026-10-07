@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -46,7 +47,6 @@ import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatType;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -132,58 +132,45 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the effective model falls back to the configured default")
-    void testEffectiveModelForFallsBackToTheConfiguredDefault() {
-        // buildRequest resolves the model the same way before feeding the capability predicate.
-        assertThat(connection().effectiveModelFor(new HashMap<>()))
-                .isEqualTo("us.anthropic.claude-sonnet-4-20250514-v1:0");
-        assertThat(connection().effectiveModelFor(params("qwen.qwen3-32b-v1:0")))
-                .isEqualTo("qwen.qwen3-32b-v1:0");
-        // A blank model is not a model. resolveModel substitutes the default for it, so the hook
+    @DisplayName("the query judges the configured default when the model parameter is unset")
+    void testQueryFallsBackToTheConfiguredDefault() {
+        // buildRequest resolves the model the same way before judging capability. The configured
+        // default is capable, so an unresolved model would answer differently.
+        BedrockChatModelConnection configuredCapable =
+                new BedrockChatModelConnection(descriptor("us-east-1", CAPABLE_MODEL), NOOP);
+
+        assertThat(support(configuredCapable, new HashMap<>()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        // A blank model is not a model. resolveModel substitutes the default for it, so the query
         // has to as well or the two disagree on exactly this input.
-        assertThat(connection().effectiveModelFor(params("   ")))
-                .isEqualTo("us.anthropic.claude-sonnet-4-20250514-v1:0");
+        assertThat(support(configuredCapable, params("   ")))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(configuredCapable, params(INCAPABLE_MODEL)))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @Test
-    @DisplayName("the model the request builder judges is the one the hook names")
-    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
-        // The hook duplicates resolveModel rather than calling it, so only capturing what the
-        // builder feeds the predicate keeps the two from drifting apart.
-        AtomicReference<String> judged = new AtomicReference<>();
-        BedrockChatModelConnection connection =
-                new BedrockChatModelConnection(
-                        descriptor("us-east-1", "us.anthropic.claude-sonnet-4-20250514-v1:0"),
-                        NOOP) {
-                    @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-                        judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
-                    }
-                };
-
-        for (Map<String, Object> modelParams :
-                List.<Map<String, Object>>of(
-                        params("qwen.qwen3-32b-v1:0"), params("   "), new HashMap<>())) {
-            String named = connection.effectiveModelFor(modelParams);
-
-            connection.buildRequest(
-                    List.of(ChatMessage.user("hello")), null, modelParams, Profile.class);
-
-            assertThat(judged.get()).isEqualTo(named);
-        }
-    }
-
-    @Test
-    @DisplayName("the effective model is null rather than throwing when none resolves")
-    void testEffectiveModelForReturnsNullWhenNoModelResolves() {
-        // resolveModel rejects an unresolvable model before a request is built. This query is
-        // part of the connection contract and answers for whatever it is given, so it reports
-        // null, which the capability predicate treats as not capable.
+    @DisplayName("the query answers rather than throwing when no model resolves")
+    void testQueryAnswersWhenNoModelResolves() {
+        // resolveModel rejects an unresolvable model before a request is built. The query answers
+        // for whatever it is given, and an unresolved model is not known to honor a schema.
         BedrockChatModelConnection conn =
                 new BedrockChatModelConnection(descriptor("us-east-1", null), NOOP);
 
-        assertThat(conn.effectiveModelFor(new HashMap<>())).isNull();
+        assertThat(support(conn, new HashMap<>()))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+    }
+
+    private static NativeStructuredOutputSupport support(
+            BedrockChatModelConnection connection, Map<String, Object> modelParams) {
+        return connection.supportsNativeStructuredOutput(Profile.class, null, modelParams);
+    }
+
+    /** The query's answer for {@code model} on a connection with no configured default. */
+    private static NativeStructuredOutputSupport supportFor(String model) {
+        // Without a default, a null or blank model reaches the capability check unresolved.
+        return support(
+                new BedrockChatModelConnection(descriptor("us-east-1", null), NOOP), params(model));
     }
 
     @Test
@@ -468,11 +455,12 @@ class BedrockChatModelConnectionTest {
 
     @ParameterizedTest
     @MethodSource("capableModels")
-    @DisplayName("every documented model reports capable")
-    void testCapableModelsReportCapable(String model) {
-        // connection() is configured with a model that is not on the list, so a predicate reading
-        // the configured model rather than its argument disagrees with itself here.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    @DisplayName("every documented model is recommended native")
+    void testCapableModelsAreRecommendedNative(String model) {
+        // connection() is configured with a model that is not on the list, so a query judging the
+        // configured model rather than the named one disagrees with itself here.
+        assertThat(support(connection(), params(model)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @ParameterizedTest
@@ -482,7 +470,7 @@ class BedrockChatModelConnectionTest {
         // A cross-Region inference profile id is a model id behind a leading segment, and the model
         // behind it is the one whose capability the request gets.
         String profile = prefix + "anthropic.claude-opus-4-6-v1";
-        assertThat(connection().supportsNativeStructuredOutput(profile)).isTrue();
+        assertThat(supportFor(profile)).isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @Test
@@ -491,18 +479,18 @@ class BedrockChatModelConnectionTest {
         // us-gov. is a documented prefix that no other documented prefix resembles, so a rule
         // written as a fixed set of prefixes tends to omit it while a leading-segment strip covers
         // it without being told.
-        assertThat(connection().supportsNativeStructuredOutput("us-gov.openai.gpt-oss-120b-1:0"))
-                .isTrue();
+        assertThat(supportFor("us-gov.openai.gpt-oss-120b-1:0"))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @Test
-    @DisplayName("a model documented as unsupported reports not capable")
+    @DisplayName("a model documented as unsupported is feasible but not recommended")
     void testDocumentedUnsupportedModelReportsNotCapable() {
         // AWS documents this model as not supporting structured output, and it extends the
         // qwen.qwen3- prefix that several capable entries share. Any prefix match claims a
         // capability the provider denies.
-        assertThat(connection().supportsNativeStructuredOutput("qwen.qwen3-vl-235b-a22b"))
-                .isFalse();
+        assertThat(supportFor("qwen.qwen3-vl-235b-a22b"))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
@@ -513,12 +501,12 @@ class BedrockChatModelConnectionTest {
                 "mistral.mistral-large-2402-v1:0",
                 "us.anthropic.claude-sonnet-4-20250514-v1:0"
             })
-    @DisplayName("a model with no documented answer reports not capable")
+    @DisplayName("a model with no documented answer is feasible but not recommended")
     void testUndocumentedModelsReportNotCapable(String model) {
         // An absent answer is not a positive one. The middle two each extend a capable entry
         // truncated at a version boundary; the last is the id this module's own example uses, so
         // its behavior is pinned here rather than discovered at the provider.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
@@ -527,22 +515,22 @@ class BedrockChatModelConnectionTest {
                 "arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-sonnet-4-5-20250929-v1:0",
                 "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/anthropic.claude-sonnet-4-5-20250929-v1:0"
             })
-    @DisplayName("an ARN reports not capable even when it spells out a capable model")
+    @DisplayName("an ARN is not recommended even when it spells out a capable model")
     void testArnFormsReportNotCapable(String model) {
         // An ARN names a resource rather than a model, and an application inference profile's
         // trailing segment can spell an id it does not front. A substring match reports both of
         // these capable.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
     @NullSource
     @ValueSource(strings = {"", " "})
-    @DisplayName("a null or blank model reports not capable")
+    @DisplayName("a null or blank model is feasible but not recommended")
     void testNullOrBlankModelReportsNotCapable(String model) {
         // The guard is load-bearing rather than defensive: the allowlist is an immutable Set, whose
         // contains(null) throws instead of reporting absence.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @Test
@@ -672,67 +660,82 @@ class BedrockChatModelConnectionTest {
                 .isNull();
     }
 
-    /** A connection that records what the feasibility query answered on each request it built. */
-    private static BedrockChatModelConnection recordingConnection(
-            AtomicReference<Boolean> answered) {
-        return new BedrockChatModelConnection(descriptor("us-east-1", CAPABLE_MODEL), NOOP) {
-            @Override
-            protected boolean canApplyNativeStructuredOutput(
-                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
-                boolean answer =
-                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
-                answered.set(answer);
-                return answer;
-            }
-        };
+    /** The exact answer a request's feasibility and its effective model's capability imply. */
+    private static NativeStructuredOutputSupport expectedSupport(
+            boolean feasible, boolean capable) {
+        if (!feasible) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return capable
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
     }
 
     @Test
-    @DisplayName("the feasibility query answers exactly what the native branch decides")
-    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+    @DisplayName("the query recommends native exactly when the native branch applies")
+    void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
-        // literal, is what keeps the query and the branch from drifting in step. The model is
-        // capable throughout, so the schema form is the only thing that moves.
-        AtomicReference<Boolean> answered = new AtomicReference<>();
-        BedrockChatModelConnection connection = recordingConnection(answered);
+        // literal, is what keeps the query and the branch from drifting in step. The query
+        // duplicates resolveModel rather than calling it, so a blank or absent model resolving to
+        // a capable or an incapable configured default is part of what moves.
+        for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+            BedrockChatModelConnection connection =
+                    new BedrockChatModelConnection(descriptor("us-east-1", configured), NOOP);
 
-        for (Object schema : Arrays.asList(Profile.class, "row<name STRING>", null)) {
-            for (List<Tool> tools :
-                    Arrays.asList(
-                            List.<Tool>of(),
-                            List.<Tool>of(new SchemaOnlyTool("{\"type\":\"object\"}")),
-                            null)) {
-                answered.set(null);
+            for (Object schema : Arrays.asList(Profile.class, "row<name STRING>", null)) {
+                for (List<Tool> tools :
+                        Arrays.asList(
+                                List.<Tool>of(),
+                                List.<Tool>of(new SchemaOnlyTool("{\"type\":\"object\"}")),
+                                null)) {
+                    for (String model :
+                            Arrays.asList(CAPABLE_MODEL, INCAPABLE_MODEL, "   ", null)) {
+                        Map<String, Object> modelParams =
+                                model == null ? new HashMap<>() : params(model);
+                        NativeStructuredOutputSupport answer =
+                                connection.supportsNativeStructuredOutput(
+                                        schema, tools, modelParams);
 
-                ConverseRequest request =
-                        connection.buildRequest(
-                                List.of(ChatMessage.user("hello")),
-                                tools,
-                                params(CAPABLE_MODEL),
-                                schema);
+                        ConverseRequest request =
+                                connection.buildRequest(
+                                        List.of(ChatMessage.user("hello")),
+                                        tools,
+                                        modelParams,
+                                        schema);
 
-                // A null here means the branch never consulted the query at all, which is the
-                // drift this test exists to catch. The value assertion below would fail too, but
-                // on a null comparison that does not say why.
-                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
-                assertThat(answered.get())
-                        .as("schema %s, tools %s", schema, tools)
-                        .isEqualTo(request.outputConfig() != null);
+                        String resolved = model == null || model.isBlank() ? configured : model;
+                        NativeStructuredOutputSupport expected =
+                                expectedSupport(
+                                        schema == Profile.class, resolved.equals(CAPABLE_MODEL));
+                        String label =
+                                String.format(
+                                        "configured %s, schema %s, tools %s, model %s",
+                                        configured, schema, tools, model);
+
+                        assertThat(answer).as(label).isEqualTo(expected);
+                        assertThat(request.outputConfig() != null)
+                                .as(label)
+                                .isEqualTo(
+                                        expected
+                                                == NativeStructuredOutputSupport
+                                                        .NATIVE_RECOMMENDED);
+                    }
+                }
             }
         }
     }
 
     @Test
-    @DisplayName("the feasibility query leaves the model's capability out of its answer")
-    void testFeasibilityQueryExcludesModelCapability() {
-        // Feasibility and capability are independent: a POJO is feasible here even on a model AWS
-        // does not document support for, and the branch's own capability conjunct is what keeps
-        // that request unconstrained. An override that folded capability in would make this pair
-        // agree, which the binding test cannot see because it moves both sides at once.
+    @DisplayName("an incapable model leaves the request feasible rather than infeasible")
+    void testQuerySeparatesCapabilityFromFeasibility() {
+        // A POJO is feasible here even on a model AWS does not document support for, and the
+        // branch's own capability conjunct is what keeps that request unconstrained. Folding
+        // capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule.
         Map<String, Object> incapable = params(INCAPABLE_MODEL);
 
-        assertThat(connection().canApplyNativeStructuredOutput(Profile.class, null, incapable))
-                .isTrue();
+        assertThat(support(connection(), incapable))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
         assertThat(
                         connection()
                                 .buildRequest(
@@ -745,15 +748,15 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the feasibility query reads its tools and parameters without consuming them")
-    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+    @DisplayName("the query reads its tools and parameters without consuming them")
+    void testQueryDoesNotConsumeItsInputs() {
         // The same tools and parameters go on to build the request the answer was about, so a
         // query that took anything out of either would answer about one request and build another.
         // Both are immutable, so a consuming implementation raises rather than silently differing.
         List<Tool> tools = List.of(new SchemaOnlyTool("{\"type\":\"object\"}"));
         Map<String, Object> modelParams = Map.of("model", CAPABLE_MODEL, "temperature", 0.5);
 
-        connection().canApplyNativeStructuredOutput(Profile.class, tools, modelParams);
+        connection().supportsNativeStructuredOutput(Profile.class, tools, modelParams);
 
         assertThat(tools).hasSize(1);
         assertThat(modelParams).isEqualTo(Map.of("model", CAPABLE_MODEL, "temperature", 0.5));

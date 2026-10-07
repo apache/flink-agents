@@ -30,6 +30,7 @@ import io.github.ollama4j.tools.Tools;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -181,12 +182,13 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
-     * Whether Ollama can constrain generation to a schema for {@code effectiveModel}.
+     * Answers {@link NativeStructuredOutputSupport#NATIVE_RECOMMENDED} whenever the request can
+     * carry the schema, whatever the model.
      *
-     * <p>Always {@code true}, and deliberately independent of the argument: schema-constrained
-     * decoding is applied by the Ollama server's sampler rather than by the model, so it holds for
-     * every model served by a server at or above v0.5.0. There is also no model-level signal to key
-     * on. Ollama's model capability set — completion, tools, insert, vision, embedding, thinking,
+     * <p>Capability is deliberately independent of the model: schema-constrained decoding is
+     * applied by the Ollama server's sampler rather than by the model, so it holds for every model
+     * served by a server at or above v0.5.0. There is also no model-level signal to key on.
+     * Ollama's model capability set — completion, tools, insert, vision, embedding, thinking,
      * image, audio — carries nothing schema-related, {@code /api/show} reports exactly that set,
      * and {@code /api/version} reports only a version string. Since a server runs arbitrary local
      * models, any allowlist would be invented, and would report not-capable for models that do
@@ -195,13 +197,13 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * <p>Three deployments break the guarantee, none of them distinguishable from a model name: a
      * server below v0.5.0 rejects the {@code format} field with HTTP 400; Ollama Cloud accepts the
      * request but does not enforce the schema; and the MLX runner accepts the field and drops it.
-     *
-     * <p>Reads no instance state, so capability stays answerable independently of how the
-     * connection was configured.
      */
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-        return true;
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.INFEASIBLE;
     }
 
     /**
@@ -210,8 +212,8 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      *
      * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
      * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
-     * Since this connection's capability predicate is unconditionally true, the schema form is the
-     * whole of what it can report infeasible.
+     * Since this connection's capability does not depend on the model, the schema form is the whole
+     * of what it can report infeasible.
      *
      * <p>Neither the tools nor the parameters are read; this connection sends a native schema
      * alongside bound tools.
@@ -221,8 +223,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @param modelParams not read
      * @return true if {@code outputSchema} is a POJO {@link Class}
      */
-    @Override
-    protected boolean canApplyNativeStructuredOutput(
+    private boolean canApplyNativeStructuredOutput(
             Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
         return outputSchema instanceof Class;
     }
@@ -335,10 +336,9 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         // the request's format, which is left unset when no native translation applies and is then
         // omitted from the serialized body rather than serialized as null.
         //
-        // The feasibility half is asked rather than restated, so a caller asking the same question
+        // The feasibility check is asked rather than restated, so a caller asking the same question
         // gets the answer this branch acts on.
-        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
-                && supportsNativeStructuredOutput(modelName)) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
             chatRequest.setFormat(toNativeFormat((Class<?>) outputSchema));
         }
 

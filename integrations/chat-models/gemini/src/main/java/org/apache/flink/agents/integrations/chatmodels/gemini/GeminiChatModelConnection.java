@@ -37,6 +37,7 @@ import com.google.genai.types.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -200,6 +201,19 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         this.client.close();
     }
 
+    @Override
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
     /**
      * Whether Google documents native structured output for {@code effectiveModel}.
      *
@@ -222,8 +236,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * endpoint, a tuned model, or the path-qualified {@code models/gemini-2.5-flash} form the SDK
      * also accepts — reports not-capable and keeps the prompt-engineering fallback.
      */
-    @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null || effectiveModel.isBlank()) {
             return false;
         }
@@ -239,10 +252,9 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * call names none, which is how the request itself resolves the model it is issued against.
      *
      * <p>Resolving to nothing comes back null rather than raising the way request building does,
-     * because the capability predicate reports a null model not capable.
+     * because the capability check reports a null model not capable.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         Object modelObj = modelParams != null ? modelParams.get("model") : null;
         String modelName = modelObj != null ? modelObj.toString() : null;
         if (modelName == null || modelName.isBlank()) {
@@ -271,8 +283,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * @param arguments not read
      * @return true if {@code outputSchema} is a POJO {@link Class} and no tools would be bound
      */
-    @Override
-    protected boolean canApplyNativeStructuredOutput(
+    private boolean canApplyNativeStructuredOutput(
             Object outputSchema,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments) {
@@ -436,7 +447,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         // caller asking the same question gets the answer this branch acts on. Asked with the
         // caller's parameters rather than the consumed copy, so both ask about the same map.
         if (canApplyNativeStructuredOutput(outputSchema, tools, arguments)
-                && supportsNativeStructuredOutput(modelName)) {
+                && modelSupportsNativeStructuredOutput(modelName)) {
             builder.responseMimeType("application/json");
             builder.responseJsonSchema(toNativeJsonSchema((Class<?>) outputSchema));
         }

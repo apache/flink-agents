@@ -40,6 +40,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -156,6 +157,19 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES =
             Set.of("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5");
 
+    @Override
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
     /**
      * Whether Anthropic documents native structured-output support for {@code effectiveModel}.
      *
@@ -167,8 +181,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
      */
-    @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         // Load-bearing: the allowlist is an immutable Set, whose contains(null) throws rather than
         // reporting absence.
         if (effectiveModel == null) {
@@ -186,8 +199,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * The {@code model} parameter, falling back to the model configured on the connection when the
      * call names none, which is how the request itself resolves the model it is issued against.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         Object modelObj = modelParams != null ? modelParams.get("model") : null;
         String modelName = modelObj != null ? modelObj.toString() : null;
         if (modelName == null || modelName.isBlank()) {
@@ -217,8 +229,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * @return true if {@code outputSchema} is a POJO {@link Class} and the caller supplied no
      *     {@code output_config} of its own
      */
-    @Override
-    protected boolean canApplyNativeStructuredOutput(
+    private boolean canApplyNativeStructuredOutput(
             Object outputSchema,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
@@ -271,7 +282,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * apart from the structured-output allowlists. An unrecognized name reports {@code true}, which
      * matches the documented rule: prefilling is the long-standing behaviour and only the listed
      * names withdraw it. The cost of that default runs the opposite way to {@link
-     * #supportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
+     * #modelSupportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
      * prefilled and answered with a 400, where an unrecognized name on the structured-output path
      * degrades silently to the prompt-engineering fallback instead.
      */
@@ -578,7 +589,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // caller asking the same question gets the answer this branch acts on.
         boolean nativeSchemaApplied = false;
         if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && supportsNativeStructuredOutput(modelName)) {
+                && modelSupportsNativeStructuredOutput(modelName)) {
             builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
             nativeSchemaApplied = true;
         }

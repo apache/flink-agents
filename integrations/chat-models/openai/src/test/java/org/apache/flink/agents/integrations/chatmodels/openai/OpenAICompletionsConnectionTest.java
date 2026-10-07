@@ -26,6 +26,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -50,8 +51,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link OpenAICompletionsConnection}'s native structured-output behavior. These
- * assert the built request body without a live API call by inspecting {@code buildRequest}, and
- * exercise the model-dependent capability predicate directly.
+ * assert the built request body without a live API call by inspecting {@code buildRequest}, and ask
+ * the connection's structured-output query directly.
  */
 class OpenAICompletionsConnectionTest {
 
@@ -346,21 +347,24 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("Effective model falls back to the connection default when the parameter is unset")
-    void testEffectiveModelForFallsBackToTheDefaultModel() {
-        // buildRequest applies the same fallback before feeding the capability predicate, so an
-        // answer taken without it would disagree with the model the request is issued against.
-        assertThat(connection().effectiveModelFor(new HashMap<>())).isEqualTo("gpt-4o");
-        assertThat(connection().effectiveModelFor(params(null))).isEqualTo("gpt-4o");
-        assertThat(connection().effectiveModelFor(params("   "))).isEqualTo("gpt-4o");
+    @DisplayName("The query judges the connection default when the model parameter is unset")
+    void testQueryFallsBackToTheDefaultModel() {
+        // buildRequest applies the same fallback before judging capability, so an answer taken
+        // without it would disagree with the model the request is issued against. The default
+        // gpt-4o is capable, whereas an unresolved model is not.
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(new HashMap<>(), params(null), params("   "))) {
+            assertThat(support(connection(), modelParams))
+                    .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        }
     }
 
     @Test
-    @DisplayName("The model the request builder judges is the one the hook names")
-    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
-        // The hook duplicates the builder's own model resolution rather than centralizing it, so
-        // capturing what the builder actually feeds the predicate is the only thing that keeps the
-        // two from drifting apart. Asserting each against a literal would let them drift in step.
+    @DisplayName("The model the request builder judges is the one the query judges")
+    void testQueryJudgesTheModelTheBuilderJudges() {
+        // The query duplicates the builder's own model resolution rather than centralizing it, so
+        // capturing what each feeds the capability check is the only thing that keeps the two from
+        // drifting apart. Asserting each against a literal would let them drift in step.
         AtomicReference<String> judged = new AtomicReference<>();
         OpenAICompletionsConnection connection =
                 new OpenAICompletionsConnection(
@@ -371,32 +375,24 @@ class OpenAICompletionsConnectionTest {
                                 .build(),
                         NOOP) {
                     @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+                    protected boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
                         judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
+                        return super.modelSupportsNativeStructuredOutput(effectiveModel);
                     }
                 };
 
         for (Map<String, Object> modelParams :
                 List.<Map<String, Object>>of(
                         params("gpt-4o-mini"), params("   "), new HashMap<>())) {
-            String named = connection.effectiveModelFor(modelParams);
+            judged.set(null);
+            support(connection, modelParams);
+            String queried = judged.get();
 
             connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
 
-            assertThat(judged.get()).isEqualTo(named);
+            assertThat(queried).isNotNull();
+            assertThat(judged.get()).isEqualTo(queried);
         }
-    }
-
-    @Test
-    @DisplayName("Effective model reads the model parameter without consuming it")
-    void testEffectiveModelForDoesNotConsumeTheModelParameter() {
-        // buildRequest resolves the model with remove(). A query doing the same would leave the
-        // caller's parameters without a model for the request it is about to build.
-        Map<String, Object> modelParams = params("gpt-4o-mini");
-
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gpt-4o-mini");
-        assertThat(modelParams).containsEntry("model", "gpt-4o-mini");
     }
 
     @Test
@@ -429,115 +425,111 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("Capability predicate accepts the documented capable models")
-    void testCapabilityPredicateAcceptsCapableModels() {
-        OpenAICompletionsConnection connection = connection();
-
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-08-06")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-11-20")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-2024-07-18")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-search-preview-2025-03-11"))
-                .isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-search-preview"))
-                .isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4.1-mini")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-5")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-5-mini")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-5-chat-latest")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("o1")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("o1-2024-12-17")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("o3")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("o3-mini")).isTrue();
-        assertThat(connection.supportsNativeStructuredOutput("o4-mini")).isTrue();
+    @DisplayName("The query recommends native for the documented capable models")
+    void testQueryRecommendsNativeForCapableModels() {
+        for (String model :
+                List.of(
+                        "gpt-4o",
+                        "gpt-4o-2024-08-06",
+                        "gpt-4o-2024-11-20",
+                        "gpt-4o-mini",
+                        "gpt-4o-mini-2024-07-18",
+                        "gpt-4o-search-preview",
+                        "gpt-4o-search-preview-2025-03-11",
+                        "gpt-4o-mini-search-preview",
+                        "gpt-4.1",
+                        "gpt-4.1-mini",
+                        "gpt-5",
+                        "gpt-5-mini",
+                        "gpt-5-chat-latest",
+                        "o1",
+                        "o1-2024-12-17",
+                        "o3",
+                        "o3-mini",
+                        "o4-mini")) {
+            assertThat(support(connection(), params(model)))
+                    .as(model)
+                    .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        }
     }
 
     @Test
     @DisplayName(
-            "Capability predicate rejects non-text modality, incapable, pre-cutoff, unknown, empty,"
-                    + " and null models")
-    void testCapabilityPredicateRejectsIncapableModels() {
-        OpenAICompletionsConnection connection = connection();
+            "The query reports non-text modality, incapable, pre-cutoff, unknown, empty and null"
+                    + " models feasible but not recommended")
+    void testQueryReportsIncapableModelsFeasible() {
+        // No default model, so an empty or null parameter reaches the capability check unresolved.
+        OpenAICompletionsConnection connection =
+                new OpenAICompletionsConnection(
+                        ResourceDescriptor.Builder.newBuilder(
+                                        OpenAICompletionsConnection.class.getName())
+                                .addInitialArgument("api_key", "test-key")
+                                .build(),
+                        NOOP);
 
-        assertThat(connection.supportsNativeStructuredOutput("gpt-3.5-turbo")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4-turbo")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-2024-05-13")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-audio-preview")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-audio-preview"))
-                .isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-realtime-preview"))
-                .isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-tts")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("gpt-4o-mini-transcribe")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("o1-mini")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("some-unknown-model")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput("")).isFalse();
-        assertThat(connection.supportsNativeStructuredOutput(null)).isFalse();
+        for (String model :
+                Arrays.asList(
+                        "gpt-3.5-turbo",
+                        "gpt-4",
+                        "gpt-4-turbo",
+                        "gpt-4o-2024-05-13",
+                        "gpt-4o-audio-preview",
+                        "gpt-4o-mini-audio-preview",
+                        "gpt-4o-mini-realtime-preview",
+                        "gpt-4o-mini-tts",
+                        "gpt-4o-mini-transcribe",
+                        "o1-mini",
+                        "some-unknown-model",
+                        "",
+                        null)) {
+            assertThat(support(connection, params(model)))
+                    .as(String.valueOf(model))
+                    .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        }
     }
 
-    /** A connection that records what the feasibility query answered on each request it built. */
-    private static OpenAICompletionsConnection recordingConnection(
-            AtomicReference<Boolean> answered) {
-        ResourceDescriptor desc =
-                ResourceDescriptor.Builder.newBuilder(OpenAICompletionsConnection.class.getName())
-                        .addInitialArgument("api_key", "test-key")
-                        .addInitialArgument("model", "gpt-4o")
-                        .build();
-        return new OpenAICompletionsConnection(desc, NOOP) {
-            @Override
-            protected boolean canApplyNativeStructuredOutput(
-                    Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
-                boolean answer =
-                        super.canApplyNativeStructuredOutput(outputSchema, tools, modelParams);
-                answered.set(answer);
-                return answer;
-            }
-        };
+    private static NativeStructuredOutputSupport support(
+            OpenAICompletionsConnection connection, Map<String, Object> modelParams) {
+        return connection.supportsNativeStructuredOutput(Person.class, List.of(), modelParams);
     }
 
     @Test
-    @DisplayName("The feasibility query answers exactly what the native branch decides")
-    void testFeasibilityQueryAgreesWithTheNativeBranch() {
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
+    void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
         // literal, is what keeps the query and the branch from drifting in step. The model is
-        // capable in every case, so the only conjunct left for the branch is the query itself.
-        AtomicReference<Boolean> answered = new AtomicReference<>();
-        OpenAICompletionsConnection connection = recordingConnection(answered);
+        // capable in every case, so feasibility alone decides the branch.
+        OpenAICompletionsConnection connection = connection();
 
         for (Object schema : Arrays.asList(Person.class, "row<name STRING>", null)) {
             for (List<Tool> tools :
                     Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
-                answered.set(null);
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(schema, tools, params("gpt-4o"));
 
                 ChatCompletionCreateParams request =
                         connection.buildRequest(userMessage(), tools, params("gpt-4o"), schema);
 
-                // A null here means the branch never consulted the query at all, which is the
-                // drift this test exists to catch. The value assertion below would fail too, but
-                // on a null comparison that does not say why.
-                assertThat(answered.get()).as("query reached for schema %s", schema).isNotNull();
-                assertThat(answered.get())
+                assertThat(answer)
                         .as("schema %s, tools %s", schema, tools)
-                        .isEqualTo(request.responseFormat().isPresent());
+                        .isEqualTo(
+                                request.responseFormat().isPresent()
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.INFEASIBLE);
             }
         }
     }
 
     @Test
-    @DisplayName("The feasibility query leaves the model's capability out of its answer")
-    void testFeasibilityQueryExcludesModelCapability() {
-        // The two answers are independent: a POJO is feasible here even on a model the allowlist
-        // rejects, and it is the branch's separate capability conjunct that keeps that request
-        // unconstrained. An override that folded capability in would make this pair agree, which
-        // the binding test above cannot see because it moves both sides at once.
+    @DisplayName("An incapable model leaves the request feasible rather than infeasible")
+    void testQuerySeparatesCapabilityFromFeasibility() {
+        // A POJO is feasible here even on a model the allowlist rejects, and it is the branch's
+        // separate capability conjunct that keeps that request unconstrained. Folding capability
+        // into feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
         Map<String, Object> incapable = params("gpt-4o-2024-05-13");
 
-        assertThat(connection().canApplyNativeStructuredOutput(Person.class, List.of(), incapable))
-                .isTrue();
+        assertThat(support(connection(), incapable))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
         assertThat(
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
@@ -546,15 +538,15 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("The feasibility query reads its tools and parameters without consuming them")
-    void testFeasibilityQueryDoesNotConsumeItsInputs() {
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void testQueryDoesNotConsumeItsInputs() {
         // The same tools and parameters go on to build the request the answer was about, so a
         // query that took anything out of either would answer about one request and build another.
         // Both are immutable, so a consuming implementation raises rather than silently differing.
         List<Tool> tools = List.of(new StubTool());
         Map<String, Object> modelParams = Map.of("model", "gpt-4o", "temperature", 0.5);
 
-        connection().canApplyNativeStructuredOutput(Person.class, tools, modelParams);
+        connection().supportsNativeStructuredOutput(Person.class, tools, modelParams);
 
         assertThat(tools).hasSize(1);
         assertThat(modelParams).isEqualTo(Map.of("model", "gpt-4o", "temperature", 0.5));

@@ -19,6 +19,7 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.DisplayName;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -108,15 +110,32 @@ class VLLMChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Structured-output capability follows the served model, not OpenAI model names")
-    void testSupportsNativeStructuredOutputForServedModels() {
+    @DisplayName("Native is recommended for any served model, not only OpenAI model names")
+    void testQueryRecommendsNativeForServedModels() {
+        // No default model, so a null or blank parameter reaches the capability check unresolved.
         VLLMChatModelConnection conn =
                 new VLLMChatModelConnection(connectionDescriptor().build(), NOOP);
-        assertThat(conn.supportsNativeStructuredOutput("Qwen/Qwen2.5-7B-Instruct")).isTrue();
-        assertThat(conn.supportsNativeStructuredOutput("meta-llama/Llama-3.1-8B-Instruct"))
-                .isTrue();
-        assertThat(conn.supportsNativeStructuredOutput(null)).isFalse();
-        assertThat(conn.supportsNativeStructuredOutput(" ")).isFalse();
+
+        assertThat(support(conn, "Qwen/Qwen2.5-7B-Instruct"))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(conn, "meta-llama/Llama-3.1-8B-Instruct"))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(conn, null)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(support(conn, " ")).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        // Only the capability check is replaced; a non-POJO schema is still infeasible.
+        assertThat(
+                        conn.supportsNativeStructuredOutput(
+                                "row<name STRING>",
+                                List.of(),
+                                Map.of("model", "Qwen/Qwen2.5-7B-Instruct")))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+    }
+
+    private static NativeStructuredOutputSupport support(
+            VLLMChatModelConnection conn, String model) {
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", model);
+        return conn.supportsNativeStructuredOutput(Person.class, List.of(), modelParams);
     }
 
     @Test
@@ -124,7 +143,7 @@ class VLLMChatModelConnectionTest {
     void testNativeResponseFormatAppliedForQwenModel() {
         VLLMChatModelConnection conn =
                 new VLLMChatModelConnection(connectionDescriptor().build(), NOOP);
-        java.util.Map<String, Object> modelParams = new HashMap<>();
+        Map<String, Object> modelParams = new HashMap<>();
         modelParams.put("model", "Qwen/Qwen2.5-7B-Instruct");
 
         ChatCompletionCreateParams params =

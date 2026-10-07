@@ -37,6 +37,7 @@ import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -204,6 +205,17 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         return maxRetries;
     }
 
+    @Override
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
     /**
      * Whether Azure documents json_schema strict support for {@code effectiveModel}.
      *
@@ -215,8 +227,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
      */
-    @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null || effectiveModel.isEmpty()) {
             return false;
         }
@@ -232,8 +243,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * Leaving the backing model unset keeps even a capable deployment on the prompt-engineering
      * fallback rather than classifying a deployment name on its spelling.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         return modelParams == null ? null : (String) modelParams.get("model_of_azure_deployment");
     }
 
@@ -279,9 +289,9 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * <p>A {@code true} answer is about those two conditions alone, and is not a promise that a
      * request gets built. A caller-supplied {@code response_format} in {@code additional_kwargs} is
      * deliberately not a condition here: the native branch sets the format and a later check raises
-     * on that conflict rather than skipping, so a caller that asked this first can still be met
-     * with an exception. Reporting the conflict infeasible instead would turn a documented error
-     * into a silently unconstrained request.
+     * on that conflict rather than skipping, so a request the structured-output query reports
+     * feasible can still be met with an exception. Reporting the conflict infeasible instead would
+     * turn a documented error into a silently unconstrained request.
      *
      * <p>Neither the tools nor the parameters are read: this connection sends a native schema
      * alongside bound tools, and the parameter that would matter is the model backing the
@@ -294,8 +304,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      *     reaches the structured-output floor; a caller-supplied {@code response_format} does not
      *     make it false, and the request builder raises on that conflict
      */
-    @Override
-    protected boolean canApplyNativeStructuredOutput(
+    private boolean canApplyNativeStructuredOutput(
             Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
         return outputSchema instanceof Class && apiVersionSupportsStructuredOutput();
     }
@@ -414,12 +423,12 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         // applies only for a POJO Class schema — a RowTypeInfo (wrapped in OutputSchema) keeps the
         // prompt-engineering fallback, as do an incapable model and an api-version below the floor.
         //
-        // The schema form and the api-version floor are asked rather than restated, so a caller
-        // asking the same question gets the answer this branch acts on. Capability stays here
-        // because it is keyed on the model backing the deployment, which that query excludes.
+        // The feasibility check (schema form and api-version floor) and the capability check are
+        // shared with the structured-output query rather than restated, so the query answers what
+        // this branch acts on. Both read the parameters as they arrived.
         String nativeSchemaName = null;
         if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && supportsNativeStructuredOutput(modelOfAzureDeployment)) {
+                && modelSupportsNativeStructuredOutput(modelOfAzureDeployment)) {
             Class<?> schemaClass = (Class<?>) outputSchema;
             builder.responseFormat(toNativeResponseFormat(schemaClass));
             nativeSchemaName = schemaClass.getSimpleName();

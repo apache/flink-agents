@@ -19,14 +19,15 @@
 package org.apache.flink.agents.api.chat.model;
 
 import java.util.Locale;
+import java.util.Objects;
 
 /**
  * User intent about how an output schema should be applied to a chat request.
  *
- * <p>This expresses <b>policy</b> only. Whether a connection <i>can</i> apply the provider's native
- * structured-output API is a separate, model-dependent <b>capability</b> question answered by
- * {@link BaseChatModelConnection#supportsNativeStructuredOutput(String)}. {@link
- * #resolvesToNative(boolean)} combines the two.
+ * <p>This expresses <b>policy</b> only. Whether a connection can carry a schema natively, and
+ * whether its effective model is known to honor it, is answered per request by {@link
+ * BaseChatModelConnection#supportsNativeStructuredOutput(Object, java.util.List, java.util.Map)}.
+ * {@link #resolvesToNative(NativeStructuredOutputSupport)} combines the two.
  *
  * <p>TODO(#912): strategy resolution is not wired into production yet. Once it is, the native
  * branches must honor the resolved policy rather than vetoing NATIVE through their own capability
@@ -34,14 +35,14 @@ import java.util.Locale;
  */
 public enum StructuredOutputStrategy {
     /**
-     * Use the provider's native structured-output API when the effective model is capable of it,
-     * and fall back to prompt engineering otherwise. This is the default.
+     * Use the provider's native structured-output API when the effective model is known to honor
+     * it, and fall back to prompt engineering otherwise. This is the default.
      */
     AUTO,
 
     /**
-     * Always use the provider's native structured-output API, without consulting the capability
-     * predicate.
+     * Use the provider's native structured-output API whenever the request can carry the schema,
+     * regardless of whether the effective model is known to honor it.
      */
     NATIVE,
 
@@ -52,29 +53,40 @@ public enum StructuredOutputStrategy {
     PROMPT;
 
     /**
-     * Resolves this policy against a connection's model-dependent capability into whether the
-     * provider's native structured-output API should be used.
+     * Resolves this policy against a connection's support for a request into whether the provider's
+     * native structured-output API should be used.
      *
      * <ul>
-     *   <li>{@code AUTO} defers to {@code modelCapable}: native when the effective model can, else
-     *       the prompt-engineering fallback.
-     *   <li>{@code NATIVE} always resolves to native, ignoring {@code modelCapable}, so an explicit
-     *       user intent surfaces a provider error rather than silently degrading.
+     *   <li>{@code AUTO} resolves to native only on {@link
+     *       NativeStructuredOutputSupport#NATIVE_RECOMMENDED}, and to the prompt-engineering
+     *       fallback otherwise.
+     *   <li>{@code NATIVE} resolves to native whenever the request can carry the schema, so an
+     *       explicit user intent surfaces a provider error rather than silently degrading. On
+     *       {@link NativeStructuredOutputSupport#INFEASIBLE} it throws, because there is no native
+     *       request to send and degrading would contradict the intent.
      *   <li>{@code PROMPT} never resolves to native.
      * </ul>
      *
-     * @param modelCapable whether the connection reports the effective model as natively capable
+     * @param support the connection's answer for the request
      * @return true if native structured output should be applied
+     * @throws IllegalArgumentException if this is {@code NATIVE} and {@code support} is {@code
+     *     INFEASIBLE}
+     * @throws NullPointerException if {@code support} is null
      */
-    public boolean resolvesToNative(boolean modelCapable) {
+    public boolean resolvesToNative(NativeStructuredOutputSupport support) {
+        Objects.requireNonNull(support, "support");
         switch (this) {
             case NATIVE:
+                if (support == NativeStructuredOutputSupport.INFEASIBLE) {
+                    throw new IllegalArgumentException(
+                            "Structured output strategy NATIVE requires native structured output, but the connection cannot apply the schema to this request.");
+                }
                 return true;
             case PROMPT:
                 return false;
             case AUTO:
             default:
-                return modelCapable;
+                return support == NativeStructuredOutputSupport.NATIVE_RECOMMENDED;
         }
     }
 
