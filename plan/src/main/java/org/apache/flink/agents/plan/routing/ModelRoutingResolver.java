@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -54,6 +55,15 @@ public final class ModelRoutingResolver {
     private static String routeCallId(String model) {
         return "route:" + model;
     }
+
+    /**
+     * Decision-metadata key naming the model a strategy selected outside the router's candidates
+     * when that selection was normalized to abstain.
+     */
+    public static final String REJECTED_MODEL_KEY = "rejected_model";
+
+    /** Decision-metadata key carrying the strategy's own reason for a rejected selection. */
+    public static final String REJECTED_REASON_KEY = "rejected_reason";
 
     private ModelRoutingResolver() {}
 
@@ -91,9 +101,9 @@ public final class ModelRoutingResolver {
     /**
      * If {@code model} names a {@link ModelRouter}, execute its declared strategy (persisted under
      * the durable {@code "route"} call so the decision replays deterministically on recovery),
-     * normalize the result (abstain -> default model, non-candidate -> fail clearly), emit an
-     * observability-only {@link ModelRoutingEvent}, and return the selected concrete model.
-     * Otherwise returns a direct selection.
+     * normalize the result (abstain or non-candidate -> default model), emit an observability-only
+     * {@link ModelRoutingEvent}, and return the selected concrete model. Otherwise returns a direct
+     * selection.
      *
      * <p>Routing runs once for the initial chat request; tool-call rounds reuse the selected
      * concrete model because it is saved in the tool-request context (see {@code
@@ -231,10 +241,13 @@ public final class ModelRoutingResolver {
     }
 
     /**
-     * Shared post-durable handling for all executors: abstain resolves to the router's
-     * <i>current</i> default (so a persisted abstain replays gracefully across candidate changes),
-     * a concrete selection is guarded against the current candidate set, and the observability
-     * event and resolved route are emitted.
+     * Shared post-durable handling for all executors, applied identically to fresh and replayed
+     * decisions against the router's <i>current</i> candidates and default. A concrete selection
+     * outside the candidate set is normalized to abstain, the same contract the judge applies to a
+     * non-candidate verdict; abstain resolves to the current default, so a persisted decision
+     * replays gracefully across candidate changes. The rejected name and the strategy's reason are
+     * kept in the decision metadata for the routing event. Normalization happens after persistence,
+     * so the stored record keeps the strategy's original decision.
      */
     private static ResolvedModelRoute normalizeAndFinish(
             UUID requestId,
@@ -243,6 +256,9 @@ public final class ModelRoutingResolver {
             RoutingDecision decision,
             String concreteSource,
             RunnerContext ctx) {
+        if (!decision.isAbstain() && !router.isCandidate(decision.getSelectedModel())) {
+            decision = rejectNonCandidate(decision);
+        }
         String selectedModel;
         String decisionSource;
         if (decision.isAbstain()) {
@@ -250,18 +266,32 @@ public final class ModelRoutingResolver {
             decisionSource = ModelRoutingEvent.SOURCE_DEFAULT;
         } else {
             selectedModel = decision.getSelectedModel();
-            if (!router.isCandidate(selectedModel)) {
-                throw new RoutingFailure(
-                        String.format(
-                                "Routing decision for router '%s' selected non-candidate model '%s'; candidates are %s.",
-                                model, selectedModel, router.getCandidateNames()));
-            }
             decisionSource = concreteSource;
         }
         return finish(requestId, model, router, decision, selectedModel, decisionSource, ctx);
     }
 
-    /** Records the decision latency histogram sample (also for decisions the guards reject). */
+    /**
+     * An abstaining copy of a non-candidate decision. The score is dropped because it rated the
+     * rejected selection, not the default; the latency and the strategy's metadata are kept.
+     */
+    private static RoutingDecision rejectNonCandidate(RoutingDecision decision) {
+        String rejected = decision.getSelectedModel();
+        Map<String, Object> metadata = new HashMap<>(decision.getMetadata());
+        metadata.put(REJECTED_MODEL_KEY, rejected);
+        if (decision.getReason() != null) {
+            metadata.put(REJECTED_REASON_KEY, decision.getReason());
+        }
+        return new RoutingDecision(
+                null,
+                true,
+                "selected model '" + rejected + "' is not a candidate",
+                null,
+                metadata,
+                decision.getDecisionMs());
+    }
+
+    /** Records the decision latency histogram sample (also for decisions normalized to abstain). */
     private static void recordDecisionLatency(RunnerContext ctx, RoutingDecision decision) {
         Double decisionMs = decision.getDecisionMs();
         FlinkAgentsMetricGroup actionMetrics = ctx.getActionMetricGroup();

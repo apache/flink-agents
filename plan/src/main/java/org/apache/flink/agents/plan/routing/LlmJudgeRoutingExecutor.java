@@ -163,9 +163,9 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
             }
             return builder.build();
         }
-        // Persisted as a real abstain: replay resolves to the router's *current* default, so
-        // a candidate-set change across a restart degrades gracefully (like the strategy
-        // path) instead of failing the non-candidate guard.
+        // Persisted as a real abstain: replay resolves to the router's *current* default. A
+        // stored verdict whose candidate was removed before a restart gets the same treatment
+        // from the resolver's non-candidate normalization.
         return new RoutingDecision(
                 null, true, abstainReason, null, new HashMap<>(judgeMetadata), null);
     }

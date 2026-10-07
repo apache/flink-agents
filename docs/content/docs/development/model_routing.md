@@ -127,7 +127,7 @@ Resources can equally be registered on the execution environment with `agentsEnv
 
 ## Routing Strategies
 
-A strategy is declared with a `Strategies` factory and travels with the agent plan. Every strategy either selects a candidate or abstains. A rule or custom strategy that selects a name that is not a candidate is an error: the request produces a failed `ChatResponseEvent`, and never falls back to the default. The LLM judge is the exception, because its reply is untrusted model output: a verdict naming a non-candidate abstains.
+A strategy is declared with a `Strategies` factory and travels with the agent plan. Every strategy either selects a candidate or abstains. A runtime result that names a model outside the candidates is treated as abstention and lands on the default model, whichever strategy produced it. A fresh judge verdict outside the candidates abstains inside the judge with the reason `judge verdict was not a candidate name`. Any other non-candidate decision is normalized by the router: the routing event's `reason` becomes `selected model '<name>' is not a candidate`, its `metadata` records the rejected name in `rejected_model` and, if the strategy gave a reason, that reason in `rejected_reason`. The same rule applies on [recovery](#advanced): a persisted decision naming a model that is no longer a candidate lands on the router's current default. Rule targets, candidates, and the default model are checked at declaration, so those mistakes fail at build time instead of abstaining.
 
 ### Rules
 
@@ -250,7 +250,7 @@ An attempt fails when the model call throws, when the candidate does not resolve
 
 Each candidate and the routing judge have up to `1 + max-retries` attempts, with exponential backoff from `retry-wait-interval`. The default retry budget is 0. Candidate fallback is independent of retries.
 
-A judge call that exhausts its retries, a throwing rule/custom strategy, or a strategy selecting a non-candidate produces a failed `ChatResponseEvent`; these failures do not count as abstention. A normal abstaining verdict still selects the default model. If all attempted candidates fail, the terminal failed response contains the last candidate's exception type and message. Earlier failures remain available in diagnostics. The retry settings are the job-level options in [Configuration]({{< ref "docs/operations/configuration#core-options" >}}).
+A judge call that exhausts its retries or a throwing rule/custom strategy produces a failed `ChatResponseEvent`; these failures do not count as abstention. A normal abstaining verdict still selects the default model. If all attempted candidates fail, the terminal failed response contains the last candidate's exception type and message. Earlier failures remain available in diagnostics. The retry settings are the job-level options in [Configuration]({{< ref "docs/operations/configuration#core-options" >}}).
 
 ## Observability
 
@@ -262,7 +262,7 @@ Every accepted routing decision emits a `ModelRoutingEvent`, event type `_model_
 | `selected_model` | The model the decision selected. |
 | `decision_source` | `strategy` for a rule or custom selection, `llm_judge` for a judge verdict, `default` when the strategy abstained, `fallback` on the second event. |
 | `fallback_enabled` | Whether fallback is configured, not whether it happened. |
-| `reason`, `score`, `metadata` | Set by the strategy. Rules record `matched rule: <pattern>`; the judge records `judge_model`, the judge's token counts when reported, and `judge_context_truncated` when history was dropped. |
+| `reason`, `score`, `metadata` | Set by the strategy. Rules record `matched rule: <pattern>`; the judge records `judge_model`, the judge's token counts when reported, and `judge_context_truncated` when history was dropped. When the router normalizes a non-candidate decision to its default, `metadata` adds `rejected_model` and, if the strategy gave one, `rejected_reason`; the strategy's score is dropped. |
 | `decision_ms` | Decision latency. For the judge it includes the judge call and its retries. |
 
 The final response message carries a `model_routing` map in its extra arguments with the routing details and the fallback result: `final_model`, the model that answered, `fallback_attempted`, and `fallback_models_tried`.
@@ -289,9 +289,9 @@ Decision latency is recorded as the `action.chat_model_action.routingDecisionLat
 
 ## Advanced
 
-**Validation.** Declaration mistakes such as an invalid rule pattern, an unknown candidate in a rule or description, or a missing strategy fail at the builder calls. Whether the judge is a plain chat model and whether a custom executor class can be loaded is checked when the plan is built, before any record is processed. Whether the default model is a candidate is only checked on the TaskManager, when the router first handles a request; an invalid router configuration then produces a failed `ChatResponseEvent` for each routed request. Whether a candidate resolves to a registered chat model is checked per attempt: an unresolvable candidate is a failed attempt, which fallback may recover from.
+**Validation.** Declaration mistakes such as an invalid rule pattern, an unknown candidate in a rule or description, or a missing strategy fail at the builder calls. Whether the judge is a plain chat model and whether a custom executor class can be loaded is checked when the plan is built, before any record is processed. Whether the default model is a candidate is checked at `build()` and again when the plan is built, so a descriptor that skipped the builder also fails before any record is processed. Whether a candidate resolves to a registered chat model is checked per attempt: an unresolvable candidate is a failed attempt, which fallback may recover from.
 
-**Recovery.** Routing runs once per request. When an [action state store]({{< ref "docs/operations/configuration#action-state-store" >}}) is configured, the routing decision, the judge call, and each candidate attempt of the initial request are persisted and replayed on recovery, so a custom executor or judge is not run again for a request that already has a decision. Without a store, which is the default, the decision is recomputed on recovery, and a non-deterministic strategy may pick a different model the second time. The request ID is regenerated in that case too, so a hash-based split in a custom executor can land on the other arm.
+**Recovery.** Routing runs once per request. When an [action state store]({{< ref "docs/operations/configuration#action-state-store" >}}) is configured, the routing decision, the judge call, and each candidate attempt of the initial request are persisted and replayed on recovery, so a rule or custom executor is not run again for a request that already has a decision. The judge executor does run again, but it reads the persisted judge call instead of invoking the judge model, and the stored decision wins. Without a store, which is the default, the decision is recomputed on recovery, and a non-deterministic strategy may pick a different model the second time. The request ID is regenerated in that case too, so a hash-based split in a custom executor can land on the other arm.
 
 ## Examples
 

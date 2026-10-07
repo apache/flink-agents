@@ -33,9 +33,11 @@ import java.util.Map;
  * explanation (reason, score, metadata), or signals abstention so the router falls back to its
  * default model.
  *
- * <p>Returning a name that is not one of the router's candidates is an <b>invalid</b> decision and
- * is failed clearly by the router (not silently defaulted). Abstention ({@link #abstain()}) is the
- * intended way to defer to the default model.
+ * <p>Abstention ({@link #abstain()}) is the intended way to defer to the default model. A name that
+ * is not one of the router's candidates is treated as abstention: the router selects its default
+ * model and records the rejected name and reason in the routing event's metadata ({@code
+ * rejected_model}, {@code rejected_reason}). This applies to fresh decisions and to persisted
+ * decisions replayed after the candidate set changed.
  *
  * <p>JSON-serializable so it can be persisted/replayed as a durable {@code "route"} call result.
  */

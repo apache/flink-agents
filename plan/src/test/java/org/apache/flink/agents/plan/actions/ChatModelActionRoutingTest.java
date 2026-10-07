@@ -47,6 +47,7 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
@@ -70,13 +71,17 @@ import static org.mockito.Mockito.when;
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
 
-    /** An executor that returns a name that is not a candidate (to exercise the invalid path). */
+    /** An executor that returns a name that is not a candidate (to exercise the abstain path). */
     public static class SelectsUnknownStrategy implements CustomRoutingExecutor {
         public SelectsUnknownStrategy() {}
 
         @Override
         public RoutingDecision route(RoutingStrategy strategy, RoutingContext context) {
-            return RoutingDecision.of("nonexistent");
+            return RoutingDecision.builder("nonexistent")
+                    .reason("tenant override")
+                    .score(0.9)
+                    .metadata("tenant", "t1")
+                    .build();
         }
     }
 
@@ -445,8 +450,12 @@ public class ChatModelActionRoutingTest {
                 .isEqualTo(ModelRoutingEvent.SOURCE_STRATEGY);
     }
 
+    /**
+     * A custom strategy naming a non-candidate abstains to the default, like a non-candidate judge
+     * verdict; the rejected name and the strategy's own reason stay visible on the routing event.
+     */
     @Test
-    void invalidCandidateFailsClearly() throws Exception {
+    void customNonCandidateSelectionAbstainsToDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -458,8 +467,41 @@ public class ChatModelActionRoutingTest {
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
                 ctx);
-        assertThat(ctx.chatResponse().isFailed()).isTrue();
-        assertThat(ctx.chatResponse().getError()).contains("non-candidate");
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("not a candidate");
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "nonexistent")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "tenant override")
+                .containsEntry("tenant", "t1");
+        // the score belonged to the rejected selection, not to the default
+        assertThat(event.getScore()).isNull();
+        assertThat(event.getDecisionMs()).isNotNull();
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+    }
+
+    /** Without a configured default, a non-candidate selection lands on the first candidate. */
+    @Test
+    void customNonCandidateSelectionWithoutDefaultUsesFirstCandidate() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(SelectsUnknownStrategy.class))
+                                .build(),
+                        null);
+        FakeRunnerContext ctx = new FakeRunnerContext(router);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(ctx.routingEvent().getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "nonexistent");
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
     }
 
     @Test
@@ -577,6 +619,11 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("small");
         assertThat(ctx.routingEvent().getDecisionSource())
                 .isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(ctx.routingEvent().getReason())
+                .isEqualTo("judge verdict was not a candidate name");
+        // the judge abstains on its own; the resolver's non-candidate normalization is not involved
+        assertThat(ctx.routingEvent().getMetadata())
+                .doesNotContainKey(ModelRoutingResolver.REJECTED_MODEL_KEY);
     }
 
     @Test
@@ -1271,6 +1318,119 @@ public class ChatModelActionRoutingTest {
         assertThat(event.getSelectedModel()).isEqualTo("big");
         assertThat(event.getDecisionMs()).isEqualTo(42.0);
         assertThat(ctx.resolvedChatModels).containsExactly("big");
+    }
+
+    /**
+     * A stored concrete decision whose model was removed from the candidates before recovery is
+     * normalized like a fresh non-candidate selection: it abstains to the router's current default,
+     * keeps its original latency, and records the rejected name. The strategy is not re-run.
+     */
+    @Test
+    void storedDecisionForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "medium")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .defaultModel("medium")
+                                .build(),
+                        null);
+        RoutingDecision stored =
+                RoutingDecision.builder("big").reason("stored").build().withDecisionMs(42.0);
+        FakeRunnerContext ctx = new FakeRunnerContext(router).seedDurable("route:router", stored);
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("medium");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "big")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "stored");
+        assertThat(event.getDecisionMs()).isEqualTo(42.0);
+        assertThat(ctx.resolvedChatModels).containsExactly("medium");
+    }
+
+    /**
+     * The same stored non-candidate decision follows whatever default the router has at recovery: a
+     * changed default, or the first candidate when none is configured.
+     */
+    @Test
+    void storedNonCandidateDecisionFollowsCurrentDefault() throws Exception {
+        RoutingDecision stored = RoutingDecision.of("removed");
+
+        ModelRouter changedDefault =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .defaultModel("big")
+                                .build(),
+                        null);
+        FakeRunnerContext first =
+                new FakeRunnerContext(changedDefault).seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                first);
+        assertThat(first.chatResponse().isFailed()).isFalse();
+        assertThat(first.routingEvent().getSelectedModel()).isEqualTo("big");
+        assertThat(first.routingEvent().getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "removed");
+        assertThat(first.resolvedChatModels).containsExactly("big");
+
+        ModelRouter noDefault =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .build(),
+                        null);
+        FakeRunnerContext second =
+                new FakeRunnerContext(noDefault).seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                second);
+        assertThat(second.chatResponse().isFailed()).isFalse();
+        assertThat(second.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(second.resolvedChatModels).containsExactly("small");
+    }
+
+    /**
+     * A stored judge verdict naming a candidate that was removed before recovery gets the same
+     * treatment as a custom strategy's: abstain to the current default, rejected name recorded. The
+     * judge chat replays from its own record and the judge model is not re-invoked.
+     */
+    @Test
+    void storedJudgeVerdictForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "medium")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("medium")
+                                .build(),
+                        null);
+        RoutingDecision stored = RoutingDecision.builder("big").reason("llm judge verdict").build();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new RuntimeException("judge re-invoked on replay")))
+                        .seedDurable(
+                                "judge:router",
+                                new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"))
+                        .seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hard"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("medium");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "big")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "llm judge verdict");
     }
 
     /**

@@ -60,7 +60,7 @@ import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
  *
  * <ol>
  *   <li><b>Decide</b> — {@link ModelRoutingResolver} runs the router's strategy and normalizes the
- *       result (abstain → default model; non-candidate → fail).
+ *       result (abstain or non-candidate → default model; a strategy exception → fail).
  *   <li><b>Durably</b> — the strategy runs inside a durable call ({@code "route:<router>"};
  *       per-request uniqueness comes from the store's (key, sequence, event, action) scoping, and
  *       the id must stay deterministic across recovery re-processing), so recovery replays the
