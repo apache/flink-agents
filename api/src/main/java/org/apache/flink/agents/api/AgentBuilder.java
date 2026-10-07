@@ -114,11 +114,13 @@ public interface AgentBuilder {
      * Get output Table of agent execution, materializing the unrestricted view with an explicit
      * physical schema.
      *
-     * <p>The table's row type is derived from the schema's physical columns, and the Table planner
-     * adapts each agent output element into a matching row. Computed and metadata columns declared
-     * in the schema are derived by the planner rather than read from the agent output. To declare
-     * the output with a type instead of a physical schema, use {@link #toTable(TypeInformation)} or
-     * {@link #toTable(Class)}.
+     * <p>The table's row type is derived from the schema's physical columns, and a downstream
+     * conversion operator adapts each agent output element into a row matching those columns by
+     * name. An element may be a row, a map keyed by column name, an object exposing each column
+     * through a getter or field, or a scalar for a single-column schema. Computed and metadata
+     * columns declared in the schema are derived by the planner rather than read from the agent
+     * output. To declare the output with a type instead of a physical schema, use {@link
+     * #toTable(TypeInformation)} or {@link #toTable(Class)}.
      *
      * @param schema Schema indicating the structure of the output table.
      * @return Table containing outputs from agent execution.

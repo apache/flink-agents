@@ -25,9 +25,11 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
+import org.apache.flink.agents.runtime.OutputTypeUtils;
 import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.YamlParserUtils;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -35,6 +37,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.types.Row;
 
 import javax.annotation.Nullable;
 
@@ -247,8 +250,16 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
 
         @Override
         public Table toTable(Schema schema) {
-            DataStream<Object> dataStream = toDataStream();
-            return getTableEnvironment().fromDataStream(dataStream, schema);
+            // Convert each agent output into a Row matching the schema's physical columns before
+            // handing the stream to the planner, so named columns declared in the schema resolve
+            // against the emitted values. The conversion is a downstream operator on the shared
+            // raw stream, so the unrestricted toDataStream() view stays unaffected.
+            RowTypeInfo rowType = OutputTypeUtils.schemaToRowTypeInfo(schema);
+            DataStream<Row> rowStream =
+                    toDataStream()
+                            .map(value -> OutputTypeUtils.adaptToRow(value, rowType))
+                            .returns(rowType);
+            return getTableEnvironment().fromDataStream(rowStream, schema);
         }
 
         @Override
