@@ -26,6 +26,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
     StructuredOutputStrategy,
 )
 from flink_agents.api.prompts.prompt import Prompt
@@ -152,15 +153,6 @@ def test_chat_refills_template_on_subsequent_invocations() -> None:
     assert connection.captured_messages[1].content == "tool result"
 
 
-def test_default_capability_predicate_is_false() -> None:
-    """A connection reports no native structured output for any model by default."""
-    connection = _RecordingConnection()
-
-    assert connection.supports_native_structured_output("gpt-4o") is False
-    assert connection.supports_native_structured_output("gpt-3.5-turbo") is False
-    assert connection.supports_native_structured_output(None) is False
-
-
 def test_output_schema_guard_rejects_a_schema() -> None:
     """The guard refuses a schema a connection cannot translate natively.
 
@@ -253,20 +245,58 @@ def test_structured_output_strategy_rejects_unrecognized_value(raw: str) -> None
         )
 
 
-def test_auto_strategy_resolves_to_native_only_when_capable() -> None:
-    """AUTO defers to the model's capability."""
-    assert StructuredOutputStrategy.AUTO.resolves_to_native(True) is True
-    assert StructuredOutputStrategy.AUTO.resolves_to_native(False) is False
+@pytest.mark.parametrize(
+    ("strategy", "support", "expected"),
+    [
+        (
+            StructuredOutputStrategy.AUTO,
+            NativeStructuredOutputSupport.INFEASIBLE,
+            False,
+        ),
+        (StructuredOutputStrategy.AUTO, NativeStructuredOutputSupport.FEASIBLE, False),
+        (
+            StructuredOutputStrategy.AUTO,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            True,
+        ),
+        (StructuredOutputStrategy.NATIVE, NativeStructuredOutputSupport.FEASIBLE, True),
+        (
+            StructuredOutputStrategy.NATIVE,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            True,
+        ),
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.INFEASIBLE,
+            False,
+        ),
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.FEASIBLE,
+            False,
+        ),
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            False,
+        ),
+    ],
+)
+def test_strategy_resolves_against_connection_support(
+    strategy: StructuredOutputStrategy,
+    support: NativeStructuredOutputSupport,
+    expected: bool,
+) -> None:
+    """AUTO goes native only when recommended, NATIVE whenever feasible, PROMPT never."""
+    assert strategy.resolves_to_native(support) is expected
 
 
-def test_native_strategy_forces_native_regardless_of_capability() -> None:
-    """NATIVE resolves to native even when the model is not capable."""
-    assert StructuredOutputStrategy.NATIVE.resolves_to_native(False) is True
-
-
-def test_prompt_strategy_never_resolves_to_native() -> None:
-    """PROMPT never resolves to native even when the model is capable."""
-    assert StructuredOutputStrategy.PROMPT.resolves_to_native(True) is False
+def test_native_strategy_raises_on_an_infeasible_request() -> None:
+    """A forced native request with no native form fails rather than degrading."""
+    with pytest.raises(ValueError, match="NATIVE"):
+        StructuredOutputStrategy.NATIVE.resolves_to_native(
+            NativeStructuredOutputSupport.INFEASIBLE
+        )
 
 
 def test_connection_rejects_unrecognized_constructor_argument() -> None:
@@ -287,60 +317,7 @@ def test_setup_rejects_unrecognized_constructor_argument() -> None:
         _RecordingChatModelSetup(connection="c", model="m", not_a_real_field="oops")
 
 
-def test_effective_model_for_reads_the_model_param() -> None:
-    """The default effective model is the ``model`` parameter a request carries."""
-    connection = _RecordingConnection()
-
-    assert connection.effective_model_for({"model": "gpt-4o"}) == "gpt-4o"
-
-
-def test_effective_model_for_returns_none_when_no_model_param() -> None:
-    """A connection carrying no default of its own has no model to resolve.
-
-    The capability predicate reports a ``None`` model not capable rather than raising,
-    so answering ``None`` degrades to the prompt-engineering fallback.
-    """
-    connection = _RecordingConnection()
-
-    assert connection.effective_model_for({}) is None
-    assert connection.effective_model_for({"temperature": 0.5}) is None
-
-
-def test_effective_model_for_returns_none_for_none_params() -> None:
-    """No parameters at all resolve to no model, rather than raising."""
-    connection = _RecordingConnection()
-
-    assert connection.effective_model_for(None) is None
-
-
-def test_effective_model_for_does_not_normalize_a_blank_model() -> None:
-    """The hook answers with what it was given rather than validating it.
-
-    Substituting a default for a blank model is what the connections carrying a
-    default model do, and it belongs to their override because it is what their
-    request builder does. Doing it here would invent a fallback for connections that
-    have none.
-    """
-    connection = _RecordingConnection()
-
-    assert connection.effective_model_for({"model": "   "}) == "   "
-
-
-def test_effective_model_for_does_not_consume_the_params() -> None:
-    """Reading the model leaves the mapping able to build the request it described.
-
-    An override copying a request builder's ``pop`` idiom would hand that builder a
-    map with the model already removed, so the contract is pinned on the default too.
-    """
-    connection = _RecordingConnection()
-    model_kwargs = {"model": "gpt-4o", "temperature": 0.5}
-
-    connection.effective_model_for(model_kwargs)
-
-    assert model_kwargs == {"model": "gpt-4o", "temperature": 0.5}
-
-
-def test_default_feasibility_predicate_is_false() -> None:
+def test_default_query_is_infeasible() -> None:
     """A connection reports no schema applicable to any request by default."""
     connection = _RecordingConnection()
     model_kwargs = {"model": "gpt-4o"}
@@ -348,13 +325,13 @@ def test_default_feasibility_predicate_is_false() -> None:
     # Both forms an OutputSchema wraps: a BaseModel subclass, which a connection with
     # a native branch could translate, and a RowTypeInfo, which none translates.
     assert (
-        connection.can_apply_native_structured_output(
+        connection.supports_native_structured_output(
             OutputSchema(output_schema=_Answer), [], model_kwargs
         )
-        is False
+        is NativeStructuredOutputSupport.INFEASIBLE
     )
     assert (
-        connection.can_apply_native_structured_output(
+        connection.supports_native_structured_output(
             OutputSchema(
                 output_schema=RowTypeInfo(
                     field_types=[BasicTypeInfo.STRING_TYPE_INFO()],
@@ -364,11 +341,11 @@ def test_default_feasibility_predicate_is_false() -> None:
             [],
             model_kwargs,
         )
-        is False
+        is NativeStructuredOutputSupport.INFEASIBLE
     )
 
 
-def test_feasibility_predicate_accepts_a_missing_schema_tools_and_kwargs() -> None:
+def test_query_accepts_a_missing_schema_tools_and_kwargs() -> None:
     """A missing schema, missing tools or missing parameters must not raise.
 
     Each is an ordinary request to answer about rather than a misuse: an unconstrained
@@ -378,16 +355,19 @@ def test_feasibility_predicate_accepts_a_missing_schema_tools_and_kwargs() -> No
     """
     connection = _RecordingConnection()
 
-    assert connection.can_apply_native_structured_output(None, None, None) is False
     assert (
-        connection.can_apply_native_structured_output(
+        connection.supports_native_structured_output(None, None, None)
+        is NativeStructuredOutputSupport.INFEASIBLE
+    )
+    assert (
+        connection.supports_native_structured_output(
             OutputSchema(output_schema=_Answer), None, None
         )
-        is False
+        is NativeStructuredOutputSupport.INFEASIBLE
     )
 
 
-def test_feasibility_predicate_does_not_consume_the_model_kwargs() -> None:
+def test_query_does_not_consume_the_model_kwargs() -> None:
     """Answering leaves the mapping able to build the request it answered about.
 
     An override copying a request builder's ``pop`` idiom would hand that builder a
@@ -396,14 +376,14 @@ def test_feasibility_predicate_does_not_consume_the_model_kwargs() -> None:
     connection = _RecordingConnection()
     model_kwargs = {"model": "gpt-4o", "temperature": 0.5}
 
-    connection.can_apply_native_structured_output(
+    connection.supports_native_structured_output(
         OutputSchema(output_schema=_Answer), [], model_kwargs
     )
 
     assert model_kwargs == {"model": "gpt-4o", "temperature": 0.5}
 
 
-def test_feasibility_predicate_does_not_consume_the_tools() -> None:
+def test_query_does_not_consume_the_tools() -> None:
     """The same tools go on to bind the request the answer was about.
 
     A connection whose native branch turns on whether any tool is bound would answer
@@ -413,7 +393,7 @@ def test_feasibility_predicate_does_not_consume_the_tools() -> None:
     tool = _StubTool()
     tools = [tool]
 
-    connection.can_apply_native_structured_output(
+    connection.supports_native_structured_output(
         OutputSchema(output_schema=_Answer), tools, {"model": "gpt-4o"}
     )
 

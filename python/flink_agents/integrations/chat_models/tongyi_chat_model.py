@@ -30,6 +30,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 
@@ -168,7 +169,30 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         )
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+
+        The effective model is the ``model`` parameter, or ``DEFAULT_MODEL`` when it
+        is absent.
+        """
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        if self._model_supports_native_structured_output(
+            self._effective_model_for(model_kwargs)
+        ):
+            return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        return NativeStructuredOutputSupport.FEASIBLE
+
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """Whether DashScope documents structured output for ``effective_model``.
 
         See the module-level allowlist for the source of truth and for why names are
@@ -184,8 +208,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         """
         return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
 
-    @override
-    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+    def _effective_model_for(
+        self, model_kwargs: Mapping[str, Any] | None
+    ) -> str | None:
         """The ``model`` parameter, falling back to ``DEFAULT_MODEL`` when absent.
 
         ``chat`` resolves the model it calls the same way, so reading the parameter
@@ -193,15 +218,14 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         default model incapable without ever asking about it.
 
         The fallback stands in for an absent parameter only, matching the request: a
-        parameter that is present but empty is passed through, so the hook and the
+        parameter that is present but empty is passed through, so the helper and the
         request agree on that input too.
         """
         if model_kwargs is None:
             return DEFAULT_MODEL
         return model_kwargs.get("model", DEFAULT_MODEL)
 
-    @override
-    def can_apply_native_structured_output(
+    def _can_apply_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
@@ -273,7 +297,7 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message.
         """
-        # Snapshotted before the pops below, so the feasibility query is asked with
+        # Snapshotted before the pops below, so the feasibility check is asked with
         # the parameters as they arrived rather than with a mapping this path has
         # already stripped. No term of today's answer reads them; the shape is what
         # keeps a term added later from answering about a request other than the one
@@ -301,9 +325,9 @@ class TongyiChatModelConnection(BaseChatModelConnection):
         # translation is reported infeasible there, so it never reaches the conflict
         # test below and cannot raise over a response_format this branch was never
         # going to write.
-        if self.can_apply_native_structured_output(
+        if self._can_apply_native_structured_output(
             output_schema, tools, raw_kwargs
-        ) and self.supports_native_structured_output(model_name):
+        ) and self._model_supports_native_structured_output(model_name):
             # Tested before the schema is rendered, because a caller who supplies both
             # a schema and a response_format has a conflict to resolve whatever the
             # schema turns out to render to, and reporting a render failure instead

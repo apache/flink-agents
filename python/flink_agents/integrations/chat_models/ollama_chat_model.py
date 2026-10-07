@@ -27,6 +27,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
@@ -41,7 +42,7 @@ def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
     ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
     translation and keeps the prompt-engineering fallback.
 
-    Separate from the render below because the feasibility query has to know whether a
+    Separate from the render below because the feasibility check has to know whether a
     schema would be sent without rendering it, and rendering raises on a schema it
     cannot express.
     """
@@ -117,13 +118,19 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         return self.__client
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
-        """Whether Ollama can constrain generation to a schema for ``effective_model``.
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """``NATIVE_RECOMMENDED`` whenever the request is feasible, for any model.
 
-        Always ``True``, and deliberately independent of the argument:
-        schema-constrained decoding is applied by the Ollama server's sampler rather
-        than by the model, so it holds for every model served by a server at or above
-        v0.5.0. There is also no model-level signal to key on. Ollama's model capability
+        Feasibility comes from the same helper ``chat`` uses to decide its native
+        branch. Capability is deliberately independent of the model: schema-constrained
+        decoding is applied by the Ollama server's sampler rather than by the model, so
+        it holds for every model served by a server at or above v0.5.0. There is also
+        no model-level signal to key on. Ollama's model capability
         set -- completion, tools, insert, vision, embedding, thinking, image, audio --
         carries nothing schema-related, ``/api/show`` reports exactly that set, and
         ``/api/version`` reports only a version string. Since a server runs arbitrary
@@ -134,14 +141,14 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         name: a server below v0.5.0 rejects the ``format`` field with HTTP 400; Ollama
         Cloud accepts the request but does not enforce the schema; and the MLX runner
         accepts the field and drops it.
-
-        Reads no instance state, so capability stays answerable independently of how the
-        connection was configured.
         """
-        return True
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
 
-    @override
-    def can_apply_native_structured_output(
+    def _can_apply_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
@@ -152,9 +159,8 @@ class OllamaChatModelConnection(BaseChatModelConnection):
 
         Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
         wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
-        prompt-engineering fallback. Since this connection's capability predicate is
-        unconditionally true, the schema form is the whole of what it can report
-        infeasible.
+        prompt-engineering fallback. Since this connection's capability is
+        unconditional, the schema form is the whole of what it can report infeasible.
 
         Neither the tools nor the parameters are read: this connection sends a native
         schema alongside bound tools, and the one parameter that would bear on the
@@ -217,7 +223,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
-        # Snapshotted before the pop below, so the feasibility query is asked with the
+        # Snapshotted before the pop below, so the feasibility check is asked with the
         # parameters as they arrived rather than with a mapping this path has already
         # stripped. No term of today's answer reads them; the shape is what keeps a
         # term added later from answering about a request other than the one built.
@@ -231,12 +237,11 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # than a sampling option, so it is passed as the format argument, which is
         # omitted altogether when no native translation applies.
         #
-        # The feasibility half is asked rather than restated, so a caller asking the
-        # same question gets the answer this branch acts on.
+        # Feasibility is asked rather than restated, so a caller asking the same
+        # question gets the answer this branch acts on. Capability is unconditional on
+        # this connection, so feasibility alone decides the branch.
         format_kwargs: Dict[str, Any] = {}
-        if self.can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self.supports_native_structured_output(model_name):
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             format_kwargs = {"format": _native_format(output_schema)}
 
         response = self.client.chat(

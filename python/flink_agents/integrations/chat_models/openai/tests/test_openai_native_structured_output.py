@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable, List, Mapping
+from typing import Any, Callable
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,7 +25,7 @@ from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.tools.tool import Tool
+from flink_agents.api.chat_models.chat_model import NativeStructuredOutputSupport
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
 )
@@ -207,9 +207,14 @@ def test_native_applied_even_when_tools_bound() -> None:
         "o4-mini",
     ],
 )
-def test_capability_predicate_accepts_capable_models(model: str) -> None:
-    """The capability predicate accepts the documented capable models."""
-    assert _connection().supports_native_structured_output(model) is True
+def test_query_recommends_native_for_capable_models(model: str) -> None:
+    """A translatable schema on a documented capable model is recommended native."""
+    assert (
+        _connection().supports_native_structured_output(
+            OutputSchema(output_schema=Person), [], {"model": model}
+        )
+        is NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    )
 
 
 @pytest.mark.parametrize(
@@ -230,9 +235,18 @@ def test_capability_predicate_accepts_capable_models(model: str) -> None:
         None,
     ],
 )
-def test_capability_predicate_rejects_incapable_models(model: str | None) -> None:
-    """The predicate rejects modality variants, incapable, unknown, and empty models."""
-    assert _connection().supports_native_structured_output(model) is False
+def test_query_reports_incapable_models_feasible(model: str | None) -> None:
+    """Modality variants, incapable, unknown and empty models stay merely feasible.
+
+    The schema is translatable, so the request is not infeasible: capability is
+    advisory and is kept out of the binding half of the answer.
+    """
+    assert (
+        _connection().supports_native_structured_output(
+            OutputSchema(output_schema=Person), [], {"model": model}
+        )
+        is NativeStructuredOutputSupport.FEASIBLE
+    )
 
 
 def _chat_with_schema(conn: OpenAIChatModelConnection, schema: Any) -> None:
@@ -280,11 +294,11 @@ def _judging_connection() -> tuple[OpenAIChatModelConnection, list[str | None]]:
     judged: list[str | None] = []
 
     class _JudgingConnection(OpenAIChatModelConnection):
-        def supports_native_structured_output(
+        def _model_supports_native_structured_output(
             self, effective_model: str | None
         ) -> bool:
             judged.append(effective_model)
-            return super().supports_native_structured_output(effective_model)
+            return super()._model_supports_native_structured_output(effective_model)
 
     conn = _JudgingConnection(api_key="test-key", api_base_url="http://localhost")
     mock_client = MagicMock()
@@ -306,75 +320,40 @@ def _judging_connection() -> tuple[OpenAIChatModelConnection, list[str | None]]:
     [{"model": "gpt-4o-mini"}, {"model": "an-unknown-model"}, {"model": ""}, {}],
     ids=["capable", "unknown", "blank", "absent"],
 )
-def test_effective_model_for_names_the_model_the_request_judges(
+def test_query_judges_the_model_the_request_judges(
     model_kwargs: dict[str, Any],
 ) -> None:
-    """The hook names exactly the model the request path asks the predicate about.
+    """The query asks about exactly the model the request path asks about.
 
-    This connection reads the parameter without a fallback, so the inherited hook is
-    already the right answer. Pinning it against what the builder judges is what would
-    catch a fallback being added here without a matching override.
+    This connection reads the parameter without a fallback. Pinning the query against
+    what the builder judges is what would catch a fallback being added to one of the
+    two without the other.
     """
     conn, judged = _judging_connection()
+    schema = OutputSchema(output_schema=Person)
 
-    named = conn.effective_model_for(model_kwargs)
+    conn.supports_native_structured_output(schema, [], model_kwargs)
     conn.chat(
         [ChatMessage(role=MessageRole.USER, content="hi")],
-        output_schema=OutputSchema(output_schema=Person),
+        output_schema=schema,
         **model_kwargs,
     )
 
-    assert judged == [named]
+    assert len(judged) == 2
+    assert judged[0] == judged[1]
 
 
-def _query_recording_connection() -> tuple[OpenAIChatModelConnection, List[bool]]:
-    """A connection recording what the feasibility query answered on each request.
-
-    Subclassing keeps the query itself under test rather than standing a stub in for
-    it: the override notes the answer it gave and delegates to the real one.
-    """
-    answers: List[bool] = []
-
-    class _RecordingConnection(OpenAIChatModelConnection):
-        def can_apply_native_structured_output(
-            self,
-            output_schema: OutputSchema | None,
-            tools: List[Tool] | None,
-            model_kwargs: Mapping[str, Any] | None,
-        ) -> bool:
-            answer = super().can_apply_native_structured_output(
-                output_schema, tools, model_kwargs
-            )
-            answers.append(answer)
-            return answer
-
-    conn = _RecordingConnection(api_key="test-key", api_base_url="http://localhost")
-    mock_client = MagicMock()
-    mock_message = MagicMock()
-    mock_message.role = "assistant"
-    mock_message.content = "ok"
-    mock_message.tool_calls = None
-    mock_message.refusal = None
-    mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
-    ]
-    mock_client.chat.completions.create.return_value.usage = None
-    conn._client = mock_client
-    return conn, answers
-
-
-def test_feasibility_query_agrees_with_the_native_branch() -> None:
+def test_query_agrees_with_the_native_branch() -> None:
     """The answer matches whether the request ends up carrying a response_format.
 
     Comparing the answer against what the request carries, rather than against a
     literal, is what keeps the query and the branch from drifting in step. The model is
-    capable in every case, so the query is the only conjunct left for the branch to act
-    on. Clearing the record per case makes the single-element comparison an assertion
-    that the query was reached exactly once on that request, too.
+    capable in every case, so only feasibility varies.
     """
-    conn, answers = _query_recording_connection()
+    conn = _connection()
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
+    model_kwargs = {"model": "gpt-4o"}
 
     for schema in (
         OutputSchema(output_schema=Person),
@@ -382,40 +361,21 @@ def test_feasibility_query_agrees_with_the_native_branch() -> None:
         None,
     ):
         for tools in (None, [], [tool]):
-            answers.clear()
+            support = conn.supports_native_structured_output(
+                schema, tools, model_kwargs
+            )
 
             conn.chat(
                 [ChatMessage(role=MessageRole.USER, content="hi")],
                 tools=tools,
-                model="gpt-4o",
                 output_schema=schema,
+                **model_kwargs,
             )
 
             carried = "response_format" in _create_call_kwargs(conn)
-            assert answers == [carried], f"schema {schema}, tools {tools}"
-
-
-def test_feasibility_query_excludes_model_capability() -> None:
-    """A translatable schema stays feasible on a model the allowlist rejects.
-
-    The two answers are independent, and it is the branch's separate capability
-    conjunct that leaves such a request unconstrained. A capability conjunct folded
-    into the query would be invisible to the binding test above, which moves both sides
-    at once, so it is pinned here.
-    """
-    conn = _connection()
-    incapable = {"model": "gpt-3.5-turbo"}
-
-    assert (
-        conn.can_apply_native_structured_output(
-            OutputSchema(output_schema=Person), [], incapable
-        )
-        is True
-    )
-
-    conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
-        output_schema=OutputSchema(output_schema=Person),
-        **incapable,
-    )
-    assert "response_format" not in _create_call_kwargs(conn)
+            expected = (
+                NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                if carried
+                else NativeStructuredOutputSupport.INFEASIBLE
+            )
+            assert support is expected, f"schema {schema}, tools {tools}"

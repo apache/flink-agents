@@ -36,12 +36,33 @@ from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
 from flink_agents.api.tools.tool import Tool
 
 
+class NativeStructuredOutputSupport(str, Enum):
+    """How far a connection can apply an output schema natively to one request.
+
+    Attributes:
+    ----------
+    INFEASIBLE : str
+        No request this connection builds from these arguments can carry the schema
+        natively. Binding: no structured-output policy can overrule it.
+    FEASIBLE : str
+        The request can carry the schema natively, but the effective model is not known
+        to honor it. Advisory: a policy may still choose the native path.
+    NATIVE_RECOMMENDED : str
+        The request can carry the schema natively and the effective model is known to
+        honor it.
+    """
+
+    INFEASIBLE = "infeasible"
+    FEASIBLE = "feasible"
+    NATIVE_RECOMMENDED = "native_recommended"
+
+
 class StructuredOutputStrategy(str, Enum):
     """User intent about how an output schema should be applied to a chat request.
 
     This expresses *policy* only. Whether a connection *can* apply the provider's
-    native structured-output API is a separate, model-dependent *capability*
-    question. ``resolves_to_native`` combines the two.
+    native structured-output API to a request is the connection's own answer, a
+    ``NativeStructuredOutputSupport``. ``resolves_to_native`` combines the two.
 
     TODO(#912): strategy resolution is not wired into production yet. Once it is, the
     native branches must honor the resolved policy rather than vetoing NATIVE through
@@ -55,11 +76,12 @@ class StructuredOutputStrategy(str, Enum):
     Attributes:
     ----------
     AUTO : str
-        Use the provider's native structured-output API when the effective model is
-        capable of it, and fall back to prompt engineering otherwise. The default.
+        Use the provider's native structured-output API when the connection answers
+        ``NATIVE_RECOMMENDED``, and fall back to prompt engineering otherwise. The
+        default.
     NATIVE : str
-        Always use the provider's native structured-output API, without consulting
-        the capability predicate.
+        Use the provider's native structured-output API whenever the request can carry
+        the schema, without consulting the model's capability, and fail when it cannot.
     PROMPT : str
         Never use the provider's native structured-output API; rely on prompt
         engineering alone. Matches the behavior of connections that have no native
@@ -70,29 +92,48 @@ class StructuredOutputStrategy(str, Enum):
     NATIVE = "native"
     PROMPT = "prompt"
 
-    def resolves_to_native(self, model_capable: bool) -> bool:  # noqa: FBT001
-        """Resolve this policy against a model's capability into whether to go native.
+    def resolves_to_native(self, support: NativeStructuredOutputSupport) -> bool:
+        """Resolve this policy against a connection's answer into whether to go native.
 
-        ``AUTO`` defers to ``model_capable`` (native when the effective model can, else
-        the prompt-engineering fallback); ``NATIVE`` always resolves to native, ignoring
-        ``model_capable``, so an explicit user intent surfaces a provider error rather
-        than silently degrading; ``PROMPT`` never resolves to native.
+        ``AUTO`` goes native only on ``NATIVE_RECOMMENDED`` and keeps the
+        prompt-engineering fallback otherwise. ``NATIVE`` ignores the advisory model
+        capability and goes native on ``FEASIBLE`` as well, so an explicit user intent
+        surfaces a provider error rather than silently degrading. ``PROMPT`` never goes
+        native.
 
         Parameters
         ----------
-        model_capable : bool
-            Whether the connection reports the effective model as natively capable.
+        support : NativeStructuredOutputSupport
+            The connection's answer for the request being resolved.
 
         Returns:
         -------
         bool
             ``True`` if native structured output should be applied.
+
+        Raises:
+        ------
+        TypeError
+            If ``support`` is ``None``, whatever this policy is.
+        ValueError
+            If this is ``NATIVE`` and ``support`` is ``INFEASIBLE``: the request has
+            no native form to send, so a forced native request fails here, before any
+            model call, instead of silently falling back.
         """
-        if self is StructuredOutputStrategy.NATIVE:
-            return True
-        if self is StructuredOutputStrategy.PROMPT:
+        if support is None:
+            msg = "support must be a NativeStructuredOutputSupport, not None."
+            raise TypeError(msg)
+        if self == StructuredOutputStrategy.PROMPT:
             return False
-        return model_capable
+        if self == StructuredOutputStrategy.AUTO:
+            return support == NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        if support == NativeStructuredOutputSupport.INFEASIBLE:
+            msg = (
+                "Structured output strategy NATIVE was requested, but the connection"
+                " cannot apply this output schema natively to the request."
+            )
+            raise ValueError(msg)
+        return True
 
     @classmethod
     def _missing_(cls, value: object) -> "StructuredOutputStrategy | None":
@@ -134,120 +175,37 @@ class BaseChatModelConnection(Resource, ABC):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL_CONNECTION
 
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
-        """Whether this connection can natively structure output for a given model.
-
-        Capability is *model-dependent*, not connection-wide: a single provider
-        connection commonly serves both models that accept a native schema parameter and
-        models that do not. The model to ask about is whatever ``effective_model_for``
-        returns for the parameters a request would be built from, and a caller outside
-        the connection asks that hook and nothing else. Such a caller must not
-        substitute the identifier the request is issued against: on a deployment-based
-        provider the request targets a deployment name the user chose while capability
-        belongs to the model backing it, so the two disagree in both directions.
-
-        The default ``False`` keeps a connection on the prompt-engineering fallback. A
-        connection that classifies by model name must report ``False`` for a name it
-        does not recognize, so that it degrades to the fallback rather than failing at
-        the provider. A connection whose capability belongs to the endpoint rather than
-        to the model answers for the endpoint instead, and may report ``True`` for a
-        name it has never seen.
-
-        This answer is advisory rather than binding: it is a statement about the model
-        that a configured policy is permitted to overrule, and
-        ``StructuredOutputStrategy.resolves_to_native`` is defined to do so in either
-        direction. Feasibility admits no such override, which is why
-        ``can_apply_native_structured_output`` is a separate hook rather than a further
-        condition folded into this one.
-
-        Parameters
-        ----------
-        effective_model : str | None
-            The model whose capability is being asked about, as returned by
-            ``effective_model_for``, may be ``None``.
-
-        Returns:
-        -------
-        bool
-            ``True`` if a schema can be applied natively for ``effective_model``.
-        """
-        return False
-
-    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
-        """The model ``supports_native_structured_output`` should be asked about.
-
-        Derived from the parameters a request would be built from. Overriding this is
-        how a connection whose effective model is not the ``model`` parameter verbatim
-        keeps the capability answer and the request in agreement: a connection that
-        falls back to a configured default model when the parameter is absent applies
-        that fallback here, and a deployment-based provider returns the model backing
-        the deployment rather than the deployment the request targets.
-
-        Answers for whatever it is given rather than validating it: a model that does
-        not resolve comes back ``None``, and ``supports_native_structured_output`` must
-        accept ``None`` rather than raising. What a ``None`` model resolves to is that
-        predicate's own answer; the default, and every override that classifies by
-        name, reports it not capable.
-
-        An override must read ``model_kwargs`` without consuming it, so that the same
-        mapping still builds the request the answer was about.
-
-        Parameters
-        ----------
-        model_kwargs : Mapping[str, Any] | None
-            The parameters a request would be built from, may be ``None``.
-
-        Returns:
-        -------
-        str | None
-            The model to ask the capability predicate about, or ``None`` if none
-            resolves.
-        """
-        return None if model_kwargs is None else model_kwargs.get("model")
-
-    def can_apply_native_structured_output(
+    def supports_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
-    ) -> bool:
-        """Whether this connection could apply ``output_schema`` natively to a
-        request built from these tools and parameters, leaving the effective model's
-        capability out of the answer.
+    ) -> NativeStructuredOutputSupport:
+        """Whether a request built from these arguments can carry ``output_schema``
+        natively, and whether its effective model is known to honor it.
 
-        Feasibility, not capability: the answer covers everything this connection's
-        native branch requires apart from the effective model, including conditions
-        fixed by the connection's own configuration rather than carried by the request,
-        and says nothing about whether the model the request names would honor a native
-        schema, which is the separate question ``supports_native_structured_output``
-        answers. Neither answer bounds the other, in either direction. A ``BaseModel``
-        subclass on a model the connection does not classify as capable is feasible
-        here and not capable there; a ``RowTypeInfo``, which no connection translates
-        natively, on a connection whose capability predicate is unconditionally true is
-        capable there and not feasible here.
+        The answer combines two questions of different weight. Feasibility is binding:
+        an ``INFEASIBLE`` request has no native form to send, so no policy can overrule
+        it. Capability is advisory: ``FEASIBLE`` and ``NATIVE_RECOMMENDED`` differ only
+        in whether the effective model is known to honor a native schema, which a
+        configured policy may overrule. A connection that classifies by model name
+        answers ``FEASIBLE`` for a name it does not recognize.
 
-        This answer is binding rather than advisory, which is the asymmetry that keeps
-        it separate from capability. A request whose schema this connection cannot
-        encode has no native form to send, so no policy can overrule a ``False`` here,
-        whereas a policy is permitted to overrule the capability answer.
+        The effective model is the one the request would actually run on, which need
+        not be the ``model`` parameter verbatim: a connection with a configured default
+        model applies that fallback, and a deployment-based provider judges the model
+        backing the deployment rather than the deployment name the request targets.
 
         An override must answer from the same logic its own request path uses to decide
         the native branch, so that the answer cannot drift from what the request ends up
-        carrying.
-
-        A ``False`` answer is not an error: it reports that the request would carry no
-        native schema, so the caller keeps the prompt-engineering fallback rather than
-        losing the schema. A ``True`` is not a promise that the call succeeds either: a
+        carrying. ``FEASIBLE`` or better is not a promise that the call succeeds: a
         connection may still raise once its native branch has decided to apply the
-        schema, as happens where the caller supplied a response format of its own that
-        conflicts with it.
+        schema, as happens where the caller supplied a conflicting response format.
 
-        The default ``False`` is safe only for a connection that translates no schema at
-        all. A connection whose request path has a native branch but which leaves this
-        unoverridden reports every request infeasible: a caller that degrades to the
-        prompt-engineering fallback then silently never reaches that branch, and one
-        that refuses an unapplicable schema instead fails on a request the connection
-        could in fact have applied.
+        The default ``INFEASIBLE`` is correct only for a connection that translates no
+        schema at all. A connection whose request path has a native branch but which
+        leaves this unoverridden reports every request infeasible, so a caller never
+        reaches that branch.
 
         Answers about the request rather than validating it. A ``None``
         ``output_schema`` is an unconstrained request, a ``None`` ``tools`` is a request
@@ -267,11 +225,10 @@ class BaseChatModelConnection(Resource, ABC):
 
         Returns:
         -------
-        bool
-            ``True`` if every condition the native branch imposes is met apart from
-            the effective model's capability.
+        NativeStructuredOutputSupport
+            How far this connection can apply ``output_schema`` natively.
         """
-        return False
+        return NativeStructuredOutputSupport.INFEASIBLE
 
     def _reject_unsupported_output_schema(
         self, output_schema: OutputSchema | None
@@ -448,8 +405,9 @@ class BaseChatModelSetup(Resource):
         description=(
             "Intent about how an output schema should be applied. "
             "``resolves_to_native`` combines this policy with the "
-            "connection's model-dependent capability. An explicitly null value is "
-            "normalized to AUTO, so a validated setup always carries a real strategy."
+            "connection's NativeStructuredOutputSupport answer. An explicitly null "
+            "value is normalized to AUTO, so a validated setup always carries a real "
+            "strategy."
         ),
     )
 

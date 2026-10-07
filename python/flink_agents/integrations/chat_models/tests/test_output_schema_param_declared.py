@@ -93,10 +93,10 @@ def _translates_schema_natively(cls: Type[BaseChatModelConnection]) -> bool:
     """Whether ``cls`` applies an output schema through a native provider parameter.
 
     Overriding ``supports_native_structured_output`` is how a connection reports that
-    capability, so the same override marks the connections that must accept a schema
-    instead of rejecting it. Such a connection owns the decision of what to do with a
-    schema it cannot apply natively for the effective model, and its own tests pin
-    that behavior.
+    it can apply a schema natively, so the same override marks the connections that
+    must accept a schema instead of rejecting it. Such a connection owns the decision
+    of what to do with a schema it cannot apply natively to a request, and its own
+    tests pin that behavior.
     """
     return (
         cls.supports_native_structured_output

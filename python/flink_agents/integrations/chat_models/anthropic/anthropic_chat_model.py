@@ -30,6 +30,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 
@@ -192,10 +193,10 @@ def _supports_json_prefill(effective_model: str | None) -> bool:
     kept apart from the structured-output allowlists. An unrecognized name reports
     ``True``, which matches the documented rule: prefilling is the long-standing
     behaviour and only the listed names withdraw it. The cost of that default runs the
-    opposite way to ``supports_native_structured_output``: a rejecting model this list
-    has not caught up with is prefilled and answered with a 400, where an unrecognized
-    name on the structured-output path degrades silently to the prompt-engineering
-    fallback instead.
+    opposite way to ``_model_supports_native_structured_output``: a rejecting model
+    this list has not caught up with is prefilled and answered with a 400, where an
+    unrecognized name on the structured-output path degrades silently to the
+    prompt-engineering fallback instead.
     """
     return effective_model not in _PREFILL_UNSUPPORTED_MODELS
 
@@ -264,7 +265,7 @@ def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
     ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
     translation and keeps the prompt-engineering fallback.
 
-    Separate from the render below because the feasibility query has to know whether a
+    Separate from the render below because the feasibility check has to know whether a
     schema would be sent without rendering it, and rendering raises on a schema it
     cannot express.
     """
@@ -361,7 +362,28 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         return self._client
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+
+        The effective model is the ``model`` parameter verbatim.
+        """
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        effective_model = None if model_kwargs is None else model_kwargs.get("model")
+        if self._model_supports_native_structured_output(effective_model):
+            return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        return NativeStructuredOutputSupport.FEASIBLE
+
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """Whether Anthropic documents structured output for ``effective_model``.
 
         See the module-level allowlists for the source of truth and for why a
@@ -379,8 +401,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             for prefix in _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES
         )
 
-    @override
-    def can_apply_native_structured_output(
+    def _can_apply_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
@@ -465,7 +486,7 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         anthropic_system = convert_to_anthropic_system_prompts(messages)
         anthropic_messages = convert_to_anthropic_messages(messages)
 
-        # Snapshotted before the pop below, so the feasibility query is asked with the
+        # Snapshotted before the pop below, so the feasibility check is asked with the
         # parameters as they arrived rather than with a mapping this path has already
         # stripped. The key the query reads is not among the stripped ones today; the
         # shape is what keeps a term added later from reading a mapping the caller's
@@ -488,9 +509,9 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         # rendered only once that answer is in, because rendering raises on a schema it
         # cannot express, and rendering one this branch is about to discard would fail
         # a request the caller had already steered away from the derived config.
-        if self.can_apply_native_structured_output(
+        if self._can_apply_native_structured_output(
             output_schema, tools, raw_kwargs
-        ) and self.supports_native_structured_output(kwargs.get("model")):
+        ) and self._model_supports_native_structured_output(kwargs.get("model")):
             kwargs["output_config"] = _native_output_config(output_schema)
 
         # JSON prefill appends a prefilled assistant "{" message to steer the model

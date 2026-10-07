@@ -34,6 +34,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
@@ -216,23 +217,44 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         return self._client
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+
+        The effective model is the model backing the deployment, never the deployment
+        name the request targets.
+        """
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        if self._model_supports_native_structured_output(
+            self._effective_model_for(model_kwargs)
+        ):
+            return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        return NativeStructuredOutputSupport.FEASIBLE
+
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """Whether Azure documents json_schema strict support for ``effective_model``.
 
         ``effective_model`` is the model backing an Azure deployment, not the deployment
         name. See the module-level allowlist for the source of truth and for why the
         match is exact. An unrecognized model reports ``False`` so it degrades to the
         prompt-engineering fallback rather than failing at the provider.
-
-        Reads no instance state, so it stays answerable on an instance that was never
-        initialized, where any field access would raise.
         """
         if not effective_model:
             return False
         return effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
 
-    @override
-    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
+    def _effective_model_for(
+        self, model_kwargs: Mapping[str, Any] | None
+    ) -> str | None:
         """The model backing the deployment, read from ``model_of_azure_deployment``.
 
         The ``model`` parameter carries the deployment name the request is issued
@@ -270,8 +292,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             return False
         return self.api_version[:10] >= _MIN_STRUCTURED_OUTPUT_API_VERSION
 
-    @override
-    def can_apply_native_structured_output(
+    def _can_apply_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
@@ -351,7 +372,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             Model response message. When the response carries a finish reason,
             it is available as ``extra_args["finish_reason"]``.
         """
-        # Snapshotted before the pops below, so the feasibility query is asked with
+        # Snapshotted before the pops below, so the feasibility check is asked with
         # the parameters as they arrived rather than with a mapping this path has
         # already stripped. No term of today's answer reads them; the shape is what
         # keeps a term added later from answering about a request other than the one
@@ -385,10 +406,10 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         # The schema form and the api-version floor are asked rather than restated, so
         # a caller asking the same question gets the answer this branch acts on.
         # Capability stays a conjunct here because it is keyed on the model backing the
-        # deployment, which that query excludes.
-        if self.can_apply_native_structured_output(
+        # deployment, which the feasibility helper excludes.
+        if self._can_apply_native_structured_output(
             output_schema, tools, raw_kwargs
-        ) and self.supports_native_structured_output(model_of_azure_deployment):
+        ) and self._model_supports_native_structured_output(model_of_azure_deployment):
             native_model = _native_output_model(output_schema)
             # Tested before the schema is rendered. A caller who supplies both a schema
             # and a response_format has a conflict to resolve whatever the schema turns

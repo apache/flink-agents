@@ -33,6 +33,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
@@ -88,7 +89,7 @@ def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
     ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
     translation and keeps the prompt-engineering fallback.
 
-    Separate from the render below because the feasibility query has to know whether a
+    Separate from the render below because the feasibility check has to know whether a
     schema would be sent without rendering it, and rendering raises on a schema it
     cannot express.
     """
@@ -230,7 +231,28 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         }
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+
+        The effective model is the ``model`` parameter verbatim.
+        """
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        effective_model = None if model_kwargs is None else model_kwargs.get("model")
+        if self._model_supports_native_structured_output(effective_model):
+            return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        return NativeStructuredOutputSupport.FEASIBLE
+
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """Whether OpenAI documents json_schema strict support for ``effective_model``.
 
         See the module-level allowlist for the source of truth and the rationale for
@@ -248,8 +270,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             or effective_model in _NATIVE_STRUCTURED_OUTPUT_MODELS
         )
 
-    @override
-    def can_apply_native_structured_output(
+    def _can_apply_native_structured_output(
         self,
         output_schema: OutputSchema | None,
         tools: List[Tool] | None,
@@ -316,7 +337,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             Model response message. When the response carries a finish reason,
             it is available as ``extra_args["finish_reason"]``.
         """
-        # Snapshotted before the native branch below, so the feasibility query is
+        # Snapshotted before the native branch below, so the feasibility check is
         # asked with the parameters as they arrived. This path strips nothing today,
         # and the snapshot is what keeps the query's view of them accurate if it ever
         # does, rather than leaving that to whoever adds the first pop.
@@ -337,9 +358,9 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         #
         # The feasibility half is asked rather than restated, so a caller asking the
         # same question gets the answer this branch acts on.
-        if self.can_apply_native_structured_output(
+        if self._can_apply_native_structured_output(
             output_schema, tools, raw_kwargs
-        ) and self.supports_native_structured_output(kwargs.get("model")):
+        ) and self._model_supports_native_structured_output(kwargs.get("model")):
             kwargs["response_format"] = _native_response_format(output_schema)
 
         response = self.client.chat.completions.create(
