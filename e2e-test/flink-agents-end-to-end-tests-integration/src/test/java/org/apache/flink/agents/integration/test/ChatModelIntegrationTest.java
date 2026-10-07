@@ -40,7 +40,6 @@ import static org.apache.flink.agents.integration.test.ChatModelIntegrationAgent
  */
 public class ChatModelIntegrationTest extends OllamaPreparationUtils {
 
-    private static final String API_KEY = "_API_KEY";
     private static final String OLLAMA = "OLLAMA";
 
     private final boolean ollamaReady;
@@ -49,53 +48,62 @@ public class ChatModelIntegrationTest extends OllamaPreparationUtils {
         ollamaReady = pullModel(OLLAMA_MODEL);
     }
 
+    /** The Responses API case is built from OPENAI_API_KEY in {@link ChatModelIntegrationAgent}. */
+    private static String apiKeyProvider(String provider) {
+        return "OPENAI_RESPONSES".equals(provider) ? "OPENAI" : provider;
+    }
+
     @ParameterizedTest()
     @ValueSource(strings = {"ANTHROPIC", "AZURE_OPENAI", "OLLAMA", "OPENAI", "OPENAI_RESPONSES"})
     public void testChatModeIntegration(String provider) throws Exception {
         Assumptions.assumeTrue(
-                (OLLAMA.equals(provider) && ollamaReady)
-                        || System.getenv().get(provider + API_KEY) != null,
+                OLLAMA.equals(provider) ? ollamaReady : hasApiKey(apiKeyProvider(provider)),
                 String.format(
                         "Server or authentication information is not provided for %s", provider));
 
         System.setProperty("MODEL_PROVIDER", provider);
+        try {
 
-        // Create the execution environment
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
-        env.setParallelism(1);
+            // Create the execution environment
+            StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+            env.setParallelism(1);
 
-        // Use prompts that trigger different tool calls in the agent
-        DataStream<String> inputStream =
-                env.fromData(
-                        "Convert 25 degrees Celsius to Fahrenheit",
-                        "Convert 98.6 degrees Fahrenheit to Celsius",
-                        "Change 32 degrees Celsius to Fahrenheit",
-                        "If it's 75 degrees Fahrenheit, what would that be in Celsius?",
-                        "Convert room temperature of 20C to F",
-                        "Calculate BMI for someone who is 1.75 meters tall and weighs 70 kg",
-                        "What's the BMI for a person weighing 85 kg with height 1.80 meters?",
-                        "Can you tell me the BMI if I'm 1.65m tall and weigh 60kg?",
-                        "Find BMI for 75kg weight and 1.78m height",
-                        "Create me a random number please");
+            // Use prompts that trigger different tool calls in the agent
+            DataStream<String> inputStream =
+                    env.fromData(
+                            "Convert 25 degrees Celsius to Fahrenheit",
+                            "Convert 98.6 degrees Fahrenheit to Celsius",
+                            "Change 32 degrees Celsius to Fahrenheit",
+                            "If it's 75 degrees Fahrenheit, what would that be in Celsius?",
+                            "Convert room temperature of 20C to F",
+                            "Calculate BMI for someone who is 1.75 meters tall and weighs 70 kg",
+                            "What's the BMI for a person weighing 85 kg with height 1.80 meters?",
+                            "Can you tell me the BMI if I'm 1.65m tall and weigh 60kg?",
+                            "Find BMI for 75kg weight and 1.78m height",
+                            "Create me a random number please");
 
-        // Create agents execution environment
-        AgentsExecutionEnvironment agentsEnv =
-                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+            // Create agents execution environment
+            AgentsExecutionEnvironment agentsEnv =
+                    AgentsExecutionEnvironment.getExecutionEnvironment(env);
 
-        // Apply agent to the DataStream and use the prompt itself as the key
-        DataStream<Object> outputStream =
-                agentsEnv
-                        .fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
-                        .apply(new ChatModelIntegrationAgent())
-                        .toDataStream();
+            // Apply agent to the DataStream and use the prompt itself as the key
+            DataStream<Object> outputStream =
+                    agentsEnv
+                            .fromDataStream(
+                                    inputStream, (KeySelector<String, String>) value -> value)
+                            .apply(new ChatModelIntegrationAgent())
+                            .toDataStream();
 
-        // Collect the results
-        CloseableIterator<Object> results = outputStream.collectAsync();
+            // Collect the results
+            CloseableIterator<Object> results = outputStream.collectAsync();
 
-        // Execute the pipeline
-        agentsEnv.execute();
+            // Execute the pipeline
+            agentsEnv.execute();
 
-        checkResult(results);
+            checkResult(results);
+        } finally {
+            System.clearProperty("MODEL_PROVIDER");
+        }
     }
 
     public void checkResult(CloseableIterator<Object> results) {

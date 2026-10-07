@@ -171,9 +171,9 @@ class BaseChatModelSetupSkillsTest {
         // Expected: SYSTEM, SYSTEM(skill_prompt), USER
         assertEquals(3, connection.capturedMessages.size());
         assertEquals(MessageRole.SYSTEM, connection.capturedMessages.get(0).getRole());
-        assertEquals("you are an agent", connection.capturedMessages.get(0).getContent());
+        assertEquals("you are an agent", connection.capturedMessages.get(0).getText());
         assertEquals(MessageRole.SYSTEM, connection.capturedMessages.get(1).getRole());
-        assertTrue(connection.capturedMessages.get(1).getContent().contains("<available_skills>"));
+        assertTrue(connection.capturedMessages.get(1).getText().contains("<available_skills>"));
         assertEquals(MessageRole.USER, connection.capturedMessages.get(2).getRole());
     }
 }

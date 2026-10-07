@@ -29,7 +29,6 @@ import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.plan.tools.FunctionTool;
-import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -50,6 +49,9 @@ public class JavaResourceAdapter {
      * user-supplied jars added via {@code env.add_jars(...)}.
      */
     private final transient ClassLoader userCodeClassLoader;
+
+    private final Map<String, FunctionTool> functionTools =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     public JavaResourceAdapter(ResourceContext resourceContext, ClassLoader userCodeClassLoader) {
         this.resourceContext = resourceContext;
@@ -92,18 +94,22 @@ public class JavaResourceAdapter {
      * Java value.
      *
      * @param roleValue the Python message role value
-     * @param content the message content
+     * @param blocks the content blocks as plain maps in the wire shape (see {@link
+     *     ChatMessage#setBlocksFromMaps(List)})
      * @param toolCalls the normalized tool calls
      * @param extraArgs additional message arguments
      * @return the Java chat message
      */
     public ChatMessage fromPythonChatMessage(
             String roleValue,
-            String content,
+            List<Map<String, Object>> blocks,
             List<Map<String, Object>> toolCalls,
             Map<String, Object> extraArgs) {
         // TODO: Delete this method after the pemja findClass method is fixed.
-        return new ChatMessage(MessageRole.fromValue(roleValue), content, toolCalls, extraArgs);
+        ChatMessage message =
+                new ChatMessage(MessageRole.fromValue(roleValue), List.of(), toolCalls, extraArgs);
+        message.setBlocksFromMaps(blocks);
+        return message;
     }
 
     /**
@@ -128,10 +134,10 @@ public class JavaResourceAdapter {
      * method name and parameter type names.
      *
      * <p>Invoked from the Python side via the {@code _j_resource_adapter} bridge when a {@code
-     * plan.FunctionTool} backed by a {@code JavaFunction} first materialises its metadata.
-     * Delegates to {@link ToolMetadataFactory#fromStaticMethod(Method, java.util.Collection)} once
-     * the {@code Method} is resolved, then flattens the resulting {@link ToolMetadata} plus any
-     * method-declared injected arguments into a {@code Map<String, String>} before returning.
+     * plan.FunctionTool} backed by a {@code JavaFunction} first materialises its metadata. Reuses
+     * the compiled {@link FunctionTool} once the {@code Method} is resolved, then flattens its
+     * {@link ToolMetadata} plus any method-declared injected arguments into a {@code Map<String,
+     * String>} before returning.
      *
      * <p>The flattening is required because pemja can crash with a SIGSEGV inside {@code
      * JcpPyJObject_New} when Java returns an arbitrary Java object to a Python call that originated
@@ -152,7 +158,7 @@ public class JavaResourceAdapter {
             List<String> injectedArgs)
             throws Exception {
         Method method = resolveMethod(className, methodName, parameterTypes);
-        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method, injectedArgs);
+        ToolMetadata metadata = functionTool(method, injectedArgs).getMetadata();
         Map<String, ToolParameterInjection> annotatedInjectedArgs =
                 FunctionTool.getInjectedArgs(method);
         Map<String, String> result = new HashMap<>();
@@ -166,14 +172,9 @@ public class JavaResourceAdapter {
     /**
      * Invoke a Java static tool method with keyword arguments coming from a Python tool call.
      *
-     * <p>Delegates to {@link FunctionTool#call(ToolParameters)} so the Python-driven tool-call path
-     * shares every detail of argument resolution with the Java agent path — {@link
-     * org.apache.flink.agents.api.annotation.ToolParam} name override, {@link ToolParameters}
-     * numeric coercion (covers the LLM-emitted JSON Number → Java box type mismatch that reflective
-     * {@code Method.invoke} otherwise rejects), required-parameter checking, and {@link
-     * ToolResponse} success / error semantics. The response is returned in an internal envelope so
-     * the Python caller can distinguish an explicit Tool error from an invocation exception without
-     * inspecting user payloads.
+     * <p>Arguments include the framework-resolved injection values. The owning Java function tool
+     * validates and binds arguments before invocation, using the complete function signature. The
+     * response uses an internal envelope to preserve explicit tool failures across the bridge.
      */
     public Map<String, Object> invokeJavaTool(
             String className,
@@ -182,9 +183,7 @@ public class JavaResourceAdapter {
             Map<String, Object> arguments)
             throws Exception {
         Method method = resolveMethod(className, methodName, parameterTypes);
-        FunctionTool tool = FunctionTool.fromStaticMethod(method);
-        ToolResponse response =
-                tool.call(new ToolParameters(arguments == null ? new HashMap<>() : arguments));
+        ToolResponse response = functionTool(method, List.of()).call(new ToolParameters(arguments));
         Map<String, Object> result = new HashMap<>();
         result.put(TOOL_RESULT_MARKER, "response");
         result.put("result", response.getResult());
@@ -212,6 +211,33 @@ public class JavaResourceAdapter {
         }
         Object[] args = arguments == null ? new Object[0] : arguments.toArray();
         return method.invoke(null, args);
+    }
+
+    private FunctionTool functionTool(Method method, List<String> injectedNames) {
+        List<String> sortedNames = new java.util.ArrayList<>(injectedNames);
+        java.util.Collections.sort(sortedNames);
+        String key = method.toGenericString() + sortedNames;
+        return functionTools.computeIfAbsent(
+                key,
+                ignored -> {
+                    Map<String, ToolParameterInjection> declarations =
+                            new HashMap<>(FunctionTool.getInjectedArgs(method));
+                    for (String name : injectedNames) {
+                        declarations.putIfAbsent(
+                                name, ToolParameterInjection.fromSensoryMemory(name));
+                    }
+                    try {
+                        return new FunctionTool(
+                                null,
+                                new org.apache.flink.agents.plan.JavaFunction(
+                                        method.getDeclaringClass(),
+                                        method.getName(),
+                                        method.getParameterTypes()),
+                                declarations);
+                    } catch (Exception error) {
+                        throw new IllegalArgumentException("Cannot resolve function tool", error);
+                    }
+                });
     }
 
     private Method resolveMethod(String className, String methodName, List<String> parameterTypes)

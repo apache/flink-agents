@@ -19,6 +19,7 @@
 package org.apache.flink.agents.resource.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
@@ -26,8 +27,9 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Assumptions;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 import java.io.IOException;
 import java.util.Map;
@@ -44,22 +46,26 @@ public class VectorStoreCrossLanguageTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"JAVA", "PYTHON"})
-    public void testVectorStoreIntegration(String embeddingType) throws Exception {
+    @CsvSource({"JAVA, false", "JAVA, true", "PYTHON, false", "PYTHON, true"})
+    @Timeout(120)
+    public void testVectorStoreIntegration(String embeddingType, boolean ragAsync)
+            throws Exception {
         System.setProperty("EMBEDDING_TYPE", embeddingType);
         Assumptions.assumeTrue(ollamaReady, "Ollama Server information is not provided");
 
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
-        final DataStreamSource<String> inputStream = env.fromData("What is Apache Flink");
+        final DataStreamSource<String> inputStream =
+                env.fromData("What is Apache Flink", "What is ChromaDB");
 
         final AgentsExecutionEnvironment agentEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        agentEnv.getConfig().set(AgentExecutionOptions.RAG_ASYNC, ragAsync);
+        agentEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 2);
 
         final DataStream<Object> outputStream =
-                agentEnv.fromDataStream(
-                                inputStream, (KeySelector<String, String>) value -> "orderKey")
+                agentEnv.fromDataStream(inputStream, (KeySelector<String, String>) value -> value)
                         .apply(new VectorStoreCrossLanguageAgent())
                         .toDataStream();
 
@@ -67,7 +73,11 @@ public class VectorStoreCrossLanguageTest {
 
         agentEnv.execute();
 
-        checkResult(results);
+        try (results) {
+            checkResult(results);
+            checkResult(results);
+            Assertions.assertFalse(results.hasNext(), "Unexpected extra retrieval response");
+        }
     }
 
     @SuppressWarnings("unchecked")

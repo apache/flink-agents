@@ -99,10 +99,16 @@ public final class EventLogWriter implements AutoCloseable {
 
     /** Appends and flushes an execution lifecycle Event when Trace recording is enabled. */
     public void appendExecutionEventAndFlush(Event event, ExecutionTraceContext traceContext) {
+        appendExecutionEventAndFlush(new EventContext(event), event, traceContext);
+    }
+
+    /** Appends and flushes an execution lifecycle Event with its occurrence context. */
+    public void appendExecutionEventAndFlush(
+            EventContext eventContext, Event event, ExecutionTraceContext traceContext) {
         if (!traceEnabled) {
             return;
         }
-        appendAndFlush(new EventContext(event), event, traceContext);
+        appendAndFlush(eventContext, event, traceContext);
     }
 
     private void appendAndFlush(

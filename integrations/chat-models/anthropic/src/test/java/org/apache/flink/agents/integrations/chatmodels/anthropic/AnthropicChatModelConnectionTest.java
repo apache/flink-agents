@@ -188,7 +188,7 @@ class AnthropicChatModelConnectionTest {
 
         assertThat(built.jsonPrefillApplied).isEqualTo(expectedApplied);
         assertThat(requestCarriesPrefill(built)).isEqualTo(expectedApplied);
-        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getContent())
+        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getText())
                 .isEqualTo(expectedApplied ? COMPLETED : CONTINUATION);
     }
 
@@ -605,7 +605,7 @@ class AnthropicChatModelConnectionTest {
         assertThat(built.jsonPrefillApplied).isFalse();
         assertThat(requestCarriesPrefill(built)).isFalse();
         // The provider returns a complete document, so nothing may be prepended to it.
-        assertThat(connection.convertResponse(built, textResponse(COMPLETED)).getContent())
+        assertThat(connection.convertResponse(built, textResponse(COMPLETED)).getText())
                 .isEqualTo(COMPLETED);
     }
 
@@ -624,7 +624,7 @@ class AnthropicChatModelConnectionTest {
 
         assertThat(built.jsonPrefillApplied).isTrue();
         assertThat(requestCarriesPrefill(built)).isTrue();
-        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getContent())
+        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getText())
                 .isEqualTo(COMPLETED);
     }
 
@@ -683,7 +683,7 @@ class AnthropicChatModelConnectionTest {
 
         assertThat(built.jsonPrefillApplied).isEqualTo(expectedApplied);
         assertThat(requestCarriesPrefill(built)).isEqualTo(expectedApplied);
-        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getContent())
+        assertThat(connection.convertResponse(built, textResponse(CONTINUATION)).getText())
                 .isEqualTo(expectedApplied ? COMPLETED : CONTINUATION);
     }
 

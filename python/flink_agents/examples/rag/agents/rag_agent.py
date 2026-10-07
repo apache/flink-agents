@@ -145,7 +145,7 @@ Please provide a helpful answer based on the context provided."""
         ctx.send_event(
             ChatRequestEvent(
                 model="chat_model",
-                messages=[ChatMessage(role=MessageRole.USER, content=enhanced_prompt)],
+                messages=[ChatMessage.of(MessageRole.USER, enhanced_prompt)],
             )
         )
 
@@ -154,5 +154,5 @@ Please provide a helpful answer based on the context provided."""
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Process chat model response and generate output."""
         chat_response = ChatResponseEvent.from_event(event)
-        if chat_response.response and chat_response.response.content:
-            ctx.send_event(OutputEvent(output=chat_response.response.content))
+        if chat_response.response and chat_response.response.text:
+            ctx.send_event(OutputEvent(output=chat_response.response.text))

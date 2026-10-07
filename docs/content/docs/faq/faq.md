@@ -113,7 +113,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 |---|---|---|
 | [Amazon Bedrock]({{< ref "docs/development/embedding_models#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
-| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ❌ |
+| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ✅ |
 | [Tongyi (DashScope)]({{< ref "docs/development/embedding_models#tongyi-dashscope" >}}) | ✅ | ❌ |
 
 **Vector Stores**

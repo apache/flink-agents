@@ -19,11 +19,13 @@
 package org.apache.flink.agents.plan.compatibility;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -130,7 +132,7 @@ public class CreateJavaAgentPlanFromJson {
         kwargs.put("connection", "mock_connection");
         kwargs.put("model", "mock-model");
         ResourceDescriptor chatModelDescriptor =
-                new ResourceDescriptor(
+                new PythonResourceDescriptor(
                         "flink_agents.plan.tests.compatibility.python_agent_plan_compatibility_test_agent",
                         "MockChatModel",
                         kwargs);
@@ -186,9 +188,19 @@ public class CreateJavaAgentPlanFromJson {
                         "FunctionTool",
                         serialized);
 
-        Map<String, ResourceProvider> chatModels = new HashMap<>();
-        chatModels.put("chat_model", resourceProvider);
-        assertEquals(chatModels, agentPlan.getResourceProviders().get(ResourceType.CHAT_MODEL));
+        Map<String, ResourceProvider> chatModels =
+                agentPlan.getResourceProviders().get(ResourceType.CHAT_MODEL);
+        assertEquals(2, chatModels.size());
+        assertEquals(resourceProvider, chatModels.get("chat_model"));
+        JavaResourceProvider javaChat =
+                assertInstanceOf(JavaResourceProvider.class, chatModels.get("java_chat"));
+        assertEquals("java_chat", javaChat.getName());
+        assertEquals(ResourceType.CHAT_MODEL, javaChat.getType());
+        assertEquals(
+                ResourceDescriptor.Builder.newBuilder("custom.models.Chat")
+                        .addInitialArgument("model", "test")
+                        .build(),
+                javaChat.getDescriptor());
 
         ResourceProvider actualToolProvider =
                 agentPlan.getResourceProviders().get(ResourceType.TOOL).get("add");

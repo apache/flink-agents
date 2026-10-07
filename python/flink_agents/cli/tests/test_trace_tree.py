@@ -247,6 +247,11 @@ def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
         [
             _record("root", "_input_event"),
             _execution_record(
+                "created",
+                ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
+                ExecutionLifecycleEvents.STATUS_CREATED,
+            ),
+            _execution_record(
                 "started",
                 ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
                 ExecutionLifecycleEvents.STATUS_STARTED,

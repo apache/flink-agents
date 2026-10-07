@@ -155,21 +155,5 @@ public class Agent {
         }
     }
 
-    public enum ErrorHandlingStrategy {
-        FAIL("fail"),
-        RETRY("retry"),
-        IGNORE("ignore");
-
-        private final String value;
-
-        ErrorHandlingStrategy(String value) {
-            this.value = value;
-        }
-
-        public String getValue() {
-            return value;
-        }
-    }
-
     public static String STRUCTURED_OUTPUT = "structured_output";
 }

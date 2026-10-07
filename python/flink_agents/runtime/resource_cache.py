@@ -96,7 +96,9 @@ class ResourceCache:
 
     def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
         """Set Java resource adapter for Java resource providers."""
-        self._j_resource_adapter = j_resource_adapter
+        from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
+
+        self._j_resource_adapter = JavaResourceAdapterImpl(j_resource_adapter)
 
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource by name and type, creating it from its provider if not cached.
@@ -121,7 +123,9 @@ class ResourceCache:
         resource = resource_provider.provide(
             resource_context=self._resource_context, config=self._config
         )
-        if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
+        if isinstance(resource, FunctionTool) and isinstance(
+            resource.func, JavaFunction
+        ):
             resource.set_java_resource_adapter(self._j_resource_adapter)
         # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
         from flink_agents.runtime.base_subagent import BaseSubagentSetup

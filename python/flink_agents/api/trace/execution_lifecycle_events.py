@@ -22,17 +22,20 @@ from typing import ClassVar
 class ExecutionLifecycleEvents:
     """Framework-owned execution lifecycle Event types and statuses."""
 
+    EXECUTION_CREATED_EVENT_TYPE = "_execution_created_event"
     EXECUTION_STARTED_EVENT_TYPE = "_execution_started_event"
     EXECUTION_FINISHED_EVENT_TYPE = "_execution_finished_event"
     EXECUTION_FAILED_EVENT_TYPE = "_execution_failed_event"
     EXECUTION_REUSED_EVENT_TYPE = "_execution_reused_event"
 
+    STATUS_CREATED = "created"
     STATUS_STARTED = "started"
     STATUS_SUCCESS = "success"
     STATUS_FAILED = "failed"
     STATUS_REUSED = "reused"
 
     _EXPECTED_STATUS_BY_EVENT_TYPE: ClassVar[dict[str, str]] = {
+        EXECUTION_CREATED_EVENT_TYPE: STATUS_CREATED,
         EXECUTION_STARTED_EVENT_TYPE: STATUS_STARTED,
         EXECUTION_FINISHED_EVENT_TYPE: STATUS_SUCCESS,
         EXECUTION_FAILED_EVENT_TYPE: STATUS_FAILED,

@@ -51,7 +51,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import static org.apache.flink.agents.api.agents.AgentExecutionOptions.ERROR_HANDLING_STRATEGY;
 import static org.apache.flink.agents.api.agents.AgentExecutionOptions.MAX_RETRIES;
 
 /**
@@ -161,7 +160,6 @@ public class SkillsIntegrationTest {
                                 .build())
                 .addResource("my_skill", ResourceType.SKILLS, Skills.fromLocalDir(skillsPath));
 
-        agentsEnv.getConfig().set(ERROR_HANDLING_STRATEGY, ReActAgent.ErrorHandlingStrategy.RETRY);
         agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
         ResourceDescriptor chatModelDescriptor =

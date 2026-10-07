@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ollama4j.models.chat.OllamaChatRequest;
 import io.github.ollama4j.tools.Tools;
+import io.github.ollama4j.utils.Utils;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -144,8 +145,7 @@ class OllamaChatModelConnectionTest {
     @Test
     @DisplayName("A schema without a 'required' key converts with every property optional")
     void testSchemaWithoutRequiredKey() {
-        // SchemaUtils only emits "required" when at least one parameter is required, so an
-        // all-optional @Tool produces exactly this shape (#1014).
+        // A schema may omit "required" when every parameter is optional (#1014).
         String schema =
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}}}";
@@ -177,6 +177,41 @@ class OllamaChatModelConnectionTest {
                 .isTrue();
         assertThat(tool.getToolSpec().getParameters().getProperties().get("b").isRequired())
                 .isFalse();
+    }
+
+    @Test
+    @DisplayName("Assistant tool calls in the history are sent back to Ollama")
+    void buildRequestForwardsAssistantToolCalls() {
+        Map<String, Object> call =
+                Map.of(
+                        "id",
+                        "fa-call-1",
+                        "type",
+                        "function",
+                        "function",
+                        Map.of("name", "get_weather", "arguments", Map.of("city", "Paris")));
+        Map<String, Object> jsonArgumentsCall =
+                Map.of("function", Map.of("name", "get_time", "arguments", "{\"zone\":\"CET\"}"));
+        List<ChatMessage> history =
+                List.of(
+                        new ChatMessage(MessageRole.USER, "Weather and time in Paris?"),
+                        ChatMessage.assistant("", List.of(call, jsonArgumentsCall)),
+                        new ChatMessage(MessageRole.TOOL, "sunny"),
+                        new ChatMessage(MessageRole.TOOL, "10:00"));
+
+        OllamaChatRequest request =
+                connection().buildRequest(history, List.of(), params("qwen3:4b"), null);
+        JsonNode wire = Utils.getObjectMapper().valueToTree(request);
+
+        JsonNode toolCalls = wire.at("/messages/1/tool_calls");
+        assertThat(toolCalls).hasSize(2);
+        assertThat(toolCalls.at("/0/function/name").asText()).isEqualTo("get_weather");
+        assertThat(toolCalls.at("/0/function/arguments/city").asText()).isEqualTo("Paris");
+        assertThat(toolCalls.at("/1/function/arguments/zone").asText()).isEqualTo("CET");
+        assertThat(
+                        wire.at("/messages/0/tool_calls").isMissingNode()
+                                || wire.at("/messages/0/tool_calls").isNull())
+                .isTrue();
     }
 
     @Test

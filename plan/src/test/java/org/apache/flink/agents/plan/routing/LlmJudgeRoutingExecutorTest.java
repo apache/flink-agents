@@ -99,10 +99,10 @@ class LlmJudgeRoutingExecutorTest {
                 ctx(List.of(new ChatMessage(MessageRole.USER, "write some sql")), Map.of());
         List<ChatMessage> messages = judgeMessages(Strategies.llm("judge"), context);
         assertEquals(2, messages.size());
-        String system = messages.get(0).getContent();
+        String system = messages.get(0).getText();
         assertTrue(system.contains("big: code and sql"));
         assertTrue(system.contains("{\"model\""));
-        assertEquals("USER: write some sql", messages.get(1).getContent());
+        assertEquals("USER: write some sql", messages.get(1).getText());
     }
 
     @Test
@@ -114,7 +114,7 @@ class LlmJudgeRoutingExecutorTest {
                                 new ChatMessage(MessageRole.USER, "Focus on race conditions"),
                                 new ChatMessage(MessageRole.USER, "synchronized void transfer()")),
                         Map.of());
-        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getContent();
+        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getText();
         assertTrue(userMessage.contains("SYSTEM: You review concurrency code"));
         assertTrue(userMessage.contains("USER: Focus on race conditions"));
         assertTrue(userMessage.contains("USER: synchronized void transfer()"));
@@ -128,7 +128,7 @@ class LlmJudgeRoutingExecutorTest {
                 ctx(
                         List.of(new ChatMessage(MessageRole.USER, "")),
                         Map.of("input", "write some sql for active users"));
-        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getContent();
+        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getText();
         assertTrue(userMessage.contains("write some sql for active users"));
     }
 
@@ -142,7 +142,7 @@ class LlmJudgeRoutingExecutorTest {
                                         "Pick from:\n{candidates}Reply {\"model\": \"...\"}"),
                                 context)
                         .get(0)
-                        .getContent();
+                        .getText();
         assertTrue(system.contains("- small: cheap chit-chat"));
         assertFalse(system.contains("{candidates}"));
     }
@@ -165,7 +165,7 @@ class LlmJudgeRoutingExecutorTest {
                         context.getMessages(),
                         java.util.Set.of(),
                         truncated);
-        String userMessage = messages.get(1).getContent();
+        String userMessage = messages.get(1).getText();
         assertTrue(truncated[0]);
         assertTrue(userMessage.contains("SYSTEM: task framing"));
         assertTrue(userMessage.contains("USER: current question"));
@@ -198,7 +198,7 @@ class LlmJudgeRoutingExecutorTest {
                                 new ChatMessage(MessageRole.SYSTEM, "You are a helpful assistant"),
                                 new ChatMessage(MessageRole.USER, "")),
                         Map.of("input", "write some sql for active users"));
-        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getContent();
+        String userMessage = judgeMessages(Strategies.llm("judge"), context).get(1).getText();
         assertTrue(userMessage.contains("SYSTEM: You are a helpful assistant"));
         assertTrue(userMessage.contains("write some sql for active users"));
     }
@@ -226,7 +226,7 @@ class LlmJudgeRoutingExecutorTest {
                         effective,
                         java.util.Set.of(0), // index 0 = rendered template
                         truncated);
-        String userMessage = messages.get(1).getContent();
+        String userMessage = messages.get(1).getText();
         assertTrue(truncated[0]);
         assertTrue(userMessage.contains("Review this SQL for performance: SELECT 1"));
         assertTrue(userMessage.contains("current question"));

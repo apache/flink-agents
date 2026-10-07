@@ -419,8 +419,8 @@ class AgentPlanDeclareToolMethodTest {
                                                 "a", "20",
                                                 "b", "4",
                                                 "operation", "subtract"))));
-        assertTrue(r.isSuccess());
-        assertEquals(16.0, (Double) r.getResult(), 0.001);
+        assertFalse(r.isSuccess());
+        assertEquals("INVALID_ARGUMENT /a: type", r.getError());
 
         // Division by zero
         r =

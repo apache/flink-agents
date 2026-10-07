@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.runtime.subagent.external;
 
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.subagent.BaseAsyncSubagentSetup;
 import org.slf4j.Logger;
@@ -47,14 +49,38 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     private static final Logger LOG = LoggerFactory.getLogger(ExternalAsyncSubagentSetup.class);
 
+    private static final String FIELD_BASE_URL = "base_url";
+
     private final String baseUrl;
-    private final List<Long> probeTimestamps = Collections.synchronizedList(new ArrayList<>());
+
+    // Static because the operator materializes a rebuilt instance from the descriptor; the
+    // registered setup a test holds is not the one that probes. Call reset() before each scenario.
+    // Synchronized because probes are recorded on async pool threads, where batched calls run
+    // concurrently.
+    private static final List<Long> PROBE_TIMESTAMPS =
+            Collections.synchronizedList(new ArrayList<>());
 
     @Nullable private transient ExternalAgentClient client;
 
+    /** Clears the recorded probe timestamps. Call before each independent scenario. */
+    public static void reset() {
+        PROBE_TIMESTAMPS.clear();
+    }
+
     public ExternalAsyncSubagentSetup(String baseUrl, long probeIntervalMillis) {
-        this.baseUrl = baseUrl;
-        this.statusPollIntervalMillis = probeIntervalMillis;
+        this(
+                ResourceDescriptor.Builder.newBuilder(ExternalAsyncSubagentSetup.class.getName())
+                        .addInitialArgument(FIELD_BASE_URL, baseUrl)
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, probeIntervalMillis)
+                        .build(),
+                null);
+    }
+
+    /** Descriptor-based construction, reading the config the convenience constructor captured. */
+    public ExternalAsyncSubagentSetup(
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+        this.baseUrl = descriptor.getArgument(FIELD_BASE_URL);
     }
 
     private ExternalAgentClient client() {
@@ -73,7 +99,7 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     @Override
     protected RunStatus callQueryStatus(String sessionId, String callId) {
-        probeTimestamps.add(System.currentTimeMillis());
+        PROBE_TIMESTAMPS.add(System.currentTimeMillis());
         ExternalAgentClient.TaskStatus probe;
         try {
             probe = client().status(taskId(sessionId, callId));
@@ -116,8 +142,8 @@ public class ExternalAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     /** Timestamps of every status probe, for asserting the probe pacing in tests. */
     public List<Long> probeTimestamps() {
-        synchronized (probeTimestamps) {
-            return new ArrayList<>(probeTimestamps);
+        synchronized (PROBE_TIMESTAMPS) {
+            return new ArrayList<>(PROBE_TIMESTAMPS);
         }
     }
 }

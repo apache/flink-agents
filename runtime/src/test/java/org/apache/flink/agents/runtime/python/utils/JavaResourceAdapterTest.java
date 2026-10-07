@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.junit.jupiter.api.Test;
@@ -41,11 +42,22 @@ public class JavaResourceAdapterTest {
         List<Map<String, Object>> toolCalls = List.of(Map.of("id", "call-1", "type", "function"));
         Map<String, Object> extraArgs = Map.of("reasoning", "brief");
 
-        ChatMessage converted =
-                adapter.fromPythonChatMessage("user", "hello", toolCalls, extraArgs);
+        List<Map<String, Object>> blocks =
+                List.of(
+                        Map.of("type", "text", "text", "hello"),
+                        Map.of(
+                                "type",
+                                "image",
+                                "media_type",
+                                "image/png",
+                                "source",
+                                Map.of("type", "base64", "data", "aGk=")));
+        ChatMessage converted = adapter.fromPythonChatMessage("user", blocks, toolCalls, extraArgs);
 
         assertThat(converted.getRole()).isEqualTo(MessageRole.USER);
-        assertThat(converted.getContent()).isEqualTo("hello");
+        assertThat(converted.getText()).isEqualTo("hello");
+        assertThat(converted.getBlocks()).hasSize(2);
+        assertThat(converted.getBlocks().get(1)).isInstanceOf(ImageBlock.class);
         assertThat(converted.getToolCalls()).isEqualTo(toolCalls);
         assertThat(converted.getExtraArgs()).isEqualTo(extraArgs);
     }
@@ -90,9 +102,12 @@ public class JavaResourceAdapterTest {
                                 String.class.getName(),
                                 String.class.getName()),
                         Map.of(
-                                "order_id", "order-1",
-                                "tenant_id", "tenant-1",
-                                "request_id", "request-1"));
+                                "order_id",
+                                "order-1",
+                                "tenant_id",
+                                "tenant-1",
+                                "request_id",
+                                "request-1"));
 
         assertThat(result)
                 .containsEntry("__flink_agents_tool_result__", "response")

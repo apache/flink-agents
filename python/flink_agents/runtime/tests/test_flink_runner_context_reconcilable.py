@@ -15,6 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import asyncio
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -24,7 +25,6 @@ from typing import Any, Callable
 import cloudpickle
 import pytest
 
-from flink_agents.api.runner_context import DurableCall
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.durable_execution import (
     _compute_args_digest,
@@ -41,14 +41,6 @@ class _StoredCallResult:
     status: str
     result_payload: bytes | None = None
     exception_payload: bytes | None = None
-
-
-def _durable_call(
-    func: Callable[..., Any],
-    *args: Any,
-    **kwargs: Any,
-) -> DurableCall:
-    return DurableCall(func=func, args=args, kwargs=kwargs or None)
 
 
 def _stored_call(
@@ -231,6 +223,39 @@ def _create_runner_context(
 
 def _close_runner_context(ctx: FlinkRunnerContext) -> None:
     ctx.executor.shutdown(wait=True)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_chat_failure_outcome_replays_without_provider_call(asynchronous: bool) -> None:
+    from flink_agents.plan.actions.chat_model_action import _invoke_chat
+
+    calls = []
+
+    class FailingModel:
+        def chat(self, messages: list, prompt_args: dict) -> None:
+            calls.append(1)
+            msg = "provider unavailable"
+            raise ValueError(msg)
+
+    def invoke() -> tuple:
+        return _invoke_chat(FailingModel(), [], {})
+
+    store = _FakeJavaRunnerContext()
+    for _ in range(2):
+        store.current_call_index = 0
+        ctx = _create_runner_context(store)
+        try:
+            outcome = (
+                _run_async(ctx.durable_execute_async(invoke))
+                if asynchronous
+                else ctx.durable_execute(invoke)
+            )
+            assert outcome == (None, "ValueError: provider unavailable")
+        finally:
+            _close_runner_context(ctx)
+    assert len(calls) == 1
+    assert len(store.call_results) == 1
+    assert store.call_results[0].exception_payload is None
 
 
 def _run_async(result: Any) -> object:
@@ -503,6 +528,7 @@ def test_flink_runner_context_async_writes_pending_on_await() -> None:
             reconciler=reconciler,
         )
         assert j_runner_context.call_results == []
+        assert j_runner_context.operations == []
         result = _run_async(async_result)
     finally:
         _close_runner_context(ctx)
@@ -511,6 +537,248 @@ def test_flink_runner_context_async_writes_pending_on_await() -> None:
     assert reconciler_called is False
     assert j_runner_context.operations == ["peek", "append_pending", "finalize"]
     assert j_runner_context.call_results[0].status == "SUCCEEDED"
+
+
+def test_flink_runner_context_async_future_is_deferred_and_reusable() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    call_count = 0
+
+    def tracked_call() -> str:
+        nonlocal call_count
+        call_count += 1
+        return "value"
+
+    try:
+        future = ctx.durable_execute_async(tracked_call)
+
+        assert j_runner_context.operations == []
+
+        first_result = _run_async(future)
+        call_index_after_first_await = j_runner_context.current_call_index
+        second_result = _run_async(future)
+    finally:
+        _close_runner_context(ctx)
+
+    assert first_result == second_result == "value"
+    assert call_count == 1
+    assert j_runner_context.current_call_index == call_index_after_first_await == 1
+
+
+def test_flink_runner_context_gather_reserves_before_execution() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    config = AgentConfiguration(
+        {"tool-call.batch.timeout.ms": -1, "tool-call.parallelism": 2}
+    )
+    ctx = _create_runner_context(j_runner_context, config=config)
+    observed_states: list[list[str]] = []
+
+    def inspect_reservation(value: str) -> str:
+        observed_states.append(
+            [result.status for result in j_runner_context.call_results]
+        )
+        return value
+
+    try:
+        first = ctx.durable_execute_async(inspect_reservation, "one")
+        second = ctx.durable_execute_async(inspect_reservation, "two")
+
+        assert j_runner_context.operations == []
+        assert j_runner_context.call_results == []
+
+        outcomes = _run_async(ctx.gather(first, second))
+
+        call_index_after_gather = j_runner_context.current_call_index
+        first_value = _run_async(first)
+        second_value = _run_async(second)
+    finally:
+        _close_runner_context(ctx)
+
+    assert [outcome.value for outcome in outcomes] == ["one", "two"]
+    assert observed_states == [["PENDING", "PENDING"], ["PENDING", "PENDING"]]
+    assert first_value == "one"
+    assert second_value == "two"
+    assert j_runner_context.current_call_index == call_index_after_gather == 2
+    assert j_runner_context.operations[0:3] == ["read_at:0", "read_at:1", "reserve:2"]
+
+
+def test_flink_runner_context_gather_caches_child_failure() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    call_count = 0
+
+    def failing_call() -> None:
+        nonlocal call_count
+        call_count += 1
+        msg = "call failed"
+        raise ValueError(msg)
+
+    try:
+        future = ctx.durable_execute_async(failing_call)
+        outcomes = _run_async(ctx.gather(future))
+        call_index_after_gather = j_runner_context.current_call_index
+
+        with pytest.raises(ValueError, match="call failed"):
+            _run_async(future)
+    finally:
+        _close_runner_context(ctx)
+
+    assert outcomes[0].is_failure()
+    assert call_count == 1
+    assert j_runner_context.current_call_index == call_index_after_gather == 1
+
+
+def test_gather_reuses_resolved_future_before_composition() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    call_count = 0
+
+    def tracked_call() -> str:
+        nonlocal call_count
+        call_count += 1
+        return "value"
+
+    try:
+        future = ctx.durable_execute_async(tracked_call)
+        assert _run_async(future) == "value"
+        operations_after_child = list(j_runner_context.operations)
+
+        outcomes = _run_async(ctx.gather(future))
+    finally:
+        _close_runner_context(ctx)
+
+    assert outcomes[0].value == "value"
+    assert call_count == 1
+    assert j_runner_context.operations == operations_after_child
+    assert j_runner_context.current_call_index == 1
+
+
+def test_gather_reuses_resolved_future_after_composition() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    call_counts = {"one": 0, "two": 0}
+
+    def tracked_call(value: str) -> str:
+        call_counts[value] += 1
+        return value
+
+    try:
+        first = ctx.durable_execute_async(tracked_call, "one")
+        second = ctx.durable_execute_async(tracked_call, "two")
+        gathered = ctx.gather(first, second)
+
+        assert _run_async(first) == "one"
+        outcomes = _run_async(gathered)
+    finally:
+        _close_runner_context(ctx)
+
+    assert [outcome.value for outcome in outcomes] == ["one", "two"]
+    assert call_counts == {"one": 1, "two": 1}
+    assert j_runner_context.operations.count("reserve:1") == 1
+    assert j_runner_context.current_call_index == 2
+
+
+def test_gather_reuses_resolved_failure_as_outcome() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    failure = ValueError("failed")
+    call_count = 0
+
+    def failing_call() -> None:
+        nonlocal call_count
+        call_count += 1
+        raise failure
+
+    try:
+        future = ctx.durable_execute_async(failing_call)
+        with pytest.raises(ValueError, match="failed"):
+            _run_async(future)
+        operations_after_child = list(j_runner_context.operations)
+
+        outcomes = _run_async(ctx.gather(future))
+    finally:
+        _close_runner_context(ctx)
+
+    assert outcomes[0].error is failure
+    assert call_count == 1
+    assert j_runner_context.operations == operations_after_child
+    assert j_runner_context.current_call_index == 1
+
+
+def test_gather_retries_future_after_cancelled_resolution() -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(j_runner_context)
+    call_count = 0
+
+    def cancelled_then_success() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise asyncio.CancelledError
+        return "value"
+
+    try:
+        future = ctx.durable_execute_async(cancelled_then_success)
+        with pytest.raises(asyncio.CancelledError):
+            _run_async(future)
+
+        assert j_runner_context.call_results == []
+        assert j_runner_context.current_call_index == 0
+
+        outcomes = _run_async(ctx.gather(future))
+    finally:
+        _close_runner_context(ctx)
+
+    assert outcomes[0].value == "value"
+    assert call_count == 2
+    assert j_runner_context.current_call_index == 1
+
+
+@pytest.mark.parametrize("use_reconciler", [False, True])
+def test_gather_retries_pending_future_after_cancelled_resolution(
+    use_reconciler: bool,
+) -> None:
+    j_runner_context = _FakeJavaRunnerContext()
+    call_count = 0
+    reconciler_count = 0
+
+    def durable_call() -> str:
+        nonlocal call_count
+        call_count += 1
+        if not use_reconciler and call_count == 1:
+            raise asyncio.CancelledError
+        return "call-value"
+
+    def reconciler() -> str:
+        nonlocal reconciler_count
+        reconciler_count += 1
+        if reconciler_count == 1:
+            raise asyncio.CancelledError
+        return "reconciled-value"
+
+    _preload_pending(j_runner_context, durable_call)
+    ctx = _create_runner_context(j_runner_context)
+
+    try:
+        future = ctx.durable_execute_async(
+            durable_call,
+            reconciler=reconciler if use_reconciler else None,
+        )
+        with pytest.raises(asyncio.CancelledError):
+            _run_async(future)
+
+        assert j_runner_context.call_results[0].status == "PENDING"
+        assert j_runner_context.current_call_index == 0
+
+        outcomes = _run_async(ctx.gather(future))
+    finally:
+        _close_runner_context(ctx)
+
+    expected = "reconciled-value" if use_reconciler else "call-value"
+    assert outcomes[0].value == expected
+    assert call_count == (0 if use_reconciler else 2)
+    assert reconciler_count == (2 if use_reconciler else 0)
+    assert j_runner_context.current_call_index == 1
 
 
 def test_flink_runner_context_async_reconciler_success() -> None:
@@ -596,7 +864,7 @@ def test_flink_runner_context_reconciler_kwarg_is_not_forwarded() -> None:
     assert result == {}
 
 
-def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel() -> None:
+def test_flink_runner_context_gather_runs_calls_in_parallel() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     parallelism = 3
     config = AgentConfiguration(
@@ -620,12 +888,10 @@ def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel()
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(concurrent_call, "one"),
-                    _durable_call(concurrent_call, "two"),
-                    _durable_call(concurrent_call, "three"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(concurrent_call, "one"),
+                ctx.durable_execute_async(concurrent_call, "two"),
+                ctx.durable_execute_async(concurrent_call, "three"),
             )
         )
     finally:
@@ -640,17 +906,15 @@ def test_flink_runner_context_durable_execute_all_async_runs_calls_in_parallel()
     assert j_runner_context.current_call_index == 3
 
 
-def test_flink_runner_context_durable_execute_all_async_initial_batch() -> None:
+def test_flink_runner_context_gather_initial_batch() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(_call_value, "one"),
-                    _durable_call(_call_value, "two"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(_call_value, "one"),
+                ctx.durable_execute_async(_call_value, "two"),
             )
         )
     finally:
@@ -664,7 +928,7 @@ def test_flink_runner_context_durable_execute_all_async_initial_batch() -> None:
     assert j_runner_context.current_call_index == 2
 
 
-def test_flink_runner_context_durable_execute_all_async_finalize_failure_keeps_slot_pending(
+def test_flink_runner_context_gather_finalize_failure_keeps_slot_pending(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     j_runner_context = _FakeJavaRunnerContext()
@@ -687,11 +951,9 @@ def test_flink_runner_context_durable_execute_all_async_finalize_failure_keeps_s
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(lambda: "one"),
-                    _durable_call(lambda: "two"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(lambda: "one"),
+                ctx.durable_execute_async(lambda: "two"),
             )
         )
     finally:
@@ -707,7 +969,7 @@ def test_flink_runner_context_durable_execute_all_async_finalize_failure_keeps_s
     assert "finalize_at:1" not in j_runner_context.operations
 
 
-def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch() -> None:
+def test_flink_runner_context_gather_recovers_partial_batch() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -716,9 +978,8 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
         call_count += 1
         return _call_value(value)
 
-    cached_call = _durable_call(tracked_call, "one")
     cached_function_id, cached_digest = durable_identity_for_call(
-        cached_call.func, cached_call.args, cached_call.kwargs
+        tracked_call, ("one",), None
     )
     j_runner_context.call_results.extend(
         [
@@ -735,11 +996,9 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
     ctx = _create_runner_context(j_runner_context)
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(tracked_call, "one"),
-                    _durable_call(tracked_call, "two"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(tracked_call, "one"),
+                ctx.durable_execute_async(tracked_call, "two"),
             )
         )
     finally:
@@ -751,11 +1010,10 @@ def test_flink_runner_context_durable_execute_all_async_recovers_partial_batch()
     assert j_runner_context.current_call_index == 2
 
 
-def test_flink_runner_context_durable_execute_all_async_returns_cached_failure() -> None:
+def test_flink_runner_context_gather_returns_cached_failure() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    cached_call = _durable_call(_call_value, "one")
     cached_function_id, cached_digest = durable_identity_for_call(
-        cached_call.func, cached_call.args, cached_call.kwargs
+        _call_value, ("one",), None
     )
     j_runner_context.call_results.append(
         _StoredCallResult(
@@ -769,9 +1027,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_cached_failure()
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [_durable_call(_call_value, "one")]
-            )
+            ctx.gather(ctx.durable_execute_async(_call_value, "one"))
         )
     finally:
         _close_runner_context(ctx)
@@ -782,7 +1038,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_cached_failure()
     assert j_runner_context.current_call_index == 1
 
 
-def test_flink_runner_context_durable_execute_all_async_collects_failures() -> None:
+def test_flink_runner_context_gather_collects_failures() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     ctx = _create_runner_context(j_runner_context)
 
@@ -792,11 +1048,9 @@ def test_flink_runner_context_durable_execute_all_async_collects_failures() -> N
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(_call_value, "one"),
-                    _durable_call(fail_call),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(_call_value, "one"),
+                ctx.durable_execute_async(fail_call),
             )
         )
     finally:
@@ -812,7 +1066,7 @@ def test_flink_runner_context_durable_execute_all_async_collects_failures() -> N
     assert j_runner_context.current_call_index == 2
 
 
-def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_results() -> None:
+def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration({"tool-call.batch.timeout.ms": 100})
     ctx = _create_runner_context(j_runner_context, config=config)
@@ -831,11 +1085,9 @@ def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(lambda: "fast"),
-                    _durable_call(slow_call),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(lambda: "fast"),
+                ctx.durable_execute_async(slow_call),
             )
         )
     finally:
@@ -850,7 +1102,7 @@ def test_flink_runner_context_durable_execute_all_async_timeout_keeps_completed_
     assert j_runner_context.current_call_index == 2
 
 
-def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitted_slots_pending() -> None:
+def test_flink_runner_context_gather_timeout_leaves_unsubmitted_slots_pending() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
         {"tool-call.batch.timeout.ms": 100, "tool-call.parallelism": 2}
@@ -870,13 +1122,11 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitt
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(blocking_call, "one"),
-                    _durable_call(blocking_call, "two"),
-                    _durable_call(_call_value, "three"),
-                    _durable_call(_call_value, "four"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(blocking_call, "one"),
+                ctx.durable_execute_async(blocking_call, "two"),
+                ctx.durable_execute_async(_call_value, "three"),
+                ctx.durable_execute_async(_call_value, "four"),
             )
         )
     finally:
@@ -896,9 +1146,7 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_unsubmitt
     assert j_runner_context.current_call_index == 4
 
 
-def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_slots_pending() -> (
-    None
-):
+def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     # Parallelism budget exceeds the worker count, so two suppliers are handed to a
     # saturated pool and wait in its queue without ever starting before the deadline.
@@ -924,13 +1172,11 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_sl
 
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(blocking_call, "one"),
-                    _durable_call(blocking_call, "two"),
-                    _durable_call(queued_call, "three"),
-                    _durable_call(queued_call, "four"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(blocking_call, "one"),
+                ctx.durable_execute_async(blocking_call, "two"),
+                ctx.durable_execute_async(queued_call, "three"),
+                ctx.durable_execute_async(queued_call, "four"),
             )
         )
     finally:
@@ -953,14 +1199,14 @@ def test_flink_runner_context_durable_execute_all_async_timeout_leaves_queued_sl
     assert j_runner_context.current_call_index == 4
 
 
-def test_flink_runner_context_durable_execute_all_async_returns_deserialize_failure_as_outcome() -> (
-    None
-):
+def test_flink_runner_context_gather_returns_deserialize_failure_as_outcome() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    call = _durable_call(lambda: "should-not-run")
-    function_id, args_digest = durable_identity_for_call(
-        call.func, call.args, call.kwargs
-    )
+
+    def should_not_run() -> str:
+        return "should-not-run"
+
+    func = should_not_run
+    function_id, args_digest = durable_identity_for_call(func, (), None)
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
@@ -971,7 +1217,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_deserialize_fail
     )
     ctx = _create_runner_context(j_runner_context)
     try:
-        outcomes = _run_async(ctx.durable_execute_all_async([call]))
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(func)))
     finally:
         _close_runner_context(ctx)
 
@@ -979,7 +1225,7 @@ def test_flink_runner_context_durable_execute_all_async_returns_deserialize_fail
     assert j_runner_context.current_call_index == 1
 
 
-def test_flink_runner_context_durable_execute_all_async_reconciles_pending_slot() -> None:
+def test_flink_runner_context_gather_reconciles_pending_slot() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
     reconcile_count = 0
@@ -995,10 +1241,7 @@ def test_flink_runner_context_durable_execute_all_async_reconciles_pending_slot(
         reconcile_count += 1
         return "recovered"
 
-    call = DurableCall(func=tracked_call, reconciler=reconciler)
-    function_id, args_digest = durable_identity_for_call(
-        call.func, call.args, call.kwargs
-    )
+    function_id, args_digest = durable_identity_for_call(tracked_call, (), None)
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
@@ -1008,7 +1251,11 @@ def test_flink_runner_context_durable_execute_all_async_reconciles_pending_slot(
     )
     ctx = _create_runner_context(j_runner_context)
     try:
-        outcomes = _run_async(ctx.durable_execute_all_async([call]))
+        outcomes = _run_async(
+            ctx.gather(
+                ctx.durable_execute_async(tracked_call, reconciler=reconciler)
+            )
+        )
     finally:
         _close_runner_context(ctx)
 
@@ -1019,9 +1266,7 @@ def test_flink_runner_context_durable_execute_all_async_reconciles_pending_slot(
     assert j_runner_context.current_call_index == 1
 
 
-def test_flink_runner_context_durable_execute_all_async_recovers_three_slot_partial_batch() -> (
-    None
-):
+def test_flink_runner_context_gather_recovers_three_slot_partial_batch() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     call_count = 0
 
@@ -1030,17 +1275,10 @@ def test_flink_runner_context_durable_execute_all_async_recovers_three_slot_part
         call_count += 1
         return _call_value(value)
 
-    first = _durable_call(tracked_call, "one")
-    second = _durable_call(tracked_call, "two")
-    third = _durable_call(tracked_call, "three")
-    first_id, first_digest = durable_identity_for_call(
-        first.func, first.args, first.kwargs
-    )
-    second_id, second_digest = durable_identity_for_call(
-        second.func, second.args, second.kwargs
-    )
+    first_id, first_digest = durable_identity_for_call(tracked_call, ("one",), None)
+    second_id, second_digest = durable_identity_for_call(tracked_call, ("two",), None)
     third_id, third_digest = durable_identity_for_call(
-        third.func, third.args, third.kwargs
+        tracked_call, ("three",), None
     )
     j_runner_context.call_results.extend(
         [
@@ -1067,7 +1305,11 @@ def test_flink_runner_context_durable_execute_all_async_recovers_three_slot_part
     ctx = _create_runner_context(j_runner_context)
     try:
         outcomes = _run_async(
-            ctx.durable_execute_all_async([first, second, third])
+            ctx.gather(
+                ctx.durable_execute_async(tracked_call, "one"),
+                ctx.durable_execute_async(tracked_call, "two"),
+                ctx.durable_execute_async(tracked_call, "three"),
+            )
         )
     finally:
         _close_runner_context(ctx)
@@ -1081,7 +1323,7 @@ def test_flink_runner_context_durable_execute_all_async_recovers_three_slot_part
     assert j_runner_context.current_call_index == 3
 
 
-def test_flink_runner_context_durable_execute_all_async_respects_max_parallelism() -> None:
+def test_flink_runner_context_gather_respects_max_parallelism() -> None:
     j_runner_context = _FakeJavaRunnerContext()
     config = AgentConfiguration(
         {"tool-call.batch.timeout.ms": -1, "tool-call.parallelism": 2}
@@ -1105,13 +1347,11 @@ def test_flink_runner_context_durable_execute_all_async_respects_max_parallelism
     try:
         start = time.perf_counter()
         outcomes = _run_async(
-            ctx.durable_execute_all_async(
-                [
-                    _durable_call(slow_call, "one"),
-                    _durable_call(slow_call, "two"),
-                    _durable_call(slow_call, "three"),
-                    _durable_call(slow_call, "four"),
-                ]
+            ctx.gather(
+                ctx.durable_execute_async(slow_call, "one"),
+                ctx.durable_execute_async(slow_call, "two"),
+                ctx.durable_execute_async(slow_call, "three"),
+                ctx.durable_execute_async(slow_call, "four"),
             )
         )
         elapsed = time.perf_counter() - start

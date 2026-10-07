@@ -77,7 +77,11 @@ public class Slf4jEventLogger implements EventLogger {
     private static final String EVENT_LOG_APPENDER_NAME = "FlinkAgentsEventLogAppender";
 
     private static final Logger EVENT_LOG = LoggerFactory.getLogger(EVENT_LOGGER_NAME);
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    // Event-Log-only mapper: chat messages are logged through their sanitized projection
+    // (media metadata instead of payload bytes) at every log level.
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(ChatMessageEventLogSerializer.module());
 
     private final EventLoggerConfig config;
     private boolean prettyPrint;

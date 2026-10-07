@@ -61,9 +61,7 @@ def _registration_env() -> RemoteExecutionEnvironment:
 
 
 def test_resolve_function_python_with_module_attr() -> None:
-    func = resolve_function(
-        name="anything", function=f"{_TARGETS_MODULE}:increment"
-    )
+    func = resolve_function(name="anything", function=f"{_TARGETS_MODULE}:increment")
     assert isinstance(func, PythonFunction)
     assert func.module == _TARGETS_MODULE
     assert func.qualname == "increment"
@@ -75,9 +73,7 @@ def test_resolve_function_python_with_class_method() -> None:
     # ``module:Class.method`` — the right side becomes
     # ``PythonFunction.qualname`` verbatim and ``as_callable`` does the
     # ``Class.method`` split internally.
-    func = resolve_function(
-        name="bump", function=f"{_TARGETS_MODULE}:Counter.bump"
-    )
+    func = resolve_function(name="bump", function=f"{_TARGETS_MODULE}:Counter.bump")
     assert isinstance(func, PythonFunction)
     assert func.module == _TARGETS_MODULE
     assert func.qualname == "Counter.bump"
@@ -223,7 +219,7 @@ def test_build_agents_loads_tools_and_prompts() -> None:
     assert isinstance(msg_prompt, LocalPrompt)
     assert len(msg_prompt.template) == 2
     assert msg_prompt.template[0].role == MessageRole.SYSTEM
-    assert msg_prompt.template[1].content == "{q}"
+    assert msg_prompt.template[1].text == "{q}"
 
 
 def test_build_agents_handles_shared_resources_and_actions() -> None:
@@ -537,13 +533,13 @@ def test_build_agents_supports_type_java(tmp_path: Path) -> None:
     agent = agents["a"]
 
     conn = agent.resources[ResourceType.CHAT_MODEL_CONNECTION]["java_conn"]
-    # clazz is the Python-side Java wrapper
-    assert conn.target_clazz == "JavaChatModelConnection"
-    # java_clazz arg points at the Java implementation
+    assert conn.language == "java"
+    assert conn.target_module == ""
     assert (
-        conn.arguments["java_clazz"]
+        conn.target_clazz
         == "org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection"
     )
+    assert "java_clazz" not in conn.arguments
     # other kwargs flow through
     assert conn.arguments["endpoint"] == "http://localhost:11434"
     assert conn.arguments["requestTimeout"] == 120
@@ -629,9 +625,7 @@ def test_resolve_function_java_supports_inner_classes() -> None:
 
 
 def test_resolve_function_python_is_default_language() -> None:
-    func1 = resolve_function(
-        name="x", function=f"{_TARGETS_MODULE}:increment"
-    )
+    func1 = resolve_function(name="x", function=f"{_TARGETS_MODULE}:increment")
     func2 = resolve_function(
         name="x",
         function=f"{_TARGETS_MODULE}:increment",

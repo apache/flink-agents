@@ -107,6 +107,15 @@ class ChatRequestEvent(Event):
         return self.get_attr("output_schema")
 
 
+class ChatResponseError(RuntimeError):
+    """A failed chat result, retaining the request ID and textual error."""
+
+    def __init__(self, request_id: UUID, error: str) -> None:
+        """Keep the request ID and textual provider error."""
+        super().__init__(error)
+        self.request_id = request_id
+
+
 class ChatResponseEvent(Event):
     """Event representing a response from chat model.
 
@@ -123,61 +132,153 @@ class ChatResponseEvent(Event):
     """
 
     EVENT_TYPE: ClassVar[str] = "_chat_response_event"
+    SUCCESS: ClassVar[str] = "SUCCESS"
+    FAILED: ClassVar[str] = "FAILED"
+
+    _REQUEST_ID: ClassVar[str] = "request_id"
+    _STATUS: ClassVar[str] = "status"
+    _RESPONSE: ClassVar[str] = "response"
+    _ERROR: ClassVar[str] = "error"
+    _RETRY_COUNT: ClassVar[str] = "retry_count"
+    _TOTAL_RETRY_WAIT_SEC: ClassVar[str] = "total_retry_wait_sec"
 
     def __init__(
         self,
         request_id: UUID,
-        response: ChatMessage,
+        status: str,
+        response: ChatMessage | None = None,
+        error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
     ) -> None:
         """Create a ChatResponseEvent."""
+        if not (
+            (
+                status == self.SUCCESS
+                and isinstance(response, ChatMessage)
+                and error is None
+            )
+            or (
+                status == self.FAILED
+                and response is None
+                and isinstance(error, str)
+                and error
+            )
+        ):
+            msg = "Chat response requires SUCCESS with response or FAILED with error."
+            raise ValueError(msg)
+        request_id = UUID(request_id) if isinstance(request_id, str) else request_id
+        if not isinstance(request_id, UUID):
+            msg = "request_id must be a UUID"
+            raise TypeError(msg)
         super().__init__(
             type=ChatResponseEvent.EVENT_TYPE,
             attributes={
-                "request_id": request_id,
-                "response": response,
-                "retry_count": retry_count,
-                "total_retry_wait_sec": total_retry_wait_sec,
+                self._REQUEST_ID: request_id,
+                self._STATUS: status,
+                self._RESPONSE: response,
+                self._ERROR: error,
+                self._RETRY_COUNT: retry_count,
+                self._TOTAL_RETRY_WAIT_SEC: total_retry_wait_sec,
             },
+        )
+
+    @classmethod
+    def success(
+        cls,
+        request_id: UUID,
+        response: ChatMessage,
+        retry_count: int = 0,
+        total_retry_wait_sec: int = 0,
+    ) -> "ChatResponseEvent":
+        """Create a successful terminal response."""
+        return cls(
+            request_id,
+            cls.SUCCESS,
+            response=response,
+            retry_count=retry_count,
+            total_retry_wait_sec=total_retry_wait_sec,
+        )
+
+    @classmethod
+    def failed(
+        cls,
+        request_id: UUID,
+        error: str,
+        retry_count: int = 0,
+        total_retry_wait_sec: int = 0,
+    ) -> "ChatResponseEvent":
+        """Create a failed terminal response."""
+        return cls(
+            request_id,
+            cls.FAILED,
+            error=error,
+            retry_count=retry_count,
+            total_retry_wait_sec=total_retry_wait_sec,
         )
 
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ChatResponseEvent":
-        assert "request_id" in event.attributes
-        assert "response" in event.attributes
-        response_raw = event.attributes["response"]
+        assert cls._REQUEST_ID in event.attributes
+        response_raw = event.attributes.get(cls._RESPONSE)
         response = (
             ChatMessage.model_validate(response_raw)
             if isinstance(response_raw, dict)
             else response_raw
         )
         result = ChatResponseEvent(
-            request_id=event.attributes["request_id"],
+            request_id=event.attributes[cls._REQUEST_ID],
+            status=event.attributes[cls._STATUS],
             response=response,
-            retry_count=event.attributes.get("retry_count", 0),
-            total_retry_wait_sec=event.attributes.get("total_retry_wait_sec", 0),
+            error=event.attributes.get(cls._ERROR),
+            retry_count=event.attributes.get(cls._RETRY_COUNT, 0),
+            total_retry_wait_sec=event.attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
         )
         return result.reconstruct_from(event)
 
     @property
     def request_id(self) -> UUID:
         """Return the request event ID."""
-        val = self.get_attr("request_id")
+        val = self.get_attr(self._REQUEST_ID)
         return UUID(val) if isinstance(val, str) else val
 
     @property
     def response(self) -> ChatMessage:
         """Return the chat model response."""
-        return self.get_attr("response")
+        if self.is_failed:
+            raise ChatResponseError(self.request_id, self.error)
+        return self.get_attr(self._RESPONSE)
+
+    @property
+    def status(self) -> str:
+        """Return the terminal status."""
+        return self.get_attr(self._STATUS)
+
+    @property
+    def is_success(self) -> bool:
+        """Whether the chat succeeded."""
+        return self.status == self.SUCCESS
+
+    @property
+    def is_failed(self) -> bool:
+        """Whether the chat failed."""
+        return self.status == self.FAILED
+
+    @property
+    def error(self) -> str:
+        """Return failure text; a successful event has no error."""
+        if not self.is_failed:
+            msg = "A successful chat response has no error."
+            raise RuntimeError(msg)
+        return self.get_attr(self._ERROR)
 
     @property
     def retry_count(self) -> int:
         """Return the total number of retries."""
-        return self.get_attr("retry_count")
+        return self.get_attr(self._RETRY_COUNT)
 
     @property
     def total_retry_wait_sec(self) -> int:
         """Return the total retry wait time in seconds."""
-        return self.get_attr("total_retry_wait_sec")
+        return self.get_attr(self._TOTAL_RETRY_WAIT_SEC)

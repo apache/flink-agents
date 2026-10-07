@@ -101,12 +101,6 @@ public final class ResourceName {
         public static final String WATSONX_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup";
 
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_CONNECTION =
-                "org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection";
-        public static final String PYTHON_WRAPPER_SETUP =
-                "org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup";
-
         /** Python implementations of ChatModel. */
         public static final class Python {
 
@@ -173,12 +167,11 @@ public final class ResourceName {
         public static final String BEDROCK_SETUP =
                 "org.apache.flink.agents.integrations.embeddingmodels.bedrock.BedrockEmbeddingModelSetup";
 
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_CONNECTION =
-                "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection";
-        public static final String PYTHON_WRAPPER_SETUP =
-                "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelSetup";
-
+        // OpenAI
+        public static final String OPENAI_CONNECTION =
+                "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelConnection";
+        public static final String OPENAI_SETUP =
+                "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelSetup";
         /** Python implementations of EmbeddingModel. */
         public static final class Python {
 
@@ -224,13 +217,6 @@ public final class ResourceName {
         // Milvus
         public static final String MILVUS_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore";
-
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_VECTOR_STORE =
-                "org.apache.flink.agents.api.vectorstores.python.PythonVectorStore";
-
-        public static final String PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE =
-                "org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore";
 
         /** Python implementations of VectorStore. */
         public static final class Python {

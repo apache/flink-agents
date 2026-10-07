@@ -26,7 +26,7 @@ import java.util.Map;
  *
  * <p>Implementations decide how reports are consumed or ignored. Callers should provide stable
  * entity type/name pairs and keep metadata small, structured, serializable, and stable for equality
- * matching between the start and terminal reports of the same logical execution.
+ * matching between lifecycle reports of the same logical execution.
  */
 public interface ExecutionReporter {
 
@@ -36,6 +36,7 @@ public interface ExecutionReporter {
         public static final String LLM = "llm";
         public static final String PARSER = "parser";
         public static final String TOOL = "tool";
+        public static final String SUBAGENT = "subagent";
 
         private EntityTypes() {}
     }
@@ -51,6 +52,22 @@ public interface ExecutionReporter {
     }
 
     /**
+     * Reports that a logical execution has been created but has not necessarily started.
+     *
+     * <p>This is an optional lifecycle phase for executions whose admission and invocation are
+     * observably separate. Implementations that do not consume it may keep the default no-op. A
+     * later start or terminal report is not guaranteed, so consumers must not infer whether the
+     * underlying invocation ran from the absence of either report.
+     *
+     * @param entityType stable category of the reported execution, such as LLM, parser, or tool
+     * @param entityName stable name of the reported execution, such as model or tool name
+     * @param entityMetadata small structured metadata used to match subsequent lifecycle reports
+     */
+    default void reportExecutionCreated(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {}
+
+    /**
      * Reports that a logical execution started within the current action.
      *
      * @param entityType stable category of the reported execution, such as LLM, parser, or tool
@@ -63,7 +80,22 @@ public interface ExecutionReporter {
             throws Exception;
 
     /**
-     * Reports that a previously started logical execution completed successfully.
+     * Reports that a logical execution started at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionStarted(String, String,
+     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     */
+    default void reportExecutionStartedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        reportExecutionStarted(entityType, entityName, entityMetadata);
+    }
+
+    /**
+     * Reports that a logical execution completed successfully.
      *
      * <p>The entity type/name/metadata should match the corresponding start report when one was
      * reported.
@@ -71,6 +103,21 @@ public interface ExecutionReporter {
     void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception;
+
+    /**
+     * Reports that a logical execution completed successfully at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionSucceeded(String, String,
+     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     */
+    default void reportExecutionSucceededAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        reportExecutionSucceeded(entityType, entityName, entityMetadata);
+    }
 
     /**
      * Reports that a logical execution failed.
@@ -85,4 +132,22 @@ public interface ExecutionReporter {
             Throwable error,
             @Nullable String problemCategory)
             throws Exception;
+
+    /**
+     * Reports that a logical execution failed at the given occurrence timestamp.
+     *
+     * <p>The default implementation delegates to {@link #reportExecutionFailed(String, String, Map,
+     * Throwable, String)}, so reporters that do not retain occurrence timestamps may use their
+     * observation time.
+     */
+    default void reportExecutionFailedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp)
+            throws Exception {
+        reportExecutionFailed(entityType, entityName, entityMetadata, error, problemCategory);
+    }
 }

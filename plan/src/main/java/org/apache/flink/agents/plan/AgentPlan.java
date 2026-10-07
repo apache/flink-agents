@@ -32,9 +32,11 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.VectorStore;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.chat.model.routing.RoutingCandidateValidator;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategyType;
 import org.apache.flink.agents.api.function.JavaFunctionUtils;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -49,7 +51,6 @@ import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
-import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
@@ -57,7 +58,6 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.tools.FunctionTool;
-import org.apache.flink.agents.plan.tools.ToolMetadataFactory;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +66,7 @@ import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.Serializable;
+import java.lang.reflect.AnnotatedElement;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
@@ -230,6 +231,9 @@ public class AgentPlan implements Serializable {
     }
 
     private void registerAction(Action action) {
+        if (actions.containsKey(action.getName())) {
+            throw new IllegalStateException("Duplicate action name '" + action.getName() + "'.");
+        }
         actions.put(action.getName(), action);
     }
 
@@ -239,58 +243,43 @@ public class AgentPlan implements Serializable {
         addBuiltAction(ToolCallAction.getToolCallAction());
         addBuiltAction(ContextRetrievalAction.getContextRetrievalAction());
 
-        // Scan the agent class for methods annotated with @Action
         Class<?> agentClass = agent.getClass();
-        // getDeclaredMethods() skips inherited @Action methods; reject loudly.
-        for (Class<?> parent = agentClass.getSuperclass();
-                parent != null && parent != Agent.class;
-                parent = parent.getSuperclass()) {
-            for (Method inherited : parent.getDeclaredMethods()) {
-                if (inherited.isAnnotationPresent(
-                        org.apache.flink.agents.api.annotation.Action.class)) {
-                    throw new IllegalStateException(
-                            "Inherited @Action '"
-                                    + parent.getName()
-                                    + "#"
-                                    + inherited.getName()
-                                    + "' is not supported; declare on the concrete agent.");
-                }
-            }
-        }
+        // getDeclaredMethods()/getDeclaredFields() skip inherited @Action members; reject loudly.
+        rejectInheritedActions(agentClass);
+
+        // @Action on a method: the method body is the native Java implementation.
         for (Method method : agentClass.getDeclaredMethods()) {
-            if (!method.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    method.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (actionAnnotation == null) {
                 continue;
             }
-            org.apache.flink.agents.api.annotation.Action actionAnnotation =
-                    Objects.requireNonNull(
-                            method.getAnnotation(
-                                    org.apache.flink.agents.api.annotation.Action.class));
-            String[] triggerConditions = actionAnnotation.value();
-            org.apache.flink.agents.api.annotation.PythonFunction target =
-                    actionAnnotation.target();
-            String targetModule = target.module();
-            String targetQualname = target.qualname();
-            boolean moduleSet = !targetModule.isEmpty();
-            boolean qualnameSet = !targetQualname.isEmpty();
+            org.apache.flink.agents.plan.Function execFunction =
+                    new org.apache.flink.agents.plan.JavaFunction(
+                            method.getDeclaringClass(),
+                            method.getName(),
+                            method.getParameterTypes());
+            extractActions(
+                    resolveActionName(actionAnnotation.name(), method.getName()),
+                    actionAnnotation.value(),
+                    execFunction,
+                    null);
+        }
 
-            org.apache.flink.agents.plan.Function execFunction;
-            if (!moduleSet && !qualnameSet) {
-                execFunction =
-                        new org.apache.flink.agents.plan.JavaFunction(
-                                method.getDeclaringClass(),
-                                method.getName(),
-                                method.getParameterTypes());
-            } else if (moduleSet && qualnameSet) {
-                execFunction =
-                        new org.apache.flink.agents.plan.PythonFunction(
-                                targetModule, targetQualname);
-            } else {
-                throw new IllegalStateException(
-                        "PythonFunction target on '"
-                                + method.getName()
-                                + "' must set both module and qualname");
+        // @Action on a field: the field value is the cross-language target descriptor.
+        for (Field field : agentClass.getDeclaredFields()) {
+            org.apache.flink.agents.api.annotation.Action actionAnnotation =
+                    field.getAnnotation(org.apache.flink.agents.api.annotation.Action.class);
+            if (actionAnnotation == null) {
+                continue;
             }
-            extractActions(method.getName(), triggerConditions, execFunction, null);
+            org.apache.flink.agents.api.function.Function descriptor =
+                    readActionDescriptorField(field);
+            extractActions(
+                    resolveActionName(actionAnnotation.name(), field.getName()),
+                    actionAnnotation.value(),
+                    toPlanFunction(descriptor),
+                    null);
         }
 
         for (var action : agent.getActions().entrySet()) {
@@ -298,6 +287,70 @@ public class AgentPlan implements Serializable {
             var definition = action.getValue();
             extractActions(actionName, definition.f0, toPlanFunction(definition.f1), definition.f2);
         }
+    }
+
+    private static String resolveActionName(String override, String memberName) {
+        return override == null || override.isEmpty() ? memberName : override;
+    }
+
+    /** Reject any {@code @Action} declared on a superclass; it must sit on the concrete agent. */
+    private static void rejectInheritedActions(Class<?> agentClass) {
+        for (Class<?> parent = agentClass.getSuperclass();
+                parent != null && parent != Agent.class;
+                parent = parent.getSuperclass()) {
+            for (Method inherited : parent.getDeclaredMethods()) {
+                rejectInheritedAction(parent, inherited.getName(), inherited);
+            }
+            for (Field inherited : parent.getDeclaredFields()) {
+                rejectInheritedAction(parent, inherited.getName(), inherited);
+            }
+        }
+    }
+
+    private static void rejectInheritedAction(
+            Class<?> parent, String memberName, AnnotatedElement element) {
+        if (element.isAnnotationPresent(org.apache.flink.agents.api.annotation.Action.class)) {
+            throw new IllegalStateException(
+                    "Inherited @Action '"
+                            + parent.getName()
+                            + "#"
+                            + memberName
+                            + "' is not supported; declare on the concrete agent.");
+        }
+    }
+
+    /**
+     * Read an {@code @Action}-annotated field as an api-layer {@link
+     * org.apache.flink.agents.api.function.Function} descriptor. The field must be {@code static
+     * final} and hold a non-null descriptor; anything else fails with an actionable error at plan
+     * construction. Cross-language target resolution stays deferred to the runtime boundary that
+     * owns the real user-code classloader or Python interpreter.
+     */
+    private static org.apache.flink.agents.api.function.Function readActionDescriptorField(
+            Field field) throws IllegalAccessException {
+        int modifiers = field.getModifiers();
+        if (!Modifier.isStatic(modifiers) || !Modifier.isFinal(modifiers)) {
+            throw new IllegalStateException(
+                    "@Action field '"
+                            + field.getName()
+                            + "' must be declared 'static final' and hold a Function descriptor.");
+        }
+        field.setAccessible(true);
+        Object value = field.get(null);
+        if (value == null) {
+            throw new IllegalStateException(
+                    "@Action field '" + field.getName() + "' must hold a non-null descriptor.");
+        }
+        if (!(value instanceof org.apache.flink.agents.api.function.Function)) {
+            throw new IllegalStateException(
+                    "@Action field '"
+                            + field.getName()
+                            + "' must hold an api-layer Function descriptor (for example "
+                            + "PythonFunction or JavaFunction), but got "
+                            + value.getClass().getName()
+                            + ".");
+        }
+        return (org.apache.flink.agents.api.function.Function) value;
     }
 
     private static ResourceDescriptor requireResourceDescriptor(
@@ -345,22 +398,13 @@ public class AgentPlan implements Serializable {
     }
 
     private boolean isPythonResource(ResourceDescriptor descriptor) {
-        String pythonClazz = descriptor.getArgument("pythonClazz");
-        return pythonClazz != null && !pythonClazz.isEmpty();
+        return "python".equals(descriptor.getLanguage());
     }
 
     private void extractTool(Method method) throws Exception {
         String name = method.getName();
 
-        // Build parameter type names for reconstruction
-        Class<?>[] paramTypes = method.getParameterTypes();
-
-        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
-        JavaFunction javaFunction =
-                new JavaFunction(method.getDeclaringClass(), method.getName(), paramTypes);
-
-        FunctionTool tool =
-                new FunctionTool(metadata, javaFunction, FunctionTool.getInjectedArgs(method));
+        FunctionTool tool = FunctionTool.fromStaticMethod(method);
         JavaSerializableResourceProvider provider =
                 JavaSerializableResourceProvider.createResourceProvider(name, TOOL, tool);
 
@@ -542,9 +586,9 @@ public class AgentPlan implements Serializable {
                             ResourceType.MCP_SERVER,
                             method,
                             desc ->
-                                    new ResourceDescriptor(
-                                            desc.getModule(),
-                                            PythonMCPServer.class.getName(),
+                                    new PythonResourceDescriptor(
+                                            "flink_agents.integrations.mcp.mcp",
+                                            "MCPServer",
                                             new HashMap<>(desc.getInitialArguments())),
                             true);
                 }
@@ -598,9 +642,14 @@ public class AgentPlan implements Serializable {
                     String name = kv.getKey();
                     Object value = kv.getValue();
                     if (value instanceof SubagentSetup) {
+                        // A live setup registered programmatically travels as its descriptor, so a
+                        // remote task rebuilds it through the (ResourceDescriptor, ResourceContext)
+                        // constructor.
                         addResourceProvider(
-                                JavaSerializableResourceProvider.createResourceProvider(
-                                        name, ResourceType.AGENT, (SubagentSetup) value));
+                                createDescriptorResourceProvider(
+                                        name,
+                                        ResourceType.AGENT,
+                                        ((SubagentSetup) value).getDescriptor()));
                     } else if (value instanceof ResourceDescriptor) {
                         // Declared via YAML: the descriptor names a SubagentSetup subclass that is
                         // instantiated when the resource is first resolved.
@@ -691,9 +740,27 @@ public class AgentPlan implements Serializable {
     /** Adds a resource provider to the resourceProviders map. */
     private void addResourceProvider(ResourceProvider provider) {
         checkNoRouterModelNameClash(provider);
+        checkToolNameNotReserved(provider);
         resourceProviders
                 .computeIfAbsent(provider.getType(), k -> new HashMap<>())
                 .put(provider.getName(), provider);
+    }
+
+    /**
+     * A tool name must not carry the reserved {@code _subagent_} prefix: sub-agent callables are
+     * exposed to the model under that prefix, and dispatch routes any prefixed call to the {@code
+     * AGENT} namespace, so a tool registered under the prefix could never be called. Fail clearly
+     * at plan-construction time rather than at call time.
+     */
+    private void checkToolNameNotReserved(ResourceProvider provider) {
+        if (provider.getType() == TOOL
+                && provider.getName().startsWith(SubagentSetup.CALLABLE_NAME_PREFIX)) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Tool name '%s' must not start with the reserved prefix '%s',"
+                                    + " which identifies sub-agent callables.",
+                            provider.getName(), SubagentSetup.CALLABLE_NAME_PREFIX));
+        }
     }
 
     /**
@@ -798,6 +865,13 @@ public class AgentPlan implements Serializable {
             // shape guard applies to all of them — not only where the rule keys are checked.
             Object candidates = descriptor.getArgument(ModelRouter.CANDIDATES_KEY);
             validateCandidatesShape(provider.getName(), candidates);
+            // The constructor's own candidate rules (non-empty, no duplicates, default model is a
+            // candidate), applied here so a descriptor that skipped the builder fails at plan
+            // construction rather than per routed request on the TaskManager.
+            RoutingCandidateValidator.validate(
+                    String.format("Model router '%s'", provider.getName()),
+                    (List<?>) candidates,
+                    descriptor.getArgument(ModelRouter.DEFAULT_MODEL_KEY));
             switch (strategy.getType()) {
                 case LLM_JUDGE:
                     validateJudge(provider.getName(), strategy, chatModels);
@@ -818,15 +892,14 @@ public class AgentPlan implements Serializable {
      * Rule declarations are static constraints like the judge checks above: the fluent builder
      * rejects a bad one at build(), but a descriptor read back from a plan (deserialized or
      * hand-built) never went through the builder. Without this arm they would surface only per
-     * record at request time — inside the durable call — where the IGNORE error policy silently
-     * drops every matching record. Rule shape, value types and pattern validity were already
-     * enforced by the {@link RoutingStrategy} constructor (regardless of the 'candidates' shape);
-     * the key-vs-candidate check here mirrors build().
+     * record at request time, producing failed responses for matching requests. Rule shape, value
+     * types and pattern validity were already enforced by the {@link RoutingStrategy} constructor
+     * (regardless of the 'candidates' shape); the key-vs-candidate check here mirrors build().
      */
     /**
      * Fail here, not per record: the router constructor's unchecked read would turn a mis-shaped
-     * 'candidates' value into a raw ClassCastException inside the durable call. A missing argument
-     * is left to the constructor's own message ("requires at least one candidate").
+     * 'candidates' value into a raw ClassCastException when the router is resolved. A missing or
+     * empty list is rejected next by {@link RoutingCandidateValidator}.
      */
     private static void validateCandidatesShape(String routerName, Object candidates) {
         if (candidates != null && !(candidates instanceof List)) {
@@ -842,9 +915,6 @@ public class AgentPlan implements Serializable {
 
     private static void validateRuleKeys(
             String routerName, RoutingStrategy strategy, Object candidates) {
-        if (candidates == null) {
-            return;
-        }
         Object rules = strategy.getArguments().get(RoutingStrategy.ARG_RULES);
         if (!(rules instanceof Map)) {
             return;
@@ -874,7 +944,7 @@ public class AgentPlan implements Serializable {
         // The judge must be a plain chat model — nothing may rewrite the judge conversation.
         // Only descriptor-carried bindings are visible here; a setup that is not introspectable
         // at plan time surfaces its bindings on the judge's normal chat path. Both Java- and
-        // Python-backed setups (a Java agent declaring the judge with 'pythonClazz') carry the
+        // Python-backed setups (declared with PythonResourceDescriptor) carry the
         // same 'prompt'/'tools'/'skills' arguments, so both descriptors are checked.
         ResourceDescriptor judgeDescriptor = descriptorOf(judgeProvider);
         if (judgeDescriptor == null || judgeDescriptor.getInitialArguments() == null) {
@@ -993,14 +1063,12 @@ public class AgentPlan implements Serializable {
                             apiTool.getInjectedArgs(),
                             resourceName);
             ToolParameterInjectionValidator.validate(func, injectedArgs, resourceName);
-            ToolMetadata metadata =
-                    ToolMetadataFactory.fromStaticMethod(method, injectedArgs.keySet());
             org.apache.flink.agents.plan.JavaFunction planFunc =
                     new org.apache.flink.agents.plan.JavaFunction(
                             method.getDeclaringClass(),
                             method.getName(),
                             method.getParameterTypes());
-            FunctionTool tool = new FunctionTool(metadata, planFunc, injectedArgs);
+            FunctionTool tool = new FunctionTool(null, planFunc, injectedArgs);
             addResourceProvider(
                     JavaSerializableResourceProvider.createResourceProvider(
                             resourceName, TOOL, tool));

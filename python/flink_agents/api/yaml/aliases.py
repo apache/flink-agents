@@ -25,7 +25,7 @@ Two tables:
   different classes across sections and languages.
 
 For Java resources, the loader resolves the alias to the Java FQN and
-wraps it in a Python-side wrapper class (see ``JAVA_WRAPPER_CLAZZ``).
+creates a JavaResourceDescriptor. Plan selects the execution wrapper.
 """
 
 from typing import Dict
@@ -112,6 +112,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
             "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_CONNECTION,
+            "openai": ResourceName.EmbeddingModel.Java.OPENAI_CONNECTION,
         },
     },
     ResourceType.EMBEDDING_MODEL: {
@@ -123,6 +124,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
             "bedrock": ResourceName.EmbeddingModel.Java.BEDROCK_SETUP,
+            "openai": ResourceName.EmbeddingModel.Java.OPENAI_SETUP,
         },
     },
     ResourceType.VECTOR_STORE: {
@@ -137,19 +139,6 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "milvus": ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
         },
     },
-}
-
-# Python wrapper class for each cross-language-supported resource type.
-# When the user writes ``type: java``, the loader resolves the alias in
-# the java bucket to a Java FQN and constructs a ResourceDescriptor whose
-# ``clazz`` is the wrapper below and whose ``java_clazz`` kwarg is the
-# resolved Java FQN.
-JAVA_WRAPPER_CLAZZ: Dict[ResourceType, str] = {
-    ResourceType.CHAT_MODEL_CONNECTION: ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
-    ResourceType.CHAT_MODEL: ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-    ResourceType.EMBEDDING_MODEL_CONNECTION: ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
-    ResourceType.EMBEDDING_MODEL: ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
-    ResourceType.VECTOR_STORE: ResourceName.VectorStore.JAVA_WRAPPER_VECTOR_STORE,
 }
 
 

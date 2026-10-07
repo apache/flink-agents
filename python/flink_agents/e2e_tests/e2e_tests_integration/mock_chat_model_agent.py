@@ -106,8 +106,8 @@ class MockChatModelConnection(BaseChatModelConnection):
         schema out of ``**kwargs``.
         """
         self._reject_unsupported_output_schema(output_schema)
-        if "sum" in messages[-1].content:
-            input = messages[-1].content
+        if "sum" in messages[-1].text:
+            input = messages[-1].text
             # Validate the tool was bound before the model was invoked.
             assert tools[0].name == "add"
             function = {"name": "add", "arguments": {"a": 1, "b": 2}}
@@ -116,11 +116,10 @@ class MockChatModelConnection(BaseChatModelConnection):
                 "type": ToolType.FUNCTION,
                 "function": function,
             }
-            return ChatMessage(
-                role=MessageRole.ASSISTANT, content=input, tool_calls=[tool_call]
+            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call]
             )
-        content = "\n".join([message.content for message in messages])
-        return ChatMessage(role=MessageRole.ASSISTANT, content=content)
+        content = "\n".join([message.text for message in messages])
+        return ChatMessage.of(MessageRole.ASSISTANT, content)
 
 
 class MockChatModel(BaseChatModelSetup):
@@ -153,7 +152,7 @@ class MockChatModel(BaseChatModelSetup):
             else:
                 prompt = self.prompt
 
-            if "sum" in messages[-1].content:
+            if "sum" in messages[-1].text:
                 str_prompt_args = (
                     {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
                 )
@@ -234,7 +233,7 @@ class BuiltInActionAgent(Agent):
             ChatRequestEvent(
                 model="mock_chat_model",
                 messages=[
-                    ChatMessage(role=MessageRole.USER, content=input_data.content)
+                    ChatMessage.of(MessageRole.USER, input_data.content)
                 ],
                 prompt_args={"task": input_data.content},
             )
@@ -248,7 +247,7 @@ class BuiltInActionAgent(Agent):
         input_id = ctx.short_term_memory.get("input_id")
         ctx.send_event(
             OutputEvent(
-                output=MockChatModelOutput(id=input_id, result=response.content)
+                output=MockChatModelOutput(id=input_id, result=response.text)
             )
         )
 
@@ -269,9 +268,7 @@ class GetResourceChatModel(BaseChatModelSetup):
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Echo the input alongside the custom descriptor fields."""
-        return ChatMessage(
-            role=MessageRole.ASSISTANT,
-            content=f"{messages[0].content} {self.host} {self.desc}",
+        return ChatMessage.of(MessageRole.ASSISTANT, f"{messages[0].text} {self.host} {self.desc}",
         )
 
 
@@ -302,8 +299,8 @@ class GetResourceAgent(Agent):
             name="mock_chat_model", type=ResourceType.CHAT_MODEL
         )
         content = mock_chat_model.chat(
-            messages=[ChatMessage(role=MessageRole.USER, content=input_data.content)]
-        ).content
+            messages=[ChatMessage.of(MessageRole.USER, input_data.content)]
+        ).text
         ctx.send_event(
             OutputEvent(
                 output=MockChatModelOutput(id=input_data.id, result=content)

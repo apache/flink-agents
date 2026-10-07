@@ -102,7 +102,7 @@ def test_python_function_tool_hides_injected_args_from_metadata() -> None:
         injected_args={"tenant_id": InjectedArg.from_config("tenant_id")},
     )
 
-    schema = tool.metadata.args_schema.model_json_schema()
+    schema = tool.metadata.args_schema
 
     assert set(schema["properties"]) == {"order_id"}
     assert schema.get("required") == ["order_id"]
@@ -177,7 +177,7 @@ def test_java_function_tool_metadata_filled_on_adapter_injection() -> None:
     assert tool.metadata is not None
     assert tool.metadata.name == "add"
     assert tool.metadata.description == "Add two ints."
-    assert set(tool.metadata.args_schema.model_fields) == {"a", "b"}
+    assert set(tool.metadata.args_schema["properties"]) == {"a", "b"}
     _ = tool.metadata
     adapter.getJavaToolMetadata.assert_called_once()
 
@@ -206,6 +206,14 @@ def test_java_function_tool_merges_adapter_injected_args() -> None:
         "tenant_id": InjectedArg.from_config("tenant.id"),
         "request_id": InjectedArg.from_sensory_memory("request.id"),
     }
+    tool.call(a=1, b=2, tenant_id="tenant", request_id="request")
+    adapter.invokeJavaTool.assert_called_once_with(
+        "com.example.Tools",
+        "add",
+        ["int", "int"],
+        {"a": 1, "b": 2, "tenant_id": "tenant", "request_id": "request"},
+    )
+
 
 
 def test_java_function_tool_metadata_is_none_without_adapter() -> None:
@@ -273,3 +281,44 @@ def test_java_function_tool_call_without_adapter_raises() -> None:
     tool = FunctionTool(func=_java_func())
     with pytest.raises(RuntimeError, match="JVM resource adapter"):
         tool.call(a=1, b=2)
+
+
+def positional_tool(prefix: str, /, count: int = 2, *, suffix: str = "!") -> str:
+    return prefix * count + suffix
+
+
+def test_call_binds_positional_only_defaults_and_keyword_only_arguments() -> None:
+    tool = FunctionTool(func=PythonFunction.from_callable(positional_tool))
+    assert tool.call(prefix="a") == "aa!"
+    assert tool.call("b", 3, suffix="?") == "bbb?"
+
+
+def test_java_tool_injection_declarations_only_affect_metadata() -> None:
+    function = _java_func()
+    first = FunctionTool(
+        func=function, injected_args={"a": InjectedArg.from_config("a")}
+    )
+    second = FunctionTool(
+        func=function, injected_args={"b": InjectedArg.from_config("b")}
+    )
+    adapter = _fake_adapter()
+    first.set_java_resource_adapter(adapter)
+    second.set_java_resource_adapter(adapter)
+    restored = FunctionTool.model_validate_json(first.model_dump_json())
+    restored.set_java_resource_adapter(adapter)
+    function.set_java_resource_adapter(adapter)
+
+    assert [call.args[-1] for call in adapter.getJavaToolMetadata.call_args_list] == [
+        ["a"],
+        ["b"],
+        ["a"],
+    ]
+    for tool in [first, second, restored]:
+        tool.call(a=1, b=2)
+        adapter.invokeJavaTool.assert_called_with(
+            "com.example.Tools", "add", ["int", "int"], {"a": 1, "b": 2}
+        )
+    function(a=1, b=2)
+    adapter.invokeJavaTool.assert_called_with(
+        "com.example.Tools", "add", ["int", "int"], {"a": 1, "b": 2}
+    )

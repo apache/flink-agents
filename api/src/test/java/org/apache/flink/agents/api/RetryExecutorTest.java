@@ -274,4 +274,60 @@ class RetryExecutorTest {
         assertThat(result).isEqualTo("success");
         assertThat(attempts.get()).isEqualTo(2);
     }
+
+    @Test
+    @DisplayName("Reject a negative maxRetries at build time")
+    void testBuildRejectsNegativeMaxRetries() {
+        assertThatThrownBy(() -> RetryExecutor.builder().maxRetries(-1).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxRetries must be >= 0")
+                .hasMessageContaining("-1");
+    }
+
+    @Test
+    @DisplayName("Reject a negative initialBackoffMs at build time")
+    void testBuildRejectsNegativeInitialBackoffMs() {
+        assertThatThrownBy(() -> RetryExecutor.builder().initialBackoffMs(-5).build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("initialBackoffMs must be >= 0")
+                .hasMessageContaining("-5");
+    }
+
+    @Test
+    @DisplayName("Reject a maxBackoffMs smaller than initialBackoffMs")
+    void testBuildRejectsMaxBackoffBelowInitialBackoff() {
+        assertThatThrownBy(
+                        () ->
+                                RetryExecutor.builder()
+                                        .initialBackoffMs(100)
+                                        .maxBackoffMs(50)
+                                        .build())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("maxBackoffMs must be >= initialBackoffMs");
+    }
+
+    @Test
+    @DisplayName("Boundary values are accepted, and zero maxRetries still runs the operation")
+    void testBuildAcceptsBoundaryValues() {
+        RetryExecutor executor =
+                RetryExecutor.builder().maxRetries(0).initialBackoffMs(0).maxBackoffMs(0).build();
+
+        assertThat(executor.getMaxRetries()).isZero();
+        assertThat(executor.getInitialBackoffMs()).isZero();
+        assertThat(executor.getMaxBackoffMs()).isZero();
+
+        AtomicInteger attempts = new AtomicInteger(0);
+        Callable<String> operation =
+                () -> {
+                    attempts.incrementAndGet();
+                    throw new SocketTimeoutException("Always fails");
+                };
+
+        assertThatThrownBy(() -> executor.execute(operation, "testOperation"))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("failed after 0 retries")
+                .hasMessageContaining("Always fails");
+
+        assertThat(attempts.get()).isEqualTo(1);
+    }
 }

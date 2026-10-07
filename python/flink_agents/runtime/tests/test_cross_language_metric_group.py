@@ -20,18 +20,16 @@ from typing import Any
 import pytest
 
 from flink_agents.api.metric_group import MetricGroup
+from flink_agents.plan.resource.java.java_chat_model import (
+    JavaChatModelConnection,
+    JavaChatModelSetup,
+)
+from flink_agents.plan.resource.java.java_embedding_model import (
+    JavaEmbeddingModelConnection,
+    JavaEmbeddingModelSetup,
+)
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
-from flink_agents.runtime.java.java_chat_model import (
-    JavaChatModelConnectionImpl,
-    JavaChatModelSetupImpl,
-)
-from flink_agents.runtime.java.java_embedding_model import (
-    JavaEmbeddingModelConnectionImpl,
-    JavaEmbeddingModelSetupImpl,
-)
-from flink_agents.runtime.java.java_resource_wrapper import (
-    set_java_resource_metric_group,
-)
+from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
 from flink_agents.runtime.python_java_utils import set_metric_group
 
 
@@ -78,21 +76,21 @@ class _JavaMetricGroup:
 @pytest.mark.parametrize(
     "resource",
     [
-        JavaChatModelConnectionImpl(
-            j_resource=_JavaResource(), j_resource_adapter=None
+        JavaChatModelConnection(
+            j_resource=_JavaResource(), j_resource_adapter=JavaResourceAdapterImpl(None)
         ),
-        JavaChatModelSetupImpl(
+        JavaChatModelSetup(
             j_resource=_JavaResource(),
-            j_resource_adapter=None,
+            j_resource_adapter=JavaResourceAdapterImpl(None),
             connection="connection",
             model="model",
         ),
-        JavaEmbeddingModelConnectionImpl(
-            j_resource=_JavaResource(), j_resource_adapter=None
+        JavaEmbeddingModelConnection(
+            j_resource=_JavaResource(), j_resource_adapter=JavaResourceAdapterImpl(None)
         ),
-        JavaEmbeddingModelSetupImpl(
+        JavaEmbeddingModelSetup(
             j_resource=_JavaResource(),
-            j_resource_adapter=None,
+            j_resource_adapter=JavaResourceAdapterImpl(None),
             connection="connection",
             model="model",
         ),
@@ -113,7 +111,7 @@ def test_set_java_resource_metric_group_unwraps_flink_metric_group():
     java_metric_group = _JavaMetricGroup()
     metric_group = FlinkMetricGroup(java_metric_group.j_metric_group)
 
-    set_java_resource_metric_group(java_resource, metric_group)
+    JavaResourceAdapterImpl(None).set_metric_group(java_resource, metric_group)
 
     assert java_resource.metric_group is java_metric_group.j_metric_group
 
@@ -121,14 +119,16 @@ def test_set_java_resource_metric_group_unwraps_flink_metric_group():
 def test_set_java_resource_metric_group_accepts_none():
     java_resource = _JavaResource()
 
-    set_java_resource_metric_group(java_resource, None)
+    JavaResourceAdapterImpl(None).set_metric_group(java_resource, None)
 
     assert java_resource.metric_group is None
 
 
 def test_set_java_resource_metric_group_rejects_non_flink_metric_group():
     with pytest.raises(TypeError, match="FlinkMetricGroup or None"):
-        set_java_resource_metric_group(_JavaResource(), _CustomMetricGroup())
+        JavaResourceAdapterImpl(None).set_metric_group(
+            _JavaResource(), _CustomMetricGroup()
+        )
 
 
 def test_set_metric_group_wraps_java_metric_group():
@@ -138,7 +138,9 @@ def test_set_metric_group_wraps_java_metric_group():
     set_metric_group(python_resource, java_metric_group.j_metric_group)
 
     assert isinstance(python_resource.metric_group, FlinkMetricGroup)
-    assert python_resource.metric_group._j_metric_group is java_metric_group.j_metric_group
+    assert (
+        python_resource.metric_group._j_metric_group is java_metric_group.j_metric_group
+    )
 
 
 def test_set_metric_group_forwards_none():

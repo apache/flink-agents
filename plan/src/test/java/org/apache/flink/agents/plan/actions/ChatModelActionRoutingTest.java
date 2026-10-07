@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -31,6 +30,7 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
@@ -47,6 +47,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.metrics.Counter;
+import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayDeque;
@@ -61,6 +63,9 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
@@ -82,6 +87,7 @@ public class ChatModelActionRoutingTest {
      */
     static class FakeChatModel extends BaseChatModelSetup {
         private final Deque<Object> outcomes = new ArrayDeque<>();
+        private int callCount;
 
         FakeChatModel(Object... outcomes) {
             super(new ResourceDescriptor("fake", Map.of()), null);
@@ -98,6 +104,7 @@ public class ChatModelActionRoutingTest {
                 List<ChatMessage> messages,
                 Map<String, Object> promptArgs,
                 Map<String, Object> modelParams) {
+            callCount++;
             Object next = outcomes.isEmpty() ? null : outcomes.poll();
             if (next instanceof RuntimeException) {
                 throw (RuntimeException) next;
@@ -118,6 +125,7 @@ public class ChatModelActionRoutingTest {
         private final ModelRouter router;
         private final MemoryObject sensoryMemory = new FakeMemoryObject(new HashMap<>());
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
+        private FlinkAgentsMetricGroup actionMetricGroup;
 
         FakeRunnerContext(ModelRouter router) {
             this.router = router;
@@ -134,14 +142,14 @@ public class ChatModelActionRoutingTest {
             return this;
         }
 
-        FakeRunnerContext withErrorHandling(Agent.ErrorHandlingStrategy strategy) {
-            config.set(AgentExecutionOptions.ERROR_HANDLING_STRATEGY, strategy);
-            return this;
-        }
-
         FakeRunnerContext withRetryBudget(int maxRetries, int waitIntervalSec) {
             config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
             config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, waitIntervalSec);
+            return this;
+        }
+
+        FakeRunnerContext withActionMetricGroup(FlinkAgentsMetricGroup actionMetricGroup) {
+            this.actionMetricGroup = actionMetricGroup;
             return this;
         }
 
@@ -192,7 +200,7 @@ public class ChatModelActionRoutingTest {
 
         @Override
         public FlinkAgentsMetricGroup getActionMetricGroup() {
-            return null;
+            return actionMetricGroup;
         }
 
         @Override
@@ -215,6 +223,15 @@ public class ChatModelActionRoutingTest {
 
         /** Seeds a stored durable result so the next lookup takes the replay path. */
         FakeRunnerContext seedDurable(String id, Object value) {
+            if (value instanceof RoutingDecision) {
+                org.apache.flink.agents.plan.routing.ModelRoutingResolver.RoutingOutcome outcome =
+                        new org.apache.flink.agents.plan.routing.ModelRoutingResolver
+                                .RoutingOutcome();
+                outcome.decision = (RoutingDecision) value;
+                value = outcome;
+            } else if (value instanceof ChatMessage) {
+                value = new ChatModelInvoker.InvocationOutcome((ChatMessage) value, null);
+            }
             durableStore.put(id, value);
             return this;
         }
@@ -231,27 +248,34 @@ public class ChatModelActionRoutingTest {
 
         @SuppressWarnings("unchecked")
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableCallIds.add(callable.getId());
-            if (durableStore.containsKey(callable.getId())) {
-                return (T) durableStore.get(callable.getId());
-            }
-            return callable.call();
+            return new TestDurableFuture<>(
+                    callable.getId(),
+                    () -> {
+                        if (durableStore.containsKey(callable.getId())) {
+                            return (T) durableStore.get(callable.getId());
+                        }
+                        return callable.call();
+                    });
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>();
-            for (DurableCallable<T> callable : callables) {
-                durableCallIds.add(callable.getId());
-                try {
-                    outcomes.add(Outcome.success(callable.call()));
-                } catch (Exception e) {
-                    outcomes.add(Outcome.failure(e));
-                }
-            }
-            return outcomes;
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            return new TestDurableFuture<>(
+                    "gather",
+                    () -> {
+                        List<Outcome<T>> outcomes = new ArrayList<>();
+                        for (DurableFuture<T> future : futures) {
+                            try {
+                                outcomes.add(Outcome.success(future.await()));
+                            } catch (Exception e) {
+                                outcomes.add(Outcome.failure(e));
+                            }
+                        }
+                        return outcomes;
+                    });
         }
 
         @Override
@@ -290,6 +314,54 @@ public class ChatModelActionRoutingTest {
         boolean hasChatResponse() {
             return chatResponse() != null;
         }
+    }
+
+    @Test
+    void routingPersistenceFailurePropagatesWithoutTerminalResponse() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router) {
+                    @Override
+                    public <T> T durableExecute(DurableCallable<T> callable) {
+                        throw new IllegalStateException("routing persistence failed");
+                    }
+                };
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "router", List.of(ChatMessage.user("hi"))),
+                                        ctx))
+                .hasMessage("routing persistence failed");
+        assertThat(ctx.sentEvents).isEmpty();
+    }
+
+    @Test
+    void responseDeliveryFailurePropagatesOnce() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(null) {
+                    @Override
+                    public void sendEvent(Event event) {
+                        super.sendEvent(event);
+                        throw new IllegalStateException("delivery failed");
+                    }
+                };
+        ctx.register("small", new FakeChatModel(new RuntimeException("provider failed")));
+        assertThatThrownBy(
+                        () ->
+                                ChatModelAction.processChatRequestOrToolResponse(
+                                        new ChatRequestEvent(
+                                                "small", List.of(ChatMessage.user("hi"))),
+                                        ctx))
+                .hasMessage("delivery failed");
+        assertThat(ctx.sentEvents).hasSize(1);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
     }
 
     private static ModelRouter router() throws Exception {
@@ -383,15 +455,11 @@ public class ChatModelActionRoutingTest {
                                 .build(),
                         null);
         FakeRunnerContext ctx = new FakeRunnerContext(router);
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.processChatRequestOrToolResponse(
-                                        new ChatRequestEvent(
-                                                "router",
-                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
-                                        ctx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("non-candidate");
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("non-candidate");
     }
 
     @Test
@@ -515,6 +583,15 @@ public class ChatModelActionRoutingTest {
     void llmJudgeUsesTheRetryBudget() throws Exception {
         // v1 review lesson: every routing test ran with numRetries == 0, so the retry path was
         // never exercised. Judge fails once, retries, then delivers a verdict.
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup judgeMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter retryCount = mock(Counter.class);
+        Counter retryWaitSec = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getSubGroup("model_resource", "judge")).thenReturn(judgeMetricGroup);
+        when(judgeMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
+        when(judgeMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -524,8 +601,8 @@ public class ChatModelActionRoutingTest {
                         null);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
                         .withRetryBudget(1, 0)
+                        .withActionMetricGroup(actionMetricGroup)
                         .register(
                                 "judge",
                                 new FakeChatModel(
@@ -541,12 +618,14 @@ public class ChatModelActionRoutingTest {
         ModelRoutingEvent event = ctx.routingEvent();
         assertThat(event.getSelectedModel()).isEqualTo("big");
         assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_LLM_JUDGE);
+        verify(actionMetricGroup).getSubGroup("model_resource", "judge");
+        verify(retryCount).inc(1);
+        verify(retryWaitSec).inc(0);
     }
 
     @Test
-    void llmJudgeCallFailurePropagatesUnderFail() {
-        // A dead judge honors the error-handling strategy like any strategy failure: under the
-        // default FAIL, the outage is loud instead of hours of silent default-routing.
+    void llmJudgeCallFailureReturnsFailureWithoutRetries() throws Exception {
+        // The default zero retry budget produces a failed terminal response.
         ModelRouter router;
         try {
             router =
@@ -563,18 +642,15 @@ public class ChatModelActionRoutingTest {
                 new FakeRunnerContext(router)
                         .register("judge", new FakeChatModel(new RuntimeException("judge down")))
                         .register("small", new FakeChatModel());
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.processChatRequestOrToolResponse(
-                                        new ChatRequestEvent(
-                                                "router",
-                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
-                                        ctx))
-                .hasMessageContaining("judge down");
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("judge down");
     }
 
     @Test
-    void llmJudgeCallFailureAbstainsToDefaultUnderIgnore() throws Exception {
+    void llmJudgeExhaustedRetriesFailsRequest() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -584,17 +660,23 @@ public class ChatModelActionRoutingTest {
                         null);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
-                        .register("judge", new FakeChatModel(new RuntimeException("judge down")))
+                        .withRetryBudget(1, 0)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new RuntimeException("transient"),
+                                        new RuntimeException("judge down")))
                         .register("small", new FakeChatModel());
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hello"))),
                 ctx);
 
-        ModelRoutingEvent event = ctx.routingEvent();
-        assertThat(event.getSelectedModel()).isEqualTo("small");
-        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
-        assertThat(event.getReason()).contains("judge call failed");
+        assertThat(ctx.routingEvent()).isNull();
+        assertThat(((FakeChatModel) ctx.models.get("small")).callCount).isZero();
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getRetryCount()).isEqualTo(1);
+        assertThat(((FakeChatModel) ctx.models.get("judge")).callCount).isEqualTo(2);
+        assertThat(ctx.chatResponse().getError()).contains("judge down");
         assertThat(ctx.hasChatResponse()).isTrue();
     }
 
@@ -631,6 +713,17 @@ public class ChatModelActionRoutingTest {
 
     @Test
     void retryBudgetRunsBeforeFallback() throws Exception {
+        FlinkAgentsMetricGroup actionMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        FlinkAgentsMetricGroup modelResourceMetricGroup = mock(FlinkAgentsMetricGroup.class);
+        Counter retryCount = mock(Counter.class);
+        Counter retryWaitSec = mock(Counter.class);
+        when(actionMetricGroup.getHistogram("routingDecisionLatencyMs"))
+                .thenReturn(mock(Histogram.class));
+        when(actionMetricGroup.getSubGroup("model_resource", "big"))
+                .thenReturn(modelResourceMetricGroup);
+        when(modelResourceMetricGroup.getCounter("retryCount")).thenReturn(retryCount);
+        when(modelResourceMetricGroup.getCounter("retryWaitSec")).thenReturn(retryWaitSec);
+
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -641,8 +734,8 @@ public class ChatModelActionRoutingTest {
                         null);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.RETRY)
                         .withRetryBudget(1, 0)
+                        .withActionMetricGroup(actionMetricGroup)
                         .register(
                                 "big",
                                 new FakeChatModel(
@@ -656,9 +749,12 @@ public class ChatModelActionRoutingTest {
 
         // the selected model's retry budget is consumed BEFORE fallback: big's retry
         // succeeds and small is never resolved — the ordering the class javadoc guarantees
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("recovered on retry");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("recovered on retry");
         assertThat(ctx.resolvedChatModels).containsExactly("big");
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
+        verify(actionMetricGroup).getSubGroup("model_resource", "big");
+        verify(retryCount).inc(1);
+        verify(retryWaitSec).inc(0);
     }
 
     @Test
@@ -699,7 +795,7 @@ public class ChatModelActionRoutingTest {
                 .containsExactly("route:router", "chat:router:big", "chat:router:small");
         ChatResponseEvent response = ctx.chatResponse();
         assertThat(response).isNotNull();
-        assertThat(response.getResponse().getContent()).isEqualTo("ok from small");
+        assertThat(response.getResponse().getText()).isEqualTo("ok from small");
         Map<String, Object> routing =
                 (Map<String, Object>) response.getResponse().getExtraArgs().get("model_routing");
         assertThat(routing.get("final_model")).isEqualTo("small");
@@ -726,7 +822,7 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
-    void fallbackExhaustedRethrows() throws Exception {
+    void fallbackExhaustedReturnsFailure() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -741,26 +837,14 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "small", new FakeChatModel(new RuntimeException("small-exploded")));
 
-        // Distinct per-candidate markers: exhaustion must surface the LAST candidate's error
-        // with the earlier candidate's error chained as suppressed, not discarded.
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.processChatRequestOrToolResponse(
-                                        new ChatRequestEvent(
-                                                "router", List.of(ChatMessage.user("write sql"))),
-                                        ctx))
-                .isInstanceOf(RuntimeException.class)
-                .hasMessageContaining("small-exploded")
-                .satisfies(
-                        t ->
-                                assertThat(t.getSuppressed())
-                                        .anySatisfy(
-                                                sup ->
-                                                        assertThat(sup)
-                                                                .hasMessageContaining(
-                                                                        "big-exploded")));
+        // The terminal error describes the last candidate; earlier failures stay in diagnostics.
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("small-exploded");
         assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
-        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(ctx.hasChatResponse()).isTrue();
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
     }
 
     @Test
@@ -838,20 +922,17 @@ public class ChatModelActionRoutingTest {
                                 .build(),
                         null);
         FakeRunnerContext ctx = new FakeRunnerContext(router);
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.processChatRequestOrToolResponse(
-                                        new ChatRequestEvent(
-                                                "router",
-                                                List.of(new ChatMessage(MessageRole.USER, "hi"))),
-                                        ctx))
-                .hasStackTraceContaining("transient boot failure");
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("transient boot failure");
         // The failure happened before the persistence boundary: no decision record was attempted.
         assertThat(ctx.durableCallIds).doesNotContain("route:router");
     }
 
     @Test
-    void strategyFailureIsIgnoredUnderIgnorePolicy() throws Exception {
+    void strategyFailureIsIgnoredPolicy() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -860,15 +941,14 @@ public class ChatModelActionRoutingTest {
                                 .build(),
                         null);
         FakeRunnerContext ctx =
-                new FakeRunnerContext(router)
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
-                        .register("small", new FakeChatModel());
+                new FakeRunnerContext(router).register("small", new FakeChatModel());
 
-        // Under IGNORE a strategy failure drops the request instead of killing the job.
+        // A failed custom strategy produces a terminal failure.
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(ChatMessage.user("hello"))), ctx);
 
-        assertThat(ctx.hasChatResponse()).isFalse();
+        assertThat(ctx.hasChatResponse()).isTrue();
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
         assertThat(ctx.resolvedChatModels).isEmpty();
     }
 
@@ -884,14 +964,10 @@ public class ChatModelActionRoutingTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router).register("small", new FakeChatModel());
 
-        assertThatThrownBy(
-                        () ->
-                                ChatModelAction.processChatRequestOrToolResponse(
-                                        new ChatRequestEvent(
-                                                "router", List.of(ChatMessage.user("hello"))),
-                                        ctx))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("strategy exploded");
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(ChatMessage.user("hello"))), ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(ctx.chatResponse().getError()).contains("strategy exploded");
     }
 
     @Test
@@ -940,7 +1016,7 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEventCount()).isEqualTo(1L);
         assertThat(ctx.resolvedChatModels).containsExactly("big", "big");
         assertThat(ctx.chatResponse()).isNotNull();
-        assertThat(ctx.chatResponse().getResponse().getContent()).isEqualTo("final answer");
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("final answer");
 
         // the routing metadata from the initial decision is carried onto the final response
         @SuppressWarnings("unchecked")
@@ -965,7 +1041,7 @@ public class ChatModelActionRoutingTest {
     }
 
     @Test
-    void routedLoopCleansParkedMetadataWhenToolRoundFailsUnderIgnore() throws Exception {
+    void routedLoopCleansParkedMetadataWhenToolRoundFails() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -984,7 +1060,6 @@ public class ChatModelActionRoutingTest {
                                 Map.of("name", "lookup", "arguments", Map.of())));
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
                         .register(
                                 "big",
                                 new FakeChatModel(
@@ -1000,7 +1075,7 @@ public class ChatModelActionRoutingTest {
                 (Map<?, ?>) ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
         assertThat(parkedMidLoop).hasSize(1);
 
-        // the tool round's chat call fails and IGNORE drops the request...
+        // The tool round fails and completes the original request.
         ChatModelAction.processChatRequestOrToolResponse(
                 new ToolResponseEvent(
                         toolRequest.getId(),
@@ -1008,9 +1083,9 @@ public class ChatModelActionRoutingTest {
                         Map.of("call-1", true),
                         Map.of()),
                 ctx);
-        assertThat(ctx.chatResponse()).isNull();
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
 
-        // ...and the abandoned loop's parked metadata was cleaned up, not leaked
+        // The completed loop's parked metadata is cleaned up.
         Map<?, ?> parkedAfter =
                 (Map<?, ?>) ctx.getSensoryMemory().get("_ROUTING_METADATA_CONTEXT").getValue();
         assertThat(parkedAfter).isEmpty();
@@ -1119,14 +1194,13 @@ public class ChatModelActionRoutingTest {
 
     /**
      * Regression (review: Okio raises a bare InterruptedIOException("timeout") for ordinary HTTP
-     * timeouts): a judge timeout under IGNORE must abstain to the default model — it is a normal
-     * failure, not a cancellation — and must not leave the thread marked interrupted.
+     * timeouts): a judge timeout must produce a failed response — it is a normal failure, not a
+     * cancellation — and must not leave the thread marked interrupted.
      */
     @Test
-    void judgeInterruptedIOTimeoutAbstainsToDefaultUnderIgnore() throws Exception {
+    void judgeInterruptedIOTimeoutFailsRequest() throws Exception {
         FakeRunnerContext ctx =
                 new FakeRunnerContext(judgeRouter())
-                        .withErrorHandling(Agent.ErrorHandlingStrategy.IGNORE)
                         .register(
                                 "judge",
                                 new FakeChatModel(
@@ -1137,10 +1211,9 @@ public class ChatModelActionRoutingTest {
                 new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hello"))),
                 ctx);
 
-        ModelRoutingEvent event = ctx.routingEvent();
-        assertThat(event.getSelectedModel()).isEqualTo("small");
-        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
-        assertThat(event.getReason()).contains("judge call failed");
+        assertThat(ctx.routingEvent()).isNull();
+        assertThat(((FakeChatModel) ctx.models.get("small")).callCount).isZero();
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
         assertThat(ctx.hasChatResponse()).isTrue();
     }
@@ -1310,7 +1383,7 @@ public class ChatModelActionRoutingTest {
                 ctx);
 
         assertThat(judge.lastMessages).hasSize(2);
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: You review Java concurrency code");
         assertThat(judgeInput).contains("USER: Focus on race conditions");
         assertThat(judgeInput).contains("USER: synchronized void transfer()");
@@ -1341,7 +1414,7 @@ public class ChatModelActionRoutingTest {
                         null),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput)
                 .contains("Review this SQL for performance issues: SELECT * FROM orders");
     }
@@ -1376,7 +1449,7 @@ public class ChatModelActionRoutingTest {
                                 new ChatMessage(MessageRole.USER, "current question"))),
                 ctx);
 
-        String judgeInput = judge.lastMessages.get(1).getContent();
+        String judgeInput = judge.lastMessages.get(1).getText();
         assertThat(judgeInput).contains("SYSTEM: task framing");
         assertThat(judgeInput).contains("USER: current question");
         assertThat(judgeInput).doesNotContain(oldTurn);

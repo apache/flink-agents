@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.Outcome;
@@ -38,6 +39,25 @@ import static org.junit.jupiter.api.Assertions.*;
 public class MemoryRefTest {
 
     private MemoryObjectImpl memory;
+
+    static class ImmediateDurableFuture<T> implements DurableFuture<T> {
+        private final DurableCallable<T> callable;
+        private boolean done;
+        private T value;
+
+        ImmediateDurableFuture(DurableCallable<T> callable) {
+            this.callable = callable;
+        }
+
+        @Override
+        public T await() throws Exception {
+            if (!done) {
+                value = callable.call();
+                done = true;
+            }
+            return value;
+        }
+    }
 
     /** Simple POJO example. */
     static class Person {
@@ -125,18 +145,35 @@ public class MemoryRefTest {
         }
 
         @Override
-        public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
-            return callable.call();
+        public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+            return new ImmediateDurableFuture<>(callable);
         }
 
         @Override
-        public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
-                throws Exception {
-            List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-            for (DurableCallable<T> callable : callables) {
-                outcomes.add(Outcome.success(callable.call()));
-            }
-            return outcomes;
+        public <T> DurableFuture<List<Outcome<T>>> gather(
+                List<? extends DurableFuture<T>> futures) {
+            return new ImmediateDurableFuture<>(
+                    new DurableCallable<List<Outcome<T>>>() {
+                        @Override
+                        public String getId() {
+                            return "gather";
+                        }
+
+                        @SuppressWarnings("unchecked")
+                        @Override
+                        public Class<List<Outcome<T>>> getResultClass() {
+                            return (Class<List<Outcome<T>>>) (Class<?>) List.class;
+                        }
+
+                        @Override
+                        public List<Outcome<T>> call() throws Exception {
+                            List<Outcome<T>> outcomes = new ArrayList<>();
+                            for (DurableFuture<T> future : futures) {
+                                outcomes.add(Outcome.success(future.await()));
+                            }
+                            return outcomes;
+                        }
+                    });
         }
 
         @Override
@@ -254,5 +291,37 @@ public class MemoryRefTest {
         assertEquals(2, refSet.size());
         assertTrue(refSet.contains(ref1));
         assertTrue(refSet.contains(ref3));
+    }
+
+    /**
+     * A reference names a slot in one memory: the same path in sensory and short-term memory is two
+     * different slots, so the references must not compare equal.
+     */
+    @Test
+    void testRefEqualityDistinguishesMemoryType() {
+        MemoryRef sensory = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "a.b");
+        MemoryRef shortTerm = MemoryRef.create(MemoryObject.MemoryType.SHORT_TERM, "a.b");
+
+        assertNotEquals(sensory, shortTerm);
+
+        Set<MemoryRef> refSet = new HashSet<>(Arrays.asList(sensory, shortTerm));
+        assertEquals(2, refSet.size());
+        assertTrue(refSet.contains(sensory));
+        assertTrue(refSet.contains(shortTerm));
+    }
+
+    @Test
+    void testToStringNamesMemoryType() {
+        MemoryRef ref = MemoryRef.create(MemoryObject.MemoryType.SENSORY, "a.b");
+        assertTrue(ref.toString().contains("SENSORY"), ref.toString());
+        assertTrue(ref.toString().contains("a.b"), ref.toString());
+    }
+
+    @Test
+    void testCreateRejectsNullTypeOrPath() {
+        assertThrows(IllegalArgumentException.class, () -> MemoryRef.create(null, "a.b"));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> MemoryRef.create(MemoryObject.MemoryType.SENSORY, null));
     }
 }

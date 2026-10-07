@@ -76,6 +76,20 @@ class AliasesTest {
     }
 
     @Test
+    void clazzAliasCoversEmbeddingModelOpenAIInBothLanguages() {
+        assertThat(
+                        Aliases.resolveClazz(
+                                "openai", ResourceType.EMBEDDING_MODEL_CONNECTION, Language.JAVA))
+                .isEqualTo(ResourceName.EmbeddingModel.OPENAI_CONNECTION);
+        assertThat(Aliases.resolveClazz("openai", ResourceType.EMBEDDING_MODEL, Language.JAVA))
+                .isEqualTo(ResourceName.EmbeddingModel.OPENAI_SETUP);
+        assertThat(
+                        Aliases.resolveClazz(
+                                "openai", ResourceType.EMBEDDING_MODEL_CONNECTION, Language.PYTHON))
+                .isEqualTo(ResourceName.EmbeddingModel.Python.OPENAI_CONNECTION);
+    }
+
+    @Test
     void clazzAliasCoversVectorStoreJavaAndPython() {
         String opensearch =
                 Aliases.resolveClazz("opensearch", ResourceType.VECTOR_STORE, Language.JAVA);
@@ -128,10 +142,10 @@ class AliasesTest {
     }
 
     @Test
-    void pythonWrapperLookup() {
-        assertThat(Aliases.PYTHON_WRAPPER_CLAZZ.get(ResourceType.CHAT_MODEL_CONNECTION))
-                .isEqualTo(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
-        assertThat(Aliases.PYTHON_WRAPPER_CLAZZ.get(ResourceType.VECTOR_STORE))
-                .isEqualTo(ResourceName.VectorStore.PYTHON_WRAPPER_VECTOR_STORE);
+    void customPythonClassPassesThrough() {
+        assertThat(
+                        Aliases.resolveClazz(
+                                "custom.models.Chat", ResourceType.CHAT_MODEL, Language.PYTHON))
+                .isEqualTo("custom.models.Chat");
     }
 }

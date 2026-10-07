@@ -22,7 +22,12 @@ from pydantic import BaseModel
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.react_agent import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    TextBlock,
+)
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
@@ -50,9 +55,7 @@ def _assert_primitive(obj) -> None:
         return
     if isinstance(obj, dict):
         for k, v in obj.items():
-            assert isinstance(k, str | int | float | bool), (
-                f"non-primitive key: {k!r}"
-            )
+            assert isinstance(k, str | int | float | bool), f"non-primitive key: {k!r}"
             _assert_primitive(v)
         return
     msg = f"non-primitive value of type {type(obj).__name__}: {obj!r}"
@@ -61,6 +64,21 @@ def _assert_primitive(obj) -> None:
 
 class _Result(BaseModel):
     result: int
+
+
+def test_structured_output_preserves_original_blocks():
+    message = ChatMessage.assistant(
+        [
+            TextBlock(text='```json\n{"result": 42}\n```'),
+            ImageBlock.from_base64("image/png", "aGk="),
+        ]
+    )
+    original_blocks = message.blocks
+    parsed = _generate_structured_output_with_report(
+        MagicMock(spec=ExecutionReporter), message, OutputSchema(output_schema=_Result)
+    )
+    assert parsed.blocks == original_blocks
+    assert parsed.extra_args["structured_output"] == _Result(result=42)
 
 
 def test_clean_llm_response_with_json_block():
@@ -101,19 +119,19 @@ def test_clean_llm_response_with_multiple_lines_in_block():
 
 def test_update_tool_call_context_stores_primitive_only():
     mem = _memory()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
-    added = [ChatMessage(role=MessageRole.ASSISTANT, content="hello")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
+    added = [ChatMessage.of(MessageRole.ASSISTANT, "hello")]
     _update_tool_call_context(mem, uuid4(), initial, added)
     _assert_primitive(mem.get(_TOOL_CALL_CONTEXT))
 
 
 def test_update_tool_call_context_returns_chat_messages():
     mem = _memory()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
-    added = [ChatMessage(role=MessageRole.ASSISTANT, content="hello")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
+    added = [ChatMessage.of(MessageRole.ASSISTANT, "hello")]
     result = _update_tool_call_context(mem, uuid4(), initial, added)
     assert all(isinstance(message, ChatMessage) for message in result)
-    assert [(m.role, m.content) for m in result] == [
+    assert [(m.role, m.text) for m in result] == [
         (MessageRole.USER, "hi"),
         (MessageRole.ASSISTANT, "hello"),
     ]
@@ -164,9 +182,7 @@ def test_get_context_none_output_schema():
 def test_request_event_key_match_after_normalization():
     mem = _memory()
     event_id = uuid4()
-    _save_tool_request_event_context(
-        mem, event_id, uuid4(), "ollama", None, None
-    )
+    _save_tool_request_event_context(mem, event_id, uuid4(), "ollama", None, None)
     context = _get_tool_request_event_context(mem, event_id)
     assert context != {}
     assert context["model"] == "ollama"
@@ -175,9 +191,9 @@ def test_request_event_key_match_after_normalization():
 def test_tool_call_context_key_match_after_normalization():
     mem = _memory()
     request_id = uuid4()
-    initial = [ChatMessage(role=MessageRole.USER, content="hi")]
+    initial = [ChatMessage.of(MessageRole.USER, "hi")]
     _update_tool_call_context(mem, request_id, initial, [])
-    extra = ChatMessage(role=MessageRole.TOOL, content="result")
+    extra = ChatMessage.of(MessageRole.TOOL, "result")
     result = _update_tool_call_context(mem, request_id, None, [extra])
     assert len(result) == 2
     assert len(mem.get(_TOOL_CALL_CONTEXT)[str(request_id)]) == 2
@@ -192,9 +208,7 @@ def test_output_schema_rowtypeinfo_round_trip():
             ["result"],
         )
     )
-    _save_tool_request_event_context(
-        mem, event_id, uuid4(), "ollama", None, schema
-    )
+    _save_tool_request_event_context(mem, event_id, uuid4(), "ollama", None, schema)
     context = _get_tool_request_event_context(mem, event_id)
     assert isinstance(context["output_schema"], OutputSchema)
     assert context["output_schema"].output_schema.get_field_names() == ["result"]
@@ -216,7 +230,7 @@ _PARSEABLE_CONTENT = '{"result": 42}'
 
 
 def _response(extra_args) -> ChatMessage:
-    return ChatMessage(
+    return ChatMessage.of(
         role=MessageRole.ASSISTANT,
         content=_PARSEABLE_CONTENT,
         extra_args=extra_args,

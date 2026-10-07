@@ -183,25 +183,73 @@ _JAVA_HANDLER_QUALNAME = (
 )
 
 
-class AgentWithCrossLanguageDecoratedAction(Agent):
-    @action(
-        EventType.InputEvent,
-        target=JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput"),
+class AgentWithCrossLanguageDescriptorAction(Agent):
+    handle = action(EventType.InputEvent)(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
     )
-    @staticmethod
-    def handle(event: Event, ctx: RunnerContext) -> None:
-        msg = "cross-language stub"
-        raise NotImplementedError(msg)
 
 
-def test_decorated_action_with_target_compiles_to_plan_java_function() -> None:
+def test_descriptor_action_compiles_to_plan_java_function() -> None:
     plan = AgentPlan.from_agent(
-        AgentWithCrossLanguageDecoratedAction(), AgentConfiguration()
+        AgentWithCrossLanguageDescriptorAction(), AgentConfiguration()
     )
     action = plan.actions["handle"]
     assert action.exec.qualname == _JAVA_HANDLER_QUALNAME
     assert action.exec.method_name == "handleInput"
     assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+class _BaseAgentWithInheritedDescriptorAction(Agent):
+    """Base with a cross-language descriptor @action — verifies the inheritance
+    guard also covers ``ActionDeclaration`` members, not just native callables.
+    """
+
+    shared = action(EventType.InputEvent)(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+class _ConcreteAgentInheritingDescriptorAction(_BaseAgentWithInheritedDescriptorAction):
+    """Concrete agent inheriting the descriptor ``shared`` action."""
+
+
+def test_descriptor_action_inherited_from_parent_agent_class_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Inherited @action") as exc:
+        AgentPlan.from_agent(
+            _ConcreteAgentInheritingDescriptorAction(), AgentConfiguration()
+        )
+    assert "shared" in str(exc.value)
+    assert "_BaseAgentWithInheritedDescriptorAction" in str(exc.value)
+
+
+class AgentWithDuplicateActionName(Agent):
+    """Two members whose ``name`` overrides collide — must fail fast."""
+
+    first = action(EventType.InputEvent, name="dup")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+    second = action(EventType.InputEvent, name="dup")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+def test_duplicate_action_name_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="Duplicate action name"):
+        AgentPlan.from_agent(AgentWithDuplicateActionName(), AgentConfiguration())
+
+
+class AgentWithEmptyNameOverride(Agent):
+    """An empty ``name`` override falls back to the attribute name (Java parity)."""
+
+    handle = action(EventType.InputEvent, name="")(
+        JavaFunction.for_action(_JAVA_HANDLER_QUALNAME, "handleInput")
+    )
+
+
+def test_empty_name_override_falls_back_to_attribute_name() -> None:
+    plan = AgentPlan.from_agent(AgentWithEmptyNameOverride(), AgentConfiguration())
+    assert "handle" in plan.actions
+    assert "" not in plan.actions
 
 
 class MyEvent(Event):
@@ -231,9 +279,7 @@ class MockChatModelImpl(BaseChatModelSetup):
 
     def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
         """Testing Implementation."""
-        return ChatMessage(
-            role=MessageRole.ASSISTANT, content=self.host + " " + self.desc
-        )
+        return ChatMessage.of(MessageRole.ASSISTANT, self.host + " " + self.desc)
 
 
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):
@@ -490,7 +536,7 @@ def test_agent_plan_merges_decorated_python_tool_injected_args() -> None:
     }
     assert (
         "tenant_id"
-        not in tool_resource.metadata.args_schema.model_json_schema()["properties"]
+        not in tool_resource.metadata.args_schema["properties"]
     )
 
 
@@ -512,6 +558,100 @@ def test_agent_plan_accepts_matching_decorated_python_tool_injected_args() -> No
     assert tool_resource.injected_args == {
         "tenant_id": InjectedArg.from_config("tenant.id")
     }
+
+
+def test_tool_name_with_reserved_subagent_prefix_is_rejected() -> None:
+    """Sub-agent callables reach the model under the reserved ``_subagent_``
+    prefix, so a tool registered under that prefix could never be called and
+    is rejected at plan-construction time.
+    """
+    agent = Agent()
+    agent.add_resource(
+        name="_subagent_helper",
+        resource_type=ResourceType.TOOL,
+        instance=ApiFunctionTool(
+            func=ApiPythonFunction.from_callable(query_order),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="reserved prefix '_subagent_'"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_mcp_tool_name_with_reserved_subagent_prefix_is_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An MCP server advertises tools under names it chose, so the reserved
+    prefix check has to run on the discovery loop as well: a remote
+    ``_subagent_lookup`` would land in the TOOL namespace, but dispatch routes
+    any prefixed call to AGENT, so the tool could never be called. Rejecting at
+    plan-construction matches the decorator and ``add_resource`` paths here and
+    Java's centralized ``checkToolNameNotReserved``.
+    """
+    from flink_agents.api.tools.tool import ToolMetadata
+    from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
+
+    offending = MCPTool(
+        metadata=ToolMetadata(
+            name="_subagent_lookup",
+            description="Remote tool squatting the reserved prefix.",
+            args_schema={"type": "object", "properties": {}},
+        ),
+    )
+    # The stub server never dials out: list_tools/list_prompts/close are
+    # replaced so plan compilation runs the discovery loop against ``offending``.
+    monkeypatch.setattr(MCPServer, "list_tools", lambda self: [offending])
+    monkeypatch.setattr(MCPServer, "list_prompts", lambda self: [])
+    monkeypatch.setattr(MCPServer, "close", lambda self: None)
+
+    agent = Agent()
+    agent.add_resource(
+        name="remote",
+        resource_type=ResourceType.MCP_SERVER,
+        instance=ResourceDescriptor(
+            clazz="flink_agents.integrations.mcp.mcp.MCPServer",
+            endpoint="http://unused.invalid",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="reserved prefix '_subagent_'"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
+
+
+def test_mcp_tool_with_plain_name_is_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prefix check on the discovery loop must not over-reject: a remote
+    tool with an ordinary name still lands in the TOOL provider map under the
+    name the server chose.
+    """
+    from flink_agents.api.tools.tool import ToolMetadata
+    from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
+
+    lookup = MCPTool(
+        metadata=ToolMetadata(
+            name="lookup",
+            description="Ordinary remote tool.",
+            args_schema={"type": "object", "properties": {}},
+        ),
+    )
+    monkeypatch.setattr(MCPServer, "list_tools", lambda self: [lookup])
+    monkeypatch.setattr(MCPServer, "list_prompts", lambda self: [])
+    monkeypatch.setattr(MCPServer, "close", lambda self: None)
+
+    agent = Agent()
+    agent.add_resource(
+        name="remote",
+        resource_type=ResourceType.MCP_SERVER,
+        instance=ResourceDescriptor(
+            clazz="flink_agents.integrations.mcp.mcp.MCPServer",
+            endpoint="http://unused.invalid",
+        ),
+    )
+
+    plan = AgentPlan.from_agent(agent, AgentConfiguration())
+
+    assert "lookup" in plan.resource_providers[ResourceType.TOOL]
 
 
 def test_agent_plan_rejects_conflicting_decorated_python_tool_injected_args() -> None:
@@ -551,7 +691,7 @@ def test_get_resource() -> None:
     cache = ResourceCache(agent_plan.resource_providers, agent_plan.config)
     mock = cache.get_resource("mock", ResourceType.CHAT_MODEL)
     assert (
-        mock.chat(ChatMessage(role=MessageRole.USER, content="")).content
+        mock.chat(ChatMessage.of(MessageRole.USER, "")).text
         == "8.8.8.8 mock resource just for testing."
     )
 

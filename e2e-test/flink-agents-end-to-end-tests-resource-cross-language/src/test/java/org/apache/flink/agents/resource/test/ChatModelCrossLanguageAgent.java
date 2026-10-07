@@ -30,11 +30,10 @@ import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -48,10 +47,10 @@ import java.util.List;
  * <p>This class demonstrates how to:
  *
  * <ul>
- *   <li>Declare a chat model connection using {@link ChatModelConnection} metadata pointing to
- *       {@link PythonChatModelConnection}
- *   <li>Declare a chat model setup using {@link ChatModelSetup} metadata pointing to {@link
- *       PythonChatModelSetup}
+ *   <li>Declare a Python chat model connection using {@link ChatModelConnection} and {@link
+ *       PythonResourceDescriptor}
+ *   <li>Declare a Python chat model setup using {@link ChatModelSetup} and {@link
+ *       PythonResourceDescriptor}
  *   <li>Expose callable tools via {@link Tool} annotated static methods (temperature conversion,
  *       BMI, random number)
  *   <li>Fetch a chat model from the {@link RunnerContext} and perform a single-turn chat
@@ -76,17 +75,16 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelConnection
     public static ResourceDescriptor pythonChatModelConnection() {
-        return ResourceDescriptor.Builder.newBuilder(
-                        ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
                 .addInitialArgument("request_timeout", 240)
                 .build();
     }
 
     @ChatModelSetup
     public static ResourceDescriptor temperatureChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "javaChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("convertTemperature"))
@@ -96,8 +94,8 @@ public class ChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor chatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .addInitialArgument("tools", List.of("calculateBMI", "createRandomNumber"))
@@ -170,6 +168,6 @@ public class ChatModelCrossLanguageAgent extends Agent {
     @Action(EventType.ChatResponseEvent)
     public static void processChatResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getContent()));
+        ctx.sendEvent(new OutputEvent(chatResponse.getResponse().getText()));
     }
 }

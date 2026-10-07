@@ -131,10 +131,12 @@ class EventLogWriterTest {
                 ExecutionTraceContext.forInputRun("business-key", "agent")
                         .childExecution("action", "action1");
         Event executionEvent = ExecutionLifecycleEvents.executionStarted();
+        EventContext eventContext =
+                new EventContext(executionEvent.getType(), "2026-01-01T00:00:00.123Z");
 
-        writer.appendExecutionEventAndFlush(executionEvent, traceContext);
+        writer.appendExecutionEventAndFlush(eventContext, executionEvent, traceContext);
 
-        verify(mockLogger).append(any(EventContext.class), eq(executionEvent), eq(traceContext));
+        verify(mockLogger).append(eq(eventContext), eq(executionEvent), eq(traceContext));
         verify(mockLogger).flush();
     }
 

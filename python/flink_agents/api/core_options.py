@@ -21,17 +21,6 @@ from enum import Enum
 from flink_agents.api.configuration import ConfigOption
 
 
-class ErrorHandlingStrategy(Enum):
-    """Error handling strategy for Agent.
-
-    Currently, only works for chat action.
-    """
-
-    RETRY = "retry"
-    FAIL = "fail"
-    IGNORE = "ignore"
-
-
 class ShortTermMemoryTtlUpdate(Enum):
     """Update policy for short-term memory TTL."""
 
@@ -144,6 +133,12 @@ class AgentConfigOptions:
         key="kafkaActionStateTombstoneEnabled",
         config_type=bool,
         default=False,
+    )
+
+    KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC = ConfigOption(
+        key="kafkaActionStateCleanupControlTopic",
+        config_type=str,
+        default=None,
     )
 
     FLUSS_BOOTSTRAP_SERVERS = ConfigOption(
@@ -279,16 +274,10 @@ class MemoryEventOptions:
 class AgentExecutionOptions:
     """Execution options for Flink Agents."""
 
-    ERROR_HANDLING_STRATEGY = ConfigOption(
-        key="error-handling-strategy",
-        config_type=ErrorHandlingStrategy,
-        default=ErrorHandlingStrategy.FAIL,
-    )
-
     MAX_RETRIES = ConfigOption(
         key="max-retries",
         config_type=int,
-        default=3,
+        default=0,
     )
 
     RETRY_WAIT_INTERVAL = ConfigOption(
@@ -301,6 +290,26 @@ class AgentExecutionOptions:
         key="num-async-threads",
         config_type=int,
         default=os.cpu_count() * 2,
+    )
+
+    # Experimental fallback switch for the Java JDK<21 parallel execution engine.
+    # Only consulted for pure-Java agents without coroutine support; plans
+    # containing Python actions never use the parallel engine regardless of
+    # this value.
+    PARALLEL_EXECUTION_ENABLED = ConfigOption(
+        key="parallel-execution.enabled",
+        config_type=bool,
+        default=True,
+    )
+
+    # Maximum number of input records that may be in flight concurrently. Only
+    # enforced by the Java JDK<21 parallel execution engine for pure-Java
+    # agents; the JDK 21 coroutine engine and plans containing Python actions
+    # ignore it.
+    MAX_IN_FLIGHT_INPUT_RECORDS = ConfigOption(
+        key="max-in-flight-input-records",
+        config_type=int,
+        default=100,
     )
 
     CHAT_ASYNC = ConfigOption(

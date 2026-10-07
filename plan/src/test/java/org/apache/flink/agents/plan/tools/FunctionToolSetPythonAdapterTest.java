@@ -17,13 +17,13 @@
  */
 package org.apache.flink.agents.plan.tools;
 
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -106,6 +106,7 @@ class FunctionToolSetPythonAdapterTest {
                         "stubMethod",
                         new Class<?>[] {int.class});
         FunctionTool tool = new FunctionTool(original, jf);
+        original = tool.getMetadata();
 
         PythonResourceAdapter adapter = Mockito.mock(PythonResourceAdapter.class);
         tool.setPythonResourceAdapter(adapter);

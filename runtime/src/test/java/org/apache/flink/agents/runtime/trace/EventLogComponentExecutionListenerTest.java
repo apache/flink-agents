@@ -42,18 +42,83 @@ import static org.assertj.core.api.Assertions.assertThat;
 class EventLogComponentExecutionListenerTest {
 
     @Test
+    void createdStartAndTerminalReportsShareOneChildExecution() {
+        CapturingEventLogger logger = new CapturingEventLogger();
+        EventLogComponentExecutionListener listener =
+                new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
+        Map<String, Object> metadata = Map.of("toolCallId", "call-1");
+
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionCreated());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionStarted());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionFinished());
+
+        assertThat(logger.records)
+                .extracting(record -> record.event.getType())
+                .containsExactly(
+                        ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
+                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE);
+        assertThat(logger.records)
+                .extracting(record -> record.traceContext.getExecutionId())
+                .containsOnly(logger.records.get(0).traceContext.getExecutionId());
+    }
+
+    @Test
+    void terminalBeforeStartPairsWithItsCreation() {
+        CapturingEventLogger logger = new CapturingEventLogger();
+        EventLogComponentExecutionListener listener =
+                new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
+        Map<String, Object> metadata = Map.of("toolCallId", "call-1");
+
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionCreated());
+        report(
+                listener,
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                ExecutionLifecycleEvents.executionFailed(
+                        new IllegalStateException("failed before invocation")));
+
+        assertThat(logger.records).hasSize(2);
+        assertThat(logger.records.get(1).traceContext.getExecutionId())
+                .isEqualTo(logger.records.get(0).traceContext.getExecutionId());
+    }
+
+    @Test
     void startAndTerminalReportsShareOneChildExecution() {
         CapturingEventLogger logger = new CapturingEventLogger();
         ExecutionTraceContext actionContext = actionTraceContext();
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionContext, sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
@@ -86,12 +151,14 @@ class EventLogComponentExecutionListenerTest {
 
         // Mirrors a continuation: the start is reported first, the terminal arrives later
         // through the same per-execution listener instance.
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 metadata,
@@ -121,7 +188,8 @@ class EventLogComponentExecutionListenerTest {
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionContext, sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.PARSER,
                 "json-parser",
                 Map.of(),
@@ -134,32 +202,34 @@ class EventLogComponentExecutionListenerTest {
     }
 
     @Test
-    void repeatedStartReportReplacesTheActiveReport() {
+    void repeatedStartReportReusesTheActiveExecution() {
         CapturingEventLogger logger = new CapturingEventLogger();
         EventLogComponentExecutionListener listener =
                 new EventLogComponentExecutionListener(actionTraceContext(), sink(logger));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionStarted());
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
                 ExecutionLifecycleEvents.executionFinished());
 
         assertThat(logger.records).hasSize(3);
-        // The terminal pairs with the second start; the first start stays unpaired.
-        assertThat(logger.records.get(2).traceContext.getExecutionId())
-                .isEqualTo(logger.records.get(1).traceContext.getExecutionId())
-                .isNotEqualTo(logger.records.get(0).traceContext.getExecutionId());
+        assertThat(logger.records)
+                .extracting(record -> record.traceContext.getExecutionId())
+                .containsOnly(logger.records.get(0).traceContext.getExecutionId());
     }
 
     @Test
@@ -171,7 +241,8 @@ class EventLogComponentExecutionListenerTest {
                         ExecutionEventLogger.forEventLogWriter(
                                 EventLogWriter.forEventLogger(logger, false)));
 
-        listener.onComponentExecution(
+        report(
+                listener,
                 ExecutionReporter.EntityTypes.LLM,
                 "model-a",
                 Map.of(),
@@ -183,6 +254,16 @@ class EventLogComponentExecutionListenerTest {
     private static ExecutionTraceContext actionTraceContext() {
         return ExecutionTraceContext.forInputRun("business-key", "agent")
                 .childExecution("action", "chat_model_action");
+    }
+
+    private static void report(
+            EventLogComponentExecutionListener listener,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Event event) {
+        listener.onComponentExecution(
+                entityType, entityName, entityMetadata, new EventContext(event), event);
     }
 
     private static ExecutionEventSink sink(EventLogger logger) {

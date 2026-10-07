@@ -69,20 +69,25 @@ public class PythonPrompt extends Prompt.LocalPrompt {
                 "Python prompt parsing failed. Template is not a string or list.");
     }
 
-    /** Parse a single ChatMessage from a Map representation. */
+    /**
+     * Parse a single ChatMessage from the Python {@code model_dump()} representation, where the
+     * content arrives as a list of discriminated block maps under {@code blocks}.
+     */
     @SuppressWarnings("unchecked")
     private static ChatMessage parseChatMessage(Map<String, Object> messageMap) {
         String roleValue = messageMap.get("role").toString();
         MessageRole role = MessageRole.fromValue(roleValue);
 
-        Object contentObj = messageMap.get("content");
-        String content = contentObj != null ? contentObj.toString() : "";
+        List<Map<String, Object>> blocks =
+                (List<Map<String, Object>>) messageMap.getOrDefault("blocks", List.of());
 
         List<Map<String, Object>> toolCalls =
                 (List<Map<String, Object>>) messageMap.get("tool_calls");
 
         Map<String, Object> extraArgs = (Map<String, Object>) messageMap.get("extra_args");
 
-        return new ChatMessage(role, content, toolCalls, extraArgs);
+        ChatMessage message = new ChatMessage(role, List.of(), toolCalls, extraArgs);
+        message.setBlocksFromMaps(blocks);
+        return message;
     }
 }

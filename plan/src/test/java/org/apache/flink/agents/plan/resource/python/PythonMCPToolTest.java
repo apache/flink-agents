@@ -18,7 +18,6 @@
 
 package org.apache.flink.agents.plan.resource.python;
 
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.junit.jupiter.api.Test;

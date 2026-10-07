@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.runtime.trace;
 
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
@@ -39,26 +41,28 @@ public final class EventLogTaskLifecycleListener implements TaskLifecycleListene
 
     @Override
     public void onActionStarted(ActionTask task) {
-        executionEventSink.emit(
-                ExecutionLifecycleEvents.executionStarted(), task.getTraceContext());
+        emit(ExecutionLifecycleEvents.executionStarted(), task);
     }
 
     @Override
     public void onActionReused(ActionTask task) {
-        executionEventSink.emit(ExecutionLifecycleEvents.executionReused(), task.getTraceContext());
+        emit(ExecutionLifecycleEvents.executionReused(), task);
     }
 
     @Override
     public void onActionFinished(ActionTask task) {
-        executionEventSink.emit(
-                ExecutionLifecycleEvents.executionFinished(), task.getTraceContext());
+        emit(ExecutionLifecycleEvents.executionFinished(), task);
     }
 
     @Override
     public void onActionFailed(ActionTask task, Throwable error) {
-        executionEventSink.emit(
+        emit(
                 ExecutionLifecycleEvents.executionFailed(
                         error, ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED),
-                task.getTraceContext());
+                task);
+    }
+
+    private void emit(Event event, ActionTask task) {
+        executionEventSink.emit(new EventContext(event), event, task.getTraceContext());
     }
 }

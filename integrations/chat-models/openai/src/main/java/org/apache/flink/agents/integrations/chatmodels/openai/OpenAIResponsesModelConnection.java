@@ -223,7 +223,7 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
     private List<ResponseInputItem> convertSingleMessage(ChatMessage message) {
         List<ResponseInputItem> items = new ArrayList<>();
         MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getContent()).orElse("");
+        String content = Optional.ofNullable(message.getText()).orElse("");
 
         switch (role) {
             case SYSTEM:

@@ -28,6 +28,7 @@ from flink_agents.api.core_options import (
     AgentConfigOptions,
     ConditionEvaluationFailureStrategy,
 )
+from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.function import (
     JavaFunction as ApiJavaFunction,
@@ -35,7 +36,7 @@ from flink_agents.api.function import (
 from flink_agents.api.function import (
     PythonFunction as ApiPythonFunction,
 )
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
+from flink_agents.api.resource import JavaResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -93,7 +94,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     )
     assert action.exec.module == pf.module
     assert action.exec.qualname == pf.qualname
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_java_function_descriptor() -> None:
@@ -116,7 +117,45 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     assert action.exec.qualname == jf.qualname
     assert action.exec.method_name == jf.method_name
     assert list(action.exec.parameter_types) == list(jf.parameter_types)
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+def test_compile_agent_with_descriptor_action_class_attribute() -> None:
+    """``action(...)(descriptor)`` as a class attribute becomes a plan action.
+
+    The descriptor-first declaration form mirrors Java's ``@Action`` field: the
+    attribute name is the action name and the wrapped descriptor is the
+    executable target, with no placeholder body required.
+    """
+
+    class DescriptorAgent(Agent):
+        handle = action(InputEvent.EVENT_TYPE)(
+            ApiJavaFunction.for_action("com.example.Handlers", "handle")
+        )
+
+    plan = AgentPlan.from_agent(DescriptorAgent(), AgentConfiguration())
+    compiled = plan.actions["handle"]
+
+    assert isinstance(compiled.exec, PlanJavaFunction), (
+        f"Expected plan JavaFunction, got {type(compiled.exec).__name__}"
+    )
+    assert compiled.exec.qualname == "com.example.Handlers"
+    assert compiled.exec.method_name == "handle"
+    assert compiled.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+def test_compile_agent_with_named_descriptor_action_class_attribute() -> None:
+    """``name=`` on the descriptor form overrides the attribute name."""
+
+    class NamedDescriptorAgent(Agent):
+        handle = action(InputEvent.EVENT_TYPE, name="renamed")(
+            ApiJavaFunction.for_action("com.example.Handlers", "handle")
+        )
+
+    plan = AgentPlan.from_agent(NamedDescriptorAgent(), AgentConfiguration())
+
+    assert "renamed" in plan.actions
+    assert "handle" not in plan.actions
 
 
 def test_python_plan_compile_does_not_validate_java_class_exists() -> None:
@@ -446,11 +485,10 @@ def test_python_can_deserialize_plan_with_java_model_router() -> None:
     provider = JavaResourceProvider(
         name="router",
         type=ResourceType.MODEL_ROUTER,
-        descriptor=ResourceDescriptor(
-            target_module="java",
-            target_clazz=(
-                "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
-            ),
+        descriptor=JavaResourceDescriptor(
+            language="java",
+            target_module="",
+            target_clazz=("org.apache.flink.agents.api.chat.model.routing.ModelRouter"),
             arguments={"candidates": ["small", "big"]},
         ),
     )

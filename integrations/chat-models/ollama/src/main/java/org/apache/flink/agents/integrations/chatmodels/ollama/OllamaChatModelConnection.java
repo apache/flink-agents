@@ -26,9 +26,15 @@ import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.models.request.ThinkMode;
+import io.github.ollama4j.tools.OllamaToolCallsFunction;
 import io.github.ollama4j.tools.Tools;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -123,8 +129,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
 
                 final Map<String, Map<String, String>> properties =
                         (Map<String, Map<String, String>>) schema.get("properties");
-                // "required" is optional in JSON Schema, and SchemaUtils only emits it when at
-                // least one parameter is required — treat a missing list as empty (#1014).
+                // "required" is optional in JSON Schema; treat a missing list as empty (#1014).
                 final List<String> required =
                         (List<String>) schema.getOrDefault("required", Collections.emptyList());
 
@@ -169,16 +174,108 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @param message the framework message
      * @return the corresponding Ollama message
      * @throws RuntimeException if the role cannot be mapped to an Ollama role
+     * @throws UnsupportedContentBlockException if the message has media Ollama cannot take
      */
     private OllamaChatMessage convertToOllamaChatMessages(ChatMessage message) {
         final MessageRole role = message.getRole();
         try {
             final OllamaChatMessageRole ollamaRole =
                     OllamaChatMessageRole.getRole(role.name().toLowerCase());
-            return new OllamaChatMessage(ollamaRole, message.getContent());
+            final OllamaChatMessage ollamaMessage =
+                    new OllamaChatMessage(ollamaRole, message.getText());
+            final List<Map<String, Object>> toolCalls = message.getToolCalls();
+            if (toolCalls != null && !toolCalls.isEmpty()) {
+                // Without the calls, the history shows tool results the model never requested.
+                ollamaMessage.setToolCalls(toOllamaToolCalls(toolCalls));
+            }
+            final List<byte[]> images = toOllamaImages(message);
+            if (!images.isEmpty()) {
+                ollamaMessage.setImages(images);
+            }
+            return ollamaMessage;
         } catch (RoleNotFoundException e) {
             throw new RuntimeException(e);
         }
+    }
+
+    /**
+     * Converts framework tool calls back to Ollama's shape, the function name and its arguments as
+     * an object, as the Python connection does. The framework-assigned id is not sent.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<OllamaChatToolCalls> toOllamaToolCalls(
+            List<Map<String, Object>> toolCalls) {
+        final List<OllamaChatToolCalls> ollamaToolCalls = new ArrayList<>(toolCalls.size());
+        for (Map<String, Object> toolCall : toolCalls) {
+            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
+            if (function == null || function.get("name") == null) {
+                throw new IllegalArgumentException("A tool call must have a function name.");
+            }
+            ollamaToolCalls.add(
+                    new OllamaChatToolCalls(
+                            null,
+                            new OllamaToolCallsFunction(
+                                    String.valueOf(function.get("name")),
+                                    toArgumentsMap(function.get("arguments")))));
+        }
+        return ollamaToolCalls;
+    }
+
+    /** Ollama expects the arguments as an object; a JSON string is parsed into one. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> toArgumentsMap(Object arguments) {
+        if (arguments == null) {
+            return Collections.emptyMap();
+        }
+        if (arguments instanceof Map) {
+            return (Map<String, Object>) arguments;
+        }
+        try {
+            return new ObjectMapper()
+                    .readValue(
+                            String.valueOf(arguments), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Tool call arguments must be a JSON object.", e);
+        }
+    }
+
+    /**
+     * The images of a user message, in block order. Ollama takes inline image data only, attached
+     * to the message rather than interleaved with its text; any other media fails explicitly.
+     */
+    private static List<byte[]> toOllamaImages(ChatMessage message) {
+        final List<byte[]> images = new ArrayList<>();
+        for (ContentBlock block : message.getBlocks()) {
+            if (!(block instanceof MediaBlock)) {
+                continue;
+            }
+            if (message.getRole() != MessageRole.USER) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama",
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+            if (!(block instanceof ImageBlock)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama accepts images only");
+            }
+            final ImageBlock image = (ImageBlock) block;
+            if (!(image.getSource() instanceof Base64Source)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama takes base64 image data, not a URL");
+            }
+            try {
+                // ollama4j base64-encodes the bytes again when it serializes the request.
+                images.add(
+                        Base64.getDecoder().decode(((Base64Source) image.getSource()).getData()));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "An image block's base64 data could not be decoded.", e);
+            }
+        }
+        return images;
     }
 
     /**
@@ -291,6 +388,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             }
 
             return chatMessage;
+        } catch (RuntimeException e) {
+            // Unchanged, so callers can catch documented errors such as
+            // UnsupportedContentBlockException.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

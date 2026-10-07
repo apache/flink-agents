@@ -22,8 +22,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryUpdate;
 import org.apache.flink.agents.api.context.Outcome;
@@ -345,6 +347,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public void reportExecutionCreated(
+            String entityType, String entityName, Map<String, Object> entityMetadata)
+            throws Exception {
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                ExecutionLifecycleEvents.executionCreated());
+    }
+
+    @Override
     public void reportExecutionStarted(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
@@ -356,6 +369,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public void reportExecutionStartedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionStarted();
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
+    }
+
+    @Override
     public void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
@@ -364,6 +393,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 entityName,
                 entityMetadata,
                 ExecutionLifecycleEvents.executionFinished());
+    }
+
+    @Override
+    public void reportExecutionSucceededAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionFinished();
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
     }
 
     @Override
@@ -381,19 +426,48 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 ExecutionLifecycleEvents.executionFailed(error, problemCategory));
     }
 
+    @Override
+    public void reportExecutionFailedAt(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp)
+            throws Exception {
+        Event event = ExecutionLifecycleEvents.executionFailed(error, problemCategory);
+        reportChildExecution(
+                entityType,
+                entityName,
+                entityMetadata,
+                new EventContext(event.getType(), timestamp),
+                event);
+    }
+
     /**
      * Fans the report out to the current action execution's component listeners best-effort: a
      * listener that throws is logged and skipped, so reporting never fails the caller.
      */
     protected void reportChildExecution(
             String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
+        reportChildExecution(
+                entityType, entityName, entityMetadata, new EventContext(event), event);
+    }
+
+    protected void reportChildExecution(
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            EventContext eventContext,
+            Event event) {
         mailboxThreadChecker.run();
         if (componentExecutionListeners == null) {
             return;
         }
         for (ComponentExecutionListener listener : componentExecutionListeners) {
             try {
-                listener.onComponentExecution(entityType, entityName, entityMetadata, event);
+                listener.onComponentExecution(
+                        entityType, entityName, entityMetadata, eventContext, event);
             } catch (Exception | LinkageError e) {
                 LOG.warn(
                         "Component execution listener {} failed on a report for action '{}' ({})",
@@ -488,15 +562,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
-    public <T> T durableExecuteAsync(DurableCallable<T> callable) throws Exception {
+    public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
+        return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
+    }
+
+    @Override
+    public <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures) {
+        return new GatherDurableFuture<>(this, futures);
+    }
+
+    /**
+     * Resolves one deferred durable call. Java contexts override this with Continuation support.
+     */
+    protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
         LOG.debug(
                 "Async durable execution is not supported in RunnerContextImpl; falling back to durableExecute for {}",
                 callable.getId());
         return durableExecute(callable);
     }
 
-    @Override
-    public <T> List<Outcome<T>> durableExecuteAllAsync(List<DurableCallable<T>> callables)
+    /** Resolves a durable batch. Java contexts override this with Continuation support. */
+    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
             throws Exception {
         List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
         for (DurableCallable<T> callable : callables) {
@@ -534,10 +620,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             return executeAndFinalizeCurrentCall(functionId, argsDigest, executionCallable);
         }
 
-        Optional<T> cachedResult =
+        Optional<Outcome<T>> cachedResult =
                 tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
         if (cachedResult.isPresent()) {
-            return cachedResult.get();
+            return cachedResult.get().getValue();
         }
 
         T result = null;
@@ -830,7 +916,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return null;
     }
 
-    protected <T> Optional<T> tryGetCachedResult(
+    /**
+     * Returns the recorded outcome of the next durable call when it matches and has finished, or an
+     * empty {@code Optional} when there is nothing to replay. A recorded failure is rethrown. A
+     * recorded success may carry a {@code null} value (for example a {@code Void} call), so the
+     * presence of the outcome, not its value, marks the hit.
+     */
+    protected <T> Optional<Outcome<T>> tryGetCachedResult(
             String functionId, String argsDigest, Class<T> resultClass) throws Exception {
         Object[] cached = matchNextOrClearSubsequentCallResult(functionId, argsDigest);
         if (cached != null && (Boolean) cached[0]) {
@@ -842,9 +934,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         OBJECT_MAPPER.readValue(exceptionPayload, DurableExecutionException.class);
                 throw cachedException.toException();
             } else if (resultPayload != null) {
-                return Optional.of(OBJECT_MAPPER.readValue(resultPayload, resultClass));
+                return Optional.of(
+                        Outcome.success(OBJECT_MAPPER.readValue(resultPayload, resultClass)));
             } else {
-                return Optional.of(null);
+                return Optional.of(Outcome.success(null));
             }
         }
         return Optional.empty();
@@ -892,10 +985,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
 
         if (!current.isPending()) {
-            Optional<T> cachedResult =
+            Optional<Outcome<T>> cachedResult =
                     tryGetCachedResult(functionId, argsDigest, durableCallable.getResultClass());
             if (cachedResult.isPresent()) {
-                return cachedResult.get();
+                return cachedResult.get().getValue();
             }
             throw new IllegalStateException(
                     String.format(

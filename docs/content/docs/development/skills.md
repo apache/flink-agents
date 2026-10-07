@@ -1,6 +1,6 @@
 ---
 title: Skills
-weight: 10
+weight: 12
 type: docs
 ---
 <!--

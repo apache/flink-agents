@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
@@ -62,7 +63,7 @@ public class ResourceProviderSerializerTest {
         kwargs.put("desc", "mock chat model");
         // Create a resource provider.
         ResourceDescriptor mockChatModelImpl =
-                new ResourceDescriptor(
+                new PythonResourceDescriptor(
                         "flink_agents.plan.tests.test_resource_provider",
                         "MockChatModelImpl",
                         kwargs);

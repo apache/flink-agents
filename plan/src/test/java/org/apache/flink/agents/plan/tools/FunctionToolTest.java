@@ -56,7 +56,7 @@ public class FunctionToolTest {
         Method method =
                 FunctionToolTest.class.getMethod(
                         "calculate", Double.class, Double.class, String.class);
-        ToolMetadata origin = ToolMetadataFactory.fromStaticMethod(method);
+        ToolMetadata origin = FunctionTool.fromStaticMethod(method).getMetadata();
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(origin);
         ToolMetadata deserialize = mapper.readValue(json, ToolMetadata.class);
@@ -68,7 +68,6 @@ public class FunctionToolTest {
         Method method =
                 FunctionToolTest.class.getMethod(
                         "calculate", Double.class, Double.class, String.class);
-        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
         JavaFunction javaFunction =
                 new JavaFunction(
                         method.getDeclaringClass(),
@@ -76,10 +75,10 @@ public class FunctionToolTest {
                         new Class[] {Double.class, Double.class, String.class});
         FunctionTool tool =
                 new FunctionTool(
-                        metadata,
+                        null,
                         javaFunction,
                         Map.of(
-                                "tenant_id",
+                                "operation",
                                 ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(tool);

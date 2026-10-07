@@ -1,0 +1,124 @@
+################################################################################
+#  Licensed to the Apache Software Foundation (ASF) under one
+#  or more contributor license agreements.  See the NOTICE file
+#  distributed with this work for additional information
+#  regarding copyright ownership.  The ASF licenses this file
+#  to you under the Apache License, Version 2.0 (the
+#  "License"); you may not use this file except in compliance
+#  with the License.  You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+# limitations under the License.
+#################################################################################
+from typing import Any, List
+
+from pydantic import ConfigDict, Field
+from typing_extensions import override
+
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.prompts.prompt import Prompt
+from flink_agents.api.resource import Resource, ResourceType
+from flink_agents.api.resource_context import ResourceContext
+from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
+from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAdapter
+
+
+class JavaTool(Tool):
+    """Java Tool that carries tool metadata and can be recognized by PythonChatModel."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    metadata_: ToolMetadata = Field(exclude=True, alias="metadata")
+
+    @property
+    @override
+    def metadata(self) -> ToolMetadata:
+        """Return the tool metadata."""
+        return self.metadata_
+
+    @classmethod
+    @override
+    def tool_type(cls) -> ToolType:
+        """Get the tool type."""
+        return ToolType.REMOTE_FUNCTION
+
+    @override
+    def call(self, *args: Any, **kwargs: Any) -> Any:
+        err_msg = "Java tool is defined in Java and needs to be executed through the Java runtime."
+        raise NotImplementedError(err_msg)
+
+
+class JavaPrompt(Prompt):
+    """Python wrapper for Java's Prompt."""
+
+    j_prompt: Any = Field(exclude=True)
+
+    @override
+    def format_string(self, **kwargs: str) -> str:
+        return self.j_prompt.formatString(kwargs)
+
+    @override
+    def format_messages(
+        self, role: MessageRole = MessageRole.SYSTEM, **kwargs: str
+    ) -> List[ChatMessage]:
+        from pemja import findClass
+
+        j_MessageRole = findClass(
+            "org.apache.flink.agents.api.chat.messages.MessageRole"
+        )
+        j_chat_messages = self.j_prompt.formatMessages(
+            j_MessageRole.fromValue(role.value), kwargs
+        )
+        chatMessages = [
+            ChatMessage.model_validate(
+                {
+                    "role": MessageRole(j_chat_message.getRole().getValue()),
+                    "blocks": j_chat_message.getBlocksAsMaps(),
+                    "tool_calls": j_chat_message.getToolCalls(),
+                    "extra_args": j_chat_message.getExtraArgs(),
+                }
+            )
+            for j_chat_message in j_chat_messages
+        ]
+        return chatMessages
+
+    @override
+    def close(self) -> None:
+        self.j_prompt.close()
+
+
+class JavaResourceContextWrapper(ResourceContext):
+    """Python wrapper for Java ResourceAdapter."""
+
+    def __init__(self, j_resource_adapter: JavaResourceAdapter) -> None:
+        """Initialize with a Java ResourceAdapter."""
+        self._j_resource_adapter = j_resource_adapter
+
+    @override
+    def get_resource(self, name: str, type: ResourceType) -> Resource:
+        """Get a resource by name and type."""
+        return self._j_resource_adapter.getResource(name, type.value)
+
+    @override
+    def generate_available_skills_prompt(self, *skill_names: str) -> str:
+        """Generate the skill discovery prompt for the given skill names.
+
+        Forwards to the Java ``JavaResourceAdapter#generateAvailableSkillsPrompt``
+        so that a Python chat model running inside a Java agent can use skills
+        declared on the Java side.
+        """
+        result = self._j_resource_adapter.generateAvailableSkillsPrompt(
+            list(skill_names)
+        )
+        return result if result is not None else ""
+
+    @override
+    def get_skill_dirs(self, *skill_names: str) -> List[str]:
+        """Return absolute directory paths for the given skill names."""
+        result = self._j_resource_adapter.getSkillDirs(list(skill_names))
+        return list(result) if result is not None else []

@@ -466,7 +466,7 @@ class WatsonxChatModelConnectionTest {
                 WatsonxChatModelConnection.parseResponse(response, "ibm/granite-3-3-8b-instruct");
 
         assertThat(message.getRole()).isEqualTo(MessageRole.ASSISTANT);
-        assertThat(message.getContent()).isEqualTo("Hello there!");
+        assertThat(message.getText()).isEqualTo("Hello there!");
         assertThat(message.getExtraArgs().get("model_name"))
                 .isEqualTo("ibm/granite-3-3-8b-instruct");
         assertThat(message.getExtraArgs().get("promptTokens")).isEqualTo(100L);
@@ -554,8 +554,8 @@ class WatsonxChatModelConnectionTest {
             WatsonxChatModelConnection connection =
                     new WatsonxChatModelConnection(
                             stubDescriptor(baseUrl(server), true, 0), NOOP, NO_ENVIRONMENT);
-            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
-            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
+            assertThat(chat(connection).getText()).isEqualTo("Hello!");
+            assertThat(chat(connection).getText()).isEqualTo("Hello!");
             assertThat(iamRequests).hasValue(1);
             assertThat(chatRequests).hasValue(2);
         } finally {
@@ -622,7 +622,7 @@ class WatsonxChatModelConnectionTest {
             WatsonxChatModelConnection connection =
                     new WatsonxChatModelConnection(
                             stubDescriptor(baseUrl(server), true, 0), NOOP, NO_ENVIRONMENT);
-            assertThat(chat(connection).getContent()).isEqualTo("Hello!");
+            assertThat(chat(connection).getText()).isEqualTo("Hello!");
             assertThat(iamRequests).hasValue(2);
             assertThat(chatRequests).hasValue(2);
         } finally {
@@ -649,7 +649,7 @@ class WatsonxChatModelConnectionTest {
             WatsonxChatModelConnection retryingConnection =
                     new WatsonxChatModelConnection(
                             stubDescriptor(baseUrl(server), false, 1), NOOP, NO_ENVIRONMENT);
-            assertThat(chat(retryingConnection).getContent()).isEqualTo("Hello!");
+            assertThat(chat(retryingConnection).getText()).isEqualTo("Hello!");
             assertThat(chatRequests).hasValue(2);
 
             server.removeContext("/ml/v1/text/chat");

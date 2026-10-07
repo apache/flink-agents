@@ -33,6 +33,7 @@ under the License.
     <modules>
         <module>bedrock</module>
         <module>ollama</module>
+        <module>openai</module>
     </modules>
 
 </project>

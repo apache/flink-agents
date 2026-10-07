@@ -75,7 +75,7 @@ class BaseChatModelTest {
             String lastUserContent = "";
             for (ChatMessage message : messages) {
                 if (message.getRole() == MessageRole.USER) {
-                    lastUserContent = message.getContent();
+                    lastUserContent = message.getText();
                 }
             }
 
@@ -131,7 +131,7 @@ class BaseChatModelTest {
 
         assertNotNull(response);
         assertEquals(MessageRole.ASSISTANT, response.getRole());
-        assertTrue(response.getContent().contains("Test Response:"));
+        assertTrue(response.getText().contains("Test Response:"));
     }
 
     @Test
@@ -149,7 +149,7 @@ class BaseChatModelTest {
 
         assertNotNull(response);
         assertEquals(MessageRole.ASSISTANT, response.getRole());
-        assertTrue(response.getContent().contains("What's the weather like?"));
+        assertTrue(response.getText().contains("What's the weather like?"));
     }
 
     @Test
@@ -162,7 +162,7 @@ class BaseChatModelTest {
 
         assertNotNull(response);
         assertEquals(MessageRole.ASSISTANT, response.getRole());
-        assertTrue(response.getContent().contains("No user message found"));
+        assertTrue(response.getText().contains("No user message found"));
     }
 
     @Test
@@ -182,7 +182,7 @@ class BaseChatModelTest {
                 chatModel.chat(multiPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertTrue(response.getContent().contains("Second message - this should be the response"));
+        assertTrue(response.getText().contains("Second message - this should be the response"));
     }
 
     @Test
@@ -199,7 +199,7 @@ class BaseChatModelTest {
         ChatMessage response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
-        assertTrue(response.getContent().startsWith("Custom Response:"));
+        assertTrue(response.getText().startsWith("Custom Response:"));
     }
 
     @Test
@@ -215,7 +215,7 @@ class BaseChatModelTest {
 
         assertNotNull(response);
         assertEquals(MessageRole.ASSISTANT, response.getRole());
-        assertTrue(response.getContent().contains("No user message found"));
+        assertTrue(response.getText().contains("No user message found"));
     }
 
     @Test
@@ -232,10 +232,10 @@ class BaseChatModelTest {
 
         // Verify response structure
         assertNotNull(response.getRole());
-        assertNotNull(response.getContent());
+        assertNotNull(response.getText());
         assertNotNull(response.getToolCalls());
         assertNotNull(response.getExtraArgs());
-        assertTrue(response.getContent().length() > 0);
+        assertTrue(response.getText().length() > 0);
     }
 
     /** Connection that captures the messages passed to it for assertions. */
@@ -287,7 +287,7 @@ class BaseChatModelTest {
 
         assertNotNull(connection.capturedMessages);
         assertEquals(1, connection.capturedMessages.size());
-        assertEquals("Task: value", connection.capturedMessages.get(0).getContent());
+        assertEquals("Task: value", connection.capturedMessages.get(0).getText());
     }
 
     @Test
@@ -303,8 +303,8 @@ class BaseChatModelTest {
 
         assertNotNull(connection.capturedMessages);
         assertEquals(2, connection.capturedMessages.size());
-        assertEquals("Task: {key}", connection.capturedMessages.get(0).getContent());
-        assertEquals("hello", connection.capturedMessages.get(1).getContent());
+        assertEquals("Task: {key}", connection.capturedMessages.get(0).getText());
+        assertEquals("hello", connection.capturedMessages.get(1).getText());
     }
 
     @Test
@@ -317,13 +317,13 @@ class BaseChatModelTest {
         setup.chat(Collections.emptyList(), Map.of("key", "v1"), Map.of());
         assertNotNull(connection.capturedMessages);
         assertEquals(1, connection.capturedMessages.size());
-        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getText());
 
         ChatMessage toolResponse = new ChatMessage(MessageRole.TOOL, "tool result");
         setup.chat(List.of(toolResponse), Map.of("key", "v1"), Map.of());
         assertEquals(2, connection.capturedMessages.size());
-        assertEquals("Task: v1", connection.capturedMessages.get(0).getContent());
-        assertEquals("tool result", connection.capturedMessages.get(1).getContent());
+        assertEquals("Task: v1", connection.capturedMessages.get(0).getText());
+        assertEquals("tool result", connection.capturedMessages.get(1).getText());
     }
 
     @Test
@@ -363,7 +363,7 @@ class BaseChatModelTest {
 
         // The 3-arg chat() ran (it is what produces "ok") and the overload added nothing
         // to modelParams that could travel on to a provider SDK request.
-        assertEquals("ok", response.getContent());
+        assertEquals("ok", response.getText());
         assertEquals(Map.of("temperature", 0.5), connection.capturedModelParams);
     }
 
@@ -530,6 +530,6 @@ class BaseChatModelTest {
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertTrue(response.getContent().length() > 0);
+        assertTrue(response.getText().length() > 0);
     }
 }

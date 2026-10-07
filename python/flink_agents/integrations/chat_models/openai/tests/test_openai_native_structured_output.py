@@ -112,7 +112,7 @@ def test_native_applied_for_basemodel_capable_model() -> None:
     """response_format json_schema strict applied for a BaseModel on a capable model."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-4o",
         output_schema=OutputSchema(output_schema=Person),
     )
@@ -126,7 +126,7 @@ def test_native_not_applied_for_incapable_model() -> None:
     """Native NOT applied for a BaseModel on an incapable model (prompt fallback)."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-3.5-turbo",
         output_schema=OutputSchema(output_schema=Person),
     )
@@ -141,7 +141,7 @@ def test_native_not_applied_for_pre_cutoff_snapshot() -> None:
     """
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-4o-2024-05-13",
         output_schema=OutputSchema(output_schema=Person),
     )
@@ -152,7 +152,7 @@ def test_native_not_applied_when_schema_none() -> None:
     """Native NOT applied when no output schema is supplied."""
     conn = _connection()
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-4o",
         output_schema=None,
     )
@@ -164,7 +164,7 @@ def test_native_not_applied_for_row_type_info() -> None:
     conn = _connection()
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-4o",
         output_schema=OutputSchema(output_schema=row_type),
     )
@@ -176,7 +176,7 @@ def test_native_applied_even_when_tools_bound() -> None:
     conn = _connection()
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(MessageRole.USER, "hi")],
         tools=[tool],
         model="gpt-4o",
         output_schema=OutputSchema(output_schema=Person),
@@ -251,7 +251,7 @@ def test_query_reports_incapable_models_feasible(model: str | None) -> None:
 
 def _chat_with_schema(conn: OpenAIChatModelConnection, schema: Any) -> None:
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         model="gpt-4o",
         output_schema=OutputSchema(output_schema=schema),
     )
@@ -334,7 +334,7 @@ def test_query_judges_the_model_the_request_judges(
 
     conn.supports_native_structured_output(schema, [], model_kwargs)
     conn.chat(
-        [ChatMessage(role=MessageRole.USER, content="hi")],
+        [ChatMessage.of(role=MessageRole.USER, content="hi")],
         output_schema=schema,
         **model_kwargs,
     )
@@ -366,7 +366,7 @@ def test_query_agrees_with_the_native_branch() -> None:
             )
 
             conn.chat(
-                [ChatMessage(role=MessageRole.USER, content="hi")],
+                [ChatMessage.of(role=MessageRole.USER, content="hi")],
                 tools=tools,
                 output_schema=schema,
                 **model_kwargs,

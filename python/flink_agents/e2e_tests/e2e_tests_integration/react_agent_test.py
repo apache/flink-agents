@@ -32,7 +32,6 @@ from flink_agents.api.agents.react_agent import (
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
-    ErrorHandlingStrategy,
 )
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
@@ -95,10 +94,6 @@ def test_react_agent_on_remote_runner(
         env=stream_env, t_env=t_env
     )
 
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
-    )
-
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
     log_dir = tmp_path / "event_logs"
@@ -121,11 +116,11 @@ def test_react_agent_on_remote_runner(
     # prepare prompt
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage(
-                role=MessageRole.SYSTEM,
-                content='An example of output is {"result": 30.32}.',
+            ChatMessage.of(
+                MessageRole.SYSTEM,
+                'An example of output is {"result": 30.32}.',
             ),
-            ChatMessage(role=MessageRole.USER, content="What is ({a} + {b}) * {c}"),
+            ChatMessage.of(MessageRole.USER, "What is ({a} + {b}) * {c}"),
         ],
     )
 
@@ -219,10 +214,6 @@ def test_react_agent_no_output_schema_on_remote_runner(
         env=stream_env, t_env=t_env
     )
 
-    env.get_config().set(
-        AgentExecutionOptions.ERROR_HANDLING_STRATEGY, ErrorHandlingStrategy.RETRY
-    )
-
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
     log_dir = tmp_path / "event_logs"
@@ -245,7 +236,7 @@ def test_react_agent_no_output_schema_on_remote_runner(
     # prepare prompt
     prompt = Prompt.from_messages(
         messages=[
-            ChatMessage(role=MessageRole.USER, content="What is ({a} + {b}) * {c}"),
+            ChatMessage.of(MessageRole.USER, "What is ({a} + {b}) * {c}"),
         ],
     )
 

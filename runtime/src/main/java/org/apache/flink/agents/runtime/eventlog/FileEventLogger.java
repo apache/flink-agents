@@ -88,7 +88,10 @@ public class FileEventLogger implements EventLogger {
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
 
-    private static final ObjectMapper MAPPER = new ObjectMapper();
+    // Event-Log-only mapper: chat messages are logged through their sanitized projection
+    // (media metadata instead of payload bytes) at every log level.
+    private static final ObjectMapper MAPPER =
+            new ObjectMapper().registerModule(ChatMessageEventLogSerializer.module());
 
     private final EventLoggerConfig config;
     private boolean prettyPrint;

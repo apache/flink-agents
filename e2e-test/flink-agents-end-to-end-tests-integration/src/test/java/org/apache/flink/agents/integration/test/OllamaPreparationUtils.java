@@ -27,6 +27,15 @@ import java.util.concurrent.TimeUnit;
 public class OllamaPreparationUtils {
     private static final Logger LOG = LoggerFactory.getLogger(OllamaPreparationUtils.class);
 
+    /**
+     * Whether a non-blank {@code <PROVIDER>_API_KEY} is exported. An exported but blank key would
+     * fail in the connection constructor instead of skipping the provider.
+     */
+    public static boolean hasApiKey(String provider) {
+        String key = System.getenv(provider + "_API_KEY");
+        return key != null && !key.isBlank();
+    }
+
     public static boolean pullModel(String model) throws IOException {
         String path =
                 Objects.requireNonNull(

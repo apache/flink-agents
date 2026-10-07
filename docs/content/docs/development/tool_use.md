@@ -1,6 +1,6 @@
 ---
 title: Tool Use
-weight: 9
+weight: 10
 type: docs
 ---
 <!--
@@ -179,11 +179,49 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 - Use `AgentsExecutionEnvironment.add_resource` to register the tool to the execution environment
 - Reference the tool by its name in the `tools` list of the `ResourceDescriptor`
 
+### Argument Validation
+
+Function tools validate arguments before execution. Unknown fields, incorrect types,
+and violated constraints produce a failed tool response without running the function.
+Validation uses the complete function signature, including injected parameters.
+Numeric strings and booleans are not converted to numbers.
+
+Missing arguments use declared defaults. Explicit `null` does not select a default
+and is accepted only for nullable parameters. Framework values override model-supplied values for
+[injected parameters](#tool-parameter-injection). Missing or invalid framework values
+fail the call; model-supplied values are never used as a fallback.
+
+In Python, use type annotations and `Annotated[..., Field(...)]` for constraints:
+
+```python
+from typing import Annotated
+from pydantic import Field
+
+@tool
+def search(query: Annotated[str, Field(min_length=1)],
+           limit: Annotated[int, Field(ge=1, le=100)] = 10) -> str:
+    return query[:limit]
+```
+
+In Java, use `@ToolParam`. `defaultValue` is JSON: `"10"` for a number,
+`"null"` for null, and `"\"text\""` for a string. Set `nullable = true` to accept
+null; `required = false` needs a default or `nullable = true` (defaulting to null).
+
+```java
+@Tool(description = "Search documents")
+public static String search(
+        @ToolParam(name = "query", minLength = 1) String query,
+        @ToolParam(name = "limit", defaultValue = "10", minimum = "1", maximum = "100")
+                int limit) {
+    return query.substring(0, Math.min(query.length(), limit));
+}
+```
+
 ## Tool Parameter Injection
 
 Some tools need runtime data that should not be chosen by the model, such as a tenant id, account id, request trace id, or other framework-owned context. Mark those parameters as injected so they are hidden from the model-facing tool schema, and declare where the runtime should read each value.
 
-The model only sees and provides normal tool parameters. The injected parameters are merged into the tool call immediately before the built-in `tool_call_action` executes the tool.
+The model only sees and provides normal tool parameters. The built-in `tool_call_action` resolves injected values and overwrites any model-supplied values for the same parameters before calling the tool.
 
 {{< tabs "Inject Tool Parameters" >}}
 
@@ -284,7 +322,7 @@ Injected parameters are part of the tool execution contract, not the model contr
 
 - They are not included in the JSON schema sent to the model.
 - They are not written back to the original `ToolRequestEvent`.
-- If a model supplies an argument with the same name, the injected value wins during execution.
+- If a model supplies an argument with the same name, the framework-provided value takes precedence.
 
 ## Parallel tool-call batches
 

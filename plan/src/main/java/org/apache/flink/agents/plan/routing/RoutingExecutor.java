@@ -68,7 +68,8 @@ interface RoutingExecutor {
 
     /**
      * Executes the declared strategy for one request. An abstain decision resolves to the router's
-     * default model; a thrown exception follows the request's error-handling strategy.
+     * default model; an ordinary strategy failure produces a failed chat response. Runtime and
+     * cancellation failures propagate to the runner.
      */
     RoutingDecision route(RoutingStrategy strategy, RoutingContext context, RunnerContext ctx)
             throws Exception;

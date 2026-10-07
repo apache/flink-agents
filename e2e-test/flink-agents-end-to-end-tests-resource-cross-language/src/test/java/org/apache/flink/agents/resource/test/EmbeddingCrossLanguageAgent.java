@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.annotation.EmbeddingModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.embedding.model.BaseEmbeddingModelSetup;
 import org.apache.flink.agents.api.embedding.model.EmbeddingResult;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 
@@ -52,18 +53,15 @@ public class EmbeddingCrossLanguageAgent extends Agent {
 
     @EmbeddingModelConnection
     public static ResourceDescriptor embeddingConnection() {
-        return ResourceDescriptor.Builder.newBuilder(
-                        ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION)
-                .addInitialArgument(
-                        "pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
                 .build();
     }
 
     @EmbeddingModelSetup
     public static ResourceDescriptor embeddingModel() {
-        return ResourceDescriptor.Builder.newBuilder(
-                        ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "embeddingConnection")
                 .addInitialArgument("model", OLLAMA_MODEL)
                 .build();

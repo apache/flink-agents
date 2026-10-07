@@ -36,11 +36,14 @@ from flink_agents.api.function import (
     PythonFunction,
 )
 from flink_agents.api.prompts.prompt import Prompt
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
+from flink_agents.api.resource import (
+    JavaResourceDescriptor,
+    ResourceDescriptor,
+    ResourceType,
+)
 from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.tools.function_tool import FunctionTool
 from flink_agents.api.yaml.aliases import (
-    JAVA_WRAPPER_CLAZZ,
     resolve_clazz,
     resolve_event_type,
 )
@@ -134,15 +137,17 @@ def _build_descriptor(
 ) -> ResourceDescriptor:
     kwargs = dict(spec.model_extra or {})
     if spec.type == "java":
-        if resource_type not in JAVA_WRAPPER_CLAZZ:
-            msg = (
-                f"Resource {spec.name!r}: type='java' is not supported "
-                f"for {resource_type.value} (no Python-side Java wrapper)."
-            )
+        if resource_type not in {
+            ResourceType.CHAT_MODEL,
+            ResourceType.CHAT_MODEL_CONNECTION,
+            ResourceType.EMBEDDING_MODEL,
+            ResourceType.EMBEDDING_MODEL_CONNECTION,
+            ResourceType.VECTOR_STORE,
+        }:
+            msg = f"type='java' is not supported for {resource_type.value}"
             raise ValueError(msg)
         java_fqn = resolve_clazz(spec.clazz, resource_type, "java")
-        wrapper_clazz = JAVA_WRAPPER_CLAZZ[resource_type]
-        return ResourceDescriptor(clazz=wrapper_clazz, java_clazz=java_fqn, **kwargs)
+        return JavaResourceDescriptor(clazz=java_fqn, **kwargs)
     python_fqn = resolve_clazz(spec.clazz, resource_type, "python")
     return ResourceDescriptor(clazz=python_fqn, **kwargs)
 
@@ -169,9 +174,7 @@ def _resolve_action_function(action: ActionSpec) -> Function:
 
 def _add_action_to_agent(agent: Agent, action: ActionSpec) -> None:
     func = _resolve_action_function(action)
-    trigger_conditions = [
-        resolve_event_type(e) for e in action.trigger_conditions
-    ]
+    trigger_conditions = [resolve_event_type(e) for e in action.trigger_conditions]
     config = action.config or {}
     agent.add_action(action.name, trigger_conditions, func, **config)
 
@@ -196,7 +199,7 @@ def _build_prompt(spec: PromptSpec) -> Prompt:
     if spec.text is not None:
         return Prompt.from_text(spec.text)
     messages = [
-        ChatMessage(role=MessageRole(m.role.value), content=m.content)
+        ChatMessage.of(MessageRole(m.role.value), m.content)
         for m in (spec.messages or [])
     ]
     return Prompt.from_messages(messages)
@@ -391,8 +394,8 @@ def load_yaml(
         paths = [paths]
 
     for path in paths:
-        agents, shared_resources, shared_actions, agent_specs, _ = (
-            _build_in_file_state(path)
+        agents, shared_resources, shared_actions, agent_specs, _ = _build_in_file_state(
+            path
         )
 
         # Cross-environment duplicate checks. In-file duplicates were

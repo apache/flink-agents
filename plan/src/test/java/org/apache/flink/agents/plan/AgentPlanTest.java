@@ -28,14 +28,11 @@ import org.apache.flink.agents.api.annotation.MCPServer;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.function.PythonFunction;
-import org.apache.flink.agents.api.resource.Resource;
-import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.yaml.YamlLoader;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
@@ -45,7 +42,6 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import pemja.core.object.PyObject;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -110,27 +106,6 @@ public class AgentPlanTest {
         }
     }
 
-    public static class TestPythonResource extends Resource implements PythonResourceWrapper {
-
-        public TestPythonResource(
-                PythonResourceAdapter adapter,
-                PyObject chatModel,
-                ResourceDescriptor descriptor,
-                ResourceContext resourceContext) {
-            super(descriptor, resourceContext);
-        }
-
-        @Override
-        public ResourceType getResourceType() {
-            return ResourceType.CHAT_MODEL;
-        }
-
-        @Override
-        public Object getPythonResource() {
-            return null;
-        }
-    }
-
     /** Test agent class with annotated methods. */
     public static class TestAgent extends Agent {
 
@@ -164,9 +139,7 @@ public class AgentPlanTest {
 
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
-            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
-                    .build();
+            return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
@@ -174,15 +147,6 @@ public class AgentPlanTest {
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
             InputEvent inputEvent = InputEvent.fromEvent(event);
-        }
-    }
-
-    /** Test agent class with illegal python resource. */
-    public static class TestAgentWithIllegalPythonResource extends Agent {
-        @ChatModelSetup
-        public static ResourceDescriptor reviewAnalysisModel() {
-            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .build();
         }
     }
 
@@ -294,27 +258,21 @@ public class AgentPlanTest {
         }
     }
 
-    /** Cross-language action via {@code @Action(target = @PythonFunction(...))}. */
+    /** Cross-language action via an {@code @Action}-annotated descriptor field. */
     public static class AgentWithCrossLanguageAction extends Agent {
-        @org.apache.flink.agents.api.annotation.Action(
-                value = EventType.InputEvent,
-                target =
-                        @org.apache.flink.agents.api.annotation.PythonFunction(
-                                module = "my_pkg.handlers",
-                                qualname = "handle_input"))
-        public static void handle(Event event, RunnerContext ctx) {
-            throw new UnsupportedOperationException("cross-language stub");
-        }
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        private static final PythonFunction handle =
+                PythonFunction.of("my_pkg.handlers", "handle_input");
     }
 
     @Test
-    public void testActionWithPythonTargetCompilesToPythonFunctionExec() throws Exception {
+    public void testFieldDescriptorCompilesToPythonFunctionExec() throws Exception {
         AgentPlan plan = new AgentPlan(new AgentWithCrossLanguageAction());
 
         Action action = plan.getActions().get("handle");
         assertThat(action).isNotNull();
         assertThat(action.getExec())
-                .as("non-empty target.module() must compile to a plan PythonFunction exec")
+                .as("a PythonFunction descriptor field must compile to a plan PythonFunction exec")
                 .isInstanceOf(org.apache.flink.agents.plan.PythonFunction.class);
 
         org.apache.flink.agents.plan.PythonFunction exec =
@@ -324,7 +282,7 @@ public class AgentPlanTest {
         assertThat(action.getTriggerConditions()).containsExactly(InputEvent.EVENT_TYPE);
     }
 
-    /** Plain {@code @Action} (no {@code target}) compiles to a native Java exec. */
+    /** Plain {@code @Action} on a method compiles to a native Java exec. */
     public static class AgentWithNativeJavaAction extends Agent {
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public static void handle(Event event, RunnerContext ctx) {
@@ -333,52 +291,89 @@ public class AgentPlanTest {
     }
 
     @Test
-    public void testActionWithEmptyTargetCompilesToJavaFunctionExec() throws Exception {
+    public void testNativeMethodActionCompilesToJavaFunctionExec() throws Exception {
         AgentPlan plan = new AgentPlan(new AgentWithNativeJavaAction());
 
         Action action = plan.getActions().get("handle");
         assertThat(action).isNotNull();
         assertThat(action.getExec())
-                .as("empty target.module() must compile to a plan JavaFunction exec")
+                .as("an @Action method must compile to a plan JavaFunction exec")
                 .isInstanceOf(JavaFunction.class);
     }
 
-    /** Partially-set target (module without qualname) — must be rejected at compile. */
-    public static class AgentWithHalfSetPythonTargetMissingQualname extends Agent {
+    /** {@code @Action(name = ...)} overrides the default member name. */
+    public static class AgentWithRenamedFieldAction extends Agent {
         @org.apache.flink.agents.api.annotation.Action(
                 value = EventType.InputEvent,
-                target = @org.apache.flink.agents.api.annotation.PythonFunction(module = "pkg"))
+                name = "renamed")
+        private static final PythonFunction handle =
+                PythonFunction.of("my_pkg.handlers", "handle_input");
+    }
+
+    @Test
+    public void testNameOverrideReplacesMemberName() throws Exception {
+        AgentPlan plan = new AgentPlan(new AgentWithRenamedFieldAction());
+        assertThat(plan.getActions()).containsKey("renamed");
+        assertThat(plan.getActions()).doesNotContainKey("handle");
+    }
+
+    /** {@code @Action(name = ...)} on a method overrides the default method name. */
+    public static class AgentWithRenamedMethodAction extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(
+                value = EventType.InputEvent,
+                name = "renamedMethod")
         public static void handle(Event event, RunnerContext ctx) {
-            throw new UnsupportedOperationException("cross-language stub");
+            // intentionally empty
         }
     }
 
     @Test
-    public void testActionWithPythonTargetMissingQualnameIsRejected() {
-        assertThatThrownBy(() -> new AgentPlan(new AgentWithHalfSetPythonTargetMissingQualname()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("handle")
-                .hasMessageContaining("qualname");
+    public void testNameOverrideReplacesMethodName() throws Exception {
+        AgentPlan plan = new AgentPlan(new AgentWithRenamedMethodAction());
+        assertThat(plan.getActions()).containsKey("renamedMethod");
+        assertThat(plan.getActions()).doesNotContainKey("handle");
     }
 
-    /** Partially-set target (qualname without module) — must be rejected at compile. */
-    public static class AgentWithHalfSetPythonTargetMissingModule extends Agent {
-        @org.apache.flink.agents.api.annotation.Action(
-                value = EventType.InputEvent,
-                target =
-                        @org.apache.flink.agents.api.annotation.PythonFunction(
-                                qualname = "handle_input"))
-        public static void handle(Event event, RunnerContext ctx) {
-            throw new UnsupportedOperationException("cross-language stub");
-        }
+    /** {@code @Action} on a non-{@code static final} field is rejected at compile. */
+    public static class AgentWithNonFinalActionField extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        private PythonFunction handle = PythonFunction.of("my_pkg.handlers", "handle_input");
     }
 
     @Test
-    public void testActionWithPythonTargetMissingModuleIsRejected() {
-        assertThatThrownBy(() -> new AgentPlan(new AgentWithHalfSetPythonTargetMissingModule()))
+    public void testNonStaticFinalActionFieldIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithNonFinalActionField()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("handle")
-                .hasMessageContaining("module");
+                .hasMessageContaining("static final");
+    }
+
+    /** {@code @Action} on a field holding a non-descriptor value is rejected at compile. */
+    public static class AgentWithNonDescriptorActionField extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        private static final String handle = "not a descriptor";
+    }
+
+    @Test
+    public void testNonDescriptorActionFieldIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithNonDescriptorActionField()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("handle")
+                .hasMessageContaining("Function descriptor");
+    }
+
+    /** {@code @Action} on a field holding a null descriptor is rejected at compile. */
+    public static class AgentWithNullActionField extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        private static final PythonFunction handle = null;
+    }
+
+    @Test
+    public void testNullActionFieldIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithNullActionField()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("handle")
+                .hasMessageContaining("non-null");
     }
 
     /**
@@ -400,6 +395,47 @@ public class AgentPlanTest {
                 .hasMessageContaining("sharedAction")
                 .hasMessageContaining("BaseAgentWithInheritedAction")
                 .hasMessageContaining("Inherited @Action");
+    }
+
+    /** An {@code @Action} descriptor field on a parent class is rejected too. */
+    public abstract static class BaseAgentWithInheritedActionField extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        protected static final PythonFunction sharedAction =
+                PythonFunction.of("my_pkg.handlers", "handle_input");
+    }
+
+    public static class ConcreteAgentInheritingActionField
+            extends BaseAgentWithInheritedActionField {}
+
+    @Test
+    public void testActionFieldInheritedFromParentAgentClassIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new ConcreteAgentInheritingActionField()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("sharedAction")
+                .hasMessageContaining("BaseAgentWithInheritedActionField")
+                .hasMessageContaining("Inherited @Action");
+    }
+
+    /** Two members resolving to the same action name are rejected at compile. */
+    public static class AgentWithDuplicateActionName extends Agent {
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handle(Event event, RunnerContext ctx) {
+            // intentionally empty
+        }
+
+        @org.apache.flink.agents.api.annotation.Action(
+                value = EventType.OutputEvent,
+                name = "handle")
+        private static final PythonFunction other =
+                PythonFunction.of("my_pkg.handlers", "handle_input");
+    }
+
+    @Test
+    public void testDuplicateActionNameIsRejected() {
+        assertThatThrownBy(() -> new AgentPlan(new AgentWithDuplicateActionName()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Duplicate action name")
+                .hasMessageContaining("handle");
     }
 
     @Test
@@ -520,9 +556,7 @@ public class AgentPlanTest {
     public void testAddResourceRegistersEmbeddingModelProvider() throws Exception {
         Agent agent = new Agent();
         ResourceDescriptor descriptor =
-                ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                        .addInitialArgument("pythonClazz", "test.module.EmbeddingClazz")
-                        .build();
+                PythonResourceDescriptor.Builder.newBuilder("test.module.EmbeddingClazz").build();
         agent.addResource("myEmbedding", ResourceType.EMBEDDING_MODEL, descriptor);
 
         AgentPlan plan = new AgentPlan(agent);
@@ -533,20 +567,17 @@ public class AgentPlanTest {
         assertThat(providers).containsKey("myEmbedding");
 
         ResourceProvider provider = providers.get("myEmbedding");
-        // TestPythonResource implements PythonResourceWrapper, so a Python provider is expected.
+        // Explicit Python language selects the provider without loading the target class.
         assertThat(provider).isInstanceOf(PythonResourceProvider.class);
         assertThat(provider.getName()).isEqualTo("myEmbedding");
         assertThat(provider.getType()).isEqualTo(ResourceType.EMBEDDING_MODEL);
     }
 
     @Test
-    public void testAddResourceDescriptorWithPythonClazzUsesPythonResourceProvider()
-            throws Exception {
+    public void testAddPythonResourceDescriptorUsesPythonResourceProvider() throws Exception {
         Agent agent = new Agent();
         ResourceDescriptor descriptor =
-                ResourceDescriptor.Builder.newBuilder(String.class.getName())
-                        .addInitialArgument("pythonClazz", "test.module.EmbeddingClazz")
-                        .build();
+                PythonResourceDescriptor.Builder.newBuilder("test.module.EmbeddingClazz").build();
         agent.addResource("myEmbedding", ResourceType.EMBEDDING_MODEL, descriptor);
 
         AgentPlan plan = new AgentPlan(agent);
@@ -555,7 +586,7 @@ public class AgentPlanTest {
                 plan.getResourceProviders().get(ResourceType.EMBEDDING_MODEL).get("myEmbedding");
         assertThat(provider).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
-                .isEqualTo(String.class.getName());
+                .isEqualTo("EmbeddingClazz");
     }
 
     @Test
@@ -592,14 +623,12 @@ public class AgentPlanTest {
     public static class TestAgentWithDescriptorPythonResource extends Agent {
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModelByDescriptor() {
-            return ResourceDescriptor.Builder.newBuilder(String.class.getName())
-                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
-                    .build();
+            return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
     }
 
     @Test
-    public void testDescriptorWithPythonClazzUsesPythonResourceProvider() throws Exception {
+    public void testPythonResourceDescriptorUsesPythonResourceProvider() throws Exception {
         AgentPlan plan = new AgentPlan(new TestAgentWithDescriptorPythonResource());
 
         ResourceProvider provider =
@@ -608,7 +637,7 @@ public class AgentPlanTest {
                         .get("pythonChatModelByDescriptor");
         assertThat(provider).isInstanceOf(PythonResourceProvider.class);
         assertThat(((PythonResourceProvider) provider).getDescriptor().getClazz())
-                .isEqualTo(String.class.getName());
+                .isEqualTo("TestClazz");
     }
 
     /** Test agent with explicit Python MCP server declaration. */

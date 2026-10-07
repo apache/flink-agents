@@ -41,6 +41,21 @@ public final class ExecutionReporters {
 
     private ExecutionReporters() {}
 
+    public static void created(RunnerContext ctx, String entityType, String entityName) {
+        created(ctx, entityType, entityName, EMPTY_METADATA);
+    }
+
+    public static void created(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata) {
+        report(
+                ctx,
+                reporter -> reporter.reportExecutionCreated(entityType, entityName, entityMetadata),
+                null);
+    }
+
     public static void started(RunnerContext ctx, String entityType, String entityName) {
         started(ctx, entityType, entityName, EMPTY_METADATA);
     }
@@ -53,6 +68,20 @@ public final class ExecutionReporters {
         report(
                 ctx,
                 reporter -> reporter.reportExecutionStarted(entityType, entityName, entityMetadata),
+                null);
+    }
+
+    public static void startedAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionStartedAt(
+                                entityType, entityName, entityMetadata, timestamp),
                 null);
     }
 
@@ -69,6 +98,20 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionSucceeded(entityType, entityName, entityMetadata),
+                null);
+    }
+
+    public static void succeededAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionSucceededAt(
+                                entityType, entityName, entityMetadata, timestamp),
                 null);
     }
 
@@ -93,6 +136,27 @@ public final class ExecutionReporters {
                 reporter ->
                         reporter.reportExecutionFailed(
                                 entityType, entityName, entityMetadata, error, problemCategory),
+                error);
+    }
+
+    public static void failedAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            Throwable error,
+            @Nullable String problemCategory,
+            String timestamp) {
+        report(
+                ctx,
+                reporter ->
+                        reporter.reportExecutionFailedAt(
+                                entityType,
+                                entityName,
+                                entityMetadata,
+                                error,
+                                problemCategory,
+                                timestamp),
                 error);
     }
 

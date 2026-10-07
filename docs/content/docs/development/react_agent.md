@@ -189,19 +189,15 @@ system_prompt_str = """
 # Prompt for review analysis react agent.
 my_prompt = Prompt.from_messages(
     messages=[
-        ChatMessage(
-            role=MessageRole.SYSTEM,
-            content=system_prompt_str,
-        ),
+        ChatMessage.system(system_prompt_str),
         # For react agent, if the input element is not primitive types,
         # framework will deserialize input element to dict and fill the prompt.
         # Note, the input element should be primitive types, BaseModel or Row.
-        ChatMessage(
-            role=MessageRole.USER,
-            content="""
+        ChatMessage.user(
+            """
             "id": {id},
             "review": {review}
-            """,
+            """
         ),
     ],
 ) 
@@ -244,10 +240,7 @@ If the input element is primitive types, like `int`, `str` and so on, the second
 
 {{< tab "Python" >}}
 ```python
-ChatMessage(
-    role=MessageRole.USER,
-    content="{input}"
-)
+ChatMessage.user("{input}")
 ```
 {{< /tab >}}
 

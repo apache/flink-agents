@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.lifecycle;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 
 import java.util.Map;
@@ -52,8 +53,13 @@ public interface ComponentExecutionListener {
      *     org.apache.flink.agents.api.trace.ExecutionReporter.EntityTypes}.
      * @param entityName the component entity name.
      * @param entityMetadata the entity metadata reported with the execution.
+     * @param eventContext the occurrence context of the lifecycle event.
      * @param event the lifecycle event, one of those produced by {@link ExecutionLifecycleEvents}.
      */
     void onComponentExecution(
-            String entityType, String entityName, Map<String, Object> entityMetadata, Event event);
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            EventContext eventContext,
+            Event event);
 }
