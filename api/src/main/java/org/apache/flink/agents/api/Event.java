@@ -34,8 +34,12 @@ import javax.annotation.Nullable;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.UUID;
 import java.util.function.BiFunction;
 
@@ -250,6 +254,306 @@ public class Event {
         reconstructedEvent.upstreamEventId = source.upstreamEventId;
         reconstructedEvent.upstreamActionName = source.upstreamActionName;
         return reconstructed;
+    }
+
+    /**
+     * Enforces the shape half of a built-in attribute schema: every name in {@code required} must
+     * be present, and no name outside {@code known} is allowed. Called by {@link
+     * #validateAttributeSchema} before the per-attribute type checks.
+     *
+     * @param type the built-in event type, used in error messages
+     * @param attributes the raw attributes to validate
+     * @param required attribute names that must be present
+     * @param known every attribute name the schema allows; any other name is rejected
+     * @throws IllegalArgumentException if a required attribute is absent or an unknown attribute is
+     *     present
+     */
+    private static void validateBuiltInAttributes(
+            String type, Map<String, Object> attributes, Set<String> required, Set<String> known) {
+        for (String name : required) {
+            if (!attributes.containsKey(name)) {
+                throw new IllegalArgumentException(
+                        "Missing required attribute '"
+                                + name
+                                + "' for built-in event type '"
+                                + type
+                                + "'.");
+            }
+        }
+        for (String key : attributes.keySet()) {
+            if (!known.contains(key)) {
+                throw new IllegalArgumentException(
+                        "Unknown attribute '"
+                                + key
+                                + "' for built-in event type '"
+                                + type
+                                + "'; allowed attributes are "
+                                + new TreeSet<>(known)
+                                + ".");
+            }
+        }
+    }
+
+    /**
+     * Returns a required built-in event attribute, asserting its runtime type.
+     *
+     * @throws IllegalArgumentException if the attribute is missing or not an instance of {@code
+     *     expected}
+     */
+    private static <T> T requireBuiltInAttribute(
+            String type, Map<String, Object> attributes, String name, Class<T> expected) {
+        Object value = attributes.get(name);
+        if (!expected.isInstance(value)) {
+            throw new IllegalArgumentException(
+                    builtInAttributeTypeMessage(type, name, expected, value));
+        }
+        return expected.cast(value);
+    }
+
+    /**
+     * Returns a required built-in event list attribute, asserting that every element is an instance
+     * of one of {@code allowedElementTypes}. A nested typed value crosses the JSON boundary as
+     * either its concrete type or its serialized {@link Map}, so callers typically allow both.
+     *
+     * @param elementDescription the element phrasing used in the rejection message, e.g. {@code "a
+     *     ChatMessage or its serialized map"}
+     * @throws IllegalArgumentException if the attribute is missing, is not a list, or holds an
+     *     element of an unexpected type
+     */
+    private static List<?> requireBuiltInListAttribute(
+            String type,
+            Map<String, Object> attributes,
+            String name,
+            String elementDescription,
+            Class<?>... allowedElementTypes) {
+        List<?> values = requireBuiltInAttribute(type, attributes, name, List.class);
+        for (Object element : values) {
+            boolean allowed = false;
+            for (Class<?> allowedType : allowedElementTypes) {
+                allowed |= allowedType.isInstance(element);
+            }
+            if (!allowed) {
+                throw new IllegalArgumentException(
+                        "Each '"
+                                + name
+                                + "' element of built-in event type '"
+                                + type
+                                + "' must be "
+                                + elementDescription
+                                + ", but was "
+                                + (element == null ? "null" : element.getClass().getSimpleName())
+                                + ".");
+            }
+        }
+        return values;
+    }
+
+    /**
+     * Asserts the runtime type of an optional built-in event attribute when it is present
+     * (non-null).
+     *
+     * @throws IllegalArgumentException if the attribute is present but not an instance of {@code
+     *     expected}
+     */
+    private static void checkBuiltInAttributeType(
+            String type, Map<String, Object> attributes, String name, Class<?> expected) {
+        Object value = attributes.get(name);
+        if (value != null && !expected.isInstance(value)) {
+            throw new IllegalArgumentException(
+                    builtInAttributeTypeMessage(type, name, expected, value));
+        }
+    }
+
+    /**
+     * Asserts a required built-in event attribute is a {@link UUID} or a {@link UUID} string, the
+     * two forms it takes natively versus after JSON deserialization.
+     *
+     * @throws IllegalArgumentException if the attribute is missing or not a UUID / UUID string
+     */
+    private static void requireUuidBuiltInAttribute(
+            String type, Map<String, Object> attributes, String name) {
+        Object value = attributes.get(name);
+        if (value instanceof UUID) {
+            return;
+        }
+        if (value instanceof String) {
+            try {
+                UUID.fromString((String) value);
+                return;
+            } catch (IllegalArgumentException ignored) {
+                // Fall through to the shared rejection below.
+            }
+        }
+        throw new IllegalArgumentException(
+                "Attribute '"
+                        + name
+                        + "' of built-in event type '"
+                        + type
+                        + "' must be a UUID or UUID string, but was "
+                        + (value == null ? "null" : value.getClass().getSimpleName())
+                        + ".");
+    }
+
+    private static String builtInAttributeTypeMessage(
+            String type, String name, Class<?> expected, Object value) {
+        return "Attribute '"
+                + name
+                + "' of built-in event type '"
+                + type
+                + "' must be a "
+                + expected.getSimpleName()
+                + ", but was "
+                + (value == null ? "null" : value.getClass().getSimpleName())
+                + ".";
+    }
+
+    /**
+     * Validates a built-in event's attributes against its declared {@link BuiltInAttribute} schema
+     * in a single pass: every required attribute must be present, no attribute outside the schema
+     * is allowed, and each present attribute must match its declared shape. Each built-in event's
+     * {@code fromEvent} reconstruction method calls this at the JSON / cross-language boundary
+     * ({@link #fromJson(String)} -&gt; {@link BuiltInEvents#restore(Event)}), so a malformed
+     * built-in event fails clearly instead of being reconstructed with silently dropped or mistyped
+     * fields.
+     *
+     * <p>It is deliberately NOT called from the {@code @JsonCreator} constructors: checkpoint
+     * recovery ({@code ActionStateSerde}) deserializes concrete events directly through those
+     * constructors and must keep tolerating framework-internal attributes that are not part of the
+     * cross-language schema.
+     *
+     * <p>This is the declarative counterpart to Flink connector factories' {@code
+     * requiredOptions()} / {@code optionalOptions()} plus {@code helper.validate()}: the schema is
+     * stated once as data and enforcement is uniform. It delegates to the low-level helpers above,
+     * so the rejection messages and the {@link IllegalArgumentException} type are unchanged.
+     *
+     * @throws IllegalArgumentException if the attributes violate the attribute schema
+     */
+    protected static void validateAttributeSchema(
+            String type, Map<String, Object> attributes, List<BuiltInAttribute> schema) {
+        Set<String> required = new LinkedHashSet<>();
+        Set<String> known = new LinkedHashSet<>();
+        for (BuiltInAttribute attribute : schema) {
+            known.add(attribute.name);
+            if (attribute.required) {
+                required.add(attribute.name);
+            }
+        }
+        validateBuiltInAttributes(type, attributes, required, known);
+        for (BuiltInAttribute attribute : schema) {
+            String name = attribute.name;
+            if (!attribute.required && !attributes.containsKey(name)) {
+                continue;
+            }
+            Class<?>[] types = attribute.types;
+            switch (attribute.kind) {
+                case SCALAR:
+                    if (types.length == 0) {
+                        break;
+                    }
+                    if (attribute.required) {
+                        requireBuiltInAttribute(type, attributes, name, types[0]);
+                    } else {
+                        checkBuiltInAttributeType(type, attributes, name, types[0]);
+                    }
+                    break;
+                case LIST:
+                    requireBuiltInListAttribute(
+                            type, attributes, name, attribute.elementDescription, types);
+                    break;
+                case UUID:
+                    requireUuidBuiltInAttribute(type, attributes, name);
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Declares one attribute of a built-in event's fixed cross-language attribute schema, in the
+     * declarative style of Flink connector factories' {@code requiredOptions()} / {@code
+     * optionalOptions()}. A built-in event states its attributes once as an ordered list of these,
+     * and {@link #validateAttributeSchema} enforces presence, unknown-key rejection, and
+     * per-attribute shape in a single pass at the JSON boundary.
+     *
+     * <p>Instances are created through the static factories. The fields are private because only
+     * the enclosing {@link Event} reads them back while validating; callers outside this class only
+     * ever assemble an attribute schema and hand it to their {@code fromEvent} reconstruction
+     * method.
+     */
+    public static final class BuiltInAttribute {
+
+        /** The shape a built-in attribute value takes at the JSON boundary. */
+        private enum Kind {
+            /** A single typed value, or any value when no type is declared. */
+            SCALAR,
+            /** A list whose elements must each match one of the declared element types. */
+            LIST,
+            /** A UUID, accepted natively or as its serialized UUID string. */
+            UUID
+        }
+
+        private final String name;
+        private final boolean required;
+        private final Kind kind;
+        private final Class<?>[] types;
+        private final String elementDescription;
+
+        private BuiltInAttribute(
+                String name,
+                boolean required,
+                Kind kind,
+                Class<?>[] types,
+                String elementDescription) {
+            this.name = name;
+            this.required = required;
+            this.kind = kind;
+            this.types = types;
+            this.elementDescription = elementDescription;
+        }
+
+        /** A required scalar attribute that must be an instance of {@code type}. */
+        public static BuiltInAttribute required(String name, Class<?> type) {
+            return new BuiltInAttribute(name, true, Kind.SCALAR, new Class<?>[] {type}, null);
+        }
+
+        /** An optional scalar attribute that, when present, must be an instance of {@code type}. */
+        public static BuiltInAttribute optional(String name, Class<?> type) {
+            return new BuiltInAttribute(name, false, Kind.SCALAR, new Class<?>[] {type}, null);
+        }
+
+        /**
+         * An optional attribute that is only checked for being a known key, accepting any type.
+         * Used for values such as {@code output_schema}, whose shape is interpreted by the consumer
+         * rather than asserted at the boundary.
+         */
+        public static BuiltInAttribute optionalUntyped(String name) {
+            return new BuiltInAttribute(name, false, Kind.SCALAR, new Class<?>[0], null);
+        }
+
+        /**
+         * A required attribute that is only checked for presence and being a known key, accepting
+         * any type. Used for values such as {@code InputEvent.input}, whose shape is interpreted by
+         * the consumer rather than asserted at the boundary.
+         */
+        public static BuiltInAttribute requiredUntyped(String name) {
+            return new BuiltInAttribute(name, true, Kind.SCALAR, new Class<?>[0], null);
+        }
+
+        /**
+         * A required list attribute whose elements must each be an instance of one of {@code
+         * elementTypes}.
+         *
+         * @param elementDescription the element phrasing used in the rejection message, e.g. {@code
+         *     "a ChatMessage or its serialized map"}
+         */
+        public static BuiltInAttribute requiredList(
+                String name, String elementDescription, Class<?>... elementTypes) {
+            return new BuiltInAttribute(name, true, Kind.LIST, elementTypes, elementDescription);
+        }
+
+        /** A required UUID attribute, accepted as a {@link java.util.UUID} or a UUID string. */
+        public static BuiltInAttribute requiredUuid(String name) {
+            return new BuiltInAttribute(name, true, Kind.UUID, new Class<?>[0], null);
+        }
     }
 
     /**

@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.Event;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.BiFunction;
@@ -57,6 +58,23 @@ public abstract class MemoryEvent extends Event {
                     LongTermUpdateEvent.EVENT_TYPE, LongTermUpdateEvent::new,
                     LongTermGetEvent.EVENT_TYPE, LongTermGetEvent::new,
                     LongTermSearchEvent.EVENT_TYPE, LongTermSearchEvent::new);
+
+    /**
+     * The fixed cross-language schema shared by the memory observation events: {@code key} and
+     * {@code value} are required, and their string / map types are enforced by {@link
+     * #normalizeAttributes(Map)} in the subclass constructor invoked below.
+     */
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUntyped("key"),
+                    BuiltInAttribute.requiredUntyped("value"));
+
+    /** {@link LongTermUpdateEvent} additionally allows the optional {@code cleared_sets}. */
+    private static final List<BuiltInAttribute> LONG_TERM_UPDATE_ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUntyped("key"),
+                    BuiltInAttribute.requiredUntyped("value"),
+                    BuiltInAttribute.optionalUntyped("cleared_sets"));
 
     /** Returns true iff {@code type} is one of the seven memory operation event types. */
     public static boolean isMemoryType(String type) {
@@ -112,12 +130,28 @@ public abstract class MemoryEvent extends Event {
         return normalizeAttributes(attributes);
     }
 
-    /** Converts a generic {@link Event} carrying a memory type into its typed subclass view. */
+    /**
+     * Converts a generic {@link Event} carrying a memory type into its typed subclass view.
+     *
+     * <p>Enforces the fixed cross-language schema shared by the memory observation events: {@code
+     * key} and {@code value} are required, and the only other attribute any subtype allows is
+     * {@code cleared_sets} on {@link LongTermUpdateEvent}. The string / map types of {@code key}
+     * and {@code value} (and the {@code cleared_sets} list-of-strings type) are enforced by {@link
+     * #normalizeAttributes(Map)} in the subclass constructor invoked below.
+     *
+     * @throws IllegalArgumentException if the type is not a memory type or the event violates the
+     *     schema
+     */
     public static MemoryEvent fromEvent(Event event) {
         BiFunction<UUID, Map<String, Object>, MemoryEvent> factory = FACTORIES.get(event.getType());
         if (factory == null) {
             throw new IllegalArgumentException("Not a memory event type: " + event.getType());
         }
+        List<BuiltInAttribute> schema =
+                LongTermUpdateEvent.EVENT_TYPE.equals(event.getType())
+                        ? LONG_TERM_UPDATE_ATTRIBUTE_SCHEMA
+                        : ATTRIBUTE_SCHEMA;
+        validateAttributeSchema(event.getType(), event.getAttributes(), schema);
         return reconstructFrom(event, factory);
     }
 

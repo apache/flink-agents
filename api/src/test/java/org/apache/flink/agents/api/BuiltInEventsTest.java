@@ -25,10 +25,21 @@ import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
+import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.LongTermGetEvent;
+import org.apache.flink.agents.api.event.LongTermSearchEvent;
+import org.apache.flink.agents.api.event.LongTermUpdateEvent;
 import org.apache.flink.agents.api.event.ModelRoutingEvent;
+import org.apache.flink.agents.api.event.SensoryReadEvent;
+import org.apache.flink.agents.api.event.SensoryWriteEvent;
+import org.apache.flink.agents.api.event.ShortTermReadEvent;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.File;
 import java.lang.reflect.Field;
@@ -36,7 +47,9 @@ import java.lang.reflect.Modifier;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -361,5 +374,399 @@ class BuiltInEventsTest {
 
         assertThat(event).isExactlyInstanceOf(Event.class);
         assertThat(event.getAttr("k")).isEqualTo("v");
+    }
+
+    // ── Malformed built-in events are rejected at the JSON boundary ────────
+
+    @Test
+    void fromJsonRejectsChatRequestMissingRequiredAttributes() {
+        // A ChatRequestEvent with empty attributes must fail at the boundary rather than being
+        // accepted with a null model and no messages.
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_chat_request_event\",\"attributes\":{}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_chat_request_event'");
+    }
+
+    @Test
+    void fromJsonRejectsChatRequestWithInvalidMessageElementType() {
+        // messages:[1] must be rejected, not silently converted to an empty list.
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_chat_request_event\",\"attributes\":"
+                                                + "{\"model\":\"m\",\"messages\":[1]}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_chat_request_event'");
+    }
+
+    // ── Every registered built-in type enforces its schema at the boundary ──
+
+    /**
+     * Builds an attribute map from alternating key/value arguments, so each fixture below reads as
+     * a plain literal without generic-inference noise.
+     */
+    private static Map<String, Object> attrs(Object... keyValues) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        for (int i = 0; i < keyValues.length; i += 2) {
+            map.put((String) keyValues[i], keyValues[i + 1]);
+        }
+        return map;
+    }
+
+    /** The {@code {key, value}} shape shared by every memory observation event. */
+    private static Map<String, Object> memoryAttrs() {
+        return attrs("key", "user-42", "value", Map.of("user.tier", "gold"));
+    }
+
+    /**
+     * Minimal schema-valid attributes for every registered built-in type. Each entry satisfies both
+     * its {@code fromEvent} schema check and the concrete constructor, so {@link
+     * #fromJsonRestoresEveryBuiltInTypeFromMinimalValidAttributes} proves the fixtures are
+     * genuinely valid and the unknown-attribute test below fails only because of the injected key.
+     */
+    private static Map<String, Map<String, Object>> validAttributesByType() {
+        Map<String, Map<String, Object>> byType = new LinkedHashMap<>();
+        byType.put(InputEvent.EVENT_TYPE, attrs("input", "hello"));
+        byType.put(OutputEvent.EVENT_TYPE, attrs("output", "world"));
+        byType.put(
+                ChatRequestEvent.EVENT_TYPE, attrs("model", "test-model", "messages", List.of()));
+        byType.put(
+                ChatResponseEvent.EVENT_TYPE,
+                attrs(
+                        "request_id",
+                        REQUEST_ID,
+                        "status",
+                        ChatResponseEvent.FAILED,
+                        "error",
+                        "boom"));
+        byType.put(
+                ToolRequestEvent.EVENT_TYPE, attrs("model", "test-model", "tool_calls", List.of()));
+        byType.put(
+                ToolResponseEvent.EVENT_TYPE,
+                attrs("request_id", REQUEST_ID, "responses", Map.of()));
+        byType.put(
+                ContextRetrievalRequestEvent.EVENT_TYPE,
+                attrs("query", "what is flink", "vector_store", "test-store", "max_results", 5));
+        byType.put(
+                ContextRetrievalResponseEvent.EVENT_TYPE,
+                attrs("request_id", REQUEST_ID, "query", "what is flink", "documents", List.of()));
+        byType.put(ModelRoutingEvent.EVENT_TYPE, routingAttrs());
+        byType.put(AgentRunBeginEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(ShortTermWriteEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(ShortTermReadEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(SensoryWriteEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(SensoryReadEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(LongTermGetEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(LongTermSearchEvent.EVENT_TYPE, memoryAttrs());
+        byType.put(LongTermUpdateEvent.EVENT_TYPE, memoryAttrs());
+        return byType;
+    }
+
+    static Stream<String> builtInEventTypes() {
+        return BuiltInEvents.registeredTypes().stream().sorted();
+    }
+
+    private static String eventJson(String type, Map<String, Object> attributes) throws Exception {
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("id", FIXED_ID);
+        root.put("type", type);
+        root.put("attributes", attributes);
+        return MAPPER.writeValueAsString(root);
+    }
+
+    @Test
+    void validAttributesCoverEveryRegisteredBuiltInType() {
+        // Guards the fixtures above: a newly registered type without a fixture fails here rather
+        // than silently escaping the parameterized schema tests below.
+        assertThat(validAttributesByType().keySet())
+                .containsExactlyInAnyOrderElementsOf(BuiltInEvents.registeredTypes());
+    }
+
+    @ParameterizedTest
+    @MethodSource("builtInEventTypes")
+    void fromJsonRestoresEveryBuiltInTypeFromMinimalValidAttributes(String type) throws Exception {
+        // Positive control: the minimal fixtures are genuinely schema-valid, so restoring each to
+        // its concrete subtype confirms the rejection tests below fail for the right reason.
+        Event event = Event.fromJson(eventJson(type, validAttributesByType().get(type)));
+
+        assertThat(event.getType()).isEqualTo(type);
+        assertThat(event).isNotExactlyInstanceOf(Event.class);
+    }
+
+    @ParameterizedTest
+    @MethodSource("builtInEventTypes")
+    void fromJsonRejectsUnknownAttributeForEveryBuiltInType(String type) throws Exception {
+        // A valid event plus one attribute outside the fixed schema must be rejected, not silently
+        // carried into the reconstructed event.
+        Map<String, Object> attributes = new LinkedHashMap<>(validAttributesByType().get(type));
+        attributes.put("__unknown_attribute__", "bogus");
+        String json = eventJson(type, attributes);
+
+        assertThatThrownBy(() -> Event.fromJson(json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '" + type + "'");
+    }
+
+    @ParameterizedTest
+    @MethodSource("builtInEventTypes")
+    void fromJsonRejectsMissingRequiredAttributesForEveryBuiltInType(String type) {
+        // Every built-in type declares at least one required attribute, so empty attributes must be
+        // rejected rather than restored with absent or null fields.
+        String json = "{\"type\":\"" + type + "\",\"attributes\":{}}";
+
+        assertThatThrownBy(() -> Event.fromJson(json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '" + type + "'");
+    }
+
+    // ── Representative invalid field types across the distinct type checks ──
+
+    @Test
+    void fromJsonRejectsChatRequestWithNonStringModel() {
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_chat_request_event\",\"attributes\":"
+                                                + "{\"model\":123,\"messages\":[]}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_chat_request_event'");
+    }
+
+    @Test
+    void fromJsonRejectsToolRequestWithNonMapToolCallElement() {
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_tool_request_event\",\"attributes\":"
+                                                + "{\"model\":\"m\",\"tool_calls\":[1]}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_tool_request_event'");
+    }
+
+    @Test
+    void fromJsonRejectsToolResponseWithNonUuidRequestId() {
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_tool_response_event\",\"attributes\":"
+                                                + "{\"request_id\":\"not-a-uuid\","
+                                                + "\"responses\":{}}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '_tool_response_event'");
+    }
+
+    @Test
+    void fromJsonRejectsContextRetrievalRequestWithNonNumberMaxResults() {
+        assertThatThrownBy(
+                        () ->
+                                Event.fromJson(
+                                        "{\"type\":\"_context_retrieval_request_event\","
+                                                + "\"attributes\":{\"query\":\"q\","
+                                                + "\"vector_store\":\"vs\","
+                                                + "\"max_results\":\"many\"}}"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining(
+                        "Malformed built-in event of type '_context_retrieval_request_event'");
+    }
+
+    // ── Every type-checked attribute has a dedicated mistyped-value rejection test ──
+
+    /**
+     * One mistyped value per type-checked attribute of every registered built-in type, so each
+     * field's type check is exercised by a dedicated case rather than only by the representative
+     * checks above. Each row overrides (required) or adds (optional) one attribute of that type's
+     * minimal-valid fixture from {@link #validAttributesByType()} with a value of the wrong JSON
+     * shape, so the only schema violation is the target attribute's type; {@link
+     * #mistypedAttributeCasesCoverEveryTypedSchemaAttribute} keeps this table in lockstep with the
+     * schemas. Untyped attributes ({@code input}/{@code output}/{@code key}/{@code value}/...) are
+     * absent because the boundary performs no type check on them.
+     */
+    private static Stream<Arguments> mistypedAttributeCases() {
+        return Stream.of(
+                // ChatRequestEvent
+                Arguments.of(ChatRequestEvent.EVENT_TYPE, "model", 0),
+                Arguments.of(ChatRequestEvent.EVENT_TYPE, "messages", List.of(0)),
+                Arguments.of(ChatRequestEvent.EVENT_TYPE, "prompt_args", "not-a-map"),
+                // ChatResponseEvent
+                Arguments.of(ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
+                Arguments.of(ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                // ToolRequestEvent
+                Arguments.of(ToolRequestEvent.EVENT_TYPE, "model", 0),
+                Arguments.of(ToolRequestEvent.EVENT_TYPE, "tool_calls", List.of(0)),
+                // ToolResponseEvent
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "responses", "not-a-map"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "success", "not-a-map"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "error", "not-a-map"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "external_ids", "not-a-map"),
+                Arguments.of(ToolResponseEvent.EVENT_TYPE, "timestamp", "not-a-number"),
+                // ContextRetrievalRequestEvent
+                Arguments.of(ContextRetrievalRequestEvent.EVENT_TYPE, "query", 0),
+                Arguments.of(ContextRetrievalRequestEvent.EVENT_TYPE, "vector_store", 0),
+                Arguments.of(
+                        ContextRetrievalRequestEvent.EVENT_TYPE, "max_results", "not-a-number"),
+                // ContextRetrievalResponseEvent
+                Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+                Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "query", 0),
+                Arguments.of(ContextRetrievalResponseEvent.EVENT_TYPE, "documents", List.of(0)),
+                // ModelRoutingEvent (Java-only)
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "request_id", "not-a-uuid"),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "router", 0),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "selected_model", 0),
+                Arguments.of(
+                        ModelRoutingEvent.EVENT_TYPE, ModelRoutingEvent.DECISION_SOURCE_KEY, 0),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "fallback_enabled", "not-a-boolean"),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "metadata", "not-a-map"),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "candidates", List.of(0)),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "reason", 0),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "score", "not-a-number"),
+                Arguments.of(ModelRoutingEvent.EVENT_TYPE, "decision_ms", "not-a-number"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("mistypedAttributeCases")
+    void fromJsonRejectsEveryMistypedBuiltInAttribute(
+            String type, String attribute, Object wrongValue) throws Exception {
+        Map<String, Object> attributes = new LinkedHashMap<>(validAttributesByType().get(type));
+        attributes.put(attribute, wrongValue);
+        String json = eventJson(type, attributes);
+
+        assertThatThrownBy(() -> Event.fromJson(json))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Malformed built-in event of type '" + type + "'");
+    }
+
+    @Test
+    void mistypedAttributeCasesCoverEveryTypedSchemaAttribute() throws Exception {
+        // Cross-check the hand-written table above against the schemas, so a new type-checked
+        // attribute without a case (or a case left behind after a schema change) fails here rather
+        // than silently narrowing coverage. Keys are "<type>#<attribute>".
+        List<String> covered =
+                mistypedAttributeCases()
+                        .map(arguments -> arguments.get()[0] + "#" + arguments.get()[1])
+                        .collect(Collectors.toList());
+
+        assertThat(new LinkedHashSet<>(covered))
+                .as("no duplicate mistyped-attribute case")
+                .hasSize(covered.size());
+        assertThat(covered).containsExactlyInAnyOrderElementsOf(typedSchemaAttributes());
+    }
+
+    /**
+     * Reflectively derives the {@code "<type>#<attribute>"} keys that carry a real type check, by
+     * scanning every {@code *ATTRIBUTE_SCHEMA} field declared on each {@link Event} subclass
+     * compiled into the main output. An attribute is type-checked iff it is a {@code LIST}, a
+     * {@code UUID}, or a {@code SCALAR} with a declared type; {@code requiredUntyped} / {@code
+     * optionalUntyped} (a {@code SCALAR} with no type) are skipped because the boundary only checks
+     * their presence. Typed attributes are keyed by the declaring class's {@code EVENT_TYPE}. A
+     * shared abstract base ({@code MemoryEvent}) declares only untyped schemas today and has no
+     * single {@code EVENT_TYPE}, so a typed attribute there would fail loudly instead of escaping.
+     */
+    private static Set<String> typedSchemaAttributes() throws Exception {
+        Set<String> typed = new LinkedHashSet<>();
+        for (Class<?> candidate : scanBuiltInEventClasses()) {
+            for (Field schemaField : attributeSchemaFields(candidate)) {
+                schemaField.setAccessible(true);
+                for (Object attribute : (List<?>) schemaField.get(null)) {
+                    if (!isTypeChecked(attribute)) {
+                        continue;
+                    }
+                    String name = (String) readAttributeField(attribute, "name");
+                    String eventType = declaredEventType(candidate);
+                    assertThat(eventType)
+                            .as(
+                                    "typed attribute '%s' on shared base %s cannot be keyed to one"
+                                            + " type; extend typedSchemaAttributes()",
+                                    name, candidate.getSimpleName())
+                            .isNotNull();
+                    typed.add(eventType + "#" + name);
+                }
+            }
+        }
+        return typed;
+    }
+
+    /**
+     * Every {@link Event} subclass (concrete or abstract, excluding {@link Event} itself) compiled
+     * into the main output. Scanning Event's own code source keeps this to main classes and
+     * excludes test-only Event subclasses.
+     */
+    private static List<Class<?>> scanBuiltInEventClasses() throws Exception {
+        URL codeSource = Event.class.getProtectionDomain().getCodeSource().getLocation();
+        assertThat(codeSource).as("code source of Event").isNotNull();
+        Path root = new File(codeSource.toURI()).toPath();
+        assertThat(Files.isDirectory(root))
+                .as("expected exploded main classes at %s, not a packaged jar", root)
+                .isTrue();
+
+        List<Class<?>> classes = new ArrayList<>();
+        try (Stream<Path> paths = Files.walk(root)) {
+            List<Path> classFiles =
+                    paths.filter(path -> path.toString().endsWith(".class"))
+                            .collect(Collectors.toList());
+            for (Path classFile : classFiles) {
+                String relative = root.relativize(classFile).toString();
+                String className =
+                        relative.substring(0, relative.length() - ".class".length())
+                                .replace(File.separatorChar, '.');
+                if (!className.startsWith("org.apache.flink.agents.api")) {
+                    continue;
+                }
+                Class<?> candidate = Class.forName(className, false, Event.class.getClassLoader());
+                if (Event.class.isAssignableFrom(candidate) && candidate != Event.class) {
+                    classes.add(candidate);
+                }
+            }
+        }
+        return classes;
+    }
+
+    /** The declared {@code static List<BuiltInAttribute> *ATTRIBUTE_SCHEMA} fields of a class. */
+    private static List<Field> attributeSchemaFields(Class<?> eventClass) {
+        List<Field> fields = new ArrayList<>();
+        for (Field field : eventClass.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())
+                    && field.getName().endsWith("ATTRIBUTE_SCHEMA")
+                    && List.class.equals(field.getType())) {
+                fields.add(field);
+            }
+        }
+        return fields;
+    }
+
+    /**
+     * True iff the boundary type-checks this attribute: a {@code LIST}, a {@code UUID}, or a typed
+     * {@code SCALAR}.
+     */
+    private static boolean isTypeChecked(Object attribute) throws Exception {
+        String kind = String.valueOf(readAttributeField(attribute, "kind"));
+        if ("LIST".equals(kind) || "UUID".equals(kind)) {
+            return true;
+        }
+        if (!"SCALAR".equals(kind)) {
+            return false;
+        }
+        Class<?>[] types = (Class<?>[]) readAttributeField(attribute, "types");
+        return types.length > 0;
+    }
+
+    /** The class's own {@code EVENT_TYPE}, or null if it declares none (e.g. an abstract base). */
+    private static String declaredEventType(Class<?> eventClass) throws Exception {
+        try {
+            Field field = eventClass.getDeclaredField("EVENT_TYPE");
+            field.setAccessible(true);
+            return (String) field.get(null);
+        } catch (NoSuchFieldException e) {
+            return null;
+        }
+    }
+
+    private static Object readAttributeField(Object attribute, String fieldName) throws Exception {
+        Field field = attribute.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        return field.get(attribute);
     }
 }

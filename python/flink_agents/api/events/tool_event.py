@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Tuple
 
 try:
     from typing import override
@@ -23,7 +23,7 @@ except ImportError:
     from typing_extensions import override
 from uuid import UUID
 
-from flink_agents.api.events.event import Event
+from flink_agents.api.events.event import BuiltInAttribute, Event
 
 
 class ToolRequestEvent(Event):
@@ -39,6 +39,11 @@ class ToolRequestEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_tool_request_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required("model", str),
+        BuiltInAttribute.required_list("tool_calls", "a dict", (dict,)),
+    )
+
     def __init__(self, model: str, tool_calls: List[Dict[str, Any]]) -> None:
         """Create a ToolRequestEvent."""
         super().__init__(
@@ -52,11 +57,13 @@ class ToolRequestEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ToolRequestEvent":
-        assert "model" in event.attributes
-        assert "tool_calls" in event.attributes
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
         result = ToolRequestEvent(
-            model=event.attributes["model"],
-            tool_calls=event.attributes["tool_calls"],
+            model=attributes["model"],
+            tool_calls=attributes["tool_calls"],
         )
         return result.reconstruct_from(event)
 
@@ -87,6 +94,18 @@ class ToolResponseEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_tool_response_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_uuid("request_id"),
+        BuiltInAttribute.required("responses", dict),
+        BuiltInAttribute.optional("success", dict),
+        BuiltInAttribute.optional("error", dict),
+        BuiltInAttribute.optional("external_ids", dict),
+        # ``timestamp`` is written only by the Java runtime; accept it so
+        # Java-produced events restore, then drop it (Python does not carry it)
+        # to stay consistent with the Python snapshot shape.
+        BuiltInAttribute.optional("timestamp", int),
+    )
+
     def __init__(
         self,
         request_id: UUID,
@@ -112,15 +131,17 @@ class ToolResponseEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ToolResponseEvent":
-        assert "request_id" in event.attributes
-        assert "responses" in event.attributes
-        responses = event.attributes["responses"]
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
+        responses = attributes["responses"]
         result = ToolResponseEvent(
-            request_id=event.attributes["request_id"],
+            request_id=attributes["request_id"],
             responses=responses,
-            external_ids=event.attributes.get("external_ids", {}),
-            success=event.attributes.get("success", dict.fromkeys(responses, True)),
-            error=event.attributes.get("error", {}),
+            external_ids=attributes.get("external_ids", {}),
+            success=attributes.get("success", dict.fromkeys(responses, True)),
+            error=attributes.get("error", {}),
         )
         return result.reconstruct_from(event)
 

@@ -16,7 +16,9 @@
 # limitations under the License.
 #################################################################################
 import json
-from typing import Any, ClassVar, Dict
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, ClassVar, Dict, List, Set, Tuple
 
 try:
     from typing import Self, override
@@ -57,6 +59,66 @@ def _reconstruct_row_if_needed(data: Any) -> Any:
     if isinstance(data, list):
         return [_reconstruct_row_if_needed(item) for item in data]
     return data
+
+
+class _AttrKind(Enum):
+    """The shape a built-in attribute value takes at the JSON boundary."""
+
+    SCALAR = "scalar"
+    LIST = "list"
+    UUID = "uuid"
+
+
+@dataclass(frozen=True, slots=True)
+class BuiltInAttribute:
+    """One attribute of a built-in event's fixed cross-language schema.
+
+    Mirrors the declarative ``requiredOptions()`` / ``optionalOptions()`` style
+    of Flink connector factories: a built-in event states its attributes once as
+    an ordered tuple of these, and :meth:`Event._validate_attribute_schema` enforces
+    presence, unknown-key rejection, and per-attribute type in a single pass at
+    the JSON boundary. Create instances through the static factories below.
+    """
+
+    name: str
+    is_required: bool
+    kind: _AttrKind
+    types: Tuple[type, ...]
+    element_description: str | None = None
+
+    @staticmethod
+    def required(name: str, expected: type) -> "BuiltInAttribute":
+        """A required scalar attribute that must be an instance of ``expected``."""
+        return BuiltInAttribute(name, True, _AttrKind.SCALAR, (expected,))
+
+    @staticmethod
+    def optional(name: str, expected: type) -> "BuiltInAttribute":
+        """An optional scalar attribute that, when present, must be ``expected``."""
+        return BuiltInAttribute(name, False, _AttrKind.SCALAR, (expected,))
+
+    @staticmethod
+    def optional_untyped(name: str) -> "BuiltInAttribute":
+        """An optional attribute only checked for being a known key, any type."""
+        return BuiltInAttribute(name, False, _AttrKind.SCALAR, ())
+
+    @staticmethod
+    def required_untyped(name: str) -> "BuiltInAttribute":
+        """A required attribute only checked for presence and being a known key."""
+        return BuiltInAttribute(name, True, _AttrKind.SCALAR, ())
+
+    @staticmethod
+    def required_list(
+        name: str, element_description: str, allowed: Tuple[type, ...]
+    ) -> "BuiltInAttribute":
+        """A required list whose elements must each match a type in ``allowed``."""
+        return BuiltInAttribute(
+            name, True, _AttrKind.LIST, allowed, element_description
+        )
+
+    @staticmethod
+    def required_uuid(name: str) -> "BuiltInAttribute":
+        """A required UUID attribute, accepted as a UUID or a UUID string."""
+        return BuiltInAttribute(name, True, _AttrKind.UUID, ())
 
 
 class Event(BaseModel, extra="allow"):
@@ -216,6 +278,182 @@ class Event(BaseModel, extra="allow"):
         """
         return event
 
+    @staticmethod
+    def _validate_built_in_attributes(
+        type_name: str,
+        attributes: Dict[str, Any],
+        required: Set[str],
+        known: Set[str],
+    ) -> None:
+        """Validate a built-in event's attributes against its fixed schema.
+
+        Each built-in event's ``from_event`` reconstruction method calls this at
+        the JSON / cross-language boundary (:meth:`Event.from_json` ->
+        ``restore``), so a malformed built-in event fails clearly instead of
+        being reconstructed with silently dropped or defaulted fields. It is
+        deliberately not called from ``__init__``: durable/checkpoint recovery
+        rebuilds concrete events directly and must keep tolerating
+        framework-internal attributes outside the cross-language schema.
+
+        Raises:
+            ValueError: If a required attribute is absent or an unknown
+                attribute is present.
+        """
+        for name in required:
+            if name not in attributes:
+                msg = (
+                    f"Missing required attribute '{name}' for built-in event "
+                    f"type '{type_name}'."
+                )
+                raise ValueError(msg)
+        unknown = set(attributes) - known
+        if unknown:
+            msg = (
+                f"Unknown attribute(s) {sorted(unknown)} for built-in event "
+                f"type '{type_name}'; allowed attributes are {sorted(known)}."
+            )
+            raise ValueError(msg)
+
+    @staticmethod
+    def _require_built_in_attribute(
+        type_name: str, attributes: Dict[str, Any], name: str, expected: type
+    ) -> Any:
+        """Return a required built-in attribute, asserting its runtime type.
+
+        Raises:
+            TypeError: If the attribute is missing or not an instance of
+                ``expected``.
+        """
+        value = attributes.get(name)
+        if not isinstance(value, expected):
+            msg = (
+                f"Attribute '{name}' of built-in event type '{type_name}' must "
+                f"be a {expected.__name__}, but was {type(value).__name__}."
+            )
+            raise TypeError(msg)
+        return value
+
+    @staticmethod
+    def _require_built_in_list_attribute(
+        type_name: str,
+        attributes: Dict[str, Any],
+        name: str,
+        element_description: str,
+        allowed: Tuple[type, ...],
+    ) -> List[Any]:
+        """Return a required built-in list attribute, asserting each element's type.
+
+        A nested typed value crosses the JSON boundary as either its concrete
+        type or its serialized dict, so callers typically allow both.
+
+        Raises:
+            TypeError: If the attribute is missing, is not a list, or holds an
+                element that is not an instance of any type in ``allowed``.
+        """
+        values = Event._require_built_in_attribute(type_name, attributes, name, list)
+        for element in values:
+            if not isinstance(element, allowed):
+                msg = (
+                    f"Each '{name}' element of built-in event type "
+                    f"'{type_name}' must be {element_description}, but was "
+                    f"{type(element).__name__}."
+                )
+                raise TypeError(msg)
+        return values
+
+    @staticmethod
+    def _check_built_in_attribute_type(
+        type_name: str, attributes: Dict[str, Any], name: str, expected: type
+    ) -> None:
+        """Assert the type of an optional built-in attribute when present.
+
+        Raises:
+            TypeError: If the attribute is present (non-null) but not an
+                instance of ``expected``.
+        """
+        value = attributes.get(name)
+        if value is not None and not isinstance(value, expected):
+            msg = (
+                f"Attribute '{name}' of built-in event type '{type_name}' must "
+                f"be a {expected.__name__}, but was {type(value).__name__}."
+            )
+            raise TypeError(msg)
+
+    @staticmethod
+    def _require_uuid_built_in_attribute(
+        type_name: str, attributes: Dict[str, Any], name: str
+    ) -> None:
+        """Assert a required built-in attribute is a UUID or a UUID string.
+
+        Raises:
+            TypeError: If the attribute is missing or not a UUID / UUID string.
+        """
+        value = attributes.get(name)
+        if isinstance(value, UUID):
+            return
+        if isinstance(value, str):
+            try:
+                UUID(value)
+            except ValueError:
+                pass
+            else:
+                return
+        msg = (
+            f"Attribute '{name}' of built-in event type '{type_name}' must be a "
+            f"UUID or UUID string, but was {type(value).__name__}."
+        )
+        raise TypeError(msg)
+
+    @staticmethod
+    def _validate_attribute_schema(
+        type_name: str,
+        attributes: Dict[str, Any],
+        schema: Tuple["BuiltInAttribute", ...],
+    ) -> None:
+        """Validate attributes against a declared attribute schema in one pass.
+
+        The declarative counterpart to calling
+        :meth:`_validate_built_in_attributes` plus the per-attribute type checks
+        by hand: presence and unknown keys are enforced first, then each present
+        attribute is checked against its declared shape. It delegates to those
+        low-level helpers, so the messages and the ``ValueError`` (shape) versus
+        ``TypeError`` (type) split are unchanged.
+
+        Raises:
+            ValueError: If a required attribute is absent or an unknown
+                attribute is present.
+            TypeError: If a present attribute has an unexpected type.
+        """
+        required = {attribute.name for attribute in schema if attribute.is_required}
+        known = {attribute.name for attribute in schema}
+        Event._validate_built_in_attributes(type_name, attributes, required, known)
+        for attribute in schema:
+            if not attribute.is_required and attribute.name not in attributes:
+                continue
+            if attribute.kind == _AttrKind.SCALAR:
+                if not attribute.types:
+                    continue
+                if attribute.is_required:
+                    Event._require_built_in_attribute(
+                        type_name, attributes, attribute.name, attribute.types[0]
+                    )
+                else:
+                    Event._check_built_in_attribute_type(
+                        type_name, attributes, attribute.name, attribute.types[0]
+                    )
+            elif attribute.kind == _AttrKind.LIST:
+                Event._require_built_in_list_attribute(
+                    type_name,
+                    attributes,
+                    attribute.name,
+                    attribute.element_description,
+                    attribute.types,
+                )
+            elif attribute.kind == _AttrKind.UUID:
+                Event._require_uuid_built_in_attribute(
+                    type_name, attributes, attribute.name
+                )
+
     @classmethod
     def from_json(cls, json_str: str) -> "Event":
         """Deserialize an event from a JSON string.
@@ -266,6 +504,10 @@ class InputEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_input_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped("input"),
+    )
+
     def __init__(self, input: Any) -> None:
         """Create an InputEvent with the given input data."""
         super().__init__(
@@ -276,7 +518,9 @@ class InputEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "InputEvent":
-        assert "input" in event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, event.attributes, cls._ATTRIBUTE_SCHEMA
+        )
         result = InputEvent(input=event.attributes["input"])
         return result.reconstruct_from(event)
 
@@ -301,6 +545,10 @@ class OutputEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_output_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped("output"),
+    )
+
     def __init__(self, output: Any) -> None:
         """Create an OutputEvent with the given output data."""
         super().__init__(
@@ -314,7 +562,9 @@ class OutputEvent(Event):
         if event.attachments:
             msg = "OutputEvent cannot carry attachments."
             raise ValueError(msg)
-        assert "output" in event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, event.attributes, cls._ATTRIBUTE_SCHEMA
+        )
         result = OutputEvent(output=event.attributes["output"])
         return result.reconstruct_from(event)
 

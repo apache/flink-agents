@@ -79,7 +79,9 @@ def test_old_event_without_status_rejected() -> None:
             "response": ChatMessage.of(role=MessageRole.ASSISTANT, content="ok"),
         },
     )
-    with pytest.raises(KeyError, match="status"):
+    # The boundary schema check rejects the missing "status" with ValueError,
+    # matching Java's IllegalArgumentException from ChatResponseEvent.fromEvent.
+    with pytest.raises(ValueError, match="status"):
         ChatResponseEvent.from_event(base)
 
 

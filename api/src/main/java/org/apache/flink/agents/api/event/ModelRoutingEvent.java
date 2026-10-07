@@ -57,6 +57,19 @@ public class ModelRoutingEvent extends Event {
     public static final String SOURCE_DEFAULT = "default";
     public static final String SOURCE_FALLBACK = "fallback";
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUuid("request_id"),
+                    BuiltInAttribute.required("router", String.class),
+                    BuiltInAttribute.required("selected_model", String.class),
+                    BuiltInAttribute.required(DECISION_SOURCE_KEY, String.class),
+                    BuiltInAttribute.required("fallback_enabled", Boolean.class),
+                    BuiltInAttribute.required("metadata", Map.class),
+                    BuiltInAttribute.requiredList("candidates", "a string", String.class),
+                    BuiltInAttribute.optional("reason", String.class),
+                    BuiltInAttribute.optional("score", Number.class),
+                    BuiltInAttribute.optional("decision_ms", Number.class));
+
     public ModelRoutingEvent(
             UUID requestId,
             String router,
@@ -113,8 +126,18 @@ public class ModelRoutingEvent extends Event {
         return normalized;
     }
 
-    /** Reconstructs a typed ModelRoutingEvent from a base Event. */
+    /**
+     * Reconstructs a typed ModelRoutingEvent from a base Event.
+     *
+     * <p>Enforces the fixed schema: {@code request_id}, {@code router}, {@code candidates}, {@code
+     * selected_model}, {@code decision_source}, {@code fallback_enabled}, and {@code metadata} are
+     * required; {@code reason}, {@code score}, and {@code decision_ms} are optional; no other
+     * attribute is allowed.
+     *
+     * @throws IllegalArgumentException if the event violates the schema
+     */
     public static ModelRoutingEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ModelRoutingEvent::new);
     }
 

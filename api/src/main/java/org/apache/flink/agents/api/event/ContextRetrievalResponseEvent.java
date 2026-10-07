@@ -37,6 +37,16 @@ public class ContextRetrievalResponseEvent extends Event {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUuid("request_id"),
+                    BuiltInAttribute.required("query", String.class),
+                    BuiltInAttribute.requiredList(
+                            "documents",
+                            "a Document or its serialized map",
+                            Document.class,
+                            Map.class));
+
     public ContextRetrievalResponseEvent(UUID requestId, String query, List<Document> documents) {
         super(EVENT_TYPE);
         setAttr("request_id", requestId);
@@ -77,10 +87,16 @@ public class ContextRetrievalResponseEvent extends Event {
      * Reconstructs a typed ContextRetrievalResponseEvent from a base Event, deserializing nested
      * types.
      *
+     * <p>Enforces the fixed cross-language schema: {@code request_id}, {@code query}, and {@code
+     * documents} are required and no other attribute is allowed; {@code query} must be a string and
+     * every {@code documents} element must be a {@link Document} or its serialized map.
+     *
      * @param event the base event containing context retrieval response data in attributes
      * @return a typed ContextRetrievalResponseEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
     public static ContextRetrievalResponseEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ContextRetrievalResponseEvent::new);
     }
 

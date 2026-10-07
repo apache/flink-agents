@@ -32,6 +32,11 @@ public class ToolRequestEvent extends Event {
 
     public static final String EVENT_TYPE = "_tool_request_event";
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.required("model", String.class),
+                    BuiltInAttribute.requiredList("tool_calls", "a map", Map.class));
+
     public ToolRequestEvent(String model, List<Map<String, Object>> toolCalls) {
         super(EVENT_TYPE);
         setAttr("model", model);
@@ -48,11 +53,16 @@ public class ToolRequestEvent extends Event {
     /**
      * Reconstructs a typed ToolRequestEvent from a base Event.
      *
+     * <p>Enforces the fixed cross-language schema: {@code model} and {@code tool_calls} are
+     * required, no other attribute is allowed, {@code model} must be a string, and every {@code
+     * tool_calls} element must be a map.
+     *
      * @param event the base event containing tool request data in attributes
      * @return a typed ToolRequestEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
-    @SuppressWarnings("unchecked")
     public static ToolRequestEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ToolRequestEvent::new);
     }
 

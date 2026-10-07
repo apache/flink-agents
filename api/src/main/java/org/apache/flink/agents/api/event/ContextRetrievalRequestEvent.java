@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +33,12 @@ public class ContextRetrievalRequestEvent extends Event {
     public static final String EVENT_TYPE = "_context_retrieval_request_event";
 
     private static final int DEFAULT_MAX_RESULTS = 3;
+
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.required("query", String.class),
+                    BuiltInAttribute.required("vector_store", String.class),
+                    BuiltInAttribute.optional("max_results", Number.class));
 
     public ContextRetrievalRequestEvent(String query, String vectorStore) {
         this(query, vectorStore, DEFAULT_MAX_RESULTS);
@@ -85,10 +92,21 @@ public class ContextRetrievalRequestEvent extends Event {
     /**
      * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
      *
+     * <p>Enforces the fixed cross-language schema: {@code query} and {@code vector_store} are
+     * required strings, {@code max_results} is an optional positive number, and no other attribute
+     * is allowed.
+     *
      * @param event the base event containing context retrieval request data in attributes
      * @return a typed ContextRetrievalRequestEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
     public static ContextRetrievalRequestEvent fromEvent(Event event) {
+        Map<String, Object> attributes = event.getAttributes();
+        validateAttributeSchema(EVENT_TYPE, attributes, ATTRIBUTE_SCHEMA);
+        Object maxResults = attributes.get("max_results");
+        if (maxResults != null) {
+            validateMaxResults(((Number) maxResults).intValue());
+        }
         return reconstructFrom(event, ContextRetrievalRequestEvent::new);
     }
 

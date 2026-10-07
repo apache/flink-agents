@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,6 +34,9 @@ import java.util.UUID;
 public class OutputEvent extends Event {
 
     public static final String EVENT_TYPE = "_output_event";
+
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(BuiltInAttribute.requiredUntyped("output"));
 
     public OutputEvent(Object output) {
         super(EVENT_TYPE);
@@ -51,12 +55,14 @@ public class OutputEvent extends Event {
      *
      * @param event the base event containing the output data in attributes
      * @return a typed OutputEvent
-     * @throws IllegalArgumentException if the source Event carries attachments
+     * @throws IllegalArgumentException if the source Event carries attachments, or does not carry
+     *     exactly the {@code output} attribute
      */
     public static OutputEvent fromEvent(Event event) {
         if (!event.getAttachments().isEmpty()) {
             throw new IllegalArgumentException("OutputEvent cannot carry attachments.");
         }
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, OutputEvent::new);
     }
 

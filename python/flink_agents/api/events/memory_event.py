@@ -19,11 +19,11 @@
 
 import base64
 import json
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Tuple
 
 from typing_extensions import override
 
-from flink_agents.api.events.event import Event
+from flink_agents.api.events.event import BuiltInAttribute, Event
 
 
 def _observation_attributes(key: Any, value: Any) -> Dict[str, Any]:
@@ -69,6 +69,16 @@ class MemoryEvent(Event):
 
     EVENT_TYPE: ClassVar[str | None] = None  # pinned by each concrete subclass
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped("key"),
+        BuiltInAttribute.required_untyped("value"),
+    )
+    _LONG_TERM_UPDATE_ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped("key"),
+        BuiltInAttribute.required_untyped("value"),
+        BuiltInAttribute.optional_untyped("cleared_sets"),
+    )
+
     def __init__(self, *, key: str, value: Dict[str, Any]) -> None:
         """Create a memory event; the type comes from the subclass EVENT_TYPE."""
         event_type = type(self).EVENT_TYPE
@@ -92,6 +102,12 @@ class MemoryEvent(Event):
         if subclass is None:
             msg = f"Not a memory event type: {event.type}"
             raise ValueError(msg)
+        schema = (
+            cls._LONG_TERM_UPDATE_ATTRIBUTE_SCHEMA
+            if subclass is LongTermUpdateEvent
+            else cls._ATTRIBUTE_SCHEMA
+        )
+        cls._validate_attribute_schema(event.type, event.attributes, schema)
         kwargs = {
             "key": event.attributes.get("key"),
             "value": event.attributes.get("value"),

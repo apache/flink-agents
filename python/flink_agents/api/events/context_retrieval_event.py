@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import ClassVar, List
+from typing import ClassVar, List, Tuple
 
 try:
     from typing import override
@@ -23,7 +23,7 @@ except ImportError:
     from typing_extensions import override
 from uuid import UUID
 
-from flink_agents.api.events.event import Event
+from flink_agents.api.events.event import BuiltInAttribute, Event
 from flink_agents.api.vector_stores.vector_store import Document
 
 
@@ -41,6 +41,12 @@ class ContextRetrievalRequestEvent(Event):
     """
 
     EVENT_TYPE: ClassVar[str] = "_context_retrieval_request_event"
+
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required("query", str),
+        BuiltInAttribute.required("vector_store", str),
+        BuiltInAttribute.optional("max_results", int),
+    )
 
     def __init__(self, query: str, vector_store: str, max_results: int = 3) -> None:
         """Create a ContextRetrievalRequestEvent.
@@ -70,12 +76,14 @@ class ContextRetrievalRequestEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ContextRetrievalRequestEvent":
-        assert "query" in event.attributes
-        assert "vector_store" in event.attributes
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
         result = ContextRetrievalRequestEvent(
-            query=event.attributes["query"],
-            vector_store=event.attributes["vector_store"],
-            max_results=event.attributes.get("max_results", 3),
+            query=attributes["query"],
+            vector_store=attributes["vector_store"],
+            max_results=attributes.get("max_results", 3),
         )
         return result.reconstruct_from(event)
 
@@ -110,6 +118,14 @@ class ContextRetrievalResponseEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_context_retrieval_response_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_uuid("request_id"),
+        BuiltInAttribute.required("query", str),
+        BuiltInAttribute.required_list(
+            "documents", "a Document or its serialized dict", (Document, dict)
+        ),
+    )
+
     def __init__(self, request_id: UUID, query: str, documents: List[Document]) -> None:
         """Create a ContextRetrievalResponseEvent."""
         super().__init__(
@@ -124,17 +140,17 @@ class ContextRetrievalResponseEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ContextRetrievalResponseEvent":
-        assert "request_id" in event.attributes
-        assert "query" in event.attributes
-        assert "documents" in event.attributes
-        documents_raw = event.attributes["documents"]
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
         documents = [
             Document.model_validate(d) if isinstance(d, dict) else d
-            for d in documents_raw
+            for d in attributes["documents"]
         ]
         result = ContextRetrievalResponseEvent(
-            request_id=event.attributes["request_id"],
-            query=event.attributes["query"],
+            request_id=attributes["request_id"],
+            query=attributes["query"],
             documents=documents,
         )
         return result.reconstruct_from(event)

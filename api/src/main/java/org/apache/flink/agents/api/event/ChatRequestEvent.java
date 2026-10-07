@@ -40,6 +40,22 @@ public class ChatRequestEvent extends Event {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
+    /**
+     * The fixed cross-language attribute schema for this event: {@code model} and {@code messages}
+     * are required, {@code prompt_args} and {@code output_schema} are optional, and no other
+     * attribute is allowed. {@link #fromEvent} enforces it at the JSON boundary.
+     */
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.required("model", String.class),
+                    BuiltInAttribute.requiredList(
+                            "messages",
+                            "a ChatMessage or its serialized map",
+                            ChatMessage.class,
+                            Map.class),
+                    BuiltInAttribute.optional("prompt_args", Map.class),
+                    BuiltInAttribute.optionalUntyped("output_schema"));
+
     public ChatRequestEvent(
             String model,
             List<ChatMessage> messages,
@@ -91,10 +107,18 @@ public class ChatRequestEvent extends Event {
     /**
      * Reconstructs a typed ChatRequestEvent from a base Event, deserializing nested types.
      *
+     * <p>Enforces the fixed cross-language attribute schema: {@code model} and {@code messages} are
+     * required, {@code prompt_args} and {@code output_schema} are optional, no other attribute is
+     * allowed, {@code model} must be a string, and every {@code messages} element must be a {@link
+     * ChatMessage} or its serialized map — an element such as a bare number is rejected rather than
+     * silently dropped.
+     *
      * @param event the base event containing chat request data in attributes
      * @return a typed ChatRequestEvent
+     * @throws IllegalArgumentException if the event violates the attribute schema
      */
     public static ChatRequestEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ChatRequestEvent::new);
     }
 

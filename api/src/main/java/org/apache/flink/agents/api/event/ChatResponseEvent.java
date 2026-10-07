@@ -25,6 +25,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -41,6 +42,15 @@ public class ChatResponseEvent extends Event {
     private static final String ERROR = "error";
     private static final String RETRY_COUNT = "retry_count";
     private static final String TOTAL_RETRY_WAIT_SEC = "total_retry_wait_sec";
+
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUntyped(REQUEST_ID),
+                    BuiltInAttribute.requiredUntyped(STATUS),
+                    BuiltInAttribute.optionalUntyped(RESPONSE),
+                    BuiltInAttribute.optionalUntyped(ERROR),
+                    BuiltInAttribute.optional(RETRY_COUNT, Number.class),
+                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -156,10 +166,17 @@ public class ChatResponseEvent extends Event {
     /**
      * Reconstructs a typed ChatResponseEvent from a base Event, deserializing nested types.
      *
+     * <p>Enforces the fixed cross-language schema: {@code request_id} and {@code status} are
+     * required and no attribute outside the schema is allowed. The {@code request_id} UUID type and
+     * the SUCCESS-with-response / FAILED-with-error consistency are enforced by {@link
+     * #normalizeAttributes(Map)} in the {@code @JsonCreator} constructor invoked below.
+     *
      * @param event the base event containing chat response data in attributes
      * @return a typed ChatResponseEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
     public static ChatResponseEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ChatResponseEvent::new);
     }
 

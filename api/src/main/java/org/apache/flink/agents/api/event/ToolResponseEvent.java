@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.tools.ToolResponse;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,6 +34,15 @@ import java.util.UUID;
 public class ToolResponseEvent extends Event {
 
     public static final String EVENT_TYPE = "_tool_response_event";
+
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUuid("request_id"),
+                    BuiltInAttribute.required("responses", Map.class),
+                    BuiltInAttribute.optional("success", Map.class),
+                    BuiltInAttribute.optional("error", Map.class),
+                    BuiltInAttribute.optional("external_ids", Map.class),
+                    BuiltInAttribute.optional("timestamp", Number.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -87,10 +97,18 @@ public class ToolResponseEvent extends Event {
     /**
      * Reconstructs a typed ToolResponseEvent from a base Event, deserializing nested types.
      *
+     * <p>Enforces the fixed cross-language schema: {@code request_id} and {@code responses} are
+     * required; {@code success}, {@code error}, {@code external_ids}, and {@code timestamp} are
+     * optional; no other attribute is allowed. {@code timestamp} is written only by the Java
+     * runtime, so it is accepted here to stay compatible with Java-produced events and is otherwise
+     * left as-is.
+     *
      * @param event the base event containing tool response data in attributes
      * @return a typed ToolResponseEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
     public static ToolResponseEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ToolResponseEvent::new);
     }
 
