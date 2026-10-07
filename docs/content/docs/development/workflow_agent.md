@@ -779,11 +779,18 @@ overwritten when an Action emits the Event.
 
 ### JSON Serialization
 
-Events are serialized as JSON when passed between Python actions or across the Java-Python boundary. This means attribute values of non-trivial types (such as Pydantic models) lose their type information and arrive as plain `dict` objects. Users must manually reconstruct the typed object:
+Events are serialized as JSON when passed between Python actions or across the Java-Python boundary. When an event crosses that boundary, its **type** and its **payload** are handled differently.
+
+**Built-in event types are restored automatically.** At the JSON boundary (`Event.fromJson` in Java, `Event.from_json` in Python) the framework restores every built-in event type to its concrete subclass and validates its fixed attribute schema. So inside an action, a dispatched `InputEvent`, `ChatRequestEvent`, `ChatResponseEvent`, or any other built-in event is already its concrete type: use it directly (with a cast in Java) instead of calling `from_event` / `fromEvent`. Those reconstruction methods stay available and idempotent, so code that still calls them keeps working.
+
+**Custom event types stay generic.** A user-defined event type is not known to the framework, so it arrives as a generic `Event`; call your subclass's `from_event` / `fromEvent` to reconstruct it (see [Custom Event Subclasses](#custom-event-subclasses)).
+
+**Arbitrary payload values are not reconstructed.** Restoration recovers the event's type and its typed built-in attributes (for example, `ChatRequestEvent.messages` become typed `ChatMessage` objects), but it does not rebuild arbitrary payload values. Non-trivial values nested in `attributes` — such as Pydantic models, or the record carried by `InputEvent.input` — lose their type information and arrive as plain `dict` / `Map` objects, so you must reconstruct them yourself:
 
 ```python
-input_event = InputEvent.from_event(event)
-input_data = ItemData.model_validate(input_event.input)
+# `event` is already a concrete InputEvent (auto-restored at the JSON boundary);
+# only its opaque `input` payload needs manual reconstruction.
+input_data = ItemData.model_validate(event.input)
 ```
 
 ### Custom Event Subclasses
