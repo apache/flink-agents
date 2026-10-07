@@ -1353,3 +1353,90 @@ def test_flink_runner_context_gather_respects_max_parallelism() -> None:
         "SUCCEEDED",
     ]
     assert j_runner_context.current_call_index == 4
+
+
+class _FailingPersistJavaRunnerContext(_FakeJavaRunnerContext):
+    """Fails every call-result write the way ``DurableExecutionManager`` does."""
+
+    def recordCallCompletion(
+        self,
+        function_id: str,
+        result_payload: bytes | None,
+        exception_payload: bytes | None,
+    ) -> None:
+        self.operations.append("record")
+        msg = "java.lang.RuntimeException: Failed to persist ActionState"
+        raise RuntimeError(msg)
+
+
+def _durable_call(ctx: FlinkRunnerContext, asynchronous: bool, func: Any) -> Any:
+    if asynchronous:
+        return _run_async(ctx.durable_execute_async(func))
+    return ctx.durable_execute(func)
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_call_result_persistence_failure_reaches_the_caller(
+    asynchronous: bool,
+) -> None:
+    calls = []
+
+    def call() -> str:
+        calls.append(1)
+        return "receipt-1"
+
+    store = _FailingPersistJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        with pytest.raises(RuntimeError, match="Failed to persist ActionState"):
+            _durable_call(ctx, asynchronous, call)
+    finally:
+        _close_runner_context(ctx)
+
+    assert len(calls) == 1
+    assert store.operations.count("record") == 1
+    assert store.call_results == []
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_result_that_cannot_be_pickled_is_returned_unrecorded(
+    asynchronous: bool,
+) -> None:
+    lock = threading.Lock()
+
+    def call() -> Any:
+        return lock
+
+    store = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        result = _durable_call(ctx, asynchronous, call)
+    finally:
+        _close_runner_context(ctx)
+
+    assert result is lock
+    assert "record" not in store.operations
+    assert store.call_results == []
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_persistence_failure_replaces_the_call_exception(asynchronous: bool) -> None:
+    calls = []
+
+    def call() -> str:
+        calls.append(1)
+        msg = "call failed"
+        raise ValueError(msg)
+
+    store = _FailingPersistJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        with pytest.raises(RuntimeError, match="Failed to persist ActionState") as info:
+            _durable_call(ctx, asynchronous, call)
+    finally:
+        _close_runner_context(ctx)
+
+    assert info.value.__cause__ is None
+    assert len(calls) == 1
+    assert store.operations.count("record") == 1
+    assert store.call_results == []

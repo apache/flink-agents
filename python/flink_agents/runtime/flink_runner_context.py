@@ -969,14 +969,15 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             result_payload, exception_payload = self._serialize_call_payloads(
                 result, exception
             )
-
-            self._j_runner_context.recordCallCompletion(
-                function_id, result_payload, exception_payload
-            )
         except Exception as e:
-            # If Java method doesn't exist, silently ignore
-            if "recordCallCompletion" not in str(e):
-                logger.warning("Failed to record call completion: %s", e)
+            logger.warning("Failed to record call completion: %s", e)
+            return
+
+        # A failed write must reach the caller: returning normally would let the
+        # action proceed although recovery could execute the call again.
+        self._j_runner_context.recordCallCompletion(
+            function_id, result_payload, exception_payload
+        )
 
     @staticmethod
     def _serialize_call_payloads(
