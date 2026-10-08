@@ -29,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -232,6 +233,49 @@ public class MemoryEventTest {
 
         assertEquals(List.of("prefs"), event.getClearedSets());
         assertEquals(Map.of("m2", "new"), event.getValue().get("prefs"));
+    }
+
+    @Test
+    void testStoredClearedSetsAreKryoRebuildable() {
+        // The runtime keeps action-task events in operator state that Flink serializes with Kryo.
+        // Flink 1.20's Kryo rebuilds a stored collection by allocating it and calling add() per
+        // element, which the immutable lists from List.of and List.copyOf reject, so such state
+        // cannot be restored; Flink 2.x's Kryo ships immutable-collection serializers, which is
+        // why only the it-python [flink-1.20] suite catches this. The stored cleared_sets list
+        // must therefore stay structurally modifiable, while getClearedSets() still hands callers
+        // an unmodifiable view.
+        LongTermUpdateEvent event =
+                new LongTermUpdateEvent(
+                        "k", Map.of("prefs", Map.of("m2", "new")), List.of("prefs"));
+
+        @SuppressWarnings("unchecked")
+        List<String> backing = (List<String>) event.getAttributes().get("cleared_sets");
+        // The exact operation Flink 1.20's Kryo performs while rebuilding the list from state.
+        assertDoesNotThrow(() -> backing.add("probe"));
+        // Callers still cannot mutate the event through the public view.
+        assertThrows(
+                UnsupportedOperationException.class, () -> event.getClearedSets().add("injected"));
+    }
+
+    @Test
+    void testRestoredClearedSetsAreKryoRebuildable() {
+        // The JSON boundary restores a LongTermUpdateEvent through its @JsonCreator, which must
+        // store cleared_sets in a Kryo-rebuildable list too, not an immutable copy.
+        Map<String, Object> attributes = new LinkedHashMap<>();
+        attributes.put("key", "k1");
+        attributes.put("value", new LinkedHashMap<>());
+        attributes.put("cleared_sets", List.of("prefs"));
+        Event generic = new Event(LongTermUpdateEvent.EVENT_TYPE, attributes);
+
+        MemoryEvent restored = MemoryEvent.fromEvent(generic);
+
+        assertInstanceOf(LongTermUpdateEvent.class, restored);
+        @SuppressWarnings("unchecked")
+        List<String> backing = (List<String>) restored.getAttributes().get("cleared_sets");
+        assertDoesNotThrow(() -> backing.add("probe"));
+        assertThrows(
+                UnsupportedOperationException.class,
+                () -> ((LongTermUpdateEvent) restored).getClearedSets().add("injected"));
     }
 
     public static class ObservationValuePojo {
