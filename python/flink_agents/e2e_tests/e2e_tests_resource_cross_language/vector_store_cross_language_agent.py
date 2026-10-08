@@ -32,6 +32,7 @@ from flink_agents.api.events.context_retrieval_event import (
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.resource import (
+    JavaResourceDescriptor,
     ResourceDescriptor,
     ResourceName,
     ResourceType,
@@ -89,9 +90,8 @@ class VectorStoreCrossLanguageAgent(Agent):
     def embedding_model_connection() -> ResourceDescriptor:
         """EmbeddingModelConnection responsible for ollama model service connection."""
         if os.environ.get("EMBEDDING_TYPE") == "JAVA":
-            return ResourceDescriptor(
-                clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
-                java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
+            return JavaResourceDescriptor(
+                clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
                 host="http://localhost:11434",
             )
         return ResourceDescriptor(
@@ -104,9 +104,8 @@ class VectorStoreCrossLanguageAgent(Agent):
     def embedding_model() -> ResourceDescriptor:
         """EmbeddingModel which focus on math, and reuse ChatModelConnection."""
         if os.environ.get("EMBEDDING_TYPE") == "JAVA":
-            return ResourceDescriptor(
-                clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
-                java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
+            return JavaResourceDescriptor(
+                clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
                 connection="embedding_model_connection",
                 model=os.environ.get(
                     "OLLAMA_EMBEDDING_MODEL", "nomic-embed-text:latest"
@@ -126,18 +125,16 @@ class VectorStoreCrossLanguageAgent(Agent):
         collection = os.environ.get("VECTOR_STORE_COLLECTION", DEFAULT_COLLECTION)
 
         if backend == BACKEND_ELASTICSEARCH:
-            return ResourceDescriptor(
-                clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
-                java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
+            return JavaResourceDescriptor(
+                clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
                 embedding_model=EMBEDDING_MODEL_RESOURCE,
                 host=os.environ.get("ES_HOST"),
                 index=collection,
                 dims=768,
             )
         if backend == BACKEND_MILVUS:
-            return ResourceDescriptor(
-                clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
-                java_clazz=ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
+            return JavaResourceDescriptor(
+                clazz=ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
                 embedding_model=EMBEDDING_MODEL_RESOURCE,
                 uri=os.environ.get("MILVUS_URI"),
                 collection=collection,

@@ -54,10 +54,21 @@ def durable_identity_for_call(
     func: Callable,
     args: tuple,
     kwargs: dict | None,
-) -> tuple[str, str]:
-    """Return the durable journal identity for a single callable invocation."""
+) -> str:
+    """Return the durable journal identity for a single callable invocation.
+
+    When the callable carries an explicit id attached by :func:`with_durable_id`,
+    that id is returned directly. Otherwise the identity is derived as
+    ``module.qualname`` concatenated with a stable digest of the serialized
+    arguments.
+    """
+    explicit_id = get_durable_id(func)
+    if explicit_id is not None:
+        return explicit_id
     call_kwargs = kwargs or {}
-    return _compute_function_id(func), _compute_args_digest(args, call_kwargs)
+    function_id = _compute_function_id(func)
+    args_digest = _compute_args_digest(args, call_kwargs)
+    return f"{function_id}::{args_digest}"
 
 
 def _compute_function_id(func: Callable) -> str:

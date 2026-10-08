@@ -6,18 +6,23 @@
     "responses": {
       "call_aaaa": "pong",
       "call_bbbb": 42,
-      "call_cccc": true
+      "call_cccc": true,
+      "call_dddd": "Tool `get_weather` execute failed."
     },
     "success": {
       "call_aaaa": true,
       "call_bbbb": true,
-      "call_cccc": true
+      "call_cccc": true,
+      "call_dddd": false
     },
-    "error": {},
+    "error": {
+      "call_dddd": "ValueError: boom"
+    },
     "external_ids": {
       "call_aaaa": null,
       "call_bbbb": null,
-      "call_cccc": null
+      "call_cccc": null,
+      "call_dddd": null
     }
   },
   "attachments": {}

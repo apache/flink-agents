@@ -23,8 +23,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.ollama4j.models.chat.OllamaChatRequest;
 import io.github.ollama4j.tools.Tools;
+import io.github.ollama4j.utils.Utils;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -39,6 +41,7 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,13 +51,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Unit tests for {@link OllamaChatModelConnection}'s tool-schema conversion and native
  * structured-output behavior — no network access. The structured-output assertions inspect the body
- * built by {@code buildRequest}, and exercise the capability predicate directly.
+ * built by {@code buildRequest}, and ask the connection's structured-output query directly.
  */
 class OllamaChatModelConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * A tool input schema carrying the {@code properties} object {@code convertToOllamaTools}
+     * documents as expected. A schema without one raises there, before the native branch this test
+     * is about is ever reached.
+     */
+    private static final String TOOL_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"}}}";
 
     /** Output schema fixture with a plain field and a map whose values carry a type. */
     public static class Report {
@@ -134,8 +145,7 @@ class OllamaChatModelConnectionTest {
     @Test
     @DisplayName("A schema without a 'required' key converts with every property optional")
     void testSchemaWithoutRequiredKey() {
-        // SchemaUtils only emits "required" when at least one parameter is required, so an
-        // all-optional @Tool produces exactly this shape (#1014).
+        // A schema may omit "required" when every parameter is optional (#1014).
         String schema =
                 "{\"type\":\"object\",\"properties\":{"
                         + "\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}}}";
@@ -167,6 +177,41 @@ class OllamaChatModelConnectionTest {
                 .isTrue();
         assertThat(tool.getToolSpec().getParameters().getProperties().get("b").isRequired())
                 .isFalse();
+    }
+
+    @Test
+    @DisplayName("Assistant tool calls in the history are sent back to Ollama")
+    void buildRequestForwardsAssistantToolCalls() {
+        Map<String, Object> call =
+                Map.of(
+                        "id",
+                        "fa-call-1",
+                        "type",
+                        "function",
+                        "function",
+                        Map.of("name", "get_weather", "arguments", Map.of("city", "Paris")));
+        Map<String, Object> jsonArgumentsCall =
+                Map.of("function", Map.of("name", "get_time", "arguments", "{\"zone\":\"CET\"}"));
+        List<ChatMessage> history =
+                List.of(
+                        new ChatMessage(MessageRole.USER, "Weather and time in Paris?"),
+                        ChatMessage.assistant("", List.of(call, jsonArgumentsCall)),
+                        new ChatMessage(MessageRole.TOOL, "sunny"),
+                        new ChatMessage(MessageRole.TOOL, "10:00"));
+
+        OllamaChatRequest request =
+                connection().buildRequest(history, List.of(), params("qwen3:4b"), null);
+        JsonNode wire = Utils.getObjectMapper().valueToTree(request);
+
+        JsonNode toolCalls = wire.at("/messages/1/tool_calls");
+        assertThat(toolCalls).hasSize(2);
+        assertThat(toolCalls.at("/0/function/name").asText()).isEqualTo("get_weather");
+        assertThat(toolCalls.at("/0/function/arguments/city").asText()).isEqualTo("Paris");
+        assertThat(toolCalls.at("/1/function/arguments/zone").asText()).isEqualTo("CET");
+        assertThat(
+                        wire.at("/messages/0/tool_calls").isMissingNode()
+                                || wire.at("/messages/0/tool_calls").isNull())
+                .isTrue();
     }
 
     @Test
@@ -205,6 +250,72 @@ class OllamaChatModelConnectionTest {
                         .buildRequest(userMessage(), List.of(), params("qwen3:4b"), nonClassSchema);
 
         assertThat(request.getFormat()).isNull();
+    }
+
+    @Test
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
+    void queryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. Capability does
+        // not depend on the model here, so the schema form is the only thing that moves.
+        OllamaChatModelConnection connection = connection();
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            // No null-tools case here: convertToOllamaTools iterates the list without a null
+            // guard, so this builder rejects null well before the native branch. The query itself
+            // accepts null, which queryIgnoresBoundTools pins against the query direct.
+            for (List<Tool> tools :
+                    List.of(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool(TOOL_SCHEMA)))) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                schema, tools, params("qwen3:4b"));
+
+                OllamaChatRequest request =
+                        connection.buildRequest(userMessage(), tools, params("qwen3:4b"), schema);
+
+                assertThat(answer)
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(
+                                request.getFormat() != null
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.INFEASIBLE);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools do not make a POJO schema infeasible here")
+    void queryIgnoresBoundTools() {
+        // Ollama's native branch imposes no empty-tools precondition, unlike Gemini's. Pinning the
+        // answer keeps the query from acquiring one by being copied from a connection that does.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(new SchemaOnlyTool(TOOL_SCHEMA)),
+                                        params("qwen3:4b")))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        // A null list means no tools, and the query accepts one even though this builder does not.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class, null, params("qwen3:4b")))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+    }
+
+    @Test
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void queryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool(TOOL_SCHEMA));
+        Map<String, Object> modelParams = Map.of("model", "qwen3:4b", "think", false);
+
+        connection().supportsNativeStructuredOutput(Report.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", "qwen3:4b", "think", false));
     }
 
     @Test
@@ -255,11 +366,12 @@ class OllamaChatModelConnectionTest {
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"qwen3:4b", "llama3.2", "gpt-oss:20b", "some-private-local-model"})
-    @DisplayName("Capability is reported for any model, since the server provides it")
-    void supportsNativeStructuredOutputIsServerNotModelGated(String model) {
-        // Null and empty are included because the capability does not depend on the argument at
-        // all, so the guard the sibling connections need for their allowlists would be a silent
-        // behavior change here.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    @DisplayName("Native is recommended for any model, since the server provides it")
+    void queryRecommendsNativeForAnyModel(String model) {
+        // Null and empty are included because capability does not depend on the model at all, so
+        // the guard the sibling connections need for their allowlists would be a silent behavior
+        // change here.
+        assertThat(connection().supportsNativeStructuredOutput(Report.class, null, params(model)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 }

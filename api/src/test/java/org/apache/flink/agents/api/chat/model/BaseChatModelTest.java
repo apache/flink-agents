@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -25,6 +26,9 @@ import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -364,13 +368,57 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("Default capability predicate reports no native structured output for any model")
-    void testDefaultCapabilityPredicateIsFalse() {
+    @DisplayName("Default query reports every request infeasible")
+    void testDefaultQueryIsInfeasible() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+
+        // Both forms a schema arrives in: a POJO class, and a wrapper a connection would have
+        // to unwrap before it could translate anything.
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(String.class, List.of(), modelParams));
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(
+                        new OutputSchema(
+                                new RowTypeInfo(
+                                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                                        new String[] {"name"})),
+                        List.of(),
+                        modelParams));
+    }
+
+    @Test
+    @DisplayName("Query accepts a null schema, tools and parameters without raising")
+    void testDefaultQueryAcceptsNullInputs() {
         RecordingConnection connection = new RecordingConnection();
 
-        assertFalse(connection.supportsNativeStructuredOutput("gpt-4o"));
-        assertFalse(connection.supportsNativeStructuredOutput("gpt-3.5-turbo"));
-        assertFalse(connection.supportsNativeStructuredOutput(null));
+        // An unconstrained request is an ordinary input to ask about, not a misuse. A request
+        // binding no tools may carry a null list, and a builder handed null parameters asks with
+        // the same null it was handed.
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(null, List.of(), Map.of()));
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(String.class, null, null));
+    }
+
+    @Test
+    @DisplayName("Query leaves the parameters a request would be built from intact")
+    void testDefaultQueryDoesNotConsumeModelParams() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+        modelParams.put("temperature", 0.5);
+
+        connection.supportsNativeStructuredOutput(String.class, List.of(), modelParams);
+
+        // The same map goes on to build the request the answer was about, so a query that
+        // took a key out of it would answer about one request and build another.
+        assertEquals(Map.of("model", "gpt-4o", "temperature", 0.5), modelParams);
     }
 
     @Test
@@ -422,22 +470,46 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("AUTO resolves to native only when the effective model is capable")
-    void testAutoStrategyResolvesToNativeOnlyWhenCapable() {
-        assertTrue(StructuredOutputStrategy.AUTO.resolvesToNative(true));
-        assertFalse(StructuredOutputStrategy.AUTO.resolvesToNative(false));
+    @DisplayName("AUTO resolves to native only when native is recommended")
+    void testAutoStrategyResolvesToNativeOnlyWhenRecommended() {
+        assertTrue(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED));
+        assertFalse(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.FEASIBLE));
+        assertFalse(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.INFEASIBLE));
     }
 
     @Test
-    @DisplayName("NATIVE forces native even when the model is not capable")
-    void testNativeStrategyForcesNativeRegardlessOfCapability() {
-        assertTrue(StructuredOutputStrategy.NATIVE.resolvesToNative(false));
+    @DisplayName("NATIVE resolves to native whenever the request can carry the schema")
+    void testNativeStrategyResolvesToNativeWhenFeasible() {
+        assertTrue(
+                StructuredOutputStrategy.NATIVE.resolvesToNative(
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED));
+        assertTrue(
+                StructuredOutputStrategy.NATIVE.resolvesToNative(
+                        NativeStructuredOutputSupport.FEASIBLE));
     }
 
     @Test
-    @DisplayName("PROMPT never resolves to native even when the model is capable")
+    @DisplayName("NATIVE on an infeasible request is rejected rather than degraded")
+    void testNativeStrategyRejectsInfeasibleRequest() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        StructuredOutputStrategy.NATIVE.resolvesToNative(
+                                NativeStructuredOutputSupport.INFEASIBLE));
+    }
+
+    @Test
+    @DisplayName("PROMPT never resolves to native")
     void testPromptStrategyNeverResolvesToNative() {
-        assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(true));
+        for (NativeStructuredOutputSupport support : NativeStructuredOutputSupport.values()) {
+            assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(support));
+        }
     }
 
     @Test
@@ -459,33 +531,5 @@ class BaseChatModelTest {
 
         assertNotNull(response);
         assertTrue(response.getText().length() > 0);
-    }
-
-    @Test
-    @DisplayName("Effective model defaults to the model parameter a request would be built from")
-    void testEffectiveModelForReadsTheModelParameter() {
-        RecordingConnection connection = new RecordingConnection();
-        Map<String, Object> modelParams = new HashMap<>();
-        modelParams.put("model", "gpt-4o");
-
-        assertEquals("gpt-4o", connection.effectiveModelFor(modelParams));
-    }
-
-    @Test
-    @DisplayName("Effective model is null when the parameters name no model")
-    void testEffectiveModelForReturnsNullWhenModelParameterAbsent() {
-        RecordingConnection connection = new RecordingConnection();
-
-        // A connection carrying no default of its own has no model to resolve, and the capability
-        // predicate reports a null model not capable rather than throwing.
-        assertNull(connection.effectiveModelFor(Map.of("temperature", 0.5)));
-    }
-
-    @Test
-    @DisplayName("Effective model is null for null parameters")
-    void testEffectiveModelForReturnsNullForNullParameters() {
-        RecordingConnection connection = new RecordingConnection();
-
-        assertNull(connection.effectiveModelFor(null));
     }
 }

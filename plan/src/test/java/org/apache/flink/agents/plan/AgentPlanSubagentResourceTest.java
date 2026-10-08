@@ -42,7 +42,7 @@ public class AgentPlanSubagentResourceTest {
     @Test
     void subagentSetupInstanceCompilesIntoAgentProvider() throws Exception {
         Agent agent = new Agent();
-        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup());
+        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup(null));
 
         AgentPlan plan = new AgentPlan(agent);
 

@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import java.util.ArrayList;
@@ -37,6 +39,18 @@ import java.util.concurrent.atomic.AtomicInteger;
  * call {@link #reset()} before each independent scenario.
  */
 public class MockDeferredSubagentSetup extends BaseDeferredSubagentSetup {
+
+    public MockDeferredSubagentSetup() {
+        this(
+                ResourceDescriptor.Builder.newBuilder(MockDeferredSubagentSetup.class.getName())
+                        .build(),
+                null);
+    }
+
+    public MockDeferredSubagentSetup(
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+    }
 
     /** One {@code (sessionId, callId)} assignment captured at prepare time. */
     public static final class Capture {
@@ -62,6 +76,8 @@ public class MockDeferredSubagentSetup extends BaseDeferredSubagentSetup {
         }
     }
 
+    // Static observation state (see class doc), reset() each scenario. EXECUTION_COUNT is atomic
+    // because call bodies run on async pool threads, where batched calls run concurrently.
     private static final List<Capture> CAPTURES = Collections.synchronizedList(new ArrayList<>());
     private static final AtomicInteger EXECUTION_COUNT = new AtomicInteger();
 

@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.function.Function;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
@@ -113,10 +114,7 @@ public final class YamlLoader {
      * Build a {@link ResourceDescriptor} from a parsed {@link DescriptorSpec}, resolving the alias
      * and applying cross-language wrapping when {@code type: python}.
      *
-     * <p>For {@code type: python} the resulting descriptor's {@code clazz} is the Java-side wrapper
-     * FQN (looked up in {@link Aliases#PYTHON_WRAPPER_CLAZZ}) and a {@code pythonClazz} init
-     * argument carries the Python implementation FQN — matching what {@code PythonResourceProvider}
-     * already expects.
+     * <p>Python declarations name the actual Python implementation.
      */
     public static ResourceDescriptor buildDescriptor(
             DescriptorSpec spec, ResourceType resourceType) {
@@ -124,18 +122,21 @@ public final class YamlLoader {
         Map<String, Object> extras = new LinkedHashMap<>(spec.getExtras());
 
         if (language == Language.PYTHON) {
-            String wrapper = Aliases.PYTHON_WRAPPER_CLAZZ.get(resourceType);
-            if (wrapper == null) {
+            if (!java.util.Set.of(
+                            ResourceType.CHAT_MODEL,
+                            ResourceType.CHAT_MODEL_CONNECTION,
+                            ResourceType.EMBEDDING_MODEL,
+                            ResourceType.EMBEDDING_MODEL_CONNECTION,
+                            ResourceType.VECTOR_STORE)
+                    .contains(resourceType)) {
                 throw new IllegalArgumentException(
-                        "Resource '"
-                                + spec.getName()
-                                + "': type='python' is not supported for "
-                                + resourceType.getValue()
-                                + " (no Java-side Python wrapper).");
+                        "type='python' is not supported for " + resourceType.getValue());
             }
             String pythonFqn = Aliases.resolveClazz(spec.getClazz(), resourceType, Language.PYTHON);
-            extras.put("pythonClazz", pythonFqn);
-            return new ResourceDescriptor(wrapper, extras);
+            PythonResourceDescriptor.Builder builder =
+                    PythonResourceDescriptor.Builder.newBuilder(pythonFqn);
+            extras.forEach(builder::addInitialArgument);
+            return builder.build();
         }
         String javaFqn = Aliases.resolveClazz(spec.getClazz(), resourceType, Language.JAVA);
         return new ResourceDescriptor(javaFqn, extras);

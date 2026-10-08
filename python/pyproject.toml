@@ -44,6 +44,7 @@ classifiers = [
 
 dependencies = [
     "pydantic==2.11.4",
+    "jsonschema>=4.23,<5",
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
     "mcp>=1.8.0",

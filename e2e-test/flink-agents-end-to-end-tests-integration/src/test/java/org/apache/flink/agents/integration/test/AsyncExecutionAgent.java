@@ -537,10 +537,11 @@ public class AsyncExecutionAgent {
                 description = "Records timing for a slow tool call.")
         public static String timed_tool(
                 @ToolParam(name = "request_id") String requestId,
-                @ToolParam(name = "call_index") String callIndex) {
+                @ToolParam(name = "call_index") String callIndex,
+                @ToolParam(name = "sleep_ms") Integer sleepMs) {
             long start = System.currentTimeMillis();
             try {
-                Thread.sleep(500);
+                Thread.sleep(sleepMs);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

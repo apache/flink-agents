@@ -31,8 +31,12 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -47,6 +51,7 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
@@ -69,6 +74,9 @@ class GeminiChatModelConnectionTest {
     /** A model Google documents native structured-output support for. */
     private static final String CAPABLE_MODEL = "gemini-2.5-flash";
 
+    /** A model on the same endpoint that is outside the Gemini family. */
+    private static final String INCAPABLE_MODEL = "gemma-4-31b-it";
+
     private static ResourceDescriptor descriptor(String apiKey, String baseUrl, String model) {
         ResourceDescriptor.Builder b =
                 ResourceDescriptor.Builder.newBuilder(GeminiChatModelConnection.class.getName());
@@ -90,8 +98,7 @@ class GeminiChatModelConnectionTest {
     }
 
     /**
-     * buildConfig consumes the keys it recognizes via {@code arguments.remove(...)}, so the map
-     * handed to it must be mutable.
+     * Model parameters for one request; mutable so a test can add keys before handing them over.
      */
     private static Map<String, Object> params() {
         return new HashMap<>();
@@ -661,9 +668,9 @@ class GeminiChatModelConnectionTest {
                 "gemini-2.5-flash",
                 "gemini-robotics-er-1.6-preview"
             })
-    @DisplayName("Every live Gemini text model reports native structured-output support")
-    void supportsNativeStructuredOutputForTextModels(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    @DisplayName("Every live Gemini text model is recommended native")
+    void queryRecommendsNativeForTextModels(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @ParameterizedTest
@@ -678,19 +685,20 @@ class GeminiChatModelConnectionTest {
                 "gemini-embedding-001",
                 "gemini-omni-flash"
             })
-    @DisplayName("A non-text output modality is rejected even though it carries the family prefix")
-    void supportsNativeStructuredOutputRejectsNonTextModalities(String model) {
+    @DisplayName(
+            "A non-text output modality is not recommended though it carries the family prefix")
+    void queryReportsNonTextModalitiesFeasibleOnly(String model) {
         // gemini-2.5-flash-image is the case the marker exists for: its published capability row
         // claims support, and the service answers 400 "JSON mode is not enabled for this model".
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"   ", "gemini-"})
-    @DisplayName("A null, blank or bare-prefix model reports not-capable")
-    void supportsNativeStructuredOutputRejectsNullBlankAndBarePrefix(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    @DisplayName("A null, blank or bare-prefix model is feasible but not recommended")
+    void queryReportsNullBlankAndBarePrefixFeasibleOnly(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
@@ -702,9 +710,18 @@ class GeminiChatModelConnectionTest {
                 "gemini",
                 "imagen-4.0-generate-001"
             })
-    @DisplayName("A name outside the family reports not-capable and keeps the prompt fallback")
-    void supportsNativeStructuredOutputRejectsOutsideFamily(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    @DisplayName("A name outside the family is not recommended and keeps the prompt fallback")
+    void queryReportsOutsideFamilyFeasibleOnly(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+    }
+
+    /** The query's answer for a POJO and no tools, on a connection with no configured default. */
+    private static NativeStructuredOutputSupport supportFor(String model) {
+        // Without a default, a null or blank model reaches the capability check unresolved.
+        GeminiChatModelConnection connection =
+                new GeminiChatModelConnection(descriptor("test-key", null, null), NOOP);
+        return connection.supportsNativeStructuredOutput(
+                Report.class, List.of(), paramsWithModel(model));
     }
 
     @Test
@@ -923,21 +940,20 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The effective model falls back to the configured default")
-    void effectiveModelForFallsBackToTheConfiguredDefault() {
-        // chat resolves the model the same way before feeding the capability predicate, and
-        // connection() is configured with gemini-3-pro-preview.
-        Map<String, Object> modelParams = params();
-
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
-
-        modelParams.put("model", CAPABLE_MODEL);
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo(CAPABLE_MODEL);
-
-        // A blank model is not a model. The request path substitutes the default for it, so the
-        // hook has to as well or the two disagree on exactly this input.
-        modelParams.put("model", "   ");
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
+    @DisplayName("The query judges the configured default when the model parameter is unset")
+    void queryFallsBackToTheConfiguredDefault() {
+        // chat resolves the model the same way before judging capability. The configured default
+        // is capable, so an unresolved model would answer differently. A blank model is not a
+        // model either: the request path substitutes the default for it, so the query has to as
+        // well or the two disagree on exactly this input.
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(params(), paramsWithModel("   "))) {
+            assertThat(
+                            connection()
+                                    .supportsNativeStructuredOutput(
+                                            Report.class, List.of(), modelParams))
+                    .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        }
     }
 
     /** Stops the request after the config is assembled, so no call reaches the provider. */
@@ -950,44 +966,159 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The model the request builder judges is the one the hook names")
-    void effectiveModelForNamesTheModelTheBuilderJudges() {
-        // chat resolves the model and hands it to buildConfig, which is where the predicate is fed.
-        // Overriding buildConfig to stop once it has run binds the hook to the request without
-        // reaching the provider. Asserting each side against a literal would let the two drift in
-        // step, which is the one failure this has to catch.
-        AtomicReference<String> judged = new AtomicReference<>();
-        GeminiChatModelConnection connection =
-                new GeminiChatModelConnection(
-                        descriptor("test-key", null, "gemini-3-pro-preview"), NOOP) {
-                    @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-                        judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
-                    }
+    @DisplayName("The query judges the model the request path resolves")
+    void queryJudgesTheModelTheRequestPathResolves() {
+        // chat resolves the model and hands it to buildConfig, which is where the native branch
+        // runs. Overriding buildConfig to stop once it has run binds the query to the request
+        // without reaching the provider. Asserting each side against a literal would let the two
+        // drift in step, which is the one failure this has to catch.
+        for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+            AtomicReference<GenerateContentConfig> built = new AtomicReference<>();
+            GeminiChatModelConnection connection =
+                    new GeminiChatModelConnection(descriptor("test-key", null, configured), NOOP) {
+                        @Override
+                        GenerateContentConfig buildConfig(
+                                List<ChatMessage> messages,
+                                List<Tool> tools,
+                                Map<String, Object> arguments,
+                                String modelName,
+                                Object outputSchema) {
+                            built.set(
+                                    super.buildConfig(
+                                            messages, tools, arguments, modelName, outputSchema));
+                            throw new StopBeforeRequest();
+                        }
+                    };
 
-                    @Override
-                    GenerateContentConfig buildConfig(
-                            List<ChatMessage> messages,
-                            List<Tool> tools,
-                            Map<String, Object> arguments,
-                            String modelName,
-                            Object outputSchema) {
-                        super.buildConfig(messages, tools, arguments, modelName, outputSchema);
-                        throw new StopBeforeRequest();
-                    }
-                };
+            for (Map<String, Object> modelParams :
+                    List.<Map<String, Object>>of(
+                            paramsWithModel(CAPABLE_MODEL),
+                            paramsWithModel(INCAPABLE_MODEL),
+                            paramsWithModel("   "),
+                            params())) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                Report.class, List.of(), modelParams);
 
-        for (Map<String, Object> modelParams :
-                List.<Map<String, Object>>of(
-                        paramsWithModel(CAPABLE_MODEL), paramsWithModel("   "), params())) {
-            String named = connection.effectiveModelFor(modelParams);
+                assertThatThrownBy(
+                                () ->
+                                        connection.chat(
+                                                userMessage(), null, modelParams, Report.class))
+                        .hasRootCauseInstanceOf(StopBeforeRequest.class);
 
-            assertThatThrownBy(
-                            () -> connection.chat(userMessage(), null, modelParams, Report.class))
-                    .hasRootCauseInstanceOf(StopBeforeRequest.class);
-
-            assertThat(judged.get()).isEqualTo(named);
+                // A POJO with no tools is feasible throughout, so only capability moves.
+                assertThat(answer)
+                        .as("configured %s, params %s", configured, modelParams)
+                        .isEqualTo(
+                                built.get().responseJsonSchema().isPresent()
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.FEASIBLE);
+            }
         }
+    }
+
+    @Test
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
+    void queryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the config ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable throughout, so the schema form and the bound tools are what move.
+        GeminiChatModelConnection connection = connection();
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                schema, tools, paramsWithModel(CAPABLE_MODEL));
+
+                GenerateContentConfig config =
+                        connection.buildConfig(
+                                userMessage(), tools, params(), CAPABLE_MODEL, schema);
+
+                assertThat(answer)
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(
+                                config.responseJsonSchema().isPresent()
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.INFEASIBLE);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools make a POJO schema infeasible, an empty or absent list does not")
+    void queryFollowsBoundTools() {
+        // Pinning the answer itself, not just its agreement with the branch: dropping this
+        // conjunct from both would leave the two in agreement. Gemini is the only connection
+        // whose answer tools can move.
+        GeminiChatModelConnection connection = connection();
+
+        assertThat(connection.supportsNativeStructuredOutput(Report.class, List.of(), params()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(connection.supportsNativeStructuredOutput(Report.class, null, params()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(
+                        connection.supportsNativeStructuredOutput(
+                                Report.class, List.of(new SchemaOnlyTool()), params()))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+    }
+
+    @Test
+    @DisplayName("An undocumented model leaves the request feasible rather than infeasible")
+    void querySeparatesCapabilityFromFeasibility() {
+        // A POJO with no tools bound is feasible here whatever the model is named, and the
+        // branch's own capability conjunct is what keeps an undocumented model's config
+        // unconstrained. Folding capability into feasibility would report INFEASIBLE, which a
+        // NATIVE policy cannot overrule.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(),
+                                        paramsWithModel("gemini-2.5-flash-image")))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(
+                        connection()
+                                .buildConfig(
+                                        userMessage(),
+                                        List.of(),
+                                        params(),
+                                        "gemini-2.5-flash-image",
+                                        Report.class)
+                                .responseJsonSchema())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void queryDoesNotConsumeItsInputs() {
+        // buildConfig consumes the keys it recognizes, so a query copying that idiom would leave
+        // the builder without them. Both inputs are immutable, so a consuming implementation
+        // raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool());
+        Map<String, Object> arguments = Map.of("model", CAPABLE_MODEL, "temperature", 0.5);
+
+        connection().supportsNativeStructuredOutput(Report.class, tools, arguments);
+
+        assertThat(tools).hasSize(1);
+        assertThat(arguments).isEqualTo(Map.of("model", CAPABLE_MODEL, "temperature", 0.5));
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "Gemini cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

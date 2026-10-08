@@ -30,6 +30,51 @@ import java.util.Map;
 
 public class ResourceDescriptorTest {
     @Test
+    void pythonDeclarationRoundTripsWithoutWrapperMetadata() throws Exception {
+        ResourceDescriptor descriptor =
+                PythonResourceDescriptor.Builder.newBuilder("custom.models.Chat")
+                        .addInitialArgument("model", "test")
+                        .build();
+        ObjectMapper mapper = new ObjectMapper();
+        String json = mapper.writeValueAsString(descriptor);
+        ResourceDescriptor restored = mapper.readValue(json, ResourceDescriptor.class);
+        Assertions.assertInstanceOf(PythonResourceDescriptor.class, restored);
+        Assertions.assertEquals(descriptor, restored);
+        Assertions.assertEquals("python", restored.getLanguage());
+        Assertions.assertEquals("custom.models", restored.getModule());
+        Assertions.assertEquals("Chat", restored.getClazz());
+        Assertions.assertEquals(Map.of("model", "test"), restored.getInitialArguments());
+    }
+
+    @Test
+    void invalidPythonClassNamesAreRejected() {
+        for (String clazz : List.of("", "Chat", "module.", ".Chat")) {
+            Assertions.assertThrows(
+                    IllegalArgumentException.class,
+                    () -> PythonResourceDescriptor.Builder.newBuilder(clazz));
+        }
+    }
+
+    @Test
+    void javaDeclarationAlwaysSerializesLanguage() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder("custom.models.Chat").build();
+        Assertions.assertEquals(
+                "java",
+                mapper.readTree(mapper.writeValueAsString(descriptor)).get("language").asText());
+        Assertions.assertEquals(
+                descriptor,
+                mapper.readValue(mapper.writeValueAsString(descriptor), ResourceDescriptor.class));
+        Assertions.assertThrows(
+                Exception.class,
+                () ->
+                        mapper.readValue(
+                                "{\"language\":\"ruby\",\"target_module\":\"\",\"target_clazz\":\"Chat\",\"arguments\":{}}",
+                                ResourceDescriptor.class));
+    }
+
+    @Test
     public void testResourceDescriptorSerializable() throws JsonProcessingException {
         Integer arg1 = 123;
         List<String> arg2 = List.of("1", "2", "3");

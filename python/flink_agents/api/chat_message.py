@@ -177,6 +177,45 @@ ContentBlock = Annotated[
 ]
 
 
+class UnsupportedContentBlockError(ValueError):
+    """A chat model integration cannot send a content block to its provider.
+
+    Raised for a media type the provider does not accept, or a media block in
+    a message role that only takes text, rather than silently dropping or
+    converting the block. Messages name the block type, media type and source
+    type only, never the media payload or URL.
+    """
+
+    @classmethod
+    def for_block(
+        cls, provider: str, block: ContentBlock, reason: str
+    ) -> "UnsupportedContentBlockError":
+        """Create the error for a block the provider cannot send.
+
+        The message reads "{provider} cannot send a(n) {type} block ({media type},
+        {source type} source): {reason}."
+        """
+        article = "an" if block.type[0] in "aeiou" else "a"
+        description = f"{article} {block.type} block"
+        if isinstance(block, MediaBlock):
+            description += f" ({block.media_type}, {block.source.type} source)"
+        return cls(f"{provider} cannot send {description}: {reason}.")
+
+    @classmethod
+    def reject_media(cls, provider: str, messages: Sequence["ChatMessage"]) -> None:
+        """Raise for the first media block in the messages.
+
+        For integrations that send text only, so that media fails explicitly
+        rather than being dropped from the request.
+        """
+        for message in messages:
+            for block in message.blocks:
+                if isinstance(block, MediaBlock):
+                    raise cls.for_block(
+                        provider, block, "this integration sends text only"
+                    )
+
+
 def _blocks_of(text: str) -> List[ContentBlock]:
     """An empty text becomes an empty block list rather than an empty text block."""
     return [TextBlock(text=text)] if text else []

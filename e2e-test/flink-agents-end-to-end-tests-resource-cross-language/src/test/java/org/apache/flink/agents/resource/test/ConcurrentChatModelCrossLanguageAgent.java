@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
@@ -83,8 +84,8 @@ public class ConcurrentChatModelCrossLanguageAgent extends Agent {
 
     @ChatModelSetup
     public static ResourceDescriptor pythonChatModel() {
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "overlappingJavaConnection")
                 .addInitialArgument("model", "mock-model")
                 .addInitialArgument("extract_reasoning", false)

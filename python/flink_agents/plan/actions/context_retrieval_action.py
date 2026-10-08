@@ -25,11 +25,11 @@ from flink_agents.api.events.context_retrieval_event import (
 from flink_agents.api.events.event import Event
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.vector_stores.java_vector_store import JavaVectorStore
 from flink_agents.api.vector_stores.vector_store import VectorStoreQuery
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.resource.java.java_vector_store import JavaVectorStore
 
 _logger = logging.getLogger(__name__)
 

@@ -68,7 +68,7 @@ def _expected_durable_function_id(
     tenant_id: str = "tenant-1",
 ) -> str:
     tool = _query_order_tool()
-    function_id, _ = durable_identity_for_call(
+    function_id = durable_identity_for_call(
         tool.call,
         (),
         {"order_id": order_id, "tenant_id": tenant_id},
@@ -138,10 +138,12 @@ class _Context:
 
     def durable_execute(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_calls.append((func, args, kwargs))
+        kwargs.pop("durable_id", None)
         return func(*args, **kwargs)
 
     def durable_execute_async(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         self.durable_execute_async_calls.append((func, args, kwargs))
+        kwargs.pop("durable_id", None)
 
         async def execute() -> Any:
             return func(*args, **kwargs)
@@ -234,7 +236,7 @@ def test_tool_call_action_injects_args_from_config_without_mutating_request() ->
     assert arguments == {"order_id": "order-1"}
 
 
-def test_tool_call_action_injected_arg_overrides_model_argument() -> None:
+def test_tool_call_action_overrides_model_supplied_injected_argument() -> None:
     ctx = _Context()
     arguments = {"order_id": "order-1", "tenant_id": "model-tenant"}
     event = ToolRequestEvent(
@@ -251,8 +253,10 @@ def test_tool_call_action_injected_arg_overrides_model_argument() -> None:
     asyncio.run(process_tool_request(event, ctx))
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
-    assert response.responses["call-1"] == "tenant-1:order-1"
     assert response.success["call-1"] is True
+    assert response.responses["call-1"] == "tenant-1:order-1"
+    assert response.error == {}
+    assert arguments == {"order_id": "order-1", "tenant_id": "model-tenant"}
 
 
 def test_tool_call_action_injects_args_from_sensory_memory() -> None:
@@ -295,7 +299,7 @@ def test_tool_call_action_reports_missing_config_injected_arg() -> None:
                 "type": "function",
                 "function": {
                     "name": "query_order",
-                    "arguments": {"order_id": "order-1"},
+                    "arguments": {"order_id": "order-1", "tenant_id": "model-tenant"},
                 },
             }
         ],
@@ -402,13 +406,12 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     }
     assert response.success == {"call-1": True, "call-2": True}
     assert len(ctx.gather_calls) == 1
-    expected_id = _expected_durable_function_id("order-call-1")
     assert [
-        durable_identity_for_call(func, args, kwargs)[0]
+        durable_identity_for_call(func, args, kwargs)
         for func, args, kwargs in ctx.gather_calls[0]
     ] == [
-        expected_id,
-        expected_id,
+        _expected_durable_function_id("order-call-1"),
+        _expected_durable_function_id("order-call-2"),
     ]
     assert len(ctx.durable_execute_async_calls) == 2
 

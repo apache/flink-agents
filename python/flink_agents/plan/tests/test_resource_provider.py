@@ -80,10 +80,10 @@ def test_python_can_deserialize_java_resource_provider_wire_shape() -> None:
             "name": "bedrock_chat",
             "type": "chat_model",
             "descriptor": {
+                "language": "java",
                 "target_module": "",
                 "target_clazz": "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup",
                 "arguments": {
-                    "java_clazz": "org.apache.flink.agents.integrations.chatmodels.bedrock.BedrockChatModelSetup",
                     "model": "anthropic.claude-3-haiku",
                     "max_tokens": 1024,
                 },

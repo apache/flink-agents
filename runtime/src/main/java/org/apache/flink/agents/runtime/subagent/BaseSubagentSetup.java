@@ -19,6 +19,8 @@
 package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
@@ -41,6 +43,14 @@ public abstract class BaseSubagentSetup extends SubagentSetup implements TaskLif
 
     /** The task whose execution is currently issuing calls. */
     @Nullable private ActionTask currentTask;
+
+    /**
+     * Descriptor-based construction for a sub-agent rebuilt on a remote task from the configuration
+     * its descriptor carries.
+     */
+    protected BaseSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+    }
 
     @Override
     public void onActionPrepared(ActionTask task) {

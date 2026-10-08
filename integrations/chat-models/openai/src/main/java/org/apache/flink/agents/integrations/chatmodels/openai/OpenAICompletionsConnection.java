@@ -35,6 +35,7 @@ import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -159,7 +160,24 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17");
 
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
+    /**
+     * Whether {@code effectiveModel} is documented to honor a {@code json_schema} response format.
+     * Protected so that a subclass serving models outside this allowlist can replace it alone.
+     *
+     * @param effectiveModel the model the request would reach, may be null
+     * @return true if the model is known to honor a native schema
+     */
+    protected boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null) {
             return false;
         }
@@ -175,13 +193,32 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
      * The {@code model} parameter, falling back to the model configured on the connection when the
      * call names none, which is how the request itself resolves the model it is issued against.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         String modelName = modelParams != null ? (String) modelParams.get("model") : null;
         if (modelName == null || modelName.isBlank()) {
             return this.defaultModel;
         }
         return modelName;
+    }
+
+    /**
+     * Whether a request built from these inputs would carry a native {@code response_format}, the
+     * effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Nothing else about the request constrains the native branch, so neither the tools nor the
+     * parameters are read: this connection sends a native schema alongside bound tools, and the one
+     * parameter that would matter is the model, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
     }
 
     /**
@@ -275,12 +312,10 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
         // the prompt-engineering fallback.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a model this predicate rejects therefore gets an unconstrained response
-        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
-        // this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility check is shared with the structured-output query rather than restated, so
+        // the query answers what this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && modelSupportsNativeStructuredOutput(modelName)) {
             builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 

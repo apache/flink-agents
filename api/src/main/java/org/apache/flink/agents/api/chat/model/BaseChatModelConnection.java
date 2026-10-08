@@ -48,55 +48,34 @@ public abstract class BaseChatModelConnection extends Resource {
     }
 
     /**
-     * Whether this connection can apply the provider's native structured-output API for the given
-     * model.
+     * Whether this connection can apply the provider's native structured-output API to a request
+     * built from these inputs, as a {@link NativeStructuredOutputSupport}.
      *
-     * <p>Capability is <b>model-dependent</b>, not connection-wide: a single provider connection
-     * commonly serves both models that accept a native schema parameter and models that do not. The
-     * model to ask about is whatever {@link #effectiveModelFor(Map)} returns for the parameters a
-     * request would be built from, and a caller outside the connection asks that hook and nothing
-     * else. Such a caller must not substitute the identifier the request is issued against: on a
-     * deployment-based provider the request targets a deployment name the user chose while
-     * capability belongs to the model backing it, so the two disagree in both directions.
+     * <p>Infeasibility is binding and no policy overrules it, so an override must decide it from
+     * the same logic its own request builder uses to choose the native branch. Capability is
+     * advisory, and belongs to the model the request would actually reach: a configured default
+     * when the {@code model} parameter is unset, or the model backing a deployment rather than the
+     * deployment name. A connection that classifies by model name answers {@code FEASIBLE} for a
+     * name it does not recognize. The default {@code INFEASIBLE} is correct only for a connection
+     * that translates no schema at all.
      *
-     * <p>The default {@code false} keeps a connection on the prompt-engineering fallback. A
-     * connection that classifies by model name must report {@code false} for a name it does not
-     * recognize, so that it degrades to the fallback rather than failing at the provider. A
-     * connection whose capability belongs to the endpoint rather than to the model answers for the
-     * endpoint instead, and may report {@code true} for a name it has never seen.
+     * <p>An answer other than {@code INFEASIBLE} does not promise the call succeeds: a connection
+     * may still raise once its native branch applies the schema, for example on a conflicting
+     * caller-supplied response format.
      *
-     * @param effectiveModel the model whose capability is being asked about, as returned by {@link
-     *     #effectiveModelFor(Map)}, may be null
-     * @return true if a schema can be applied natively for {@code effectiveModel}
+     * <p>Null inputs are accepted without raising, and the parameters are read without being
+     * consumed, so that the same map still builds the request the answer was about.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools the tools the request would bind, may be null or empty for none
+     * @param modelParams the parameters the request would be built from, may be null
+     * @return the connection's support for applying {@code outputSchema} natively
      */
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-        return false;
-    }
-
-    /**
-     * The model whose capability {@link #supportsNativeStructuredOutput(String)} should be asked
-     * about, derived from the parameters a request would be built from.
-     *
-     * <p>Overriding this is how a connection whose effective model is not the {@code model}
-     * parameter verbatim keeps the capability answer and the request in agreement. A connection
-     * that falls back to a configured default model when the parameter is absent applies that
-     * fallback here, and a deployment-based provider returns the model backing the deployment
-     * rather than the deployment the request targets.
-     *
-     * <p>Answers for whatever it is given rather than validating: a model that does not resolve
-     * comes back null, and {@link #supportsNativeStructuredOutput(String)} must accept null rather
-     * than throwing. What a null model resolves to is that predicate's own answer; the default, and
-     * every override that classifies by name, reports it not capable.
-     *
-     * <p>An override must read {@code modelParams} without consuming it, so that the same map still
-     * builds the request the answer was about.
-     *
-     * @param modelParams the parameters a request would be built from, may be null
-     * @return the model to ask the capability predicate about, or null if none resolves
-     */
-    @Nullable
-    protected String effectiveModelFor(@Nullable Map<String, Object> modelParams) {
-        return modelParams == null ? null : (String) modelParams.get("model");
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            @Nullable Object outputSchema,
+            @Nullable List<Tool> tools,
+            @Nullable Map<String, Object> modelParams) {
+        return NativeStructuredOutputSupport.INFEASIBLE;
     }
 
     /**
@@ -122,8 +101,8 @@ public abstract class BaseChatModelConnection extends Resource {
      * default implementation rejects a non-null {@code outputSchema} rather than dropping it, so an
      * unconstrained response can never be mistaken for a schema-conforming one. A null {@code
      * outputSchema} delegates to {@link #chat(List, List, Map)}. A connection that does translate a
-     * schema into a native provider parameter overrides this overload, and reports its capability
-     * via {@link #supportsNativeStructuredOutput(String)}.
+     * schema into a native provider parameter overrides this overload, and reports its support via
+     * {@link #supportsNativeStructuredOutput(Object, List, Map)}.
      *
      * <p>No connection translates an {@link org.apache.flink.agents.api.agents.OutputSchema}, and
      * so a {@code RowTypeInfo}, natively, and what follows differs by connection. One that

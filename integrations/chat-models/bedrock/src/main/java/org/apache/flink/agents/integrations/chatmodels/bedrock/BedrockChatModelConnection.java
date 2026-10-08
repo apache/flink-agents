@@ -25,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -201,6 +203,17 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                         .build();
     }
 
+    @Override
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
     /**
      * Whether AWS documents structured-output support for {@code effectiveModel}.
      *
@@ -215,16 +228,14 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * the prompt-engineering fallback rather than failing at the provider.
      *
      * <p>A null or blank model reports {@code false} rather than throwing: {@code resolveModel}
-     * rejects one before a request is built, but this method is part of the connection contract and
-     * answers for whatever it is given. Only the null case needs a guard of its own, because the
-     * allowlist is an immutable Set whose {@code contains(null)} throws; a blank model is merely
-     * absent from it.
+     * rejects one before a request is built, but the structured-output query answers for whatever
+     * it is given. Only the null case needs a guard of its own, because the allowlist is an
+     * immutable Set whose {@code contains(null)} throws; a blank model is merely absent from it.
      *
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
      */
-    @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         // Load-bearing: the allowlist is an immutable Set, whose contains(null) throws rather than
         // reporting absence.
         if (effectiveModel == null || effectiveModel.isBlank()) {
@@ -242,15 +253,34 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * call names none, which is how the request itself resolves the model it is issued against.
      *
      * <p>Resolving to nothing comes back null rather than raising the way {@code resolveModel}
-     * does, because the capability predicate reports a null model not capable.
+     * does, because the capability check reports a null model not capable.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         String model = modelParams != null ? (String) modelParams.get("model") : null;
         if (model == null || model.isBlank()) {
             return this.defaultModel;
         }
         return model;
+    }
+
+    /**
+     * Whether a request built from these inputs would carry a native {@code outputConfig}, the
+     * effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Nothing else about the request constrains the native branch, so neither the tools nor the
+     * parameters are read: this connection sends a native schema alongside bound tools, and the one
+     * parameter that would matter is the model, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
     }
 
     @Override
@@ -271,6 +301,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("Amazon Bedrock", messages);
         ConverseRequest request = buildRequest(messages, tools, modelParams, outputSchema);
         String modelId = request.modelId();
 
@@ -366,7 +398,10 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
         }
 
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelId)) {
+        // The feasibility and capability checks are shared with the structured-output query rather
+        // than restated, so the query answers what this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                && modelSupportsNativeStructuredOutput(modelId)) {
             requestBuilder.outputConfig(nativeOutputConfig((Class<?>) outputSchema));
         }
 

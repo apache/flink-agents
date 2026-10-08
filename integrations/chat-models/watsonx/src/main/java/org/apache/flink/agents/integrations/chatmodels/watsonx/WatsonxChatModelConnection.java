@@ -27,7 +27,9 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -239,37 +241,67 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
-     * Whether watsonx.ai can constrain generation to a schema for {@code effectiveModel}.
+     * Answers {@link NativeStructuredOutputSupport#NATIVE_RECOMMENDED} whenever the request can
+     * carry the schema, whatever the model.
      *
-     * <p>Always {@code true}, and deliberately independent of the argument. The constraint is
-     * applied by the serving runtime, through vLLM guided decoding, rather than by a per-model
-     * capability. IBM states that chat API support requires the vLLM runtime, on its pages about
-     * inferencing <i>custom</i> foundation models; it does not state in so many words that its own
-     * provided models are served the same way. That last step rests instead on the chat request
-     * body exposing vLLM's guided-decoding parameters verbatim.
+     * <p>Capability is deliberately independent of the model. The constraint is applied by the
+     * serving runtime, through vLLM guided decoding, rather than by a per-model capability. IBM
+     * states that chat API support requires the vLLM runtime, on its pages about inferencing
+     * <i>custom</i> foundation models; it does not state in so many words that its own provided
+     * models are served the same way. That last step rests instead on the chat request body
+     * exposing vLLM's guided-decoding parameters verbatim.
      *
      * <p>There is no allowlist because IBM publishes no per-model structured-output signal to key
      * on: the foundation-model comparison table has columns for chat and tool interaction and none
      * for structured output, and the model-specs API exposes no such flag. A list written here
      * would encode a gate nobody documents and would report not-capable for models that do work.
      *
-     * <p>This diverges from the base contract, which describes capability as model-dependent and
-     * requires an unrecognized model to report {@code false}. That rule guards against failing at
-     * the provider for a model whose capability is unknown; here capability is a property of the
-     * endpoint rather than of the model, so there is no unknown to guard against.
-     *
-     * <p>Reads no instance state, so capability stays answerable independently of how the
-     * connection was configured.
+     * <p>An unrecognized model is therefore not reported {@code FEASIBLE}, as it is on a connection
+     * that classifies by name: capability is a property of the endpoint rather than of the model,
+     * so there is no unknown model to degrade for.
      */
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-        return true;
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.INFEASIBLE;
+    }
+
+    /**
+     * Whether {@code outputSchema} is a form this connection could translate into a native {@code
+     * response_format}, the effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Since this connection's capability does not depend on the model, the schema form is the whole
+     * of what it can report infeasible.
+     *
+     * <p>A {@code true} answer is about the schema form alone, and is not a promise that a payload
+     * gets built. A caller-supplied {@code response_format} is deliberately not a condition here,
+     * and the native branch answers that conflict by raising rather than by skipping, so a request
+     * the structured-output query reports feasible can still be met with an exception. Reporting
+     * the conflict infeasible instead would turn a documented error into a silently unconstrained
+     * request.
+     *
+     * <p>Neither the tools nor the parameters are read; this connection sends a native schema
+     * alongside bound tools.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}; a caller-supplied {@code
+     *     response_format} does not make it false, and the native branch raises on that conflict
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
     }
 
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        return doChat(messages, tools, modelParams, null);
+        return chat(messages, tools, modelParams, null);
     }
 
     /**
@@ -284,6 +316,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("IBM watsonx.ai", messages);
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
@@ -482,13 +516,9 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         // written at the payload root. When no native translation applies the key stays absent
         // rather than being written as a null, which would still be a present field on the wire.
         //
-        // TODO(#912): the requested strategy is not visible here, so a request that explicitly
-        // asked for NATIVE cannot be told apart from one that merely resolved to it. Capability is
-        // unconditional on this connection, so the schema form is the only way through to an
-        // unconstrained response: a caller who asked for NATIVE and passed a schema this branch
-        // cannot translate gets one silently. Once strategy resolution is wired up, NATIVE must
-        // either bypass this re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility check is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
             // A caller reaches the same payload field through either channel. Only the branch that
             // actually sends a derived schema may reject the caller's value; every path that skips
             // it leaves that value untouched. A null is not a conflict, because both write loops

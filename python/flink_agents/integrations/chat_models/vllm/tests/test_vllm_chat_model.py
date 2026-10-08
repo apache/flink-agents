@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import NativeStructuredOutputSupport
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
 )
@@ -82,14 +83,28 @@ class _Person(BaseModel):
     age: int
 
 
-def test_supports_native_structured_output_follows_served_model() -> None:
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("Qwen/Qwen2.5-7B-Instruct", NativeStructuredOutputSupport.NATIVE_RECOMMENDED),
+        (
+            "meta-llama/Llama-3.1-8B-Instruct",
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+        ),
+        (None, NativeStructuredOutputSupport.FEASIBLE),
+        (" ", NativeStructuredOutputSupport.FEASIBLE),
+    ],
+)
+def test_query_follows_served_model(
+    model: str | None, expected: NativeStructuredOutputSupport
+) -> None:
     connection = VLLMChatModelConnection()
-    assert connection.supports_native_structured_output("Qwen/Qwen2.5-7B-Instruct")
-    assert connection.supports_native_structured_output(
-        "meta-llama/Llama-3.1-8B-Instruct"
+    assert (
+        connection.supports_native_structured_output(
+            OutputSchema(output_schema=_Person), [], {"model": model}
+        )
+        is expected
     )
-    assert not connection.supports_native_structured_output(None)
-    assert not connection.supports_native_structured_output(" ")
 
 
 def test_native_response_format_applied_for_qwen_model() -> None:

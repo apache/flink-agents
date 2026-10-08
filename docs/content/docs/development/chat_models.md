@@ -60,9 +60,13 @@ order you want them presented. Supported block types are `TextBlock`, `ImageBloc
 `AudioBlock`, `VideoBlock`, and `DocumentBlock`. For example, a message can contain
 a question followed by an image:
 
-**Provider support:** Built-in provider integrations currently send only the text
-portion of a message. These examples construct multimodal messages; sending their
-media to a model requires a provider integration that supports those block types.
+**Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
+and vLLM integrations built on it, send media blocks to the model; see
+[Multimodal Input](#multimodal-input) for what each block becomes. Ollama sends
+Base64 images; see its section. The Anthropic, Gemini, Amazon Bedrock, IBM
+watsonx.ai, DashScope and OpenAI Responses integrations do not send media yet: a
+message with a media block raises `UnsupportedContentBlockException` (Java) or
+`UnsupportedContentBlockError` (Python).
 
 {{< tabs "Message content blocks" >}}
 
@@ -286,7 +290,7 @@ Model availability varies by AWS region and requires explicit model access enabl
 {{< /hint >}}
 
 {{< hint warning >}}
-**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported.
+**Current limitations:** The integration uses text content blocks only. Extended thinking / reasoning content blocks (e.g. Claude extended thinking), citation blocks, and image / document content blocks are not yet supported; a message with a media block raises `UnsupportedContentBlockException`.
 {{< /hint >}}
 
 ### Anthropic
@@ -594,6 +598,8 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+Azure OpenAI sends media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input).
+
 #### Available Models
 
 Azure OpenAI supports OpenAI models deployed through your Azure subscription. Visit the [Azure OpenAI Models documentation](https://learn.microsoft.com/en-us/azure/ai-services/openai/concepts/models) for the complete and up-to-date list of available models.
@@ -840,6 +846,8 @@ public class MyAgent extends Agent {
 {{< /tabs >}}
 
 
+**Multimodal input.** The `ImageBlock`s of a user message are sent as the message's `images`, in block order, next to its text; Ollama's API does not interleave images with text. The images must be Base64 data, and the model must support vision. Images given by URL, other media, and media in system, assistant or tool messages raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent.
+
 #### Available Models
 
 Visit the [Ollama Models Library](https://ollama.com/library) for the complete and up-to-date list of available chat models.
@@ -1003,6 +1011,22 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
+#### Multimodal Input
+
+The Chat Completions connections (OpenAI, Azure OpenAI and vLLM) send the media blocks of a user message as content parts, in block order:
+
+| Block | Sent as |
+|---|---|
+| `TextBlock` | a `text` part |
+| `ImageBlock` | an `image_url` part: the URL, or a `data:` URI for Base64 data |
+| `AudioBlock` | an `input_audio` part, for Base64 data in `audio/wav` or `audio/mpeg` (WAV or MP3) |
+| `DocumentBlock` | a `file` part: the Base64 data as a `data:` URI, with the block's `name` as the file name (`document` when unset). OpenAI accepts PDF documents only |
+| `VideoBlock` | not supported |
+
+A user message with only text blocks is still sent as a plain string. Media in system, assistant or tool messages, audio or documents given by URL, other audio types, and video raise `UnsupportedContentBlockException` (Java) or `UnsupportedContentBlockError` (Python) before the request is sent. Whether a model accepts a given part depends on the model and the server.
+
+The other built-in providers (Anthropic, Gemini, Amazon Bedrock, IBM watsonx.ai, DashScope and the OpenAI Responses API) do not send media yet: a message with a media block raises the same error instead of being sent as its text.
+
 #### Responses API
 
 {{< hint info >}}
@@ -1099,26 +1123,26 @@ Some popular options include:
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
 {{< /hint >}}
 
-### Tongyi (DashScope)
+### Alibaba Cloud Model Studio (DashScope)
 
-Tongyi provides cloud-based chat models from Alibaba Cloud, offering powerful Chinese and English language capabilities.
+This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access chat models.
 
 {{< hint info >}}
-Tongyi is only supported in Python currently. To use Tongyi from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+The DashScope integration is currently supported in the Python API only. To use it from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
 
-1. Get an API key from [Alibaba Cloud DashScope](https://dashscope.aliyun.com/)
+1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.aliyun.com/)
 
-#### TongyiChatModelConnection Parameters
+#### DashScopeChatModelConnection Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
 | `request_timeout` | float | `60.0` | HTTP request timeout in seconds |
 
-#### TongyiChatModelSetup Parameters
+#### DashScopeChatModelSetup Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -1137,19 +1161,19 @@ class MyAgent(Agent):
 
     @chat_model_connection
     @staticmethod
-    def tongyi_connection() -> ResourceDescriptor:
+    def dashscope_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.TONGYI_CONNECTION,
+            clazz=ResourceName.ChatModel.DASHSCOPE_CONNECTION,
             api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
             request_timeout=60.0
         )
 
     @chat_model_setup
     @staticmethod
-    def tongyi_chat_model() -> ResourceDescriptor:
+    def dashscope_chat_model() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.TONGYI_SETUP,
-            connection="tongyi_connection",
+            clazz=ResourceName.ChatModel.DASHSCOPE_SETUP,
+            connection="dashscope_connection",
             model="qwen-plus",
             temperature=0.7,
             extract_reasoning=True
@@ -1160,7 +1184,7 @@ class MyAgent(Agent):
 
 #### Available Models
 
-Visit the [DashScope Models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/model-introduction) for the complete and up-to-date list of available chat models.
+Visit the [Alibaba Cloud Model Studio models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/model-introduction) for the complete and up-to-date list of available chat models.
 
 Some popular options include:
 - **qwen-plus**
@@ -1169,7 +1193,7 @@ Some popular options include:
 - **qwen-long**
 
 {{< hint warning >}}
-Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
+Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
 {{< /hint >}}
 
 ### vLLM
@@ -1280,6 +1304,8 @@ public class MyAgent extends Agent {
 {{< /tab >}}
 
 {{< /tabs >}}
+
+vLLM receives media blocks the same way as the OpenAI Chat Completions API; see [Multimodal Input](#multimodal-input). The model must be multimodal; see the [vLLM multimodal inputs docs](https://docs.vllm.ai/en/stable/features/multimodal_inputs/).
 
 #### Available Models
 
@@ -1444,7 +1470,7 @@ Model availability and specifications may change. Always check the official IBM 
 
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., Tongyi is currently Python-only).
+Flink Agents supports cross-language chat model integration, allowing you to use chat models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when a chat model provider is only available in one language (e.g., the DashScope integration for Alibaba Cloud Model Studio is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**
@@ -1455,10 +1481,10 @@ Flink Agents supports cross-language chat model integration, allowing you to use
 
 ### How To Use
 
-To leverage chat model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+To use a resource implemented in another language, declare its implementation class with the corresponding cross-language resource descriptor:
 
-- **Using Java chat models in Python**: Use `ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION` and `ResourceName.ChatModel.JAVA_WRAPPER_SETUP`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python chat models in Java**: Use `ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION` and `ResourceName.ChatModel.PYTHON_WRAPPER_SETUP`, specifying the Python provider via the `pythonClazz` parameter
+- **Using Java chat models in Python**: Use `JavaResourceDescriptor(clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION, ...)` (or the corresponding setup class).
+- **Using Python chat models in Java**: Use `PythonResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.Python.OLLAMA_CONNECTION)` (or the corresponding setup class).
 
 
 
@@ -1479,9 +1505,8 @@ class MyAgent(Agent):
         #     .addInitialArgument("endpoint", "http://localhost:11434")
         #     .addInitialArgument("requestTimeout", 120)
         #     .build();
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
             endpoint="http://localhost:11434",
             requestTimeout=120,
         )
@@ -1499,9 +1524,8 @@ class MyAgent(Agent):
         #     .addInitialArgument("tools", List.of("my_tool1", "my_tool2"))
         #     .addInitialArgument("extractReasoning", true)
         #     .build();
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="java_chat_model_connection",
             model="qwen3:8b",
             prompt="my_prompt",
@@ -1540,8 +1564,7 @@ public class MyAgent extends Agent {
         //     clazz=ResourceName.ChatModel.OLLAMA_CONNECTION,
         //     request_timeout=120.0
         // )
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
+        return PythonResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
                 .addInitialArgument("request_timeout", 120.0)
                 .build();
     }
@@ -1556,8 +1579,7 @@ public class MyAgent extends Agent {
         //     tools=["tool1", "tool2"],
         //     extract_reasoning=True
         // )
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonChatModelConnection")
                 .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("tools", List.of("tool1", "tool2"))

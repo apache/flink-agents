@@ -17,6 +17,7 @@
 ################################################################################
 """Covers how a setup declares its AGENT resources to a chat model."""
 
+import json
 from typing import Any, Dict, List, Sequence
 
 import pytest
@@ -189,9 +190,7 @@ def test_declared_subagents_reach_the_model_as_callables_after_the_tools() -> No
     delegated = connection.captured_tools[1]
     assert isinstance(delegated, SubagentTool)
     assert delegated.metadata.description == "Reviews a file. This is subagent."
-    assert delegated.metadata.get_parameters_dict()["properties"] == {
-        "path": {"title": "Path", "type": "string"}
-    }
+    assert delegated.metadata.get_parameters_dict() == json.loads(CUSTOM_SCHEMA)
 
 
 def test_an_undescribed_subagent_is_still_delegable() -> None:
@@ -208,9 +207,7 @@ def test_an_undescribed_subagent_is_still_delegable() -> None:
     assert tool.metadata.description == (
         "Delegate a standalone task to sub-agent reviewer This is subagent."
     )
-    assert tool.metadata.get_parameters_dict()["properties"] == {
-        "path": {"title": "Path", "type": "string"}
-    }
+    assert tool.metadata.get_parameters_dict() == json.loads(CUSTOM_SCHEMA)
 
 
 def test_a_typed_subagent_is_declared_with_the_derived_schema() -> None:

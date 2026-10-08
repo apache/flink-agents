@@ -102,9 +102,12 @@ public class JavaResourceAdapterTest {
                                 String.class.getName(),
                                 String.class.getName()),
                         Map.of(
-                                "order_id", "order-1",
-                                "tenant_id", "tenant-1",
-                                "request_id", "request-1"));
+                                "order_id",
+                                "order-1",
+                                "tenant_id",
+                                "tenant-1",
+                                "request_id",
+                                "request-1"));
 
         assertThat(result)
                 .containsEntry("__flink_agents_tool_result__", "response")

@@ -19,7 +19,7 @@ import importlib
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from flink_agents.api.resource import (
     Resource,
@@ -94,13 +94,26 @@ class PythonResourceProvider(ResourceProvider):
 
     descriptor: ResourceDescriptor
 
+    @model_validator(mode="after")
+    def _validate_language(self) -> "PythonResourceProvider":
+        if self.descriptor.language != "python":
+            msg = "PythonResourceProvider requires a Python descriptor"
+            raise ValueError(msg)
+        return self
+
     @staticmethod
-    def get(name: str, descriptor: ResourceDescriptor) -> "PythonResourceProvider":
+    def get(
+        name: str,
+        descriptor: ResourceDescriptor,
+        resource_type: ResourceType | None = None,
+    ) -> "PythonResourceProvider":
         """Create PythonResourceProvider instance."""
-        clazz = descriptor.clazz
+        if descriptor.language != "python":
+            msg = "PythonResourceProvider requires a Python descriptor"
+            raise ValueError(msg)
         return PythonResourceProvider(
             name=name,
-            type=clazz.resource_type(),
+            type=resource_type or descriptor.clazz.resource_type(),
             descriptor=descriptor,
         )
 
@@ -162,39 +175,40 @@ class PythonSerializableResourceProvider(SerializableResourceProvider):
 
 
 JAVA_RESOURCE_MAPPING: dict[ResourceType, str] = {
-    ResourceType.CHAT_MODEL: "flink_agents.runtime.java.java_chat_model.JavaChatModelSetupImpl",
-    ResourceType.CHAT_MODEL_CONNECTION: "flink_agents.runtime.java.java_chat_model.JavaChatModelConnectionImpl",
-    ResourceType.EMBEDDING_MODEL: "flink_agents.runtime.java.java_embedding_model.JavaEmbeddingModelSetupImpl",
-    ResourceType.EMBEDDING_MODEL_CONNECTION: "flink_agents.runtime.java.java_embedding_model.JavaEmbeddingModelConnectionImpl",
-    ResourceType.VECTOR_STORE: "flink_agents.runtime.java.java_vector_store.JavaVectorStoreImpl",
+    ResourceType.CHAT_MODEL: "flink_agents.plan.resource.java.java_chat_model.JavaChatModelSetup",
+    ResourceType.CHAT_MODEL_CONNECTION: "flink_agents.plan.resource.java.java_chat_model.JavaChatModelConnection",
+    ResourceType.EMBEDDING_MODEL: "flink_agents.plan.resource.java.java_embedding_model.JavaEmbeddingModelSetup",
+    ResourceType.EMBEDDING_MODEL_CONNECTION: "flink_agents.plan.resource.java.java_embedding_model.JavaEmbeddingModelConnection",
+    ResourceType.VECTOR_STORE: "flink_agents.plan.resource.java.java_vector_store.JavaVectorStore",
 }
 
 
 class JavaResourceProvider(ResourceProvider):
-    """Represent Resource Provider declared by Java.
-
-    Currently, this class only used for deserializing Java agent plan json
-    """
+    """Carry a Java implementation declaration and select its Plan wrapper."""
 
     descriptor: ResourceDescriptor
     _j_resource_adapter: Any = None
 
+    @model_validator(mode="after")
+    def _validate_language(self) -> "JavaResourceProvider":
+        if self.descriptor.language != "java":
+            msg = "JavaResourceProvider requires a Java descriptor"
+            raise ValueError(msg)
+        return self
+
     @staticmethod
-    def get(name: str, descriptor: ResourceDescriptor) -> "JavaResourceProvider":
-        """Create JavaResourceProvider instance."""
-        wrapper_clazz = descriptor.clazz
-        kwargs = {}
-        kwargs.update(descriptor.arguments)
-
-        clazz = descriptor.arguments.get("java_clazz", "")
-        if len(clazz) < 1:
-            err_msg = f"java_clazz are not set for {wrapper_clazz.__name__}"
-            raise KeyError(err_msg)
-
+    def get(
+        name: str, descriptor: ResourceDescriptor, resource_type: ResourceType
+    ) -> "JavaResourceProvider":
+        """Create a Java provider without loading the target class in Python."""
+        if descriptor.language != "java":
+            msg = "JavaResourceProvider requires a Java descriptor"
+            raise ValueError(msg)
+        if resource_type not in JAVA_RESOURCE_MAPPING:
+            msg = f"Unsupported Java resource type: {resource_type}"
+            raise ValueError(msg)
         return JavaResourceProvider(
-            name=name,
-            type=wrapper_clazz.resource_type(),
-            descriptor=descriptor,
+            name=name, type=resource_type, descriptor=descriptor
         )
 
     def provide(

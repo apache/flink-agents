@@ -29,7 +29,11 @@ from flink_agents.api.decorators import action, chat_model_connection, chat_mode
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
-from flink_agents.api.resource import ResourceDescriptor, ResourceName
+from flink_agents.api.resource import (
+    JavaResourceDescriptor,
+    ResourceDescriptor,
+    ResourceName,
+)
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools.tool import Tool
 
@@ -81,9 +85,8 @@ class ConcurrentChatModelCrossLanguageAgent(Agent):
     @staticmethod
     def java_chat_model() -> ResourceDescriptor:
         """Declare a Java setup backed by the Python connection."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="overlapping_python_connection",
             model="mock-model",
             extract_reasoning=False,

@@ -31,6 +31,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
+    JavaResourceDescriptor,
     ResourceDescriptor,
     ResourceName,
 )
@@ -75,9 +76,8 @@ class ChatModelCrossLanguageAgent(Agent):
     @staticmethod
     def ollama_connection_java() -> ResourceDescriptor:
         """ChatModelConnection responsible for ollama model service connection."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_CONNECTION,
             endpoint="http://localhost:11434",
             requestTimeout=120,
         )
@@ -86,9 +86,8 @@ class ChatModelCrossLanguageAgent(Agent):
     @staticmethod
     def math_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="ollama_connection_python",
             model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
             prompt="from_messages_prompt",
@@ -100,9 +99,8 @@ class ChatModelCrossLanguageAgent(Agent):
     @staticmethod
     def creative_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on text generate, and reuse ChatModelConnection."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="ollama_connection_java",
             model=os.environ.get("OLLAMA_CHAT_MODEL", "qwen3:1.7b"),
             prompt="from_text_prompt",

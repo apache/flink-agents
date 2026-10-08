@@ -56,12 +56,32 @@ public @interface ToolParam {
      */
     String description() default "";
 
+    /** Sentinel indicating that no default was declared. */
+    String NO_DEFAULT = "\u0000";
+
     /**
-     * The default value of the tool argument. If not provided, the argument is considered required.
+     * The default value as JSON (including quotes for strings). Applied only when omitted.
      *
      * @return a string representing the default value of the argument.
      */
-    String defaultValue() default "";
+    String defaultValue() default NO_DEFAULT;
+
+    /** Whether an explicitly supplied null is accepted. */
+    boolean nullable() default false;
+
+    /** Inclusive numeric bounds, expressed as decimal numbers. */
+    String minimum() default "";
+
+    String maximum() default "";
+
+    /** String and array size bounds. A negative bound means unspecified. */
+    int minLength() default -1;
+
+    int maxLength() default -1;
+
+    int minItems() default -1;
+
+    int maxItems() default -1;
 
     /**
      * Whether this argument is injected by the framework at tool execution time.

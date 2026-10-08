@@ -25,7 +25,7 @@ Two tables:
   different classes across sections and languages.
 
 For Java resources, the loader resolves the alias to the Java FQN and
-wraps it in a Python-side wrapper class (see ``JAVA_WRAPPER_CLAZZ``).
+creates a JavaResourceDescriptor. Plan selects the execution wrapper.
 """
 
 from typing import Dict
@@ -64,7 +64,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "ollama": ResourceName.ChatModel.OLLAMA_CONNECTION,
             "openai": ResourceName.ChatModel.OPENAI_COMPLETIONS_CONNECTION,
             "anthropic": ResourceName.ChatModel.ANTHROPIC_CONNECTION,
-            "tongyi": ResourceName.ChatModel.TONGYI_CONNECTION,
+            "dashscope": ResourceName.ChatModel.DASHSCOPE_CONNECTION,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_CONNECTION,
             "vllm": ResourceName.ChatModel.VLLM_CONNECTION,
             "watsonx": ResourceName.ChatModel.WATSONX_CONNECTION,
@@ -86,7 +86,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "ollama": ResourceName.ChatModel.OLLAMA_SETUP,
             "openai": ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             "anthropic": ResourceName.ChatModel.ANTHROPIC_SETUP,
-            "tongyi": ResourceName.ChatModel.TONGYI_SETUP,
+            "dashscope": ResourceName.ChatModel.DASHSCOPE_SETUP,
             "azure_openai": ResourceName.ChatModel.AZURE_OPENAI_SETUP,
             "vllm": ResourceName.ChatModel.VLLM_SETUP,
             "watsonx": ResourceName.ChatModel.WATSONX_SETUP,
@@ -107,7 +107,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "python": {
             "ollama": ResourceName.EmbeddingModel.OLLAMA_CONNECTION,
             "openai": ResourceName.EmbeddingModel.OPENAI_CONNECTION,
-            "tongyi": ResourceName.EmbeddingModel.TONGYI_CONNECTION,
+            "dashscope": ResourceName.EmbeddingModel.DASHSCOPE_CONNECTION,
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
@@ -119,7 +119,7 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
         "python": {
             "ollama": ResourceName.EmbeddingModel.OLLAMA_SETUP,
             "openai": ResourceName.EmbeddingModel.OPENAI_SETUP,
-            "tongyi": ResourceName.EmbeddingModel.TONGYI_SETUP,
+            "dashscope": ResourceName.EmbeddingModel.DASHSCOPE_SETUP,
         },
         "java": {
             "ollama": ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
@@ -139,19 +139,6 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "milvus": ResourceName.VectorStore.Java.MILVUS_VECTOR_STORE,
         },
     },
-}
-
-# Python wrapper class for each cross-language-supported resource type.
-# When the user writes ``type: java``, the loader resolves the alias in
-# the java bucket to a Java FQN and constructs a ResourceDescriptor whose
-# ``clazz`` is the wrapper below and whose ``java_clazz`` kwarg is the
-# resolved Java FQN.
-JAVA_WRAPPER_CLAZZ: Dict[ResourceType, str] = {
-    ResourceType.CHAT_MODEL_CONNECTION: ResourceName.ChatModel.JAVA_WRAPPER_CONNECTION,
-    ResourceType.CHAT_MODEL: ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-    ResourceType.EMBEDDING_MODEL_CONNECTION: ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
-    ResourceType.EMBEDDING_MODEL: ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
-    ResourceType.VECTOR_STORE: ResourceName.VectorStore.JAVA_WRAPPER_VECTOR_STORE,
 }
 
 

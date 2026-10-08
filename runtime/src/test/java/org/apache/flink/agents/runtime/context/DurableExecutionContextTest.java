@@ -90,9 +90,9 @@ class DurableExecutionContextTest {
     @Test
     void testInitialization() {
         actionState.addCallResult(
-                new CallResult("funcA", "digestA", "resultA".getBytes(StandardCharsets.UTF_8)));
+                new CallResult("funcA", "resultA".getBytes(StandardCharsets.UTF_8)));
         actionState.addCallResult(
-                new CallResult("funcB", "digestB", "resultB".getBytes(StandardCharsets.UTF_8)));
+                new CallResult("funcB", "resultB".getBytes(StandardCharsets.UTF_8)));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
@@ -103,11 +103,11 @@ class DurableExecutionContextTest {
     @Test
     void testMatchNextOrClearSubsequentCallResultHit() {
         byte[] expectedResult = "cached_result".getBytes(StandardCharsets.UTF_8);
-        actionState.addCallResult(new CallResult("funcA", "digestA", expectedResult));
+        actionState.addCallResult(new CallResult("funcA", expectedResult));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
-        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA");
 
         assertNotNull(result);
         assertEquals(3, result.length);
@@ -121,7 +121,7 @@ class DurableExecutionContextTest {
     void testMatchNextOrClearSubsequentCallResultMiss() {
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
-        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA");
 
         assertNull(result);
         assertEquals(0, context.getCurrentCallIndex());
@@ -129,11 +129,11 @@ class DurableExecutionContextTest {
 
     @Test
     void testMatchNextOrClearSubsequentCallResultPendingTreatedAsMiss() {
-        actionState.addCallResult(CallResult.pending("funcA", "digestA"));
+        actionState.addCallResult(CallResult.pending("funcA"));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
-        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA");
 
         assertNull(result);
         assertEquals(0, context.getCurrentCallIndex());
@@ -142,13 +142,13 @@ class DurableExecutionContextTest {
 
     @Test
     void testMatchNextOrClearSubsequentCallResultMismatch() {
-        actionState.addCallResult(new CallResult("funcA", "digestA", "result".getBytes()));
-        actionState.addCallResult(new CallResult("funcB", "digestB", "result".getBytes()));
+        actionState.addCallResult(new CallResult("funcA", "result".getBytes()));
+        actionState.addCallResult(new CallResult("funcB", "result".getBytes()));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
         // Call with mismatched functionId - should clear subsequent results and return null
-        Object[] result = context.matchNextOrClearSubsequentCallResult("funcX", "digestX");
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcX");
 
         assertNull(result);
         // ActionState should have results cleared from index 0
@@ -162,7 +162,7 @@ class DurableExecutionContextTest {
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
         byte[] resultPayload = "success_result".getBytes(StandardCharsets.UTF_8);
-        context.recordCallCompletion("funcA", "digestA", resultPayload, null);
+        context.recordCallCompletion("funcA", resultPayload, null);
 
         assertEquals(1, context.getCurrentCallIndex());
         assertEquals(1, actionState.getCallResults().size());
@@ -177,7 +177,7 @@ class DurableExecutionContextTest {
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
         byte[] exceptionPayload = "exception_data".getBytes(StandardCharsets.UTF_8);
-        context.recordCallCompletion("funcA", "digestA", null, exceptionPayload);
+        context.recordCallCompletion("funcA", null, exceptionPayload);
 
         assertEquals(1, context.getCurrentCallIndex());
         CallResult recorded = actionState.getCallResults().get(0);
@@ -190,36 +190,36 @@ class DurableExecutionContextTest {
     void testMultipleCallResultRecovery() {
         byte[] result1 = "result1".getBytes(StandardCharsets.UTF_8);
         byte[] result2 = "result2".getBytes(StandardCharsets.UTF_8);
-        actionState.addCallResult(new CallResult("func1", "digest1", result1));
-        actionState.addCallResult(new CallResult("func2", "digest2", result2));
+        actionState.addCallResult(new CallResult("func1", result1));
+        actionState.addCallResult(new CallResult("func2", result2));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
         // First call should hit
-        Object[] hit1 = context.matchNextOrClearSubsequentCallResult("func1", "digest1");
+        Object[] hit1 = context.matchNextOrClearSubsequentCallResult("func1");
         assertNotNull(hit1);
         assertTrue((Boolean) hit1[0]);
         assertArrayEquals(result1, (byte[]) hit1[1]);
 
         // Second call should hit
-        Object[] hit2 = context.matchNextOrClearSubsequentCallResult("func2", "digest2");
+        Object[] hit2 = context.matchNextOrClearSubsequentCallResult("func2");
         assertNotNull(hit2);
         assertTrue((Boolean) hit2[0]);
         assertArrayEquals(result2, (byte[]) hit2[1]);
 
         // Third call should miss (no more results)
-        Object[] miss = context.matchNextOrClearSubsequentCallResult("func3", "digest3");
+        Object[] miss = context.matchNextOrClearSubsequentCallResult("func3");
         assertNull(miss);
     }
 
     @Test
     void testRecoveryWithExceptionPayload() {
         byte[] exceptionPayload = "exception_data".getBytes(StandardCharsets.UTF_8);
-        actionState.addCallResult(new CallResult("funcA", "digestA", null, exceptionPayload));
+        actionState.addCallResult(new CallResult("funcA", null, exceptionPayload));
 
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
-        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA", "digestA");
+        Object[] result = context.matchNextOrClearSubsequentCallResult("funcA");
 
         assertNotNull(result);
         assertTrue((Boolean) result[0]); // isHit
@@ -232,9 +232,9 @@ class DurableExecutionContextTest {
         RunnerContextImpl.DurableExecutionContext context = createContext();
 
         // Record multiple completions
-        context.recordCallCompletion("func1", "digest1", "result1".getBytes(), null);
-        context.recordCallCompletion("func2", "digest2", "result2".getBytes(), null);
-        context.recordCallCompletion("func3", "digest3", "result3".getBytes(), null);
+        context.recordCallCompletion("func1", "result1".getBytes(), null);
+        context.recordCallCompletion("func2", "result2".getBytes(), null);
+        context.recordCallCompletion("func3", "result3".getBytes(), null);
 
         // Each call should trigger persistence
         assertEquals(3, persistCallCount.get());

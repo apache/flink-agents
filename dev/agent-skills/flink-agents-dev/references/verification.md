@@ -184,8 +184,8 @@ Cross-language:
 - Confirm the Resource type supports the bridge in the target-version API, not only
   in the matching YAML docs; direct Python and direct Java APIs support these bridges
   too.
-- Confirm the generated descriptor uses the correct wrapper plus `java_clazz` or
-  `pythonClazz` metadata, or the equivalent target-version factory.
+- Confirm the generated descriptor uses `JavaResourceDescriptor` in Python or
+  `PythonResourceDescriptor` in Java and names the actual implementation class.
 - Confirm the selected language's integration artifact and bridge runtime are
   available to every TaskManager.
 - Run the repository's cross-language tests or an equivalent focused test.

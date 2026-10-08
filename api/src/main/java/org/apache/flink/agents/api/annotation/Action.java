@@ -24,7 +24,18 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Marks a Java method as an agent action triggered by event types or condition expressions.
+ * Marks a Java member as an agent action triggered by event types or condition expressions.
+ *
+ * <p>The annotated member is always the action's real definition:
+ *
+ * <ul>
+ *   <li>On a {@code static} method with the {@code (Event, RunnerContext)} signature, the method is
+ *       the native Java implementation.
+ *   <li>On a {@code static final} field whose value is an api-layer {@link
+ *       org.apache.flink.agents.api.function.Function} descriptor (for example {@link
+ *       org.apache.flink.agents.api.function.PythonFunction}), the field is the cross-language
+ *       target and no placeholder method body is required.
+ * </ul>
  *
  * <p>Each {@link #value()} entry is either an exact event-type name or a condition expression that
  * evaluates to boolean. Multiple entries use OR semantics. An entry matching the event-type syntax
@@ -38,11 +49,8 @@ import java.lang.annotation.Target;
  *
  * <p>The API preserves entries as raw strings. Entries are classified and condition expressions are
  * validated when the agent plan is built.
- *
- * <p>Set {@link #target()} to a {@link PythonFunction} configured with a module for a
- * cross-language action. The annotated Java method is not invoked for such actions.
  */
-@Target(ElementType.METHOD)
+@Target({ElementType.METHOD, ElementType.FIELD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Action {
     /**
@@ -53,9 +61,8 @@ public @interface Action {
     String[] value();
 
     /**
-     * Cross-language target. When {@link PythonFunction#module()} is non-empty, dispatch routes to
-     * the Python target and the annotated Java body is unused. Default (empty {@code module}) keeps
-     * the action native Java.
+     * Optional action name override. When empty (the default), the annotated method or field name
+     * is used as the action name.
      */
-    PythonFunction target() default @PythonFunction;
+    String name() default "";
 }

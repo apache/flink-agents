@@ -19,9 +19,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from flink_agents.runtime.java.java_embedding_model import (
-    JavaEmbeddingModelConnectionImpl,
-    JavaEmbeddingModelSetupImpl,
+from flink_agents.plan.resource.java.java_embedding_model import (
+    JavaEmbeddingModelConnection,
+    JavaEmbeddingModelSetup,
 )
 
 
@@ -44,15 +44,15 @@ class _JavaEmbeddingResult:
 @pytest.mark.parametrize(
     ("wrapper_class", "kwargs"),
     [
-        (JavaEmbeddingModelConnectionImpl, {}),
+        (JavaEmbeddingModelConnection, {}),
         (
-            JavaEmbeddingModelSetupImpl,
+            JavaEmbeddingModelSetup,
             {"connection": "connection", "model": "test-model"},
         ),
     ],
 )
 def test_java_embedding_wrappers_preserve_usage(
-    wrapper_class: type[JavaEmbeddingModelConnectionImpl | JavaEmbeddingModelSetupImpl],
+    wrapper_class: type[JavaEmbeddingModelConnection | JavaEmbeddingModelSetup],
     kwargs: dict[str, str],
 ) -> None:
     j_resource = MagicMock()

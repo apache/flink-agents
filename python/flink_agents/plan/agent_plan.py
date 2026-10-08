@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, cast
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.decorators import ActionDeclaration
 from flink_agents.api.function import Function as ApiFunction
 from flink_agents.api.function import JavaFunction as ApiJavaFunction
 from flink_agents.api.function import PythonFunction as ApiPythonFunction
@@ -143,7 +144,9 @@ class AgentPlan(BaseModel):
         """Build a AgentPlan from user defined agent."""
         actions = {}
         for action in _get_actions(agent) + BUILT_IN_ACTIONS:
-            assert action.name not in actions, f"Duplicate action name: {action.name}"
+            if action.name in actions:
+                msg = f"Duplicate action name: {action.name}"
+                raise RuntimeError(msg)
             actions[action.name] = action
 
         resource_providers = {}
@@ -159,7 +162,9 @@ class AgentPlan(BaseModel):
         return AgentPlan(
             actions=actions,
             resource_providers=resource_providers,
-            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
+            agent_name=agent_name
+            if agent_name is not None
+            else agent.__class__.__name__,
             config=config,
         )
 
@@ -196,9 +201,10 @@ class AgentPlan(BaseModel):
         return self.actions[action_name].config.get(key, None)
 
 
-def _action_marker(value: Any) -> tuple | None:
-    """Return ``(inner_callable, trigger_conditions, target)`` if ``value`` is @action.
+def _native_action_marker(value: Any) -> tuple | None:
+    """Return the native ``@action`` marker as a 3-tuple, or ``None``.
 
+    The tuple is ``(inner_callable, trigger_conditions, name_override)``.
     ``@action`` may set ``_trigger_conditions`` on the outer wrapper (when ``@action``
     is the outer decorator) or on ``__func__`` (when ``@staticmethod`` is outer
     and ``@action`` inner). Accept either by checking both candidates.
@@ -215,7 +221,12 @@ def _action_marker(value: Any) -> tuple | None:
     )
     if marker is None:
         return None
-    return inner, marker._trigger_conditions, getattr(marker, "_target", None)
+    return inner, marker._trigger_conditions, getattr(marker, "_action_name", None)
+
+
+def _is_action_attr(value: Any) -> bool:
+    """True if ``value`` is an @action member: a declaration or a tagged callable."""
+    return isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
 
 
 def _get_actions(agent: Agent) -> List[Action]:
@@ -231,13 +242,13 @@ def _get_actions(agent: Agent) -> List[Action]:
     List[Action]
         List of Action defined in the agent.
     """
-    # __dict__ skips inherited @action methods; reject loudly.
+    # __dict__ skips inherited @action members; reject loudly.
     agent_class = agent.__class__
     for parent in agent_class.__mro__[1:]:
         if parent is Agent or parent is object:
             break
         for parent_name, parent_value in parent.__dict__.items():
-            if _action_marker(parent_value) is not None:
+            if _is_action_attr(parent_value):
                 msg = (
                     f"Inherited @action '{parent.__qualname__}.{parent_name}' is "
                     f"not supported; declare on the concrete agent."
@@ -246,19 +257,25 @@ def _get_actions(agent: Agent) -> List[Action]:
 
     actions = []
     for name, value in agent_class.__dict__.items():
-        marker = _action_marker(value)
+        if isinstance(value, ActionDeclaration):
+            # Cross-language: the attribute holds an immutable declaration that
+            # wraps the executable descriptor.
+            actions.append(
+                Action(
+                    name=value.name if value.name is not None else name,
+                    exec=_to_plan_function(value.func),
+                    trigger_conditions=list(value.trigger_conditions),
+                )
+            )
+            continue
+        marker = _native_action_marker(value)
         if marker is None:
             continue
-        inner, trigger_conditions, target = marker
-        exec_ = (
-            _to_plan_function(target)
-            if target is not None
-            else PythonFunction.from_callable(inner)
-        )
+        inner, trigger_conditions, name_override = marker
         actions.append(
             Action(
-                name=name,
-                exec=exec_,
+                name=name_override if name_override is not None else name,
+                exec=PythonFunction.from_callable(inner),
                 trigger_conditions=list(trigger_conditions),
             )
         )
@@ -328,14 +345,24 @@ def _get_resource_providers(
 
             if callable(value):
                 descriptor = value()
-                if hasattr(descriptor.clazz, "_is_java_resource"):
-                    resource_providers.append(
-                        JavaResourceProvider.get(name=name, descriptor=value())
-                    )
-                else:
-                    resource_providers.append(
-                        PythonResourceProvider.get(name=name, descriptor=value())
-                    )
+                resource_type = next(
+                    resource_type
+                    for marker, resource_type in {
+                        "_is_chat_model_setup": ResourceType.CHAT_MODEL,
+                        "_is_chat_model_connection": ResourceType.CHAT_MODEL_CONNECTION,
+                        "_is_embedding_model_setup": ResourceType.EMBEDDING_MODEL,
+                        "_is_embedding_model_connection": ResourceType.EMBEDDING_MODEL_CONNECTION,
+                        "_is_vector_store": ResourceType.VECTOR_STORE,
+                    }.items()
+                    if hasattr(value, marker)
+                    or hasattr(agent.__class__.__dict__[name], marker)
+                )
+                provider = (
+                    JavaResourceProvider
+                    if descriptor.language == "java"
+                    else PythonResourceProvider
+                )
+                resource_providers.append(provider.get(name, descriptor, resource_type))
 
         elif hasattr(value, "_is_tool"):
             _check_tool_name_not_reserved(name)
@@ -409,23 +436,25 @@ def _get_resource_providers(
 
     for name, value in agent.resources[ResourceType.AGENT].items():
         if isinstance(value, SubagentSetup):
-            resource_providers.append(
-                PythonSerializableResourceProvider.from_resource(
-                    name=name, resource=value
-                )
+            # A live setup travels as its descriptor, so a remote task rebuilds
+            # it from the class name and configuration.
+            descriptor = ResourceDescriptor(
+                clazz=f"{value.__class__.__module__}.{value.__class__.__name__}",
+                arguments=value.model_dump(),
             )
         elif isinstance(value, ResourceDescriptor):
             # Declared via YAML: the descriptor names a SubagentSetup subclass
             # that is instantiated when the resource is first resolved.
-            resource_providers.append(
-                PythonResourceProvider.get(name=name, descriptor=value)
-            )
+            descriptor = value
         else:
             msg = (
                 f"AGENT resource '{name}' must be a SubagentSetup or a "
                 f"ResourceDescriptor, but got {type(value).__name__}."
             )
             raise TypeError(msg)
+        resource_providers.append(
+            PythonResourceProvider.get(name=name, descriptor=descriptor)
+        )
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
@@ -435,14 +464,12 @@ def _get_resource_providers(
         ResourceType.VECTOR_STORE,
     ]:
         for name, descriptor in agent.resources[resource_type].items():
-            if hasattr(descriptor.clazz, "_is_java_resource"):
-                resource_providers.append(
-                    JavaResourceProvider.get(name=name, descriptor=descriptor)
-                )
-            else:
-                resource_providers.append(
-                    PythonResourceProvider.get(name=name, descriptor=descriptor)
-                )
+            provider = (
+                JavaResourceProvider
+                if descriptor.language == "java"
+                else PythonResourceProvider
+            )
+            resource_providers.append(provider.get(name, descriptor, resource_type))
 
     return resource_providers
 

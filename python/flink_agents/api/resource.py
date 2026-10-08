@@ -18,7 +18,7 @@
 import importlib
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, Type
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Literal, Type
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
 
@@ -145,6 +145,8 @@ class ResourceDescriptor(BaseModel):
     """
 
     _clazz: Type[Resource] = None
+    language: Literal["python", "java"] = "python"
+    _default_language: ClassVar[str] = "python"
     target_module: str
     target_clazz: str
     arguments: Dict[str, Any]
@@ -157,6 +159,7 @@ class ResourceDescriptor(BaseModel):
         target_module: str | None = None,
         target_clazz: str | None = None,
         arguments: Dict[str, Any] | None = None,
+        language: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize ResourceDescriptor.
@@ -167,6 +170,7 @@ class ResourceDescriptor(BaseModel):
             target_module: The module name of the resource class.
             target_clazz: The class name of the resource.
             arguments: Dictionary containing resource initialization parameters.
+            language: Serialized implementation language; must match this descriptor.
             **kwargs: Additional keywords arguments for resource initialization,
             will merge into arguments.
 
@@ -176,10 +180,18 @@ class ResourceDescriptor(BaseModel):
                                             param1="value1",
                                             param2="value2")
         """
+        language = language or self._default_language
+        if language != self._default_language:
+            msg = "Use the descriptor class matching the resource language"
+            raise ValueError(msg)
         if clazz is not None:
-            parts = clazz.split(".")
-            target_module = ".".join(parts[:-1])
-            target_clazz = parts[-1]
+            if language == "java":
+                target_module, target_clazz = "", clazz
+            else:
+                target_module, separator, target_clazz = clazz.rpartition(".")
+                if not separator or not target_module or not target_clazz:
+                    msg = "Expected a Python module.ClassName"
+                    raise ValueError(msg)
 
         if target_clazz is None or target_module is None:
             msg = "The fully qualified name of the resource must be specified"
@@ -191,12 +203,42 @@ class ResourceDescriptor(BaseModel):
         args.update(kwargs)
 
         super().__init__(
-            target_module=target_module, target_clazz=target_clazz, arguments=args
+            language=language,
+            target_module=target_module,
+            target_clazz=target_clazz,
+            arguments=args,
         )
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def _restore_language(cls, value: Any, handler: Any) -> "ResourceDescriptor":
+        if (
+            cls is ResourceDescriptor
+            and isinstance(value, dict)
+            and value.get("language") == "java"
+        ):
+            return JavaResourceDescriptor.model_validate(value)
+        return handler(value)
+
+    @model_validator(mode="after")
+    def _validate_target(self) -> "ResourceDescriptor":
+        if not self.target_clazz.strip():
+            msg = "Resource class must not be empty"
+            raise ValueError(msg)
+        if self.language == "java" and self.target_module:
+            msg = "Java resources require a full class name and an empty module"
+            raise ValueError(msg)
+        if self.language == "python" and not self.target_module.strip():
+            msg = "Python resources require a module"
+            raise ValueError(msg)
+        return self
 
     @property
     def clazz(self) -> Type[Resource]:
         """Get the class of the resource."""
+        if self.language != "python":
+            msg = "A Java resource class can only be loaded by the Java provider"
+            raise TypeError(msg)
         if self._clazz is None:
             module = importlib.import_module(self.target_module)
             self._clazz = getattr(module, self.target_clazz)
@@ -212,7 +254,8 @@ class ResourceDescriptor(BaseModel):
         if not isinstance(other, ResourceDescriptor):
             return False
         return (
-            self.target_module == other.target_module
+            self.language == other.language
+            and self.target_module == other.target_module
             and self.target_clazz == other.target_clazz
             and self.arguments == other.arguments
         )
@@ -221,11 +264,19 @@ class ResourceDescriptor(BaseModel):
         """Generate hash for ResourceDescriptor."""
         return hash(
             (
+                self.language,
                 self.target_module,
                 self.target_clazz,
                 tuple(sorted(self.arguments.items())),
             )
         )
+
+
+class JavaResourceDescriptor(ResourceDescriptor):
+    """Declare a Java implementation without importing a Python wrapper class."""
+
+    language: Literal["java"] = "java"
+    _default_language: ClassVar[str] = "java"
 
 
 def get_resource_class(module_path: str, class_name: str) -> Type[Resource]:
@@ -278,9 +329,9 @@ class ResourceName:
         OPENAI_COMPLETIONS_CONNECTION = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelConnection"
         OPENAI_COMPLETIONS_SETUP = "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup"
 
-        # Tongyi
-        TONGYI_CONNECTION = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection"
-        TONGYI_SETUP = "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup"
+        # DashScope
+        DASHSCOPE_CONNECTION = "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelConnection"
+        DASHSCOPE_SETUP = "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelSetup"
 
         # vLLM (OpenAI-compatible)
         VLLM_CONNECTION = "flink_agents.integrations.chat_models.vllm.vllm_chat_model.VLLMChatModelConnection"
@@ -289,14 +340,6 @@ class ResourceName:
         # Watsonx
         WATSONX_CONNECTION = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelConnection"
         WATSONX_SETUP = "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.WatsonxChatModelSetup"
-
-        # Java Wrapper
-        JAVA_WRAPPER_CONNECTION = (
-            "flink_agents.api.chat_models.java_chat_model.JavaChatModelConnection"
-        )
-        JAVA_WRAPPER_SETUP = (
-            "flink_agents.api.chat_models.java_chat_model.JavaChatModelSetup"
-        )
 
         class Java:
             """Java implementations of ChatModel."""
@@ -347,13 +390,9 @@ class ResourceName:
         OPENAI_CONNECTION = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelConnection"
         OPENAI_SETUP = "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup"
 
-        # Tongyi
-        TONGYI_CONNECTION = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection"
-        TONGYI_SETUP = "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup"
-
-        # Java Wrapper
-        JAVA_WRAPPER_CONNECTION = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelConnection"
-        JAVA_WRAPPER_SETUP = "flink_agents.api.embedding_models.java_embedding_model.JavaEmbeddingModelSetup"
+        # DashScope
+        DASHSCOPE_CONNECTION = "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelConnection"
+        DASHSCOPE_SETUP = "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelSetup"
 
         class Java:
             """Java implementations of EmbeddingModel."""
@@ -379,12 +418,6 @@ class ResourceName:
         # Mem0 (gateway to Mem0's native vector stores: pgvector, milvus, qdrant,
         # redis, ...)
         MEM0_VECTOR_STORE = "flink_agents.integrations.vector_stores.mem0.mem0_vector_store.Mem0VectorStore"
-
-        # Java Wrapper
-        JAVA_WRAPPER_VECTOR_STORE = (
-            "flink_agents.api.vector_stores.java_vector_store.JavaVectorStore"
-        )
-        JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE = "flink_agents.api.vector_stores.java_vector_store.JavaCollectionManageableVectorStore"
 
         class Java:
             """Java implementations of VectorStore."""

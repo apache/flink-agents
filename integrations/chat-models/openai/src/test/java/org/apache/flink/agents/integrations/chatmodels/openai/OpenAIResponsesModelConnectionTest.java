@@ -20,7 +20,10 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 
 import com.openai.errors.BadRequestException;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -77,18 +80,6 @@ class OpenAIResponsesModelConnectionTest {
 
     private static List<ChatMessage> userMessage() {
         return List.of(new ChatMessage(MessageRole.USER, "hi"));
-    }
-
-    @Test
-    @DisplayName("Effective model falls back to the connection default when the parameter is unset")
-    void testEffectiveModelForFallsBackToTheDefaultModel() {
-        // This connection extends the base directly, so it inherits no override from the chat
-        // completions connection. Its request builder resolves the model against the configured
-        // default, and the capability answer has to be about that same model.
-        assertThat(connection().effectiveModelFor(new HashMap<>())).isEqualTo("gpt-4o");
-        assertThat(connection().effectiveModelFor(params(null))).isEqualTo("gpt-4o");
-        assertThat(connection().effectiveModelFor(params("   "))).isEqualTo("gpt-4o");
-        assertThat(connection().effectiveModelFor(params("gpt-4o-mini"))).isEqualTo("gpt-4o-mini");
     }
 
     @Test
@@ -283,5 +274,22 @@ class OpenAIResponsesModelConnectionTest {
                             })
                     .hasMessageContaining(FakeOpenAIErrorEndpoint.ERROR_MESSAGE);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>()))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "OpenAI Responses cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

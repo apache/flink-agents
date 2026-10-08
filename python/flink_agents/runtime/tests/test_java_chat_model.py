@@ -16,9 +16,17 @@
 # limitations under the License.
 #################################################################################
 from typing import Any
+from unittest.mock import Mock
+
+import pytest
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.runtime.java.java_chat_model import _to_java_chat_message
+from flink_agents.plan.resource.java.conversions import from_java_chat_message
+from flink_agents.plan.resource.java.java_chat_model import _to_java_chat_message
+from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
+from flink_agents.runtime.python_java_utils import (
+    from_java_chat_message as runtime_from_java_chat_message,
+)
 
 
 class _JavaResourceAdapter:
@@ -62,3 +70,46 @@ def test_to_java_chat_message_extracts_java_safe_fields() -> None:
         ],
         {"reasoning": "brief"},
     )
+
+
+def _multimodal_blocks() -> list[dict]:
+    return [
+        {"type": "text", "text": "Describe the image"},
+        {
+            "type": "image",
+            "media_type": "image/png",
+            "source": {"type": "url", "url": "https://example.com/image.png"},
+        },
+    ]
+
+
+def test_plan_message_conversion_preserves_media_through_runtime_adapter() -> None:
+    bridge = _JavaResourceAdapter()
+    message = ChatMessage.model_validate(
+        {"role": "user", "blocks": _multimodal_blocks()}
+    )
+
+    result = _to_java_chat_message(JavaResourceAdapterImpl(bridge), message)
+
+    assert result is bridge.result
+    assert bridge.arguments == ("user", _multimodal_blocks(), [], {})
+
+
+@pytest.mark.parametrize(
+    "convert", [from_java_chat_message, runtime_from_java_chat_message]
+)
+def test_java_message_conversion_preserves_media_in_plan_and_runtime(convert) -> None:
+    message = Mock()
+    message.getRole.return_value.getValue.return_value = "user"
+    message.getBlocksAsMaps.return_value = _multimodal_blocks()
+    message.getToolCalls.return_value = []
+    message.getExtraArgs.return_value = {"provider": "test"}
+
+    result = convert(message)
+
+    assert (
+        result.model_dump(mode="json", exclude_none=True)["blocks"]
+        == _multimodal_blocks()
+    )
+    assert result.extra_args == {"provider": "test"}
+    message.getContent.assert_not_called()

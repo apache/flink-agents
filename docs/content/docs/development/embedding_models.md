@@ -566,17 +566,17 @@ Current popular models include:
 Model availability and specifications may change. Always check the official OpenAI documentation for the latest information before implementing in production.
 {{< /hint >}}
 
-### Tongyi (DashScope)
+### Alibaba Cloud Model Studio (DashScope)
 
-Tongyi provides cloud-based embedding models from Alibaba Cloud, with strong support for Chinese and English text.
+This integration connects to Alibaba Cloud Model Studio (Bailian) through the DashScope SDK to access embedding models.
 
 {{< hint info >}}
-Tongyi embedding models are currently supported in the Python API only. To use Tongyi from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
+The DashScope integration is currently supported in the Python API only. To use it from Java agents, see [Using Cross-Language Providers](#using-cross-language-providers).
 {{< /hint >}}
 
 #### Prerequisites
 
-1. Get an API key from [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/)
+1. Get an API key from [Alibaba Cloud Model Studio](https://dashscope.console.aliyun.com/)
 
 #### Usage Example
 
@@ -585,32 +585,32 @@ class MyAgent(Agent):
 
     @embedding_model_connection
     @staticmethod
-    def tongyi_connection() -> ResourceDescriptor:
+    def dashscope_connection() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.TONGYI_CONNECTION,
+            clazz=ResourceName.EmbeddingModel.DASHSCOPE_CONNECTION,
             api_key="your-api-key-here",  # Or set DASHSCOPE_API_KEY env var
             request_timeout=30.0
         )
 
     @embedding_model_setup
     @staticmethod
-    def tongyi_embedding() -> ResourceDescriptor:
+    def dashscope_embedding() -> ResourceDescriptor:
         return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.TONGYI_SETUP,
-            connection="tongyi_connection",
+            clazz=ResourceName.EmbeddingModel.DASHSCOPE_SETUP,
+            connection="dashscope_connection",
             model="text-embedding-v4",
             text_type="query"
         )
 ```
 
-#### TongyiEmbeddingModelConnection Parameters
+#### DashScopeEmbeddingModelConnection Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `api_key` | str | `$DASHSCOPE_API_KEY` | DashScope API key for authentication |
 | `request_timeout` | float | `30.0` | HTTP request timeout in seconds |
 
-#### TongyiEmbeddingModelSetup Parameters
+#### DashScopeEmbeddingModelSetup Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -622,7 +622,7 @@ class MyAgent(Agent):
 
 #### Available Models
 
-Visit the [DashScope Embedding Models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
+Visit the [Alibaba Cloud Model Studio embedding models documentation](https://help.aliyun.com/zh/dashscope/developer-reference/text-embedding-api-details) for the complete and up-to-date list of available embedding models.
 
 Some popular options include:
 - **text-embedding-v4** (default, recommended)
@@ -631,12 +631,12 @@ Some popular options include:
 - **text-embedding-v1**
 
 {{< hint warning >}}
-Model availability and specifications may change. Always check the official DashScope documentation for the latest information before implementing in production.
+Model availability and specifications may change. Always check the official Alibaba Cloud Model Studio documentation for the latest information before implementing in production.
 {{< /hint >}}
 
 ## Using Cross-Language Providers
 
-Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., Tongyi embedding is currently Python-only).
+Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., the DashScope embedding integration for Alibaba Cloud Model Studio is currently Python-only).
 
 {{< hint warning >}}
 **Limitations:**
@@ -645,10 +645,10 @@ Flink Agents supports cross-language embedding model integration, allowing you t
 {{< /hint >}}
 ### How To Use
 
-To leverage embedding model supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+To use a resource implemented in another language, declare its implementation class with the corresponding cross-language resource descriptor:
 
-- **Using Java embedding models in Python**: Use `ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION` and `ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python embedding models in Java**: Use `ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION` and `ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP`, specifying the Python provider via the `pythonClazz` parameter
+- **Using Java embedding models in Python**: Use `JavaResourceDescriptor` with the actual Java connection or setup class as `clazz`.
+- **Using Python embedding models in Java**: Use `PythonResourceDescriptor.Builder.newBuilder(...)` with the actual Python connection or setup class, including its module.
 
 ### Usage Example
 
@@ -667,9 +667,8 @@ class MyAgent(Agent):
         #     .newBuilder(ResourceName.EmbeddingModel.OLLAMA_CONNECTION)
         #     .addInitialArgument("host", "http://localhost:11434")
         #     .build();
-        return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_CONNECTION,
-            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.Java.OLLAMA_CONNECTION,
             host="http://localhost:11434"
         )
 
@@ -682,9 +681,8 @@ class MyAgent(Agent):
         #     .addInitialArgument("connection", "java_embedding_connection")
         #     .addInitialArgument("model", "nomic-embed-text")
         #     .build();
-        return ResourceDescriptor(
-            clazz=ResourceName.EmbeddingModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.EmbeddingModel.Java.OLLAMA_SETUP,
             connection="java_embedding_connection",
             model="nomic-embed-text"
         )
@@ -713,8 +711,7 @@ public class MyAgent extends Agent {
         //     clazz=ResourceName.EmbeddingModel.OLLAMA_CONNECTION,
         //     base_url="http://localhost:11434"
         // )
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION)
-                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
+        return PythonResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
                 .addInitialArgument("base_url", "http://localhost:11434")
                 .build();
     }
@@ -727,8 +724,7 @@ public class MyAgent extends Agent {
         //     connection="ollama_connection",
         //     model="nomic-embed-text"
         // )
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP)
-                .addInitialArgument("pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
+        return PythonResourceDescriptor.Builder.newBuilder(ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
                 .addInitialArgument("connection", "pythonEmbeddingConnection")
                 .addInitialArgument("model", "nomic-embed-text")
                 .build();

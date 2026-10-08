@@ -238,7 +238,7 @@ public class ReviewAnalysisAgent extends Agent {
 An action is a piece of code that can be executed. It declares one or more trigger conditions and is
 triggered when an event matches one of them.
 
-Use `@action(*trigger_conditions, target=None)` to decorate a Python function or `@Action({...})` to
+Use `@action(*trigger_conditions, name=None)` to decorate a Python function or `@Action({...})` to
 annotate a Java method. The function or method accepts the triggering `Event` and a `RunnerContext`.
 It sends events through the context rather than returning a result, so declare its return type as
 `None` in Python or `void` in Java. A native Java action must be `public static`. Python actions can
@@ -675,7 +675,7 @@ when an outer call occupies an async or interpreter worker while waiting for ano
 
 ### Cross-language Actions
 
-An action declared in one language can dispatch its body to the other language by setting a `target` on the decorator/annotation. The decorated function or annotated method then acts as a stub — it should raise so direct calls outside the framework fail loud.
+An action declared in one language can dispatch its body to the other language. The declared member *is* the executable target, so no placeholder body is needed: apply `action(...)` to a `Function` descriptor in Python, or annotate a `static final` `Function` field in Java. The member name becomes the action name, and can be overridden with `name=` (Python) or `name` (Java).
 
 {{< tabs "Cross-language Actions" >}}
 
@@ -684,29 +684,21 @@ An action declared in one language can dispatch its body to the other language b
 from flink_agents.api.function import JavaFunction
 
 class MyAgent(Agent):
-    @action(
-        InputEvent.EVENT_TYPE,
-        # Action signatures are fixed (Event, RunnerContext), so for_action
-        # fills the Java parameter types for you — only the class and method.
-        target=JavaFunction.for_action("com.example.MyHandlers", "handleInput"),
-    )
-    @staticmethod
-    def handle_input(event: Event, ctx: RunnerContext) -> None:
-        raise NotImplementedError("cross-language stub")
+    # Action signatures are fixed (Event, RunnerContext), so for_action
+    # fills the Java parameter types for you — only the class and method.
+    handle_input = action(InputEvent.EVENT_TYPE)(
+        JavaFunction.for_action("com.example.MyHandlers", "handleInput"))
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
+import org.apache.flink.agents.api.function.PythonFunction;
+
 public class MyAgent extends Agent {
-    @Action(
-            value = EventType.InputEvent,
-            target = @PythonFunction(
-                    module = "my_pkg.handlers",
-                    qualname = "handle_input"))
-    public static void handleInput(Event event, RunnerContext ctx) {
-        throw new UnsupportedOperationException("cross-language stub");
-    }
+    @Action(EventType.InputEvent)
+    private static final PythonFunction handleInput =
+            PythonFunction.of("my_pkg.handlers", "handle_input");
 }
 ```
 {{< /tab >}}

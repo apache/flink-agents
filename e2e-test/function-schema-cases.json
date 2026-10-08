@@ -1,0 +1,163 @@
+[
+  {
+    "name": "defaults",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      }
+    },
+    "result": "flink:alice:10:tenant:"
+  },
+  {
+    "name": "explicit",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": 2,
+      "note": "hello"
+    },
+    "result": "flink:alice:2:tenant:hello"
+  },
+  {
+    "name": "integral-number",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": 1.0
+    },
+    "result": "flink:alice:1:tenant:"
+  },
+  {
+    "name": "nullable",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "note": null
+    },
+    "result": "flink:alice:10:tenant:"
+  },
+  {
+    "name": "string-number",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": "2"
+    },
+    "error": "INVALID_ARGUMENT /limit: type"
+  },
+  {
+    "name": "boolean-number",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": true
+    },
+    "error": "INVALID_ARGUMENT /limit: type"
+  },
+  {
+    "name": "fraction",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": 1.5
+    },
+    "error": "INVALID_ARGUMENT /limit: type"
+  },
+  {
+    "name": "range",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": 0
+    },
+    "error": "INVALID_ARGUMENT /limit: minimum"
+  },
+  {
+    "name": "null-default",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "limit": null
+    },
+    "error": "INVALID_ARGUMENT /limit: type"
+  },
+  {
+    "name": "extra",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "extra": 1
+    },
+    "error": "INVALID_ARGUMENT /: additionalProperties"
+  },
+  {
+    "name": "constraint",
+    "arguments": {
+      "query": "",
+      "options": {
+        "name": "alice"
+      }
+    },
+    "error": "INVALID_ARGUMENT /query: minLength"
+  },
+  {
+    "name": "nested-type",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": 1
+      }
+    },
+    "error": "INVALID_ARGUMENT /options/name: type"
+  },
+  {
+    "name": "nested-extra",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice",
+        "unknown": 1
+      }
+    },
+    "error": "INVALID_ARGUMENT /options: additionalProperties"
+  },
+  {
+    "name": "injection-overrides-model",
+    "arguments": {
+      "query": "flink",
+      "options": {
+        "name": "alice"
+      },
+      "tenant_id": "fake"
+    },
+    "result": "flink:alice:10:tenant:"
+  },
+  {
+    "name": "missing",
+    "arguments": {
+      "options": {
+        "name": "alice"
+      }
+    },
+    "error": "INVALID_ARGUMENT /: required"
+  }
+]

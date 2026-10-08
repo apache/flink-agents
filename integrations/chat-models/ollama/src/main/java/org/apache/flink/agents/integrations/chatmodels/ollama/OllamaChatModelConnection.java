@@ -26,10 +26,17 @@ import io.github.ollama4j.exceptions.RoleNotFoundException;
 import io.github.ollama4j.models.chat.*;
 import io.github.ollama4j.models.request.OllamaChatEndpointCaller;
 import io.github.ollama4j.models.request.ThinkMode;
+import io.github.ollama4j.tools.OllamaToolCallsFunction;
 import io.github.ollama4j.tools.Tools;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -122,8 +129,7 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
 
                 final Map<String, Map<String, String>> properties =
                         (Map<String, Map<String, String>>) schema.get("properties");
-                // "required" is optional in JSON Schema, and SchemaUtils only emits it when at
-                // least one parameter is required — treat a missing list as empty (#1014).
+                // "required" is optional in JSON Schema; treat a missing list as empty (#1014).
                 final List<String> required =
                         (List<String>) schema.getOrDefault("required", Collections.emptyList());
 
@@ -168,25 +174,118 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * @param message the framework message
      * @return the corresponding Ollama message
      * @throws RuntimeException if the role cannot be mapped to an Ollama role
+     * @throws UnsupportedContentBlockException if the message has media Ollama cannot take
      */
     private OllamaChatMessage convertToOllamaChatMessages(ChatMessage message) {
         final MessageRole role = message.getRole();
         try {
             final OllamaChatMessageRole ollamaRole =
                     OllamaChatMessageRole.getRole(role.name().toLowerCase());
-            return new OllamaChatMessage(ollamaRole, message.getText());
+            final OllamaChatMessage ollamaMessage =
+                    new OllamaChatMessage(ollamaRole, message.getText());
+            final List<Map<String, Object>> toolCalls = message.getToolCalls();
+            if (toolCalls != null && !toolCalls.isEmpty()) {
+                // Without the calls, the history shows tool results the model never requested.
+                ollamaMessage.setToolCalls(toOllamaToolCalls(toolCalls));
+            }
+            final List<byte[]> images = toOllamaImages(message);
+            if (!images.isEmpty()) {
+                ollamaMessage.setImages(images);
+            }
+            return ollamaMessage;
         } catch (RoleNotFoundException e) {
             throw new RuntimeException(e);
         }
     }
 
     /**
-     * Whether Ollama can constrain generation to a schema for {@code effectiveModel}.
+     * Converts framework tool calls back to Ollama's shape, the function name and its arguments as
+     * an object, as the Python connection does. The framework-assigned id is not sent.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<OllamaChatToolCalls> toOllamaToolCalls(
+            List<Map<String, Object>> toolCalls) {
+        final List<OllamaChatToolCalls> ollamaToolCalls = new ArrayList<>(toolCalls.size());
+        for (Map<String, Object> toolCall : toolCalls) {
+            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
+            if (function == null || function.get("name") == null) {
+                throw new IllegalArgumentException("A tool call must have a function name.");
+            }
+            ollamaToolCalls.add(
+                    new OllamaChatToolCalls(
+                            null,
+                            new OllamaToolCallsFunction(
+                                    String.valueOf(function.get("name")),
+                                    toArgumentsMap(function.get("arguments")))));
+        }
+        return ollamaToolCalls;
+    }
+
+    /** Ollama expects the arguments as an object; a JSON string is parsed into one. */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> toArgumentsMap(Object arguments) {
+        if (arguments == null) {
+            return Collections.emptyMap();
+        }
+        if (arguments instanceof Map) {
+            return (Map<String, Object>) arguments;
+        }
+        try {
+            return new ObjectMapper()
+                    .readValue(
+                            String.valueOf(arguments), new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Tool call arguments must be a JSON object.", e);
+        }
+    }
+
+    /**
+     * The images of a user message, in block order. Ollama takes inline image data only, attached
+     * to the message rather than interleaved with its text; any other media fails explicitly.
+     */
+    private static List<byte[]> toOllamaImages(ChatMessage message) {
+        final List<byte[]> images = new ArrayList<>();
+        for (ContentBlock block : message.getBlocks()) {
+            if (!(block instanceof MediaBlock)) {
+                continue;
+            }
+            if (message.getRole() != MessageRole.USER) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama",
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+            if (!(block instanceof ImageBlock)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama accepts images only");
+            }
+            final ImageBlock image = (ImageBlock) block;
+            if (!(image.getSource() instanceof Base64Source)) {
+                throw UnsupportedContentBlockException.forBlock(
+                        "Ollama", block, "Ollama takes base64 image data, not a URL");
+            }
+            try {
+                // ollama4j base64-encodes the bytes again when it serializes the request.
+                images.add(
+                        Base64.getDecoder().decode(((Base64Source) image.getSource()).getData()));
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "An image block's base64 data could not be decoded.", e);
+            }
+        }
+        return images;
+    }
+
+    /**
+     * Answers {@link NativeStructuredOutputSupport#NATIVE_RECOMMENDED} whenever the request can
+     * carry the schema, whatever the model.
      *
-     * <p>Always {@code true}, and deliberately independent of the argument: schema-constrained
-     * decoding is applied by the Ollama server's sampler rather than by the model, so it holds for
-     * every model served by a server at or above v0.5.0. There is also no model-level signal to key
-     * on. Ollama's model capability set — completion, tools, insert, vision, embedding, thinking,
+     * <p>Capability is deliberately independent of the model: schema-constrained decoding is
+     * applied by the Ollama server's sampler rather than by the model, so it holds for every model
+     * served by a server at or above v0.5.0. There is also no model-level signal to key on.
+     * Ollama's model capability set — completion, tools, insert, vision, embedding, thinking,
      * image, audio — carries nothing schema-related, {@code /api/show} reports exactly that set,
      * and {@code /api/version} reports only a version string. Since a server runs arbitrary local
      * models, any allowlist would be invented, and would report not-capable for models that do
@@ -195,13 +294,35 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
      * <p>Three deployments break the guarantee, none of them distinguishable from a model name: a
      * server below v0.5.0 rejects the {@code format} field with HTTP 400; Ollama Cloud accepts the
      * request but does not enforce the schema; and the MLX runner accepts the field and drops it.
-     *
-     * <p>Reads no instance state, so capability stays answerable independently of how the
-     * connection was configured.
      */
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-        return true;
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.INFEASIBLE;
+    }
+
+    /**
+     * Whether a request built from these inputs would carry a native {@code format}, the effective
+     * model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Since this connection's capability does not depend on the model, the schema form is the whole
+     * of what it can report infeasible.
+     *
+     * <p>Neither the tools nor the parameters are read; this connection sends a native schema
+     * alongside bound tools.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
     }
 
     @Override
@@ -267,6 +388,10 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
             }
 
             return chatMessage;
+        } catch (RuntimeException e) {
+            // Unchanged, so callers can catch documented errors such as
+            // UnsupportedContentBlockException.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -312,12 +437,9 @@ public class OllamaChatModelConnection extends BaseChatModelConnection {
         // the request's format, which is left unset when no native translation applies and is then
         // omitted from the serialized body rather than serialized as null.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a schema form this branch skips therefore gets an unconstrained response
-        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
-        // this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility check is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
             chatRequest.setFormat(toNativeFormat((Class<?>) outputSchema));
         }
 

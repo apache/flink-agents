@@ -23,31 +23,32 @@ from typing import Iterator, List, Type
 from pydantic import BaseModel
 
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_models import java_chat_model as api_java_chat_model
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
 from flink_agents.e2e_tests.e2e_tests_integration import (
     mock_chat_model_agent,
     tool_parameter_injection_agent,
 )
-from flink_agents.integrations.chat_models import ollama_chat_model, tongyi_chat_model
+from flink_agents.integrations.chat_models import (
+    dashscope_chat_model,
+    ollama_chat_model,
+)
 from flink_agents.integrations.chat_models.anthropic import anthropic_chat_model
 from flink_agents.integrations.chat_models.azure import azure_openai_chat_model
 from flink_agents.integrations.chat_models.openai import openai_chat_model
 from flink_agents.integrations.chat_models.watsonx import watsonx_chat_model
-from flink_agents.runtime.java import java_chat_model as runtime_java_chat_model
+from flink_agents.plan.resource.java import java_chat_model
 
 # A class is only discoverable through __subclasses__() once it has been imported.
 # Importing every module that defines a connection is what gives the walk below its
 # reach — including the cross-language bridge and the e2e test doubles.
 _MODULES_DEFINING_CONNECTIONS = (
     anthropic_chat_model,
-    api_java_chat_model,
+    java_chat_model,
     azure_openai_chat_model,
     mock_chat_model_agent,
     ollama_chat_model,
     openai_chat_model,
-    runtime_java_chat_model,
-    tongyi_chat_model,
+    dashscope_chat_model,
     tool_parameter_injection_agent,
     watsonx_chat_model,
 )
@@ -93,10 +94,10 @@ def _translates_schema_natively(cls: Type[BaseChatModelConnection]) -> bool:
     """Whether ``cls`` applies an output schema through a native provider parameter.
 
     Overriding ``supports_native_structured_output`` is how a connection reports that
-    capability, so the same override marks the connections that must accept a schema
-    instead of rejecting it. Such a connection owns the decision of what to do with a
-    schema it cannot apply natively for the effective model, and its own tests pin
-    that behavior.
+    it can apply a schema natively, so the same override marks the connections that
+    must accept a schema instead of rejecting it. Such a connection owns the decision
+    of what to do with a schema it cannot apply natively to a request, and its own
+    tests pin that behavior.
     """
     return (
         cls.supports_native_structured_output

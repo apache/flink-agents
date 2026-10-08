@@ -52,6 +52,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -71,6 +72,9 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
     private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
+    private static final String FIXED_TOOL_CALL_ID_FAILED = "call_dddd";
+    private static final String FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed.";
+    private static final String FIXED_TOOL_ERROR = "ValueError: boom";
     private static final String MEMORY_REF_ATTACHMENT_EVENT_TYPE = "_memory_ref_attachment_event";
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
@@ -406,8 +410,25 @@ class CrossLanguageEventSnapshotTest {
 
         Map<String, Object> attrs = typed.getAttributes();
         assertEquals(Boolean.TRUE, typed.getSuccess().get(FIXED_TOOL_CALL_ID));
-        assertTrue(typed.getError().isEmpty());
+        assertEquals(Map.of(FIXED_TOOL_CALL_ID_FAILED, FIXED_TOOL_ERROR), typed.getError());
         assertFalse(attrs.containsKey("timestamp"));
+    }
+
+    @Test
+    void pythonToolResponseEventKeepsFailedCallsAsErrors() throws Exception {
+        Event base = readPythonSnapshot("tool_response_event.json");
+        ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
+
+        ToolResponse failed = typed.getResponses().get(FIXED_TOOL_CALL_ID_FAILED);
+        assertNotNull(failed);
+        assertTrue(failed.isError(), "A call Python marked as failed must not read as a success.");
+        // The response keeps the text Python shows the model; the diagnostic stays in getError().
+        assertEquals(FIXED_TOOL_FAILURE_TEXT, failed.getError());
+        assertEquals(FIXED_TOOL_ERROR, typed.getError().get(FIXED_TOOL_CALL_ID_FAILED));
+        assertEquals(Boolean.FALSE, typed.getSuccess().get(FIXED_TOOL_CALL_ID_FAILED));
+
+        String printed = assertDoesNotThrow(typed::toString);
+        assertTrue(printed.contains(FIXED_TOOL_CALL_ID_FAILED + "=false"), printed);
     }
 
     // ── ContextRetrievalRequestEvent ───────────────────────────────────────

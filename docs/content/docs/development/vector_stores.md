@@ -1001,10 +1001,10 @@ Flink Agents supports cross-language vector store integration, allowing you to u
 
 ### How To Use
 
-To leverage vector store supports provided in a different language, you need to declare the resource within a built-in cross-language wrapper, and specify the target provider as an argument:
+To use a resource implemented in another language, declare its implementation class with the corresponding cross-language resource descriptor:
 
-- **Using Java vector stores in Python**: Use `ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Java provider class via the `java_clazz` parameter
-- **Using Python vector stores in Java**: Use `ResourceName.VectorStore.PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE`, specifying the Python provider via the `pythonClazz` parameter
+- **Using Java vector stores in Python**: Use `JavaResourceDescriptor` with the actual Java vector store class as `clazz`.
+- **Using Python vector stores in Java**: Use `PythonResourceDescriptor.Builder.newBuilder(...)` with the actual Python vector store class, including its module.
 
 ### Usage Example
 
@@ -1040,9 +1040,8 @@ class MyAgent(Agent):
         #     .addInitialArgument("index", "my_documents")
         #     .addInitialArgument("dims", 768)
         #     .build();
-        return ResourceDescriptor(
-            clazz=ResourceName.VectorStore.JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE,
-            java_clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.VectorStore.Java.ELASTICSEARCH_VECTOR_STORE,
             embedding_model="my_embedding_model",
             host="http://localhost:9200",
             index="my_documents",
@@ -1090,8 +1089,7 @@ public class MyAgent extends Agent {
         //     clazz=ResourceName.VectorStore.CHROMA_VECTOR_STORE,
         //     embedding_model="my_embedding_model",
         // )
-        return ResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE)
-                .addInitialArgument("pythonClazz", ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE)
+        return PythonResourceDescriptor.Builder.newBuilder(ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE)
                 .addInitialArgument("embedding_model", "myEmbeddingModel")
                 .build();
     }

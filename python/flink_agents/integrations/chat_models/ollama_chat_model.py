@@ -15,24 +15,54 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import base64
+import binascii
 import uuid
-from typing import Any, Dict, List, Literal, Sequence
+from typing import Any, Dict, List, Literal, Mapping, Sequence
 
-from ollama import Client, Message
+from ollama import Client, Image, Message
 from pydantic import BaseModel, Field
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    Base64Source,
+    ChatMessage,
+    ImageBlock,
+    MediaBlock,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 
 DEFAULT_CONTEXT_WINDOW = 2048
 DEFAULT_REQUEST_TIMEOUT = 30.0
+
+
+def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
+
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the feasibility check has to know whether a
+    schema would be sent without rendering it, and rendering raises on a schema it
+    cannot express.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
 
 
 def _native_format(output_schema: Any) -> Dict[str, Any] | None:
@@ -42,12 +72,8 @@ def _native_format(output_schema: Any) -> Dict[str, Any] | None:
     ``BaseModel`` subclass. A ``RowTypeInfo`` schema is skipped so it keeps the
     prompt-engineering fallback.
     """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+    model = _native_output_model(output_schema)
+    if model is None:
         return None
     return model.model_json_schema()
 
@@ -101,13 +127,19 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         return self.__client
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
-        """Whether Ollama can constrain generation to a schema for ``effective_model``.
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """``NATIVE_RECOMMENDED`` whenever the request is feasible, for any model.
 
-        Always ``True``, and deliberately independent of the argument:
-        schema-constrained decoding is applied by the Ollama server's sampler rather
-        than by the model, so it holds for every model served by a server at or above
-        v0.5.0. There is also no model-level signal to key on. Ollama's model capability
+        Feasibility comes from the same helper ``chat`` uses to decide its native
+        branch. Capability is deliberately independent of the model: schema-constrained
+        decoding is applied by the Ollama server's sampler rather than by the model, so
+        it holds for every model served by a server at or above v0.5.0. There is also
+        no model-level signal to key on. Ollama's model capability
         set -- completion, tools, insert, vision, embedding, thinking, image, audio --
         carries nothing schema-related, ``/api/show`` reports exactly that set, and
         ``/api/version`` reports only a version string. Since a server runs arbitrary
@@ -118,11 +150,51 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         name: a server below v0.5.0 rejects the ``format`` field with HTTP 400; Ollama
         Cloud accepts the request but does not enforce the schema; and the MLX runner
         accepts the field and drops it.
-
-        Reads no instance state, so capability stays answerable independently of how the
-        connection was configured.
         """
-        return True
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+
+    def _can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native ``format``,
+        leaving the effective model's capability out of the answer.
+
+        Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
+        wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
+        prompt-engineering fallback. Since this connection's capability is
+        unconditional, the schema form is the whole of what it can report infeasible.
+
+        Neither the tools nor the parameters are read: this connection sends a native
+        schema alongside bound tools, and the one parameter that would bear on the
+        answer is the model, which is the capability question this excludes.
+
+        A ``True`` is not a promise that the call succeeds. The branch renders the
+        schema once it has decided to apply it, and rendering raises on a ``BaseModel``
+        that carries no JSON Schema.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Not read.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
+        """
+        return _native_output_model(output_schema) is not None
 
     def chat(
         self,
@@ -160,6 +232,12 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             ollama_tools = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
+        # Snapshotted before the pop below, so the feasibility check is asked with the
+        # parameters as they arrived rather than with a mapping this path has already
+        # stripped. No term of today's answer reads them; the shape is what keeps a
+        # term added later from answering about a request other than the one built.
+        raw_kwargs = dict(kwargs)
+
         model_name = kwargs.pop("model")
 
         # Native structured output applies only for a BaseModel schema; any other schema
@@ -168,18 +246,12 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # than a sampling option, so it is passed as the format argument, which is
         # omitted altogether when no native translation applies.
         #
-        # TODO(#912): the requested strategy is not visible here, so this re-check
-        # cannot tell an explicit NATIVE request apart from one that merely resolved to
-        # native. A caller asking for NATIVE on a schema form this branch skips
-        # therefore gets an unconstrained response instead of an error. Once strategy
-        # resolution is wired up, NATIVE must either bypass this capability re-check or
-        # fail explicitly.
-        native_format = None
-        if output_schema is not None and self.supports_native_structured_output(
-            model_name
-        ):
-            native_format = _native_format(output_schema)
-        format_kwargs = {} if native_format is None else {"format": native_format}
+        # Feasibility is asked rather than restated, so a caller asking the same
+        # question gets the answer this branch acts on. Capability is unconditional on
+        # this connection, so feasibility alone decides the branch.
+        format_kwargs: Dict[str, Any] = {}
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
+            format_kwargs = {"format": _native_format(output_schema)}
 
         response = self.client.chat(
             model=model_name,
@@ -237,7 +309,11 @@ class OllamaChatModelConnection(BaseChatModelConnection):
     def __convert_to_ollama_messages(messages: Sequence[ChatMessage]) -> List[Message]:
         ollama_messages = []
         for message in messages:
-            ollama_message = Message(role=message.role.value, content=message.text)
+            ollama_message = Message(
+                role=message.role.value,
+                content=message.text,
+                images=_ollama_images(message),
+            )
             if len(message.tool_calls) > 0:
                 ollama_tool_calls = []
                 for tool_call in message.tool_calls:
@@ -252,6 +328,42 @@ class OllamaChatModelConnection(BaseChatModelConnection):
                 ollama_message.tool_calls = ollama_tool_calls
             ollama_messages.append(ollama_message)
         return ollama_messages
+
+
+def _unsupported(block: MediaBlock, reason: str) -> UnsupportedContentBlockError:
+    return UnsupportedContentBlockError.for_block("Ollama", block, reason)
+
+
+def _ollama_images(message: ChatMessage) -> List[Image] | None:
+    """Return the images of a user message, in block order.
+
+    Ollama takes inline image data only, attached to the message rather than
+    interleaved with its text; any other media raises
+    UnsupportedContentBlockError. Returns None when the message has no media,
+    so a text-only request is unchanged.
+    """
+    images = []
+    for block in message.blocks:
+        if not isinstance(block, MediaBlock):
+            continue
+        if message.role != MessageRole.USER:
+            reason = (
+                f"only user messages can carry media, not {message.role.value} messages"
+            )
+            raise _unsupported(block, reason)
+        if not isinstance(block, ImageBlock):
+            raise _unsupported(block, "Ollama accepts images only")
+        if not isinstance(block.source, Base64Source):
+            raise _unsupported(block, "Ollama takes base64 image data, not a URL")
+        try:
+            # Bytes rather than the string: the client re-encodes bytes, whereas a
+            # string is first tried as a file path.
+            data = base64.b64decode(block.source.data, validate=True)
+        except binascii.Error as e:
+            msg = "An image block's base64 data could not be decoded."
+            raise ValueError(msg) from e
+        images.append(Image(value=data))
+    return images or None
 
 
 class OllamaChatModelSetup(BaseChatModelSetup):

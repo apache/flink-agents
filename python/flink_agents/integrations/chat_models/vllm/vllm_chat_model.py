@@ -75,7 +75,9 @@ class VLLMChatModelConnection(OpenAIChatModelConnection):
         )
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """VLLM implements the OpenAI ``json_schema`` response format for whatever
         model it serves (via guided decoding), so structured-output capability does
         not depend on OpenAI model names — the inherited allowlist would wrongly

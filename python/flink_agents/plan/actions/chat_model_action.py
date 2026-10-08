@@ -31,7 +31,6 @@ from pyflink.common.typeinfo import RowTypeInfo
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.chat_models.java_chat_model import JavaChatModelSetup
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -50,6 +49,7 @@ from flink_agents.api.trace import (
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.utils import support_async
 from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
 
 if TYPE_CHECKING:
     from flink_agents.api.chat_models.chat_model import BaseChatModelSetup

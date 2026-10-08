@@ -61,7 +61,7 @@ import java.util.concurrent.CompletionException;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
-    static final String TOOL_CALL_DURABLE_ID = "tool-call";
+    static final String TOOL_CALL_DURABLE_ID = "tool-call:";
     private static final Logger LOG = LoggerFactory.getLogger(ToolCallAction.class);
 
     public static Action getToolCallAction() throws Exception {
@@ -114,7 +114,9 @@ public class ToolCallAction {
             String id = String.valueOf(toolCall.get("id"));
             Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
             String name = (String) function.get("name");
-            Map<String, Object> arguments = (Map<String, Object>) function.get("arguments");
+            Object rawArguments = function.get("arguments");
+            Map<String, Object> arguments =
+                    rawArguments instanceof Map ? (Map<String, Object>) rawArguments : null;
             Map<String, Object> mergedArguments =
                     arguments == null ? new HashMap<>() : new HashMap<>(arguments);
 
@@ -124,7 +126,11 @@ public class ToolCallAction {
 
             Tool tool = null;
             SubagentSetup agent = null;
-            Exception preparationError = null;
+            Exception preparationError =
+                    arguments == null
+                            ? new IllegalArgumentException(
+                                    "INVALID_ARGUMENT /: type (expected object)")
+                            : null;
             // The reserved _subagent_ prefix separates the two namespaces: tool
             // registration rejects the prefix, so a prefixed callable name can only
             // address a sub-agent. Matched once here and carried down, because resolving
@@ -148,8 +154,6 @@ public class ToolCallAction {
             // unchanged.
             if (tool != null) {
                 try {
-                    // Framework-owned injected args must win over model-provided values so hidden
-                    // context such as tenant ids cannot be spoofed by a tool call payload.
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
                 } catch (Exception e) {
                     preparationError = e;
@@ -214,7 +218,7 @@ public class ToolCallAction {
                     new DurableCallable<>() {
                         @Override
                         public String getId() {
-                            return TOOL_CALL_DURABLE_ID;
+                            return TOOL_CALL_DURABLE_ID + id;
                         }
 
                         @Override

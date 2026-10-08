@@ -57,15 +57,15 @@ class YamlLoaderBuildersTest {
     }
 
     @Test
-    void descriptorPythonWrapsInPythonWrapper() throws Exception {
+    void descriptorPythonNamesImplementation() throws Exception {
         DescriptorSpec spec =
                 M.readValue(
                         "name: c\nclazz: ollama\ntype: python\nbase_url: http://x\n",
                         DescriptorSpec.class);
         ResourceDescriptor d = YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION);
-        assertThat(d.getClazz()).isEqualTo(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
+        assertThat(d.getClazz()).isEqualTo("OllamaChatModelConnection");
         assertThat(d.getInitialArguments())
-                .containsEntry("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION)
+                .doesNotContainKey("pythonClazz")
                 .containsEntry("base_url", "http://x");
     }
 
@@ -73,10 +73,9 @@ class YamlLoaderBuildersTest {
     void descriptorDefaultIsPython() throws Exception {
         DescriptorSpec spec = M.readValue("name: c\nclazz: ollama\n", DescriptorSpec.class);
         ResourceDescriptor d = YamlLoader.buildDescriptor(spec, ResourceType.CHAT_MODEL_CONNECTION);
-        // Default is Python (host-neutral) — wrapper FQN with Python class in pythonClazz arg.
-        assertThat(d.getClazz()).isEqualTo(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
-        assertThat(d.getInitialArguments())
-                .containsEntry("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
+        // Default is Python (host-neutral), with the actual module and class.
+        assertThat(d.getClazz()).isEqualTo("OllamaChatModelConnection");
+        assertThat(d.getInitialArguments()).doesNotContainKey("pythonClazz");
     }
 
     @Test

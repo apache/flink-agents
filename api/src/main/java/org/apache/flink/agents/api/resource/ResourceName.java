@@ -101,12 +101,6 @@ public final class ResourceName {
         public static final String WATSONX_SETUP =
                 "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup";
 
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_CONNECTION =
-                "org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection";
-        public static final String PYTHON_WRAPPER_SETUP =
-                "org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup";
-
         /** Python implementations of ChatModel. */
         public static final class Python {
 
@@ -134,11 +128,11 @@ public final class ResourceName {
             public static final String OPENAI_COMPLETIONS_SETUP =
                     "flink_agents.integrations.chat_models.openai.openai_chat_model.OpenAIChatModelSetup";
 
-            // Tongyi
-            public static final String TONGYI_CONNECTION =
-                    "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelConnection";
-            public static final String TONGYI_SETUP =
-                    "flink_agents.integrations.chat_models.tongyi_chat_model.TongyiChatModelSetup";
+            // DashScope
+            public static final String DASHSCOPE_CONNECTION =
+                    "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelConnection";
+            public static final String DASHSCOPE_SETUP =
+                    "flink_agents.integrations.chat_models.dashscope_chat_model.DashScopeChatModelSetup";
 
             // vLLM (OpenAI-compatible)
             public static final String VLLM_CONNECTION =
@@ -178,13 +172,6 @@ public final class ResourceName {
                 "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelConnection";
         public static final String OPENAI_SETUP =
                 "org.apache.flink.agents.integrations.embeddingmodels.openai.OpenAIEmbeddingModelSetup";
-
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_CONNECTION =
-                "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection";
-        public static final String PYTHON_WRAPPER_SETUP =
-                "org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelSetup";
-
         /** Python implementations of EmbeddingModel. */
         public static final class Python {
 
@@ -200,11 +187,11 @@ public final class ResourceName {
             public static final String OPENAI_SETUP =
                     "flink_agents.integrations.embedding_models.openai_embedding_model.OpenAIEmbeddingModelSetup";
 
-            // Tongyi
-            public static final String TONGYI_CONNECTION =
-                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelConnection";
-            public static final String TONGYI_SETUP =
-                    "flink_agents.integrations.embedding_models.tongyi_embedding_model.TongyiEmbeddingModelSetup";
+            // DashScope
+            public static final String DASHSCOPE_CONNECTION =
+                    "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelConnection";
+            public static final String DASHSCOPE_SETUP =
+                    "flink_agents.integrations.embedding_models.dashscope_embedding_model.DashScopeEmbeddingModelSetup";
 
             private Python() {}
         }
@@ -230,13 +217,6 @@ public final class ResourceName {
         // Milvus
         public static final String MILVUS_VECTOR_STORE =
                 "org.apache.flink.agents.integrations.vectorstores.milvus.MilvusVectorStore";
-
-        // Python Wrapper
-        public static final String PYTHON_WRAPPER_VECTOR_STORE =
-                "org.apache.flink.agents.api.vectorstores.python.PythonVectorStore";
-
-        public static final String PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE =
-                "org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore";
 
         /** Python implementations of VectorStore. */
         public static final class Python {

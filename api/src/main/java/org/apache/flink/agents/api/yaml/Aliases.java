@@ -46,8 +46,8 @@ import java.util.Map;
  *       can refer to different classes across sections and languages.
  * </ul>
  *
- * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a
- * Java-side wrapper class (see {@link #PYTHON_WRAPPER_CLAZZ}).
+ * <p>For Python resources, the loader resolves the alias to the Python FQN and wraps it in a Python
+ * implementation descriptor.
  */
 public final class Aliases {
 
@@ -56,13 +56,6 @@ public final class Aliases {
 
     /** ResourceType to Language to alias to fully-qualified class path. */
     public static final Map<ResourceType, Map<Language, Map<String, String>>> CLAZZ_ALIASES;
-
-    /**
-     * ResourceType to Java-side wrapper FQN that embeds a Python implementation. Used when a YAML
-     * resource declares {@code type: python} so the Java host wraps the Python class through an
-     * existing PythonResourceWrapper implementation.
-     */
-    public static final Map<ResourceType, String> PYTHON_WRAPPER_CLAZZ;
 
     static {
         Map<String, String> ev = new HashMap<>();
@@ -95,7 +88,7 @@ public final class Aliases {
         chatConnPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
         chatConnPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_CONNECTION);
         chatConnPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_CONNECTION);
-        chatConnPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_CONNECTION);
+        chatConnPython.put("dashscope", ResourceName.ChatModel.Python.DASHSCOPE_CONNECTION);
         chatConnPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_CONNECTION);
         chatConnPython.put("vllm", ResourceName.ChatModel.Python.VLLM_CONNECTION);
         chatConnPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_CONNECTION);
@@ -116,7 +109,7 @@ public final class Aliases {
         chatPython.put("ollama", ResourceName.ChatModel.Python.OLLAMA_SETUP);
         chatPython.put("openai", ResourceName.ChatModel.Python.OPENAI_COMPLETIONS_SETUP);
         chatPython.put("anthropic", ResourceName.ChatModel.Python.ANTHROPIC_SETUP);
-        chatPython.put("tongyi", ResourceName.ChatModel.Python.TONGYI_SETUP);
+        chatPython.put("dashscope", ResourceName.ChatModel.Python.DASHSCOPE_SETUP);
         chatPython.put("azure_openai", ResourceName.ChatModel.Python.AZURE_OPENAI_SETUP);
         chatPython.put("vllm", ResourceName.ChatModel.Python.VLLM_SETUP);
         chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
@@ -130,7 +123,7 @@ public final class Aliases {
         Map<String, String> embConnPython = new HashMap<>();
         embConnPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION);
         embConnPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_CONNECTION);
-        embConnPython.put("tongyi", ResourceName.EmbeddingModel.Python.TONGYI_CONNECTION);
+        embConnPython.put("dashscope", ResourceName.EmbeddingModel.Python.DASHSCOPE_CONNECTION);
         ca.put(
                 ResourceType.EMBEDDING_MODEL_CONNECTION,
                 buildLangBuckets(embConnJava, embConnPython));
@@ -143,7 +136,7 @@ public final class Aliases {
         Map<String, String> embPython = new HashMap<>();
         embPython.put("ollama", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP);
         embPython.put("openai", ResourceName.EmbeddingModel.Python.OPENAI_SETUP);
-        embPython.put("tongyi", ResourceName.EmbeddingModel.Python.TONGYI_SETUP);
+        embPython.put("dashscope", ResourceName.EmbeddingModel.Python.DASHSCOPE_SETUP);
         ca.put(ResourceType.EMBEDDING_MODEL, buildLangBuckets(embJava, embPython));
 
         // VECTOR_STORE
@@ -158,18 +151,6 @@ public final class Aliases {
         ca.put(ResourceType.VECTOR_STORE, buildLangBuckets(vsJava, vsPython));
 
         CLAZZ_ALIASES = Collections.unmodifiableMap(ca);
-
-        Map<ResourceType, String> wrap = new EnumMap<>(ResourceType.class);
-        wrap.put(
-                ResourceType.CHAT_MODEL_CONNECTION,
-                ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
-        wrap.put(ResourceType.CHAT_MODEL, ResourceName.ChatModel.PYTHON_WRAPPER_SETUP);
-        wrap.put(
-                ResourceType.EMBEDDING_MODEL_CONNECTION,
-                ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION);
-        wrap.put(ResourceType.EMBEDDING_MODEL, ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP);
-        wrap.put(ResourceType.VECTOR_STORE, ResourceName.VectorStore.PYTHON_WRAPPER_VECTOR_STORE);
-        PYTHON_WRAPPER_CLAZZ = Collections.unmodifiableMap(wrap);
     }
 
     private Aliases() {}

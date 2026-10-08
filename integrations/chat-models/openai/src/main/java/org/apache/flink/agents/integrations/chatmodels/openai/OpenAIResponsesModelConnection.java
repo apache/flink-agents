@@ -30,6 +30,7 @@ import com.openai.models.ReasoningEffort;
 import com.openai.models.responses.*;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -124,24 +125,13 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
         this.client = builder.build();
     }
 
-    /**
-     * The {@code model} parameter, falling back to the model configured on the connection when the
-     * call names none, which is how the request itself resolves the model it is issued against.
-     */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
-        String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-        if (modelName == null || modelName.isBlank()) {
-            return this.defaultModel;
-        }
-        return modelName;
-    }
-
     @Override
     public ChatMessage chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("OpenAI Responses", messages);
         ResponseCreateParams params = buildRequest(messages, tools, modelParams);
         Response response = client.responses().create(params);
         ChatMessage result = convertResponse(response);

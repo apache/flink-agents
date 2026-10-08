@@ -56,12 +56,25 @@ public final class JavaFunction implements Function, Serializable {
             @JsonProperty(FIELD_QUAL_NAME) String qualName,
             @JsonProperty(FIELD_METHOD_NAME) String methodName,
             @JsonProperty(FIELD_PARAMETER_TYPES) List<String> parameterTypes) {
-        this.qualName = Objects.requireNonNull(qualName, "qualName");
-        this.methodName = Objects.requireNonNull(methodName, "methodName");
+        this.qualName = requireNonEmpty(qualName, FIELD_QUAL_NAME);
+        this.methodName = requireNonEmpty(methodName, FIELD_METHOD_NAME);
         this.parameterTypes =
                 parameterTypes == null
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(new ArrayList<>(parameterTypes));
+    }
+
+    /**
+     * Rejects a null or empty identifier. A descriptor names a cross-language target, so an empty
+     * identifier can never resolve; failing here makes every construction path ({@link
+     * #fromMethod}, {@code new}, and Jackson deserialization) reject a partially specified target
+     * up front rather than deferring the failure to dispatch time.
+     */
+    private static String requireNonEmpty(String value, String name) {
+        if (Objects.requireNonNull(value, name).isEmpty()) {
+            throw new IllegalArgumentException(name + " must not be empty");
+        }
+        return value;
     }
 
     /**

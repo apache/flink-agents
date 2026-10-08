@@ -20,7 +20,7 @@ package org.apache.flink.agents.runtime;
 
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
@@ -163,7 +163,17 @@ public class ResourceCache implements AutoCloseable {
             ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
         }
 
-        resource.open();
+        try {
+            resource.open();
+        } catch (Throwable openFailure) {
+            try {
+                resource.close();
+            } catch (Throwable closeFailure) {
+                openFailure.addSuppressed(closeFailure);
+            }
+            ExceptionUtils.rethrowException(openFailure);
+            throw new AssertionError("Unreachable after rethrowing resource open failure");
+        }
         cache.computeIfAbsent(type, k -> new ConcurrentHashMap<>()).put(name, resource);
         return resource;
     }

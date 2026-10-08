@@ -32,10 +32,15 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
@@ -49,16 +54,19 @@ RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 REQUEST_OWNED_PARAMS = frozenset(
     {"model_id", "messages", "tools", "project_id", "space_id"}
 )
-RESERVED_ADDITIONAL_KWARGS = frozenset(
-    {
-        "model",
-        "temperature",
-        "max_tokens",
-        "extract_reasoning",
-        "tool_choice",
-        "tool_choice_option",
-    }
-) | REQUEST_OWNED_PARAMS
+RESERVED_ADDITIONAL_KWARGS = (
+    frozenset(
+        {
+            "model",
+            "temperature",
+            "max_tokens",
+            "extract_reasoning",
+            "tool_choice",
+            "tool_choice_option",
+        }
+    )
+    | REQUEST_OWNED_PARAMS
+)
 
 
 def _normalize(value: str | None) -> str | None:
@@ -376,12 +384,18 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                 attempt += 1
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
-        """Whether watsonx.ai can constrain generation to a schema for the given model.
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """``NATIVE_RECOMMENDED`` whenever the request is feasible, for any model.
 
-        Always ``True``, and deliberately independent of the argument. The constraint
-        is applied by the serving runtime, through vLLM guided decoding, rather than by
-        a per-model capability. IBM states that chat API support requires the vLLM
+        Feasibility comes from the same helper ``chat`` uses to decide its native
+        branch. Capability is deliberately independent of the model. The constraint is
+        applied by the serving runtime, through vLLM guided decoding, rather than by a
+        per-model capability. IBM states that chat API support requires the vLLM
         runtime, on its pages about inferencing *custom* foundation models; it does not
         state in so many words that its own provided models are served the same way.
         That last step rests instead on the chat request body exposing vLLM's
@@ -391,34 +405,55 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         signal to key on: the foundation-model comparison table has columns for chat
         and tool interaction and none for structured output, and the model-specs API
         exposes no such flag. A list written here would encode a gate nobody documents
-        and would report not-capable for models that do work.
-
-        This diverges from the base contract, which describes capability as
-        model-dependent and requires an unrecognized model to report ``False``. That
-        rule guards against failing at the provider for a model whose capability is
-        unknown; here capability is a property of the endpoint rather than of the
-        model, so there is no unknown to guard against.
-
-        Reads no instance state, so capability stays answerable independently of how
-        the connection was configured.
+        and would report ``FEASIBLE`` for models that do work.
         """
-        return True
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
 
-    @override
-    def effective_model_for(self, model_kwargs: Mapping[str, Any] | None) -> str | None:
-        """The ``model`` parameter, falling back to ``DEFAULT_MODEL`` when absent.
+    def _can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a native
+        ``response_format``, leaving the effective model's capability out of the answer.
 
-        ``chat`` resolves the model it calls the same way, so reading the parameter
-        alone would answer ``None`` where the request in fact goes to the default
-        model.
+        Only a ``BaseModel`` subclass has a native translation here; a ``RowTypeInfo``
+        wrapped in ``OutputSchema``, or no schema at all, has none and keeps the
+        prompt-engineering fallback. Since this connection's capability is
+        unconditional, the schema form is the whole of what it can report infeasible.
 
-        The fallback stands in for an absent parameter only, matching the request: a
-        parameter that is present but empty is passed through, so the hook and the
-        request agree on that input too.
+        A caller-supplied ``response_format`` is deliberately not a condition: the
+        branch answers that conflict by raising rather than by skipping, so a caller
+        that asked here first can still be met with an exception. Reporting the
+        conflict infeasible instead would turn a documented error into a silently
+        unconstrained request. Rendering raises likewise, on a ``BaseModel`` that
+        carries no JSON Schema, so a ``True`` is not a promise the call succeeds.
+
+        Neither the tools nor the parameters are read: this connection sends a native
+        schema alongside bound tools, and the one parameter that would bear on the
+        answer is the model, which is the capability question this excludes.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Not read.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass.
         """
-        if model_kwargs is None:
-            return DEFAULT_MODEL
-        return model_kwargs.get("model", DEFAULT_MODEL)
+        return _native_output_model(output_schema) is not None
 
     def chat(
         self,
@@ -441,6 +476,15 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         ``extra_args["finish_reason"]``; the key is absent when the provider
         reports none.
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("IBM watsonx.ai", messages)
+        # Snapshotted before the pops below, so the feasibility check is asked with
+        # the parameters as they arrived rather than with a mapping this path has
+        # already stripped. No term of today's answer reads them; the shape is what
+        # keeps a term added later from answering about a request other than the one
+        # being built.
+        raw_kwargs = dict(kwargs)
+
         model_name = kwargs.pop("model", DEFAULT_MODEL)
         extract_reasoning = bool(kwargs.pop("extract_reasoning", False))
         tool_choice = kwargs.pop("tool_choice", None)
@@ -467,16 +511,10 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         # schema form, such as a RowTypeInfo wrapped in OutputSchema, keeps the
         # prompt-engineering fallback.
         #
-        # TODO(#912): the requested strategy is not visible here, so a request that
-        # explicitly asked for NATIVE cannot be told apart from one that merely
-        # resolved to it. Capability is unconditional on this connection, so the schema
-        # form is the only way through to an unconstrained response: a caller who asked
-        # for NATIVE and passed a schema this branch cannot translate gets one
-        # silently. Once strategy resolution is wired up, NATIVE must either bypass
-        # this re-check or fail explicitly.
-        if output_schema is not None and self.supports_native_structured_output(
-            model_name
-        ):
+        # Feasibility is asked rather than restated, so a caller asking the same
+        # question gets the answer this branch acts on. Capability is unconditional on
+        # this connection, so feasibility alone decides the branch.
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             native_model = _native_output_model(output_schema)
             # A caller reaches the same request field through either channel, and both
             # have already merged into request_params. Only the branch that sends a
@@ -486,10 +524,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
             # the schema is rendered, so a caller who supplied both is told about the
             # conflict rather than about a render failure; the name is read off the
             # model class and needs no rendered document.
-            if (
-                native_model is not None
-                and request_params.get("response_format") is not None
-            ):
+            if request_params.get("response_format") is not None:
                 msg = (
                     f"The {native_model.__name__} output schema is sent as"
                     " response_format, so response_format must not also be passed as"
@@ -497,12 +532,10 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
                     " output_schema to set response_format directly."
                 )
                 raise ValueError(msg)
-            response_format = _native_response_format(output_schema)
-            if response_format is not None:
-                # The SDK merges params into the request body at its root, so the
-                # derived schema travels as the request field it is rather than as a
-                # sampling option.
-                request_params["response_format"] = response_format
+            # The SDK merges params into the request body at its root, so the derived
+            # schema travels as the request field it is rather than as a sampling
+            # option.
+            request_params["response_format"] = _native_response_format(output_schema)
 
         tool_specs: List[Dict[str, Any]] | None = (
             [to_openai_tool(metadata=tool.metadata) for tool in tools]

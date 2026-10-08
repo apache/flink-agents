@@ -18,7 +18,8 @@
 import importlib
 import json
 import typing
-from typing import Any, Dict, List
+from functools import lru_cache
+from typing import Any, Dict
 
 import cloudpickle
 
@@ -27,21 +28,29 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
 from flink_agents.api.tools.tool import Tool, ToolMetadata
-from flink_agents.api.tools.utils import (
-    create_java_tool_schema_str_from_model,
-    create_model_from_java_tool_schema_str,
-)
 from flink_agents.api.vector_stores.vector_store import (
     Document,
     VectorStoreQuery,
     VectorStoreQueryMode,
 )
-from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
-from flink_agents.runtime.java.java_resource_wrapper import (
+from flink_agents.plan.resource.java.conversions import (
+    dump_blocks as dump_blocks,
+)
+from flink_agents.plan.resource.java.conversions import (
+    from_java_chat_message as from_java_chat_message,
+)
+from flink_agents.plan.resource.java.conversions import (
+    from_java_document as from_java_document,
+)
+from flink_agents.plan.resource.java.conversions import (
+    normalize_tool_call_id as normalize_tool_call_id,
+)
+from flink_agents.plan.resource.java.java_resource_wrapper import (
     JavaPrompt,
     JavaResourceContextWrapper,
     JavaTool,
 )
+from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.memory.event_attachment_utils import load_event_attachments
 
 
@@ -118,7 +127,9 @@ def get_resource_context(j_resource_adapter: Any) -> JavaResourceContextWrapper:
         JavaResourceContextWrapper: A ResourceContext that wraps the
         Java resource adapter
     """
-    return JavaResourceContextWrapper(j_resource_adapter)
+    from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
+
+    return JavaResourceContextWrapper(JavaResourceAdapterImpl(j_resource_adapter))
 
 
 def from_java_tool(j_tool: Any) -> JavaTool:
@@ -134,9 +145,7 @@ def from_java_tool(j_tool: Any) -> JavaTool:
     metadata = ToolMetadata(
         name=name,
         description=j_tool.getDescription(),
-        args_schema=create_model_from_java_tool_schema_str(
-            name, j_tool.getMetadata().getInputSchema()
-        ),
+        args_schema=json.loads(j_tool.getMetadata().getInputSchema()),
     )
     return JavaTool(metadata=metadata)
 
@@ -156,34 +165,19 @@ def get_python_tool_metadata(
     pemja's SIGSEGV when wrapping arbitrary Python objects on non-main
     interpreter threads.
     """
-    from docstring_parser import parse
-
     from flink_agents.api.function import PythonFunction
     from flink_agents.api.tools.tool_parameter_injection import normalize_injected_args
-    from flink_agents.api.tools.utils import (
-        create_java_tool_schema_str_from_model,
-        create_schema_from_function,
-    )
 
-    descriptor = PythonFunction(module=module, qualname=qual_name)
-    callable_ = descriptor.as_callable()
-    name = callable_.__name__
-    description = (
-        (parse(callable_.__doc__).description or "") if callable_.__doc__ else ""
+    callable_ = PythonFunction(module=module, qualname=qual_name).as_callable()
+    declared = normalize_injected_args(getattr(callable_, "_injected_args", None))
+    tool = _compiled_function_tool(
+        module, qual_name, tuple(sorted(set(injected_args or ()) | set(declared)))
     )
-    callable_injected_args = normalize_injected_args(
-        getattr(callable_, "_injected_args", None)
-    )
-    hidden_args = set(injected_args or ()) | set(callable_injected_args)
-    args_schema_model = create_schema_from_function(
-        name, callable_, injected_args=hidden_args
-    )
-    input_schema = create_java_tool_schema_str_from_model(args_schema_model)
     return {
-        "name": name,
-        "description": description,
-        "inputSchema": input_schema,
-        "injectedArgs": _dump_injected_args(callable_injected_args),
+        "name": tool.metadata.name,
+        "description": tool.metadata.description,
+        "inputSchema": json.dumps(tool.metadata.args_schema),
+        "injectedArgs": _dump_injected_args(declared),
     }
 
 
@@ -193,7 +187,34 @@ def _dump_injected_args(injected_args: Dict[str, Any]) -> str:
     )
 
 
-def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> Any:
+@lru_cache(maxsize=256)
+def _compiled_function_tool(module: str, qual_name: str, injected_names: tuple) -> Any:
+    # Module globals and Pydantic classes are local to each Pemja interpreter.
+    from flink_agents.api.tools.tool_parameter_injection import (
+        InjectedArg,
+        normalize_injected_args,
+    )
+    from flink_agents.plan.function import PythonFunction
+    from flink_agents.plan.tools.function_tool import FunctionTool
+
+    function = PythonFunction(module=module, qualname=qual_name)
+    declared = normalize_injected_args(
+        getattr(function.as_callable(), "_injected_args", None)
+    )
+    return FunctionTool(
+        func=function,
+        injected_args={
+            name: declared.get(name, InjectedArg.from_sensory_memory(name))
+            for name in injected_names
+        },
+    )
+
+
+def invoke_python_tool(
+    module: str,
+    qual_name: str,
+    kwargs: Dict[str, Any],
+) -> Any:
     """Invoke a Python callable as a tool, passing the provided keyword arguments.
 
     Used by the Java-side ``PythonResourceAdapter.invokePythonTool`` so a Java host can
@@ -202,10 +223,7 @@ def invoke_python_tool(module: str, qual_name: str, kwargs: Dict[str, Any]) -> A
     an internal envelope so Java can distinguish a raw result from an explicit
     ``ToolResponse`` without inspecting user payloads.
     """
-    from flink_agents.api.function import PythonFunction
-
-    descriptor = PythonFunction(module=module, qualname=qual_name)
-    result = descriptor.as_callable()(**kwargs)
+    result = _compiled_function_tool(module, qual_name, ()).call(**kwargs)
     return _encode_python_tool_result(result)
 
 
@@ -264,6 +282,10 @@ def from_java_resource(type_name: str, kwargs: Dict[str, Any]) -> Resource:
     module_path, class_name = class_path.rsplit(".", 1)
     cls = get_resource_class(module_path, class_name)
 
+    from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
+
+    kwargs = dict(kwargs)
+    kwargs["j_resource_adapter"] = JavaResourceAdapterImpl(kwargs["j_resource_adapter"])
     return cls(**kwargs)
 
 
@@ -291,52 +313,6 @@ def call_embedding_with_usage(
     This avoids PyObject attribute access in the Java caller.
     """
     return embedding_result_to_java(embedding_model.embed_with_usage(**kwargs))
-
-
-def normalize_tool_call_id(tool_call: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize tool call by converting the ID field to string format while preserving
-    all other fields.
-
-    This function ensures that the tool call ID is consistently represented as a string,
-    which is required for compatibility with certain systems that expect string IDs.
-
-    Args:
-        tool_call: Dictionary containing tool call information. The dictionary may
-                   contain any number of fields, but typically includes:
-                  - id: Tool call identifier (will be converted to string)
-                  - type: Tool call type (preserved as-is)
-                  - function: Function details (preserved as-is)
-                  - Any other fields (preserved as-is)
-    """
-    normalized_call = tool_call.copy()
-
-    normalized_call["id"] = str(tool_call.get("id", ""))
-
-    return normalized_call
-
-
-def dump_blocks(chat_message: ChatMessage) -> List[Dict[str, Any]]:
-    """Content blocks as plain dicts in the serialized shape, for the Java bridge."""
-    return [
-        block.model_dump(mode="json", exclude_none=True)
-        for block in chat_message.blocks
-    ]
-
-
-def from_java_chat_message(j_chat_message: Any) -> ChatMessage:
-    """Convert a chat message to a python chat message."""
-    return ChatMessage.model_validate(
-        {
-            "role": MessageRole(j_chat_message.getRole().getValue()),
-            # Blocks cross the bridge as plain dicts in the serialized shape.
-            "blocks": j_chat_message.getBlocksAsMaps(),
-            "tool_calls": [
-                normalize_tool_call_id(tool_call)
-                for tool_call in j_chat_message.getToolCalls()
-            ],
-            "extra_args": j_chat_message.getExtraArgs(),
-        }
-    )
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
@@ -373,18 +349,6 @@ def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> 
     return chat_message.role.value
 
 
-def from_java_document(j_document: Any) -> Document:
-    """Convert a Java documents to a Python document."""
-    document = Document(
-        content=j_document.getContent(),
-        id=j_document.getId(),
-        metadata=j_document.getMetadata(),
-    )
-    if j_document.getEmbedding():
-        document.embedding = list(j_document.getEmbedding())
-    return document
-
-
 def update_java_document(document: Document, j_document: Any) -> None:
     """Update a Java document using Python document."""
     j_document.setContent(document.content)
@@ -416,9 +380,7 @@ def get_java_tool_metadata_from_tool(tool: Tool) -> typing.Dict[str, str]:
     return {
         "name": tool.name,
         "description": tool.metadata.description,
-        "inputSchema": create_java_tool_schema_str_from_model(
-            tool.metadata.args_schema
-        ),
+        "inputSchema": json.dumps(tool.metadata.args_schema),
     }
 
 

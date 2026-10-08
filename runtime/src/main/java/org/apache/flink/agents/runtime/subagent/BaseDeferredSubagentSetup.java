@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 
@@ -30,6 +32,12 @@ import org.apache.flink.agents.api.subagent.SubagentResult;
  * failover-reproducible id, so the invocation participates in the task's durable execution.
  */
 public abstract class BaseDeferredSubagentSetup extends BaseSubagentSetup {
+
+    /** Descriptor-based construction, forwarding to the sub-agent base. */
+    protected BaseDeferredSubagentSetup(
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+    }
 
     /** Registers the invocation and returns its deferred handle. */
     @Override

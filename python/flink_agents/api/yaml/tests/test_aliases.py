@@ -32,7 +32,6 @@ from flink_agents.api.resource import ResourceName, ResourceType
 from flink_agents.api.yaml.aliases import (
     CLAZZ_ALIASES,
     EVENT_ALIASES,
-    JAVA_WRAPPER_CLAZZ,
     resolve_clazz,
     resolve_event_type,
 )
@@ -216,15 +215,8 @@ def test_resolve_clazz_covers_embedding_model_openai_in_both_languages() -> None
     assert java_setup.endswith("OpenAIEmbeddingModelSetup")
 
 
-def test_java_wrapper_clazz_table_covers_supported_types() -> None:
-    # The Python-side wrappers must exist for every cross-language type
-    expected = {
-        ResourceType.CHAT_MODEL_CONNECTION,
-        ResourceType.CHAT_MODEL,
-        ResourceType.EMBEDDING_MODEL_CONNECTION,
-        ResourceType.EMBEDDING_MODEL,
-        ResourceType.VECTOR_STORE,
-    }
-    assert set(JAVA_WRAPPER_CLAZZ.keys()) == expected
-    for fqn in JAVA_WRAPPER_CLAZZ.values():
-        assert "." in fqn
+def test_custom_java_resource_class_passes_through() -> None:
+    assert (
+        resolve_clazz("custom.models.Chat", ResourceType.CHAT_MODEL, "java")
+        == "custom.models.Chat"
+    )

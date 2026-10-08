@@ -31,7 +31,10 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -47,6 +50,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -397,46 +401,38 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the effective model falls back to the configured default")
-    void testEffectiveModelForFallsBackToTheConfiguredDefault() {
-        // buildRequest resolves the model the same way before feeding the capability predicate,
-        // and connection() is configured with claude-sonnet-4-20250514.
-        assertThat(connection().effectiveModelFor(params(null)))
-                .isEqualTo("claude-sonnet-4-20250514");
-        assertThat(connection().effectiveModelFor(paramsWithModel(CAPABLE_MODEL, null)))
-                .isEqualTo(CAPABLE_MODEL);
-        // A blank model is not a model. The builder substitutes the default for it, so the hook
+    @DisplayName("the query judges the configured default when the model parameter is unset")
+    void testQueryFallsBackToTheConfiguredDefault() {
+        // buildRequest resolves the model the same way before judging capability. The configured
+        // default is capable, so an unresolved model would answer differently.
+        AnthropicChatModelConnection configuredCapable =
+                new AnthropicChatModelConnection(descriptor(CAPABLE_MODEL), NOOP);
+
+        assertThat(support(configuredCapable, params(null)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        // A blank model is not a model. The builder substitutes the default for it, so the query
         // has to as well or the two disagree on exactly this input.
-        assertThat(connection().effectiveModelFor(paramsWithModel("   ", null)))
-                .isEqualTo("claude-sonnet-4-20250514");
+        assertThat(support(configuredCapable, paramsWithModel("   ", null)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(configuredCapable, paramsWithModel(INCAPABLE_MODEL, null)))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
-    @Test
-    @DisplayName("the model the request builder judges is the one the hook names")
-    void testEffectiveModelForNamesTheModelTheBuilderJudges() {
-        // The hook duplicates the builder's resolution rather than centralizing it, so only
-        // capturing what the builder feeds the predicate keeps the two from drifting apart.
-        AtomicReference<String> judged = new AtomicReference<>();
+    private static NativeStructuredOutputSupport support(
+            AnthropicChatModelConnection connection, Map<String, Object> modelParams) {
+        return connection.supportsNativeStructuredOutput(Answer.class, List.of(), modelParams);
+    }
+
+    private static NativeStructuredOutputSupport supportFor(String model) {
+        // No configured default, so a null model reaches the capability check unresolved.
         AnthropicChatModelConnection connection =
-                new AnthropicChatModelConnection(descriptor("claude-sonnet-4-20250514"), NOOP) {
-                    @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-                        judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
-                    }
-                };
-
-        for (Map<String, Object> modelParams :
-                List.<Map<String, Object>>of(
-                        paramsWithModel(CAPABLE_MODEL, null),
-                        paramsWithModel("   ", null),
-                        params(null))) {
-            String named = connection.effectiveModelFor(modelParams);
-
-            connection.buildRequest(userMessage(), List.of(), modelParams, Answer.class);
-
-            assertThat(judged.get()).isEqualTo(named);
-        }
+                new AnthropicChatModelConnection(
+                        ResourceDescriptor.Builder.newBuilder(
+                                        AnthropicChatModelConnection.class.getName())
+                                .addInitialArgument("api_key", "test-key")
+                                .build(),
+                        NOOP);
+        return support(connection, paramsWithModel(model, null));
     }
 
     @Test
@@ -458,17 +454,17 @@ class AnthropicChatModelConnectionTest {
 
     @ParameterizedTest
     @MethodSource("capableModels")
-    @DisplayName("every documented model reports capable")
-    void testCapableModelsReportCapable(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    @DisplayName("every documented model is recommended native")
+    void testCapableModelsAreRecommendedNative(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @ParameterizedTest
     @NullSource
     @MethodSource("incapableModels")
-    @DisplayName("an undocumented model reports not capable")
-    void testIncapableModelsReportNotCapable(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    @DisplayName("an undocumented model is feasible but not recommended")
+    void testIncapableModelsAreFeasibleOnly(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @Test
@@ -476,8 +472,8 @@ class AnthropicChatModelConnectionTest {
     void testAliasPrefixMatchesDatedSnapshot() {
         // The three 4.5-generation names are aliases, so a request may carry the snapshot instead.
         // Converting the prefixes to exact matches would still satisfy the capable-models test.
-        assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-5-20250929"))
-                .isTrue();
+        assertThat(supportFor("claude-sonnet-4-5-20250929"))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @Test
@@ -486,21 +482,24 @@ class AnthropicChatModelConnectionTest {
         // A dated snapshot continues the alias with a "-" separator. A name that extends the
         // alias without one is a different minor version, whose capability is not the alias's to
         // answer for.
-        assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-50")).isFalse();
+        assertThat(supportFor("claude-sonnet-4-50"))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @Test
-    @DisplayName("capability does not depend on the connection's configured model")
-    void testCapabilityReadsNoInstanceState() {
+    @DisplayName(
+            "a named model is judged on its own, whatever model the connection is configured with")
+    void testNamedModelIgnoresTheConfiguredModel() {
         AnthropicChatModelConnection configuredCapable =
                 new AnthropicChatModelConnection(descriptor(CAPABLE_MODEL), NOOP);
 
-        // connection() is configured with an incapable default. Both must answer for the argument
-        // alone, so a predicate that consulted the configured model would disagree with itself.
-        assertThat(configuredCapable.supportsNativeStructuredOutput(INCAPABLE_MODEL))
-                .isEqualTo(connection().supportsNativeStructuredOutput(INCAPABLE_MODEL));
-        assertThat(configuredCapable.supportsNativeStructuredOutput(CAPABLE_MODEL))
-                .isEqualTo(connection().supportsNativeStructuredOutput(CAPABLE_MODEL));
+        // connection() is configured with an incapable default. Both must answer for the named
+        // model alone, so a query that consulted the configured model would disagree with itself.
+        for (String model : List.of(INCAPABLE_MODEL, CAPABLE_MODEL)) {
+            assertThat(support(configuredCapable, paramsWithModel(model, null)))
+                    .as(model)
+                    .isEqualTo(support(connection(), paramsWithModel(model, null)));
+        }
     }
 
     @Test
@@ -965,7 +964,8 @@ class AnthropicChatModelConnectionTest {
         // provider documents structured-output support from the 4.5 generation on but withdraws
         // prefilling only from 4.6 on. Deriving the prefill rule from the structured-output
         // allowlists would strip the prefill here, where the provider still accepts it.
-        assertThat(connection().supportsNativeStructuredOutput("claude-sonnet-4-5")).isTrue();
+        assertThat(supportFor("claude-sonnet-4-5"))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
 
         assertPrefillDecisionForModel("claude-sonnet-4-5", true);
     }
@@ -1043,6 +1043,129 @@ class AnthropicChatModelConnectionTest {
         assertThat(topLevel.wasRendered()).isFalse();
     }
 
+    /** Model params on {@code model}, optionally carrying a caller-supplied output_config. */
+    private static Map<String, Object> paramsWithCallerOutputConfig(
+            String model, boolean supplied) {
+        Map<String, Object> params = paramsWithModel(model, null);
+        if (supplied) {
+            params.put("additional_kwargs", Map.of("output_config", Map.of("format", Map.of())));
+        }
+        return params;
+    }
+
+    /** The exact answer a request's feasibility and its effective model's capability imply. */
+    private static NativeStructuredOutputSupport expectedSupport(
+            boolean feasible, boolean capable) {
+        if (!feasible) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return capable
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
+    @Test
+    @DisplayName("the query recommends native exactly when the native branch applies")
+    void testQueryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the request ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The schema form,
+        // the caller's output_config, the tools and the effective model all move, including a
+        // blank or absent model that resolves to a capable or an incapable configured default.
+        for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+            AnthropicChatModelConnection connection =
+                    new AnthropicChatModelConnection(descriptor(configured), NOOP);
+
+            for (Object schema : Arrays.asList(Answer.class, "row<name STRING>", null)) {
+                for (boolean callerConfig : List.of(false, true)) {
+                    for (List<Tool> tools :
+                            Arrays.asList(List.<Tool>of(), List.<Tool>of(new StubTool()), null)) {
+                        for (String model :
+                                Arrays.asList(CAPABLE_MODEL, INCAPABLE_MODEL, "   ", null)) {
+                            Map<String, Object> modelParams =
+                                    paramsWithCallerOutputConfig(model, callerConfig);
+                            NativeStructuredOutputSupport answer =
+                                    connection.supportsNativeStructuredOutput(
+                                            schema, tools, modelParams);
+
+                            AnthropicChatModelConnection.BuiltRequest built =
+                                    connection.buildRequest(
+                                            userMessage(), tools, modelParams, schema);
+
+                            String resolved = model == null || model.isBlank() ? configured : model;
+                            NativeStructuredOutputSupport expected =
+                                    expectedSupport(
+                                            schema == Answer.class && !callerConfig,
+                                            resolved.equals(CAPABLE_MODEL));
+                            String label =
+                                    String.format(
+                                            "configured %s, schema %s, callerConfig %s, tools %s,"
+                                                    + " model %s",
+                                            configured, schema, callerConfig, tools, model);
+
+                            assertThat(answer).as(label).isEqualTo(expected);
+                            assertThat(built.params.outputConfig().isPresent())
+                                    .as(label)
+                                    .isEqualTo(
+                                            expected
+                                                    == NativeStructuredOutputSupport
+                                                            .NATIVE_RECOMMENDED);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("a caller-supplied output_config makes a POJO schema infeasible")
+    void testQueryFollowsTheCallerOutputConfig() {
+        // Pinning the answer itself, not just its agreement with the branch: dropping this
+        // conjunct from both would leave the two in agreement.
+        assertThat(support(connection(), paramsWithCallerOutputConfig(CAPABLE_MODEL, false)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(support(connection(), paramsWithCallerOutputConfig(CAPABLE_MODEL, true)))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+    }
+
+    @Test
+    @DisplayName("an incapable model leaves the request feasible rather than infeasible")
+    void testQuerySeparatesCapabilityFromFeasibility() {
+        // A POJO is feasible here even on a model Anthropic does not document support for, and
+        // the branch's own capability conjunct is what keeps that request unconstrained. Folding
+        // capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule.
+        Map<String, Object> incapable = paramsWithModel(INCAPABLE_MODEL, null);
+
+        assertThat(support(connection(), incapable))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(
+                        connection()
+                                .buildRequest(userMessage(), List.of(), incapable, Answer.class)
+                                .params
+                                .outputConfig())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("the query reads its tools and parameters without consuming them")
+    void testQueryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the request the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new StubTool());
+        Map<String, Object> modelParams =
+                Map.of(
+                        "model",
+                        CAPABLE_MODEL,
+                        "additional_kwargs",
+                        Map.of("output_config", Map.of("format", Map.of())));
+
+        connection().supportsNativeStructuredOutput(Answer.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).containsKey("additional_kwargs");
+    }
+
     /** Minimal tool stub; only its presence in the tools list matters. */
     private static class StubTool extends Tool {
         StubTool() {
@@ -1058,5 +1181,23 @@ class AnthropicChatModelConnectionTest {
         public ToolResponse call(ToolParameters parameters) {
             return ToolResponse.success(null);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        org.apache.flink.agents.api.chat.messages.TextBlock.of(
+                                                "Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "Anthropic cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

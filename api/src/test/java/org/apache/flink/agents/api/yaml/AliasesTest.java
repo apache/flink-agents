@@ -142,10 +142,10 @@ class AliasesTest {
     }
 
     @Test
-    void pythonWrapperLookup() {
-        assertThat(Aliases.PYTHON_WRAPPER_CLAZZ.get(ResourceType.CHAT_MODEL_CONNECTION))
-                .isEqualTo(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
-        assertThat(Aliases.PYTHON_WRAPPER_CLAZZ.get(ResourceType.VECTOR_STORE))
-                .isEqualTo(ResourceName.VectorStore.PYTHON_WRAPPER_VECTOR_STORE);
+    void customPythonClassPassesThrough() {
+        assertThat(
+                        Aliases.resolveClazz(
+                                "custom.models.Chat", ResourceType.CHAT_MODEL, Language.PYTHON))
+                .isEqualTo("custom.models.Chat");
     }
 }

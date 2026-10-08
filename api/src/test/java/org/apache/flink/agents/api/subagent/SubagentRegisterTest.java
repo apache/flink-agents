@@ -34,7 +34,7 @@ class SubagentRegisterTest {
     @Test
     void registerSubagentSetupAsResource() {
         Agent agent = new Agent();
-        TestSubagentSetup setup = new TestSubagentSetup();
+        TestSubagentSetup setup = new TestSubagentSetup(null);
         agent.addResource("reviewer", ResourceType.AGENT, setup);
 
         Map<String, Object> agentResources = agent.getResources().get(ResourceType.AGENT);
@@ -46,17 +46,19 @@ class SubagentRegisterTest {
     @Test
     void duplicateNameThrows() {
         Agent agent = new Agent();
-        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup());
+        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup(null));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup()));
+                () ->
+                        agent.addResource(
+                                "reviewer", ResourceType.AGENT, new TestSubagentSetup(null)));
     }
 
     @Test
     void multipleSubagentsRegistered() {
         Agent agent = new Agent();
-        TestSubagentSetup reviewer = new TestSubagentSetup();
-        TestSubagentSetup coder = new TestSubagentSetup();
+        TestSubagentSetup reviewer = new TestSubagentSetup(null);
+        TestSubagentSetup coder = new TestSubagentSetup(null);
         agent.addResource("reviewer", ResourceType.AGENT, reviewer);
         agent.addResource("coder", ResourceType.AGENT, coder);
 

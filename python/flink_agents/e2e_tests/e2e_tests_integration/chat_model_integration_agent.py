@@ -60,9 +60,9 @@ class ChatModelTestAgent(Agent):
 
     @chat_model_connection
     @staticmethod
-    def tongyi_connection() -> ResourceDescriptor:
-        """ChatModelConnection responsible for tongyi model service connection."""
-        return ResourceDescriptor(clazz=ResourceName.ChatModel.TONGYI_CONNECTION)
+    def dashscope_connection() -> ResourceDescriptor:
+        """ChatModelConnection responsible for dashscope model service connection."""
+        return ResourceDescriptor(clazz=ResourceName.ChatModel.DASHSCOPE_CONNECTION)
 
     @chat_model_connection
     @staticmethod
@@ -77,11 +77,11 @@ class ChatModelTestAgent(Agent):
     def math_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on math, and reuse ChatModelConnection."""
         model_provider = os.environ.get("MODEL_PROVIDER")
-        if model_provider == "Tongyi":
+        if model_provider == "DashScope":
             return ResourceDescriptor(
-                clazz=ResourceName.ChatModel.TONGYI_SETUP,
-                connection="tongyi_connection",
-                model=os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus"),
+                clazz=ResourceName.ChatModel.DASHSCOPE_SETUP,
+                connection="dashscope_connection",
+                model=os.environ.get("DASHSCOPE_CHAT_MODEL", "qwen-plus"),
                 tools=["add"],
             )
         elif model_provider == "Ollama":
@@ -115,11 +115,11 @@ class ChatModelTestAgent(Agent):
     def creative_chat_model() -> ResourceDescriptor:
         """ChatModel which focus on text generate, and reuse ChatModelConnection."""
         model_provider = os.environ.get("MODEL_PROVIDER")
-        if model_provider == "Tongyi":
+        if model_provider == "DashScope":
             return ResourceDescriptor(
-                clazz=ResourceName.ChatModel.TONGYI_SETUP,
-                connection="tongyi_connection",
-                model=os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus"),
+                clazz=ResourceName.ChatModel.DASHSCOPE_SETUP,
+                connection="dashscope_connection",
+                model=os.environ.get("DASHSCOPE_CHAT_MODEL", "qwen-plus"),
             )
         elif model_provider == "Ollama":
             return ResourceDescriptor(

@@ -25,15 +25,13 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
@@ -41,6 +39,9 @@ import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -63,6 +64,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -138,9 +140,7 @@ public class ResourceCacheTest {
 
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
-            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
-                    .build();
+            return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
 
         @Tool private TestTool anotherTool = new TestTool("anotherTool");
@@ -287,6 +287,27 @@ public class ResourceCacheTest {
         assertThatThrownBy(() -> cache.getResource("non-existent", ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Resource not found: non-existent");
+    }
+
+    @Test
+    public void getResourceClosesUncachedResourceWhenOpenFails() throws Exception {
+        RuntimeException openFailure = new RuntimeException("open failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        Resource resource = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        when(provider.provide(org.mockito.ArgumentMatchers.any())).thenReturn(resource);
+        doThrow(openFailure).when(resource).open();
+        doThrow(closeFailure).when(resource).close();
+        ResourceCache cache =
+                new ResourceCache(Map.of(ResourceType.TOOL, Map.of("tool", provider)));
+
+        assertThatThrownBy(() -> cache.getResource("tool", ResourceType.TOOL))
+                .isSameAs(openFailure)
+                .satisfies(
+                        thrown -> assertThat(thrown.getSuppressed()).containsExactly(closeFailure));
+
+        verify(resource).close();
+        assertThat(cachedResources(cache)).isEmpty();
     }
 
     @Test
@@ -528,6 +549,17 @@ public class ResourceCacheTest {
 
     /** Test Java sub-agent setup, registered as an AGENT resource. */
     public static class TestAgentSetup extends BaseSubagentSetup {
+
+        public TestAgentSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(TestAgentSetup.class.getName()).build(),
+                    null);
+        }
+
+        public TestAgentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
         @Override
         public SubagentFuture submit(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {

@@ -17,7 +17,7 @@
 #################################################################################
 import json
 import os
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Tuple
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,10 +26,14 @@ from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import NativeStructuredOutputSupport
+from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.watsonx.watsonx_chat_model import (
     DEFAULT_MODEL,
     WatsonxChatModelConnection,
 )
+from flink_agents.plan.function import PythonFunction
+from flink_agents.plan.tools.function_tool import FunctionTool
 
 test_model = os.environ.get("WATSONX_CHAT_MODEL", DEFAULT_MODEL)
 credentials_available = (
@@ -128,16 +132,25 @@ def _sent_params(
     return provider_model.chat.call_args.kwargs["params"] or {}
 
 
-@pytest.mark.parametrize("effective_model", [DEFAULT_MODEL, "no-such-model", None])
-def test_supports_native_structured_output_is_unconditional(
-    effective_model: str | None,
+@pytest.mark.parametrize(
+    "model_kwargs",
+    [{"model": DEFAULT_MODEL}, {"model": "no-such-model"}, {"model": None}, {}],
+    ids=["default", "unknown", "none", "absent"],
+)
+def test_query_recommends_native_for_every_model(
+    model_kwargs: Dict[str, Any],
 ) -> None:
-    """Capability is reported for any model, including one nothing recognizes.
+    """Native is recommended for any model, including one nothing recognizes.
 
     The constraint is applied by the serving runtime rather than by the model, so a
     gate on the model string would turn callers away from a path that works.
     """
-    assert _connection().supports_native_structured_output(effective_model) is True
+    assert (
+        _connection().supports_native_structured_output(
+            OutputSchema(output_schema=Report), [], model_kwargs
+        )
+        is NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    )
 
 
 def test_params_carry_response_format_for_basemodel_schema(
@@ -357,22 +370,117 @@ def test_chat_with_output_schema() -> None:
     assert Answer(**parsed).verdict is not None
 
 
-def _judging_connection(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Tuple[WatsonxChatModelConnection, list]:
-    """A mocked connection recording every model its request path judges.
+def _add(a: int, b: int) -> int:
+    """Add two integers.
 
-    Subclassing keeps the predicate itself under test rather than standing a stub in
-    for it: the override notes what it was asked about and delegates to the real one.
+    Parameters
+    ----------
+    a : int
+        first
+    b : int
+        second
+
+    Returns:
+    -------
+    int
+        sum
     """
-    judged: list = []
+    return a + b
 
-    class _JudgingConnection(WatsonxChatModelConnection):
-        def supports_native_structured_output(
-            self, effective_model: str | None
+
+def test_query_agrees_with_the_native_branch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The answer matches whether the payload ends up carrying a response_format.
+
+    Comparing the answer against what the payload carries, rather than against a
+    literal, is what keeps the query and the branch from drifting in step. This
+    connection recommends native for every model, so the schema form is the only
+    thing that moves.
+    """
+    conn, provider_model = _mocked_connection(monkeypatch)
+    tool = FunctionTool(func=PythonFunction.from_callable(_add))
+    row_type = RowTypeInfo(
+        field_types=[BasicTypeInfo.STRING_TYPE_INFO()], field_names=["name"]
+    )
+
+    for schema in (
+        OutputSchema(output_schema=Report),
+        OutputSchema(output_schema=row_type),
+        None,
+    ):
+        for tools in (None, [], [tool]):
+            support = conn.supports_native_structured_output(schema, tools, {})
+
+            conn.chat(
+                [ChatMessage.of(role=MessageRole.USER, content="Hello!")],
+                tools=tools,
+                output_schema=schema,
+            )
+
+            params = provider_model.chat.call_args.kwargs["params"] or {}
+            carried = "response_format" in params
+            expected = (
+                NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                if carried
+                else NativeStructuredOutputSupport.INFEASIBLE
+            )
+            assert support is expected, f"schema {schema}, tools {tools}"
+
+
+def test_query_ignores_a_caller_response_format() -> None:
+    """A caller-supplied response_format does not make a translatable schema infeasible.
+
+    The branch answers that conflict by raising rather than by skipping, so the query
+    has to keep recommending native here. Reporting it infeasible instead would turn a
+    documented error into a silently unconstrained request.
+    """
+    conn = _connection()
+    schema = OutputSchema(output_schema=Report)
+
+    assert (
+        conn.supports_native_structured_output(
+            schema, [], {"model": DEFAULT_MODEL, "response_format": CALLER_FORMAT}
+        )
+        is NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    )
+    assert (
+        conn.supports_native_structured_output(
+            schema,
+            [],
+            {
+                "model": DEFAULT_MODEL,
+                "additional_kwargs": {"response_format": CALLER_FORMAT},
+            },
+        )
+        is NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    )
+
+
+def test_feasibility_is_asked_with_the_unstripped_kwargs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Feasibility sees the parameters as they arrived, not a copy ``chat`` stripped.
+
+    ``chat`` removes ``model``, ``extract_reasoning``, ``tool_choice``,
+    ``tool_choice_option`` and ``additional_kwargs`` from its own mapping before the
+    native branch runs. Asked with that copy, an override reading any of them would
+    answer about a request other than the one being built. No term of today's answer
+    reads them, so this pins the shape rather than a live defect.
+    """
+    asked: List[Mapping[str, Any] | None] = []
+
+    class _CapturingConnection(WatsonxChatModelConnection):
+        def _can_apply_native_structured_output(
+            self,
+            output_schema: OutputSchema | None,
+            tools: List[Tool] | None,
+            model_kwargs: Mapping[str, Any] | None,
         ) -> bool:
-            judged.append(effective_model)
-            return super().supports_native_structured_output(effective_model)
+            asked.append(model_kwargs)
+            return super()._can_apply_native_structured_output(
+                output_schema, tools, model_kwargs
+            )
 
     provider_model = MagicMock()
     provider_model.chat.return_value = CHAT_RESPONSE
@@ -380,73 +488,23 @@ def _judging_connection(
         "flink_agents.integrations.chat_models.watsonx.watsonx_chat_model.ModelInference",
         MagicMock(return_value=provider_model),
     )
-    connection = _JudgingConnection(
+    conn = _CapturingConnection(
         url="https://us-south.ml.cloud.ibm.com",
         api_key="fake-key",
         project_id="fake-project",
     )
-    connection._client = MagicMock()
-    return connection, judged
+    conn._client = MagicMock()
 
-
-def test_effective_model_for_applies_the_default_model() -> None:
-    """A call naming no model resolves to the model the request would be issued to.
-
-    Reading the parameter alone would answer ``None`` where the request in fact goes
-    to the default model, so the hook and the request would disagree on every call
-    that names no model.
-    """
-    assert _connection().effective_model_for({}) == DEFAULT_MODEL
-    assert _connection().effective_model_for(None) == DEFAULT_MODEL
-
-
-def test_effective_model_for_reads_an_explicit_model() -> None:
-    """A named model is answered as given, not replaced by the default."""
-    assert _connection().effective_model_for({"model": "no-such-model"}) == (
-        "no-such-model"
-    )
-
-
-def test_effective_model_for_keeps_a_present_but_empty_model() -> None:
-    """The default stands in for an absent model only, matching the request builder.
-
-    The builder's fallback is a ``pop`` default, which applies when the key is missing
-    and not when it is present and empty.
-    """
-    assert _connection().effective_model_for({"model": ""}) == ""
-
-
-def test_effective_model_for_does_not_consume_the_model() -> None:
-    """The hook reads the key that ``chat`` pops, and has to leave it in place."""
-    model_kwargs = {"model": "no-such-model"}
-
-    _connection().effective_model_for(model_kwargs)
-
-    assert model_kwargs == {"model": "no-such-model"}
-
-
-@pytest.mark.parametrize(
-    "model_kwargs",
-    [{"model": "no-such-model"}, {"model": ""}, {}],
-    ids=["named", "blank", "absent"],
-)
-def test_effective_model_for_names_the_model_the_request_judges(
-    monkeypatch: pytest.MonkeyPatch, model_kwargs: Dict[str, Any]
-) -> None:
-    """The hook names exactly the model the request path asks the predicate about.
-
-    Capability here is unconditional, so the predicate's answer cannot reveal a
-    disagreement; only the argument it was handed can. A fresh connection per case is
-    what makes the single-element comparison also an assertion that the predicate was
-    reached at all.
-    """
-    connection, judged = _judging_connection(monkeypatch)
-
-    named = connection.effective_model_for(model_kwargs)
-    connection.chat(
+    conn.chat(
         [ChatMessage.of(role=MessageRole.USER, content="Hello!")],
-        output_schema=OutputSchema(output_schema=Answer),
-        **model_kwargs,
+        model=DEFAULT_MODEL,
+        extract_reasoning=True,
+        additional_kwargs={"user": "someone"},
+        output_schema=OutputSchema(output_schema=Report),
     )
 
-    assert judged == [named]
+    assert len(asked) == 1
+    assert asked[0] is not None
+    assert asked[0]["model"] == DEFAULT_MODEL
+    assert asked[0]["extract_reasoning"] is True
+    assert asked[0]["additional_kwargs"] == {"user": "someone"}

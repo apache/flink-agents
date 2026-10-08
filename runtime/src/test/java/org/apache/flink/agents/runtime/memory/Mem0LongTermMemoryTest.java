@@ -19,7 +19,7 @@ package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.memory.MemorySetItem;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
