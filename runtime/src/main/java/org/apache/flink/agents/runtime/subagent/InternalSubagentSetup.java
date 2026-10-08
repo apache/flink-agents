@@ -18,6 +18,9 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -67,6 +70,14 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
     private static final long serialVersionUID = 1L;
 
+    /**
+     * Serializes the child plan with the same configuration {@code RunnerContextImpl} uses for the
+     * active-scope plan JSON, so the eager materialization the operator runs at open and the lazy
+     * resolution a child action performs at call time key the Python scope cache by one string.
+     */
+    private static final ObjectMapper CHILD_PLAN_MAPPER =
+            new ObjectMapper().registerModule(new JavaTimeModule());
+
     private final String scope;
 
     private final AgentPlan childPlan;
@@ -88,6 +99,12 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
     /** Lazily built event-to-action matcher for the child plan; not part of the serialized form. */
     private transient ActionMatcher actionMatcher;
 
+    /**
+     * Lazily serialized child plan JSON; not part of the serialized form. See {@link
+     * #getChildPlanJson()}.
+     */
+    private transient String childPlanJson;
+
     public InternalSubagentSetup(String scope, AgentPlan childPlan) {
         // An internal sub-agent is built from a compiled child plan rather than a caller
         // descriptor, so it carries a synthetic self-named descriptor to satisfy the base
@@ -106,6 +123,26 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
     public AgentPlan getChildPlan() {
         return childPlan;
+    }
+
+    /**
+     * The child plan JSON, serialized once and cached. This is the single source of the scope's
+     * plan JSON: the operator hands it to the child resource cache so the Python runtime
+     * materializes the scope's Python-owned resources against the child plan, and {@code
+     * RunnerContextImpl.getActiveScopePlanJson()} returns the same string so a child action
+     * resolves its resources against that plan. Both paths then key one Python scope cache, so a
+     * Python-owned resource of the scope is built exactly once.
+     */
+    public String getChildPlanJson() {
+        if (childPlanJson == null) {
+            try {
+                childPlanJson = CHILD_PLAN_MAPPER.writeValueAsString(childPlan);
+            } catch (JsonProcessingException e) {
+                throw new IllegalStateException(
+                        "Failed to serialize the child plan for scope " + scope, e);
+            }
+        }
+        return childPlanJson;
     }
 
     /**
@@ -270,16 +307,22 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
         return null;
     }
 
-    /** The pooled child resource cache for this scope, inheriting from the root cache. */
+    /**
+     * The pooled child resource cache for this scope, inheriting resource resolution and the Python
+     * bridge from the root cache. It carries the child plan JSON so the Python runtime materializes
+     * this scope's Python-owned resources against the child plan rather than the root plan.
+     */
     public ResourceCache getOrCreateChildCache(
             ClassLoader userCodeClassLoader, ResourceCache rootResourceCache) {
+        String planJson = getChildPlanJson();
         return childCaches.computeIfAbsent(
                 scope,
                 k ->
                         new ResourceCache(
                                 childPlan.getResourceProviders(),
                                 userCodeClassLoader,
-                                rootResourceCache));
+                                rootResourceCache,
+                                planJson));
     }
 
     /**

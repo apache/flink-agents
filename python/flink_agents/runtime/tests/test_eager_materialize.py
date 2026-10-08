@@ -35,14 +35,18 @@ from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
 
 
 class _StubResourceCache:
-    """Resource cache recording every resolution and returning a marker."""
+    """Resource cache recording every resolution and close, returning a marker."""
 
     def __init__(self) -> None:
         self.resolved: list = []
+        self.closed = False
 
     def get_resource(self, name: str, type: ResourceType) -> Any:
         self.resolved.append((name, type))
         return f"resource:{name}"
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class _StubAgentPlan:
@@ -127,3 +131,77 @@ def test_a_type_without_providers_materializes_nothing() -> None:
 
     assert ctx.eager_materialize(ResourceType.CHAT_MODEL.value) == {}
     assert cache.resolved == []
+
+
+def test_scoped_materialization_uses_the_child_plan_and_its_own_cache() -> None:
+    """A sub-agent scope materializes against the child plan, not the root.
+
+    An internal child that declares a Python-owned resource must have it built
+    in the child scope's cache -- the same one a child action resolves through
+    at call time -- keyed by the child plan JSON, so the resource is built once
+    and shared instead of being looked up in the root plan where it is absent.
+    """
+    ctx, root_cache = _context(
+        {ResourceType.CHAT_MODEL: {"root": _python_provider("root")}}
+    )
+    child_plan_json = '{"agent_name": "child"}'
+    child_cache = _StubResourceCache()
+    child_plan = _StubAgentPlan(
+        {ResourceType.CHAT_MODEL: {"child_model": _python_provider("child_model")}}
+    )
+    ctx._FlinkRunnerContext__scoped_resource_caches = {
+        child_plan_json: (child_plan, child_cache)
+    }
+
+    materialized = ctx.eager_materialize(ResourceType.CHAT_MODEL.value, child_plan_json)
+
+    assert materialized == {"child_model": "resource:child_model"}
+    assert child_cache.resolved == [("child_model", ResourceType.CHAT_MODEL)]
+    # The root plan is untouched: the child's resource is not looked up there.
+    assert root_cache.resolved == []
+
+
+def test_scoped_materialization_leaves_java_owned_child_resources() -> None:
+    """Only the child scope's Python-owned resources are built in Python."""
+    ctx, _ = _context({})
+    child_plan_json = '{"agent_name": "child"}'
+    child_cache = _StubResourceCache()
+    child_plan = _StubAgentPlan(
+        {
+            ResourceType.CHAT_MODEL: {
+                "python": _python_provider("python"),
+                "java": _java_provider("java"),
+            }
+        }
+    )
+    ctx._FlinkRunnerContext__scoped_resource_caches = {
+        child_plan_json: (child_plan, child_cache)
+    }
+
+    materialized = ctx.eager_materialize(ResourceType.CHAT_MODEL.value, child_plan_json)
+
+    assert materialized == {"python": "resource:python"}
+    assert child_cache.resolved == [("python", ResourceType.CHAT_MODEL)]
+
+
+def test_close_closes_the_root_and_every_scoped_cache() -> None:
+    """Closing the context releases the sub-agent scope caches too.
+
+    Each scope cache holds the Python-owned resources of its scope, built
+    eagerly at open or lazily at call time; leaving them unclosed leaks those
+    resources when the operator closes.
+    """
+    ctx, root_cache = _context({})
+    scoped_a = _StubResourceCache()
+    scoped_b = _StubResourceCache()
+    ctx._FlinkRunnerContext__scoped_resource_caches = {
+        '{"agent_name": "a"}': (_StubAgentPlan({}), scoped_a),
+        '{"agent_name": "b"}': (_StubAgentPlan({}), scoped_b),
+    }
+
+    ctx.close()
+
+    assert root_cache.closed is True
+    assert scoped_a.closed is True
+    assert scoped_b.closed is True
+    assert ctx._FlinkRunnerContext__scoped_resource_caches == {}

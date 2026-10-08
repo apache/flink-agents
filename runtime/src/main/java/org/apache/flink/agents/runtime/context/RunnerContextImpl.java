@@ -757,13 +757,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * top-level action. Cross-language (Python) entry point invoked over pemja: the Python side
      * resolves resources against this plan so a child agent sees its own resources (including any
      * nested sub-agents) rather than the root plan's.
+     *
+     * <p>Returns the setup's cached child plan JSON — the same string the operator handed the child
+     * resource cache for eager materialization — so the eager and lazy paths key one Python scope
+     * cache and a Python-owned resource of the scope is built exactly once.
      */
     @Nullable
-    public String getActiveScopePlanJson() throws JsonProcessingException {
+    public String getActiveScopePlanJson() {
         if (subagentScope == null) {
             return null;
         }
-        return OBJECT_MAPPER.writeValueAsString(subagentScope.getChildPlan());
+        return subagentScope.getCallStatus().getSetup().getChildPlanJson();
     }
 
     @Override

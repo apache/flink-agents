@@ -128,12 +128,17 @@ public class PythonActionExecutor implements AutoCloseable {
      * Materializes every resource of the given type that the Python runtime owns and returns one
      * handle per resource, keyed by resource name.
      *
+     * <p>{@code scopePlanJson} selects the plan the Python runtime materializes against: {@code
+     * null} for the root plan, or a sub-agent scope's child plan JSON so an internal child's
+     * Python-owned resources are built against its own plan and cached in that scope.
+     *
      * <p>See {@link PythonRuntimeResource} for what the returned handle may and may not do.
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Resource> eagerMaterialize(ResourceType type) {
+    public Map<String, Resource> eagerMaterialize(ResourceType type, String scopePlanJson) {
         Object pythonResources =
-                interpreterManager.invoke(EAGER_MATERIALIZE, pythonRunnerContext, type.getValue());
+                interpreterManager.invoke(
+                        EAGER_MATERIALIZE, pythonRunnerContext, type.getValue(), scopePlanJson);
         if (pythonResources == null) {
             return Collections.emptyMap();
         }

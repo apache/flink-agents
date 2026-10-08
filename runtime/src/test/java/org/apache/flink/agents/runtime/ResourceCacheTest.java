@@ -42,6 +42,7 @@ import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
@@ -50,6 +51,7 @@ import org.apache.flink.agents.runtime.skill.SkillManager;
 import org.apache.flink.agents.runtime.skill.SkillRepository;
 import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.junit.jupiter.api.Test;
 import org.mockito.MockedConstruction;
 import pemja.core.object.PyObject;
@@ -257,7 +259,7 @@ public class ResourceCacheTest {
         // No Python resource adapter is wired, so resolving the Python provider here would fail:
         // the type materializes only because the Python runtime is asked for its own resources.
         PythonActionExecutor pythonActionExecutor = mock(PythonActionExecutor.class);
-        when(pythonActionExecutor.eagerMaterialize(ResourceType.CHAT_MODEL))
+        when(pythonActionExecutor.eagerMaterialize(ResourceType.CHAT_MODEL, null))
                 .thenReturn(Collections.singletonMap("pythonChatModel", handle));
         cache.setPythonActionExecutor(pythonActionExecutor);
 
@@ -276,6 +278,44 @@ public class ResourceCacheTest {
         assertThatThrownBy(() -> cache.eagerMaterialize(ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("declared in Python but no Python runtime was initialized");
+    }
+
+    /**
+     * An internal child that registers a Python-owned external sub-agent must materialize it even
+     * though the operator never wires the child cache with the Python bridge: the cache inherits
+     * the root's executor and hands it the child plan JSON, so the runtime builds the resource
+     * against the child plan rather than the root plan, where it does not exist.
+     */
+    @Test
+    public void testInternalChildCacheMaterializesPythonOwnedResourcesThroughTheRootBridge()
+            throws Exception {
+        PythonResourceProvider pythonAgent =
+                new PythonResourceProvider(
+                        "external",
+                        ResourceType.AGENT,
+                        new PythonResourceDescriptor("test.module", "ExternalSubagent", Map.of()));
+        Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
+        childProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("external", pythonAgent)));
+        InternalSubagentSetup setup =
+                new InternalSubagentSetup("child", new AgentPlan(Map.of(), childProviders));
+
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        ResourceCache rootCache = new ResourceCache(new HashMap<>(), classLoader);
+        PythonActionExecutor executor = mock(PythonActionExecutor.class);
+        TestPythonHandle handle = new TestPythonHandle();
+        when(executor.eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson()))
+                .thenReturn(Collections.singletonMap("external", handle));
+        rootCache.setPythonActionExecutor(executor);
+
+        // The operator builds the child cache from the root cache as parent, never wiring the
+        // Python bridge onto the child itself.
+        ResourceCache childCache = setup.getOrCreateChildCache(classLoader, rootCache);
+        List<Resource> materialized = childCache.eagerMaterialize(ResourceType.AGENT);
+
+        assertThat(materialized).containsExactly(handle);
+        assertThat(childCache.getResource("external", ResourceType.AGENT)).isSameAs(handle);
+        // The runtime is asked for the child plan's resources, keyed by the child plan JSON.
+        verify(executor).eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson());
     }
 
     @Test

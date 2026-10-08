@@ -30,6 +30,8 @@ import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
 import org.apache.flink.util.ExceptionUtils;
 
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -60,6 +62,13 @@ public class ResourceCache implements AutoCloseable {
     private final ResourceCache parent;
 
     /**
+     * Child plan JSON identifying the sub-agent scope this cache serves, or {@code null} for the
+     * root cache. Handed to the Python runtime so it materializes the scope's Python-owned
+     * resources against the child plan instead of the root plan.
+     */
+    @Nullable private final String scopePlanJson;
+
+    /**
      * Construct a cache that resolves {@code classpath:} skill sources via {@code classLoader}.
      * Production code passes the Flink user-code class loader (from {@code
      * ActionExecutionOperator.getRuntimeContext().getUserCodeClassLoader()}); tests may call {@link
@@ -76,7 +85,7 @@ public class ResourceCache implements AutoCloseable {
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             ClassLoader classLoader,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
-        this(resourceProviders, classLoader, null, interpreterManagerSupplier);
+        this(resourceProviders, classLoader, null, null, interpreterManagerSupplier);
     }
 
     /**
@@ -88,21 +97,38 @@ public class ResourceCache implements AutoCloseable {
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             ClassLoader classLoader,
             ResourceCache parent) {
-        this(resourceProviders, classLoader, parent, () -> null);
+        this(resourceProviders, classLoader, parent, null);
     }
 
     /**
-     * Construct a cache with both a parent for resource inheritance and the operator's interpreter
-     * supplier. Sub-agent child scopes pass a {@code () -> null} supplier, matching the base-cache
-     * default, so a child scope resolves {@code classpath:} skills through {@code classLoader}
+     * Construct a cache for a sub-agent scope. Resolution and the Python bridge fall back to {@code
+     * parent}; {@code scopePlanJson} is the child plan JSON the Python runtime materializes this
+     * scope's Python-owned resources against, so they are built once in the scope rather than
+     * looked up in the root plan. A scope uses a {@code () -> null} interpreter supplier, matching
+     * the base-cache default, so it resolves {@code classpath:} skills through {@code classLoader}
      * without the operator's interpreter, exactly as it did before the supplier existed.
      */
     public ResourceCache(
             Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
             ClassLoader classLoader,
             ResourceCache parent,
+            @Nullable String scopePlanJson) {
+        this(resourceProviders, classLoader, parent, scopePlanJson, () -> null);
+    }
+
+    /**
+     * Full constructor: a cache with a parent, its sub-agent scope's child plan JSON, and the
+     * operator's interpreter supplier. The root cache passes a real supplier; a sub-agent scope
+     * passes {@code () -> null}.
+     */
+    public ResourceCache(
+            Map<ResourceType, Map<String, ResourceProvider>> resourceProviders,
+            ClassLoader classLoader,
+            ResourceCache parent,
+            @Nullable String scopePlanJson,
             Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
         this.parent = parent;
+        this.scopePlanJson = scopePlanJson;
         // Defensive copy: the cache must not be affected by later mutations to the source map.
         this.resourceProviders = new HashMap<>();
         for (Map.Entry<ResourceType, Map<String, ResourceProvider>> entry :
@@ -139,6 +165,29 @@ public class ResourceCache implements AutoCloseable {
      */
     public void setPythonActionExecutor(PythonActionExecutor pythonActionExecutor) {
         this.pythonActionExecutor = pythonActionExecutor;
+    }
+
+    /**
+     * The bridge that reaches the Python runtime for this cache: its own when wired, else the
+     * nearest ancestor's. A sub-agent scope's cache is built with the root cache as parent and is
+     * never wired directly, yet one Python runtime serves the whole plan tree, so the scope
+     * materializes and resolves its Python-owned resources through the inherited bridge.
+     */
+    @Nullable
+    private PythonActionExecutor effectivePythonActionExecutor() {
+        if (pythonActionExecutor != null) {
+            return pythonActionExecutor;
+        }
+        return parent != null ? parent.effectivePythonActionExecutor() : null;
+    }
+
+    /** The Python resource adapter in effect: this cache's own, else the nearest ancestor's. */
+    @Nullable
+    private PythonResourceAdapter effectivePythonResourceAdapter() {
+        if (pythonResourceAdapter != null) {
+            return pythonResourceAdapter;
+        }
+        return parent != null ? parent.effectivePythonResourceAdapter() : null;
     }
 
     public ResourceContextImpl getResourceContext() {
@@ -189,8 +238,9 @@ public class ResourceCache implements AutoCloseable {
         }
         ResourceProvider provider = providers.get(name);
 
-        if (pythonResourceAdapter != null && provider instanceof PythonResourceProvider) {
-            ((PythonResourceProvider) provider).setPythonResourceAdapter(pythonResourceAdapter);
+        PythonResourceAdapter adapter = effectivePythonResourceAdapter();
+        if (adapter != null && provider instanceof PythonResourceProvider) {
+            ((PythonResourceProvider) provider).setPythonResourceAdapter(adapter);
         }
 
         Resource resource = provider.provide(resourceContext);
@@ -201,8 +251,8 @@ public class ResourceCache implements AutoCloseable {
             ((BaseSubagentSetup) resource).setSubagentName(name);
         }
 
-        if (pythonResourceAdapter != null && resource instanceof FunctionTool) {
-            ((FunctionTool) resource).setPythonResourceAdapter(pythonResourceAdapter);
+        if (adapter != null && resource instanceof FunctionTool) {
+            ((FunctionTool) resource).setPythonResourceAdapter(adapter);
         }
 
         try {
@@ -271,15 +321,16 @@ public class ResourceCache implements AutoCloseable {
         if (!hasPythonOwned) {
             return materialized;
         }
+        PythonActionExecutor executor = effectivePythonActionExecutor();
         checkState(
-                pythonActionExecutor != null,
+                executor != null,
                 "Resources of type %s are declared in Python but no Python runtime was"
                         + " initialized for this plan, so they cannot be materialized.",
                 type);
         // The Python runtime owns these resources: it built and opened them, so the handles are
         // cached as they are instead of being opened again here.
         for (Map.Entry<String, Resource> handle :
-                pythonActionExecutor.eagerMaterialize(type).entrySet()) {
+                executor.eagerMaterialize(type, scopePlanJson).entrySet()) {
             put(handle.getKey(), type, handle.getValue());
             materialized.add(handle.getValue());
         }
