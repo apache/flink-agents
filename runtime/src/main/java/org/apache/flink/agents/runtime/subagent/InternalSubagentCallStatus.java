@@ -18,9 +18,14 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+
+import javax.annotation.Nullable;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 /**
  * Self-coordinating quiesce state machine for a single sub-agent call. Completion is driven by two
@@ -38,6 +43,14 @@ public class InternalSubagentCallStatus {
     private int runningActions;
     private int pendingEvents;
     private final List<Object> output = new ArrayList<>();
+
+    /**
+     * Isolated memory view shared by every child action of this call. The first child action
+     * creates it and the rest reuse it, so a value one child action writes stays readable by the
+     * next action of the same call. It lives exactly as long as this call status: the owning setup
+     * drops both when the record finishes.
+     */
+    @Nullable private RunnerContextImpl.MemoryContext isolatedMemoryContext;
 
     public InternalSubagentCallStatus(
             String callId, String scope, String sessionId, InternalSubagentSetup setup) {
@@ -72,6 +85,19 @@ public class InternalSubagentCallStatus {
 
     public CompletableFuture<List<Object>> getResponseFuture() {
         return responseFuture;
+    }
+
+    /**
+     * Returns the call's isolated memory view, building it from {@code factory} on first use. The
+     * create-once check lives here so no caller can replace a view that another child action has
+     * already written to.
+     */
+    public RunnerContextImpl.MemoryContext getOrCreateIsolatedMemoryContext(
+            Supplier<RunnerContextImpl.MemoryContext> factory) {
+        if (isolatedMemoryContext == null) {
+            isolatedMemoryContext = factory.get();
+        }
+        return isolatedMemoryContext;
     }
 
     public void emitEvent() {

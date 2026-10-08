@@ -17,20 +17,16 @@
  */
 package org.apache.flink.agents.runtime.memory;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.util.HashMap;
 import java.util.Map;
 
 /**
  * Child memory store that reads through to the parent's unpersisted cache but keeps writes to
- * itself. {@link #persistCache()} discards child writes with a warning — cross-scope persist
- * behavior is not yet designed.
+ * itself. The store backs one sub-agent call's isolated memory view: {@link #persistCache()} keeps
+ * the child's writes in memory for the whole call so every action of that call reads a consistent
+ * view, and never flushes them into the parent's durable state.
  */
 public class IsolatedCachedMemoryStore extends CachedMemoryStore {
-
-    private static final Logger LOG = LoggerFactory.getLogger(IsolatedCachedMemoryStore.class);
 
     private final CachedMemoryStore parent;
     private final Map<String, MemoryObjectImpl.MemoryItem> ownCache = new HashMap<>();
@@ -58,15 +54,15 @@ public class IsolatedCachedMemoryStore extends CachedMemoryStore {
         return ownCache.containsKey(key) || parent.contains(key);
     }
 
-    // TODO: design cross-scope memory persist behavior
+    /**
+     * Retains the child's writes for the lifetime of the sub-agent call. The isolated view belongs
+     * to the call, not to any single action: flushing it into the parent would leak child writes
+     * into the caller, and clearing it would hide one action's writes from the next action of the
+     * same call. The owning call status releases the view when the record finishes.
+     */
     @Override
     public void persistCache() throws Exception {
-        if (!ownCache.isEmpty()) {
-            LOG.warn(
-                    "Subagent memory persist not yet supported; discarding {} cached entries.",
-                    ownCache.size());
-            ownCache.clear();
-        }
+        // No-op: the call's isolated writes stay in ownCache until the call status is dropped.
     }
 
     @Override

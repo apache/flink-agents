@@ -30,11 +30,11 @@ import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
-import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -306,15 +306,25 @@ class ActionTaskContextManager implements AutoCloseable {
 
         RunnerContextImpl.MemoryContext memoryContext = getMemoryContext(actionTask);
         if (memoryContext == null) {
-            memoryContext =
-                    new RunnerContextImpl.MemoryContext(
-                            new CachedMemoryStore(sensoryMemState),
-                            new CachedMemoryStore(shortTermMemState));
-            // A sub-agent call runs against an isolated memory view so its reads/writes do not
-            // leak into the caller; nested calls reuse the already-isolated view.
-            if (getSubagentScope(actionTask) != null
-                    && !(memoryContext.getSensoryMemStore() instanceof IsolatedCachedMemoryStore)) {
-                memoryContext = memoryContext.createChildContext();
+            RunnerContextImpl.SubagentScope scope = getSubagentScope(actionTask);
+            if (scope != null) {
+                // A sub-agent call runs against an isolated memory view so its reads/writes do not
+                // leak into the caller. The view is shared by every action of the same call and
+                // lives as long as the call status, so a value one child action writes stays
+                // readable by the next action of that call.
+                InternalSubagentCallStatus callStatus = scope.getCallStatus();
+                memoryContext =
+                        callStatus.getOrCreateIsolatedMemoryContext(
+                                () ->
+                                        new RunnerContextImpl.MemoryContext(
+                                                        new CachedMemoryStore(sensoryMemState),
+                                                        new CachedMemoryStore(shortTermMemState))
+                                                .createChildContext());
+            } else {
+                memoryContext =
+                        new RunnerContextImpl.MemoryContext(
+                                new CachedMemoryStore(sensoryMemState),
+                                new CachedMemoryStore(shortTermMemState));
             }
             putMemoryContext(actionTask, memoryContext);
         }

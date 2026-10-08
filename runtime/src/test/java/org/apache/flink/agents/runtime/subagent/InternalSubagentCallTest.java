@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
@@ -118,6 +119,50 @@ public class InternalSubagentCallTest {
         }
     }
 
+    /**
+     * Writes a value to short-term memory in one action, then reads it back in a second action the
+     * first triggers with an event. The two run as separate child action tasks inside one call, so
+     * the value is readable only if the call's child actions share one isolated memory view for the
+     * whole call.
+     */
+    public static class MemoryRelayChildAgent extends Agent {
+        public MemoryRelayChildAgent() throws Exception {
+            addAction(
+                    new String[] {InputEvent.EVENT_TYPE},
+                    MemoryRelayChildAgent.class.getMethod(
+                            "write", Event.class, RunnerContext.class));
+            addAction(
+                    new String[] {RelayEvent.EVENT_TYPE},
+                    MemoryRelayChildAgent.class.getMethod(
+                            "read", Event.class, RunnerContext.class));
+        }
+
+        /** Hand-off event that lets {@code write} trigger {@code read} as a separate action. */
+        public static class RelayEvent extends Event {
+            public static final String EVENT_TYPE = "MemoryRelayEvent";
+
+            public RelayEvent() {
+                super(EVENT_TYPE);
+            }
+        }
+
+        @SuppressWarnings("unused")
+        public static void write(Event event, RunnerContext ctx) throws Exception {
+            ctx.getShortTermMemory().set("relay", "from-write");
+            ctx.sendEvent(new RelayEvent());
+        }
+
+        @SuppressWarnings("unused")
+        public static void read(Event event, RunnerContext ctx) throws Exception {
+            MemoryObject memory = ctx.getShortTermMemory();
+            String value =
+                    memory.isExist("relay")
+                            ? String.valueOf(memory.get("relay").getValue())
+                            : "<missing>";
+            ctx.sendEvent(new OutputEvent("read:" + value));
+        }
+    }
+
     // --- caller actions ---
 
     @SuppressWarnings("unused")
@@ -194,6 +239,14 @@ public class InternalSubagentCallTest {
 
         assertThat(CHILD_INVOCATIONS).containsExactly("deep:7");
         assertThat(output).containsExactly("relayed:echo:deep:7");
+    }
+
+    @Test
+    @Timeout(60)
+    void laterChildActionReadsValueWrittenByEarlierChildAction() throws Exception {
+        List<Object> output = run(plan("callOnce", new MemoryRelayChildAgent()), 7L);
+
+        assertThat(output).containsExactly("read:from-write");
     }
 
     // --- helpers ---
