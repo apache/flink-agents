@@ -320,8 +320,7 @@ public class KafkaActionStateStoreTest {
         actionStateStore.pruneState(TEST_KEY, 5L);
 
         // A later-sequence live state keeps the checkpointed boundary load-bearing.
-        assertThat(actionStateStore.getLatestKeySeqNum())
-                .containsEntry(businessKeyIdentity, 5L);
+        assertThat(actionStateStore.getLatestKeySeqNum()).containsEntry(businessKeyIdentity, 5L);
 
         // Once the identity has no live state left, prune the boundary too, otherwise the map
         // grows one entry per key for the whole job lifetime.

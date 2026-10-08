@@ -675,7 +675,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
 
         lastCommitted.actionTask.getRunnerContext().clearSensoryMemory();
-        durableExecManager.updateLastCompletedSequenceNumber(lastCommitted.sequenceNumber);
+        durableExecManager.updateLastCompletedSequenceNumber(key, lastCommitted.sequenceNumber);
         // Mirror the serial path: notify record finished. Noop rounds stay silent.
         if (!isInternalNoopInputAction(lastCommitted.actionTask.action)) {
             notifyRecordFinished(key);

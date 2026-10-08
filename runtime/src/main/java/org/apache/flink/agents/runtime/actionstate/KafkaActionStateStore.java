@@ -611,7 +611,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }
 
-/**
+    /**
      * Returns a versioned marker containing per-partition replay start offsets. For partitions
      * whose latest durable state is already reflected in the Flink checkpoint, the end offset is
      * used; for partitions with newer durable state, the marker rewinds to that state's earliest
@@ -804,7 +804,7 @@ public class KafkaActionStateStore implements ActionStateStore {
         return consumerProps;
     }
 
-static final class KafkaTopicMetadata {
+    static final class KafkaTopicMetadata {
         private final String topicId;
         private final Set<Integer> partitions;
 

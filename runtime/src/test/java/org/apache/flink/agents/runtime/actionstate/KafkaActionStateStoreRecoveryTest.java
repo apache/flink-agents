@@ -19,6 +19,7 @@ package org.apache.flink.agents.runtime.actionstate;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -116,7 +117,11 @@ public class KafkaActionStateStoreRecoveryTest {
                             Collections.singletonList(InputEvent.EVENT_TYPE));
             Map<String, Action> actions = new HashMap<>();
             actions.put(action.getName(), action);
-            return new AgentPlan(actions);
+            // The parallel engine drains in-flight actions before checkpointing. This test covers
+            // the continuation engine's pending-action checkpoint path through its serial fallback.
+            AgentConfiguration config = new AgentConfiguration();
+            config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+            return new AgentPlan(actions, new HashMap<>(), config);
         } catch (Exception e) {
             ExceptionUtils.rethrow(e);
         }
@@ -164,14 +169,17 @@ public class KafkaActionStateStoreRecoveryTest {
                             });
             assertThat(failure).isNotNull();
             checkpoint = CHECKPOINT.get();
-            assertThat(checkpoint).isNotNull();
+            assertThat(checkpoint)
+                    .as(
+                            "Action failed before checkpoint: %s",
+                            ExceptionUtils.stringifyException(failure))
+                    .isNotNull();
             assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
         }
 
         // Recovery: a restarted task reads the checkpoint's recovery marker into a fresh store and
         // must find the pending durable result that was recorded before the checkpoint.
-        MockConsumer<String, ActionState> recoveryConsumer =
-                recoveryConsumer(producer.history());
+        MockConsumer<String, ActionState> recoveryConsumer = recoveryConsumer(producer.history());
         Action action = plan().getActions().values().iterator().next();
         try (KafkaActionStateStore recoveredStore =
                         new KafkaActionStateStore(
@@ -194,13 +202,12 @@ public class KafkaActionStateStoreRecoveryTest {
 
             ActionState recovered = recoveredStore.get(7L, 0L, action, new InputEvent(7L));
             assertThat(recovered)
-                    .as(
-                            "Recovery must replay the durable result recorded before the checkpoint")
+                    .as("Recovery must replay the durable result recorded before the checkpoint")
                     .isNotNull();
             assertThat(recovered.isCompleted()).isFalse();
             assertThat(recovered.getCallResults()).hasSize(1);
             CallResult result = recovered.getCallResults().get(0);
-            assertThat(result.matches("multiply", "")).isTrue();
+            assertThat(result.matches("multiply")).isTrue();
             assertThat(result.isPending()).isFalse();
             assertThat(result.isSuccess()).isTrue();
             assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
@@ -215,9 +222,9 @@ public class KafkaActionStateStoreRecoveryTest {
             MockProducer<String, ActionState> producer) {
         return new MockConsumer<>(EARLIEST.name()) {
             {
-                updatePartitions(
-                        TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
+                updatePartitions(TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
             }
+
             @Override
             public synchronized Map<TopicPartition, Long> endOffsets(
                     Collection<TopicPartition> partitions) {
@@ -233,15 +240,13 @@ public class KafkaActionStateStoreRecoveryTest {
     private static MockConsumer<String, ActionState> recoveryConsumer(
             List<ProducerRecord<String, ActionState>> history) {
         MockConsumer<String, ActionState> consumer = new MockConsumer<>(EARLIEST.name());
-        consumer.updatePartitions(
-                TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
+        consumer.updatePartitions(TOPIC, List.of(new PartitionInfo(TOPIC, 0, null, null, null)));
         consumer.assign(List.of(new TopicPartition(TOPIC, 0)));
         consumer.updateBeginningOffsets(Map.of(new TopicPartition(TOPIC, 0), 0L));
         consumer.updateEndOffsets(Map.of(new TopicPartition(TOPIC, 0), (long) history.size()));
         for (int i = 0; i < history.size(); i++) {
             ProducerRecord<String, ActionState> record = history.get(i);
-            consumer.addRecord(
-                    new ConsumerRecord<>(TOPIC, 0, i, record.key(), record.value()));
+            consumer.addRecord(new ConsumerRecord<>(TOPIC, 0, i, record.key(), record.value()));
         }
         return consumer;
     }
