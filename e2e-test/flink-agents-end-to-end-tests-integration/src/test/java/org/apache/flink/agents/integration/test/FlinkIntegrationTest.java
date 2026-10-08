@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integration.test;
 
 import org.apache.flink.agents.api.AgentsExecutionEnvironment;
+import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
@@ -62,6 +63,42 @@ public class FlinkIntegrationTest {
                 return (Integer) row.getField(0); // Assuming first field is the ID
             }
             return 0;
+        }
+    }
+
+    @Test
+    public void testBatchExecutionWithMultipleKeys() throws Exception {
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setRuntimeMode(RuntimeExecutionMode.BATCH);
+        env.setParallelism(1);
+
+        DataStream<FlinkIntegrationAgent.ItemData> inputStream =
+                env.fromElements(
+                        new FlinkIntegrationAgent.ItemData(1, "item1", 10.0),
+                        new FlinkIntegrationAgent.ItemData(2, "item2", 20.0),
+                        new FlinkIntegrationAgent.ItemData(3, "item3", 30.0),
+                        new FlinkIntegrationAgent.ItemData(4, "item4", 40.0),
+                        new FlinkIntegrationAgent.ItemData(5, "item5", 50.0));
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env);
+        DataStream<Object> outputStream =
+                agentsEnv
+                        .fromDataStream(inputStream, new FlinkIntegrationAgent.ItemKeySelector())
+                        .apply(new FlinkIntegrationAgent.DataStreamAgent())
+                        .toDataStream();
+
+        try (CloseableIterator<Object> results = outputStream.collectAsync()) {
+            agentsEnv.execute();
+
+            List<Object> output = new ArrayList<>();
+            results.forEachRemaining(output::add);
+            Assertions.assertEquals(5, output.size());
+            for (int id = 1; id <= 5; id++) {
+                String itemName = "item" + id;
+                Assertions.assertTrue(
+                        output.stream().anyMatch(value -> value.toString().contains(itemName)),
+                        "Missing output for " + itemName);
+            }
         }
     }
 

@@ -42,8 +42,6 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Tests for {@link CompileUtils}. */
@@ -109,32 +107,53 @@ public class CompileUtilsTest {
     }
 
     @Test
-    void rejectsExplicitBatchModeWithDefaultBatchStateBackend() {
-        // execution.batch-state-backend.enabled defaults to true in BATCH mode, which is exactly
-        // the combination that silently drops records (issue #939).
-        Configuration conf = new Configuration();
-        conf.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.BATCH);
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
-        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
-
-        assertThatIllegalStateException()
-                .isThrownBy(() -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN))
-                .withMessageContaining("RuntimeExecutionMode.BATCH")
-                .withMessageContaining("execution.batch-state-backend.enabled");
+    void processesEveryKeyWithDefaultBatchStateBackend() throws Exception {
+        assertThat(
+                        executeBatch(
+                                ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                List.of(0L, 1L, 2L, 3L, 4L)))
+                .containsExactly(2L, 4L, 6L, 8L, 10L);
     }
 
     @Test
-    void allowsExplicitBatchModeWithBatchStateBackendDisabled() {
-        // The documented workaround: disabling the batch-specific state backend restores the
-        // per-key-processed-to-completion semantics the operator relies on.
-        Configuration conf = new Configuration();
-        conf.set(ExecutionOptions.RUNTIME_MODE, RuntimeExecutionMode.BATCH);
-        conf.set(ExecutionOptions.USE_BATCH_STATE_BACKEND, false);
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
-        KeyedStream<Long, Long> keyedInputStream = env.fromData(testSequence).keyBy(x -> x);
+    void processesEveryKeyWhenAutomaticModeSelectsBatchExecution() throws Exception {
+        assertThat(
+                        executeBounded(
+                                ActionExecutionOperatorTest.TestAgent.getAgentPlan(false),
+                                List.of(0L, 1L, 2L, 3L, 4L),
+                                RuntimeExecutionMode.AUTOMATIC))
+                .containsExactly(2L, 4L, 6L, 8L, 10L);
+    }
 
-        assertThatCode(() -> CompileUtils.connectToAgent(keyedInputStream, TEST_AGENT_PLAN))
-                .doesNotThrowAnyException();
+    @Test
+    void processesAsyncActionsWithDefaultBatchStateBackend() throws Exception {
+        assertThat(
+                        executeBatch(
+                                ActionExecutionOperatorTest.TestAgent.getAsyncAgentPlan(false),
+                                List.of(1L, 2L, 3L)))
+                .containsExactly(20L, 40L, 60L);
+    }
+
+    private static List<Long> executeBatch(AgentPlan agentPlan, List<Long> input) throws Exception {
+        return executeBounded(agentPlan, input, RuntimeExecutionMode.BATCH);
+    }
+
+    private static List<Long> executeBounded(
+            AgentPlan agentPlan, List<Long> input, RuntimeExecutionMode runtimeMode)
+            throws Exception {
+        Configuration conf = new Configuration();
+        conf.set(ExecutionOptions.RUNTIME_MODE, runtimeMode);
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(conf);
+        env.setParallelism(1);
+        KeyedStream<Long, Long> keyedInputStream = env.fromData(input).keyBy(value -> value);
+        DataStream<Object> output = CompileUtils.connectToAgent(keyedInputStream, agentPlan);
+
+        List<Long> results = new ArrayList<>();
+        try (CloseableIterator<Object> iterator = output.executeAndCollect()) {
+            iterator.forEachRemaining(value -> results.add((Long) value));
+        }
+        results.sort(Long::compareTo);
+        return results;
     }
 
     @Test
