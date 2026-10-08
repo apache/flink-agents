@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -102,6 +103,34 @@ public class AgentPlanSubagentResourceTest {
         InternalSubagentProvider provider = (InternalSubagentProvider) agentProviders.get("child");
         assertThat(provider.getScope()).isEqualTo("child");
         assertThat(provider.getChildPlan()).isNotNull();
+    }
+
+    /**
+     * Serializing the provider must close its nested child plan before writing the provider's own
+     * fields, so the type marker stays at the provider level and the plan deserializes back to an
+     * equivalent {@link InternalSubagentProvider}.
+     */
+    @Test
+    void internalSubagentProviderSurvivesJsonRoundTrip() throws Exception {
+        Agent root = new Agent();
+        Agent child = new Agent();
+        root.addResource("child", ResourceType.AGENT, child);
+        AgentPlan plan = new AgentPlan(root);
+        InternalSubagentProvider original =
+                (InternalSubagentProvider)
+                        plan.getResourceProviders().get(ResourceType.AGENT).get("child");
+
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan deserialized = mapper.readValue(mapper.writeValueAsString(plan), AgentPlan.class);
+
+        ResourceProvider provider =
+                deserialized.getResourceProviders().get(ResourceType.AGENT).get("child");
+        assertThat(provider).isInstanceOf(InternalSubagentProvider.class);
+        InternalSubagentProvider roundTripped = (InternalSubagentProvider) provider;
+        assertThat(roundTripped.getScope()).isEqualTo("child");
+        assertThat(roundTripped.getChildPlan()).isNotNull();
+        assertThat(roundTripped.getChildPlan().getAgentName())
+                .isEqualTo(original.getChildPlan().getAgentName());
     }
 
     @Test

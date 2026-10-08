@@ -138,6 +138,31 @@ class AgentPlan(BaseModel):
                                         provider
                                     )
                                 )
+                            elif provider_type == "InternalSubagentProvider":
+                                # Java compiles a directly-registered child Agent
+                                # into an InternalSubagentProvider that nests the
+                                # child plan. Python models the same internal
+                                # sub-agent as a PythonSerializableResourceProvider
+                                # pointing at InternalSubagentSetup, so convert to
+                                # that shape and rebuild the nested child plan
+                                # recursively.
+                                child_plan = AgentPlan.model_validate(
+                                    provider["childPlan"]
+                                )
+                                self["resource_providers"][type][name] = (
+                                    PythonSerializableResourceProvider(
+                                        name=provider["name"],
+                                        type=ResourceType(provider["type"]),
+                                        module=(
+                                            "flink_agents.runtime.internal_subagent"
+                                        ),
+                                        clazz="InternalSubagentSetup",
+                                        serialized={
+                                            "child_plan": child_plan,
+                                            "scope": provider["scope"],
+                                        },
+                                    )
+                                )
         return self
 
     @staticmethod
@@ -242,7 +267,9 @@ def _native_action_marker(value: Any) -> tuple | None:
 
 def _is_action_attr(value: Any) -> bool:
     """True if ``value`` is an @action member: a declaration or a tagged callable."""
-    return isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
+    return (
+        isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
+    )
 
 
 def _get_actions(agent: Agent) -> List[Action]:

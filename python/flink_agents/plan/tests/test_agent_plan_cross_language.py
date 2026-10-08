@@ -46,7 +46,10 @@ from flink_agents.plan.function import (
 from flink_agents.plan.function import (
     PythonFunction as PlanPythonFunction,
 )
-from flink_agents.plan.resource_provider import JavaResourceProvider
+from flink_agents.plan.resource_provider import (
+    JavaResourceProvider,
+    PythonSerializableResourceProvider,
+)
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -365,6 +368,39 @@ def test_python_can_deserialize_java_plan_with_python_action() -> None:
         InputEvent.EVENT_TYPE,
         "attributes.ready == true",
     ]
+
+
+def test_python_can_deserialize_java_plan_with_internal_subagent() -> None:
+    """Java compiles a directly-registered child Agent into an
+    ``InternalSubagentProvider`` that nests the child plan; Python must read it
+    back as its own internal sub-agent representation.
+
+    The snapshot is emitted by AgentPlanCrossLanguageTest on the Java side
+    (regenerate with -Dregenerate.snapshots=true). Python has no
+    ``InternalSubagentProvider`` class: it represents the same internal
+    sub-agent as a ``PythonSerializableResourceProvider`` referencing
+    ``InternalSubagentSetup``, so deserialization must convert to that form and
+    recursively rebuild the nested child plan.
+    """
+    snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_internal_subagent.json"
+    assert snapshot.exists(), (
+        f"Java internal sub-agent plan snapshot missing from {snapshot}; "
+        f"regenerate on the Java side with -Dregenerate.snapshots=true and commit it."
+    )
+
+    restored = AgentPlan.model_validate_json(snapshot.read_text())
+
+    provider = restored.resource_providers[ResourceType.AGENT]["child"]
+    assert isinstance(provider, PythonSerializableResourceProvider), (
+        f"Expected internal sub-agent to deserialize as "
+        f"PythonSerializableResourceProvider, got {type(provider).__name__}"
+    )
+    assert provider.module == "flink_agents.runtime.internal_subagent"
+    assert provider.clazz == "InternalSubagentSetup"
+    assert provider.serialized["scope"] == "child"
+    child_plan = provider.serialized["child_plan"]
+    assert isinstance(child_plan, AgentPlan)
+    assert "handle" in child_plan.actions
 
 
 def test_java_action_plan_matches_runtime_wire_shape() -> None:

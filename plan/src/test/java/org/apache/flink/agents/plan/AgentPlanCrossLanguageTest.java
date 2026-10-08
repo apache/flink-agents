@@ -317,6 +317,42 @@ class AgentPlanCrossLanguageTest {
         assertThat(actual).isEqualTo(expected);
     }
 
+    /** A plan that nests a child agent compiled into an {@code InternalSubagentProvider}. */
+    private static AgentPlan compileWithInternalSubagent() throws Exception {
+        Agent child = new Agent();
+        child.addAction(
+                "handle", new String[] {InputEvent.EVENT_TYPE}, javaFunctionDescriptor(), null);
+        Agent root = new Agent();
+        root.addResource("child", ResourceType.AGENT, child);
+        return new AgentPlan(root);
+    }
+
+    @Test
+    void regenerateJavaPlanWithInternalSubagentSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        AgentPlan plan = compileWithInternalSubagent();
+        String json = MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(plan);
+
+        Path target = snapshotDir.resolve("java/agent_plan_with_internal_subagent.json");
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, json + "\n");
+    }
+
+    @Test
+    void javaPlanWithInternalSubagentSnapshotIsStable() throws Exception {
+        Path committed = snapshotDir.resolve("java/agent_plan_with_internal_subagent.json");
+        assertTrue(
+                Files.exists(committed),
+                "Internal sub-agent plan snapshot missing from "
+                        + committed
+                        + ". Regenerate with -Dregenerate.snapshots=true and commit alongside the test.");
+
+        AgentPlan plan = compileWithInternalSubagent();
+        JsonNode actual = MAPPER.readTree(MAPPER.writeValueAsString(plan));
+        JsonNode expected = MAPPER.readTree(Files.readString(committed));
+        assertThat(actual).isEqualTo(expected);
+    }
+
     @Test
     void javaCanDeserializePythonPlanWithJavaAction() throws Exception {
         Path snapshot = snapshotDir.resolve("python/agent_plan_with_java_action.json");

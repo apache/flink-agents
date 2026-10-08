@@ -104,5 +104,10 @@ public class AgentPlanJsonSerializer extends StdSerializer<AgentPlan> {
                         });
         jsonGenerator.writeEndObject();
         jsonGenerator.writeEndObject();
+
+        // Close the plan object opened at the start of serialize(). Without this the enclosing
+        // serializer would keep writing sibling fields (e.g. a resource provider's type marker)
+        // into the still-open plan object when this plan is nested as a child plan.
+        jsonGenerator.writeEndObject();
     }
 }
