@@ -276,7 +276,7 @@ public class PythonActionExecutor implements AutoCloseable {
                         }
                     });
         } catch (Exception e) {
-            runnerContext.drainEvents(null);
+            runnerContext.discardPendingEvents();
             throw new PythonActionExecutionException("Failed to execute Python action", e);
         }
     }

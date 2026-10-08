@@ -68,6 +68,7 @@ import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -410,9 +411,31 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         + " metadata in attributes.");
     }
 
-    public List<Event> drainEvents(Long timestamp) {
+    public List<Event> drainEventsAtActionYield(Long timestamp) {
         mailboxThreadChecker.run();
-        return drainPendingEvents(timestamp);
+        List<Event> events = new ArrayList<>();
+        Iterator<Event> iterator = pendingEvents.iterator();
+        while (iterator.hasNext()) {
+            Event event = iterator.next();
+            if (!(event instanceof InternalSubagentCallEvent)) {
+                continue;
+            }
+            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) event;
+            if (subagentScope != null) {
+                InternalSubagentCallStatus callStatus = subagentScope.getCallStatus();
+                if (callStatus.getSessionId().equals(envelope.getSessionId())
+                        && callStatus.getCallId().equals(envelope.getCallId())) {
+                    continue;
+                }
+            }
+            // Only call bootstraps must run before completion to unblock the awaiting action.
+            if (timestamp != null) {
+                event.setSourceTimestamp(timestamp);
+            }
+            events.add(event);
+            iterator.remove();
+        }
+        return events;
     }
 
     /** Converts this action's memory records into events and drains all action output events. */
@@ -420,6 +443,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         mailboxThreadChecker.run();
         flushMemoryObservation();
         return drainPendingEvents(timestamp);
+    }
+
+    public void discardPendingEvents() {
+        mailboxThreadChecker.run();
+        pendingEvents.clear();
     }
 
     /**

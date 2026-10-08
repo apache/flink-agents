@@ -111,10 +111,10 @@ public class JavaActionTask extends ActionTask {
                     runnerContext.drainEventsAtActionFinish(event.getSourceTimestamp()),
                     null);
         } else {
-            // A suspended action may already have emitted events (e.g. a bootstrapped internal
-            // sub-agent call): drain them so the operator dispatches them while the action waits.
             return new ActionTaskResult(
-                    false, runnerContext.drainEvents(event.getSourceTimestamp()), this);
+                    false,
+                    runnerContext.drainEventsAtActionYield(event.getSourceTimestamp()),
+                    this);
         }
     }
 }

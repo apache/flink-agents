@@ -43,7 +43,7 @@ class RunnerContextLineageTest {
 
         context.sendEvent(event);
 
-        assertThat(context.drainEvents(null)).containsExactly(event);
+        assertThat(context.getPendingEvents()).containsExactly(event);
     }
 
     @Test
@@ -57,7 +57,7 @@ class RunnerContextLineageTest {
                 .hasMessageContaining("upstreamEventId=")
                 .hasMessageNotContaining("upstreamActionName=")
                 .hasMessageContaining("attributes");
-        assertThat(context.drainEvents(null)).isEmpty();
+        assertThat(context.getPendingEvents()).isEmpty();
     }
 
     @Test
@@ -70,7 +70,7 @@ class RunnerContextLineageTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("upstreamActionName=user_action")
                 .hasMessageNotContaining("upstreamEventId=");
-        assertThat(context.drainEvents(null)).isEmpty();
+        assertThat(context.getPendingEvents()).isEmpty();
     }
 
     @Test

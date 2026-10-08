@@ -19,20 +19,25 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.operator.PythonGeneratorActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Tests for output finalization owned by {@link ActionTask}. */
@@ -85,6 +90,75 @@ class ActionTaskTest {
 
         assertThat(generated).isInstanceOf(PythonGeneratorActionTask.class);
         assertThat(generated.getObservationId()).isEqualTo(task.getObservationId());
+    }
+
+    @Test
+    void pythonContinuationsDispatchBootstrapOnceAndRetainOrdinaryEventsUntilCompletion()
+            throws Exception {
+        PythonFunction function = new PythonFunction("test_module", "test_action");
+        Action action = new Action("python-action", function, List.of(InputEvent.EVENT_TYPE));
+        Event triggeringEvent = new InputEvent(1L);
+        triggeringEvent.setSourceTimestamp(123L);
+        PythonActionTask task = new PythonActionTask("key", triggeringEvent, action, 1L);
+        PythonRunnerContextImpl context =
+                new PythonRunnerContextImpl(
+                        null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
+        PythonActionExecutor executor = mock(PythonActionExecutor.class);
+        task.setRunnerContext(context);
+        Event firstEvent = new Event("first-event");
+        Event secondEvent = new Event("second-event");
+        InternalSubagentCallEvent bootstrap =
+                InternalSubagentCallEvent.bootstrap(
+                        new InputEvent("prompt"), "child", "call", "session");
+        when(executor.executePythonFunction(function, triggeringEvent))
+                .thenAnswer(
+                        invocation -> {
+                            context.sendEvent(firstEvent);
+                            return "awaitable";
+                        });
+        when(executor.callPythonAwaitable("awaitable"))
+                .thenAnswer(
+                        invocation -> {
+                            context.sendEvent(bootstrap);
+                            return false;
+                        })
+                .thenAnswer(
+                        invocation -> {
+                            context.sendEvent(secondEvent);
+                            return false;
+                        })
+                .thenReturn(false, true);
+
+        ActionTask.ActionTaskResult first = task.invoke(getClass().getClassLoader(), executor);
+
+        assertThat(first.isFinished()).isFalse();
+        assertThat(first.getOutputEvents()).containsExactly(bootstrap);
+        assertThat(bootstrap.getSourceTimestamp()).isEqualTo(123L);
+        assertThat(context.getPendingEvents()).containsExactly(firstEvent);
+        ActionTask continuation = first.getGeneratedActionTask().orElseThrow();
+        assertThat(continuation).isInstanceOf(PythonGeneratorActionTask.class);
+        assertThat(continuation.getRunnerContext()).isSameAs(context);
+        assertThat(continuation.getObservationId()).isEqualTo(task.getObservationId());
+
+        for (int i = 0; i < 2; i++) {
+            ActionTask.ActionTaskResult suspended =
+                    continuation.invoke(getClass().getClassLoader(), executor);
+
+            assertThat(suspended.isFinished()).isFalse();
+            assertThat(suspended.getOutputEvents()).isEmpty();
+            assertThat(suspended.getGeneratedActionTask()).containsSame(continuation);
+            assertThat(context.getPendingEvents()).containsExactly(firstEvent, secondEvent);
+        }
+
+        ActionTask.ActionTaskResult completed =
+                continuation.invoke(getClass().getClassLoader(), executor);
+
+        assertThat(completed.isFinished()).isTrue();
+        assertThat(completed.getGeneratedActionTask()).isEmpty();
+        assertThat(completed.getOutputEvents()).containsExactly(firstEvent, secondEvent);
+        assertThat(context.getPendingEvents()).isEmpty();
+        verify(executor).executePythonFunction(function, triggeringEvent);
+        verify(executor, times(4)).callPythonAwaitable("awaitable");
     }
 
     @Test

@@ -376,6 +376,40 @@ class PythonActionExecutorTest {
     }
 
     @Test
+    void discardsPendingEventsWhenInitialPythonFunctionFails() throws Exception {
+        PythonInterpreter interpreter = mock(PythonInterpreter.class);
+        PythonRunnerContextImpl runnerContext =
+                new PythonRunnerContextImpl(
+                        null, () -> {}, new AgentPlan(Map.of()), null, "test-job");
+        PythonActionExecutor executor = newExecutor(interpreter, runnerContext);
+        PythonFunction function = new PythonFunction("test_module", "test_action");
+        PyObject pythonEvent = mock(PyObject.class);
+        Event ordinaryEvent = new Event("ordinary-event");
+        RuntimeException failure = new RuntimeException("initial function failed");
+        when(interpreter.invoke(same(CONVERT_JSON_TO_PYTHON_EVENT), anyString()))
+                .thenReturn(pythonEvent);
+        when(interpreter.invoke(
+                        CALL_PYTHON_FUNCTION,
+                        "test_module",
+                        "test_action",
+                        new Object[] {pythonEvent, null}))
+                .thenAnswer(
+                        invocation -> {
+                            runnerContext.sendEvent(ordinaryEvent);
+                            throw failure;
+                        });
+
+        assertThatThrownBy(() -> executor.executePythonFunction(function, new InputEvent(1L)))
+                .isInstanceOf(PythonActionExecutor.PythonActionExecutionException.class)
+                .hasMessage("Failed to execute Python action")
+                .hasCause(failure);
+
+        assertThat(runnerContext.getPendingEvents()).isEmpty();
+        assertThat(runnerContext.drainEventsAtActionFinish(null)).isEmpty();
+        verify(pythonEvent).close();
+    }
+
+    @Test
     void closesTemporaryWrappersAfterStoringAwaitable() throws Exception {
         PythonInterpreter interpreter = mock(PythonInterpreter.class);
         PythonRunnerContextImpl runnerContext = mock(PythonRunnerContextImpl.class);

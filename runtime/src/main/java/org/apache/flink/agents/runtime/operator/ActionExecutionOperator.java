@@ -815,9 +815,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             isFinished = true;
             outputEvents =
                     actionTask.finalizeOutputEvents(
-                            actionTask.isSubagentEvent()
-                                    ? actionState.getSubagentResultEvents()
-                                    : actionState.getOutputEvents());
+                            completedActionOutputEvents(actionTask, actionState));
             MemoryUpdateReplayer.replay(
                     actionTask.getRunnerContext().getShortTermMemory(),
                     actionState.getShortTermMemoryUpdates());
@@ -1003,6 +1001,34 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     key, contextKey, actionTask.getTraceContext().getInputRunId()),
                     "process action task");
         }
+    }
+
+    private List<Event> completedActionOutputEvents(
+            ActionTask actionTask, ActionState actionState) {
+        if (!actionTask.isSubagentEvent()) {
+            return actionState.getOutputEvents();
+        }
+
+        InternalSubagentCallEvent triggeringEnvelope = (InternalSubagentCallEvent) actionTask.event;
+        List<Event> replayEvents = new ArrayList<>();
+        for (Event event : actionState.getOutputEvents()) {
+            if (!(event instanceof InternalSubagentCallEvent)) {
+                replayEvents.add(event);
+                continue;
+            }
+            InternalSubagentCallEvent emittedEnvelope = (InternalSubagentCallEvent) event;
+            // Same-call envelopes continue the current sub-agent's action graph, whose downstream
+            // actions replay and reconcile against their ActionState. Different-call envelopes
+            // bootstrap nested calls whose results were already consumed by this completed action
+            // and reflected in its persisted outputs, so replaying them is unnecessary.
+            if (triggeringEnvelope.getSessionId().equals(emittedEnvelope.getSessionId())
+                    && triggeringEnvelope.getCallId().equals(emittedEnvelope.getCallId())) {
+                replayEvents.add(event);
+            }
+        }
+        // Terminal child outputs are accumulated separately from graph-driving events.
+        replayEvents.addAll(actionState.getSubagentResultEvents());
+        return replayEvents;
     }
 
     @Override
@@ -1546,6 +1572,30 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        stateManager.forEachActionTaskKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    List<ActionTask> rootTasks = new ArrayList<>();
+                    for (ActionTask task : state.get()) {
+                        if (!task.isSubagentEvent()) {
+                            rootTasks.add(task);
+                        }
+                    }
+
+                    // Retain only root tasks: replaying them regenerates the call tree, while
+                    // completedActionOutputEvents restores graph events from completed child state.
+                    // Retaining child tasks would run them alongside the regenerated copies.
+                    // Dropping children cannot strand a key: a child task is persisted only while
+                    // its root caller still awaits it (the caller resumes only after the child
+                    // quiesces), so the root is always retained here to drive the replay.
+                    state.update(rootTasks);
+                    for (ActionTask actionTask : rootTasks) {
+                        builtInMetrics.restoreActionTask(
+                                actionTask.getTraceContext(),
+                                actionTask.hasExecutionStartedEventEmitted());
+                    }
+                });
+
         Iterable<Object> keys = stateManager.getProcessingKeys();
         long activeInputRuns = 0L;
         if (keys != null) {
@@ -1566,6 +1616,9 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 if (parallelExecutionWithoutCoroutineEnabled) {
                     // Restored tasks were never enqueued through processEvent: add one node per
                     // queued task; the worker-completion path finishes the input (no kick mail).
+                    // No sub-agent child reaches this engine: the parallel path requires
+                    // continuations to be unsupported (JDK < 21), where InternalSubagentSetup
+                    // fails fast, so the root-only filter above never drops anything here.
                     setCurrentKey(key);
                     int queued = stateManager.countActionTasks();
                     for (int i = 0; i < queued; i++) {
@@ -1590,16 +1643,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             activeInputRuns = ownedKeys.size();
         }
         builtInMetrics.restoreActiveInputRuns(activeInputRuns);
-
-        stateManager.forEachActionTaskKey(
-                getKeyedStateBackend(),
-                (key, state) -> {
-                    for (ActionTask actionTask : state.get()) {
-                        builtInMetrics.restoreActionTask(
-                                actionTask.getTraceContext(),
-                                actionTask.hasExecutionStartedEventEmitted());
-                    }
-                });
 
         long[] pendingInputEvents = {0L};
         // Recovered pending input records will each be dequeued, processed, and decremented when

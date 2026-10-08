@@ -129,7 +129,7 @@ class TestMemoryObservationFlush {
         RunnerContextImpl context = createContext(new HashMap<>(), false);
         context.getShortTermMemory().set("first", 1);
 
-        assertThat(context.drainEvents(null)).isEmpty();
+        assertThat(context.drainEventsAtActionYield(null)).isEmpty();
         context.getShortTermMemory().set("second", 2);
 
         List<Event> finished = context.drainEventsAtActionFinish(null);
