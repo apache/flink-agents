@@ -259,6 +259,17 @@ public class MemoryObjectImpl implements MemoryObject {
             this.subKeys = new HashSet<>();
         }
 
+        /**
+         * Copy constructor producing an item with an independent {@code subKeys} set. Used at the
+         * child-memory isolation boundary so the field-list updates that {@link #set} and {@link
+         * #fillParents} apply in place stay confined to the copy's own scope.
+         */
+        MemoryItem(MemoryItem other) {
+            this.type = other.type;
+            this.value = other.value;
+            this.subKeys = new HashSet<>(other.subKeys);
+        }
+
         public ItemType getType() {
             return type;
         }

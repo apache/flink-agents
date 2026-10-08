@@ -41,7 +41,11 @@ public class IsolatedCachedMemoryStore extends CachedMemoryStore {
         if (ownCache.containsKey(key)) {
             return ownCache.get(key);
         }
-        return parent.get(key);
+        MemoryObjectImpl.MemoryItem parentItem = parent.get(key);
+        // Copy on read so this scope owns the item it exposes: MemoryObjectImpl.set() applies its
+        // field-list updates to the resolved item in place, and the copy confines those updates to
+        // the child scope, leaving the parent's item unchanged.
+        return parentItem == null ? null : new MemoryObjectImpl.MemoryItem(parentItem);
     }
 
     @Override
