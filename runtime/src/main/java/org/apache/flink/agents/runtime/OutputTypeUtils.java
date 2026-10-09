@@ -23,16 +23,21 @@ import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.types.AbstractDataType;
 import org.apache.flink.table.types.DataType;
+import org.apache.flink.table.types.logical.LogicalType;
+import org.apache.flink.table.types.logical.utils.LogicalTypeParser;
 import org.apache.flink.table.types.utils.TypeConversions;
 import org.apache.flink.types.Row;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.time.temporal.Temporal;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Output-type conversion helpers for the typed {@code toTable(Schema)} terminal.
@@ -60,15 +65,16 @@ public final class OutputTypeUtils {
     /**
      * Derives a {@link RowTypeInfo} from the physical columns of a Table {@link Schema}.
      *
-     * <p>Each physical column must carry a resolved {@link DataType} (as produced by {@code
-     * DataTypes.STRING()} and friends); computed and metadata columns are ignored because the
-     * planner derives them rather than reading them from the agent output.
+     * <p>Each physical column's type is resolved to a concrete {@link DataType}: a {@code
+     * DataTypes} object is used as-is, while a SQL type string such as {@code column("id",
+     * "BIGINT")} is parsed first. Computed and metadata columns are ignored because the planner
+     * derives them rather than reading them from the agent output.
      *
      * @param schema the output schema declared by the user.
      * @return a row type whose field names and types follow the schema's physical columns, in
      *     order.
      * @throws IllegalArgumentException if the schema has no physical columns, or a physical
-     *     column's type is not a resolved {@link DataType}.
+     *     column's type is neither a resolved {@link DataType} nor a parseable SQL type string.
      */
     public static RowTypeInfo schemaToRowTypeInfo(Schema schema) {
         List<String> names = new ArrayList<>();
@@ -79,23 +85,50 @@ public final class OutputTypeUtils {
             }
             AbstractDataType<?> abstractType =
                     ((Schema.UnresolvedPhysicalColumn) column).getDataType();
-            if (!(abstractType instanceof DataType)) {
-                throw new IllegalArgumentException(
-                        "Cannot derive the output row type from column '"
-                                + column.getName()
-                                + "': its type "
-                                + abstractType
-                                + " is not a resolved DataType. Build the schema with concrete"
-                                + " types such as DataTypes.STRING().");
-            }
             names.add(column.getName());
-            types.add(TypeConversions.fromDataTypeToLegacyInfo((DataType) abstractType));
+            types.add(
+                    TypeConversions.fromDataTypeToLegacyInfo(
+                            resolveDataType(abstractType, column.getName())));
         }
         if (names.isEmpty()) {
             throw new IllegalArgumentException(
                     "Cannot derive an output row type: the schema declares no physical columns.");
         }
         return new RowTypeInfo(types.toArray(new TypeInformation[0]), names.toArray(new String[0]));
+    }
+
+    /**
+     * Resolves a schema column's {@link AbstractDataType} to a concrete {@link DataType}.
+     *
+     * <p>A column declared with a {@code DataTypes} object is already resolved and is returned
+     * as-is. A column declared with a SQL type string such as {@code column("id", "BIGINT")}
+     * carries an {@link org.apache.flink.table.types.UnresolvedDataType} that {@link
+     * TypeConversions#fromDataTypeToLegacyInfo} rejects, so its SQL text is parsed through Flink's
+     * {@link LogicalTypeParser} first -- the same resolution the planner applies once the schema
+     * reaches it, and the one the Python {@code schema_to_row_type_info} performs.
+     */
+    private static DataType resolveDataType(AbstractDataType<?> abstractType, String columnName) {
+        if (abstractType instanceof DataType) {
+            return (DataType) abstractType;
+        }
+        String sqlType = abstractType.toString();
+        if (sqlType.startsWith("[") && sqlType.endsWith("]")) {
+            sqlType = sqlType.substring(1, sqlType.length() - 1);
+        }
+        try {
+            LogicalType logicalType =
+                    LogicalTypeParser.parse(
+                            sqlType, Thread.currentThread().getContextClassLoader());
+            return TypeConversions.fromLogicalToDataType(logicalType);
+        } catch (RuntimeException e) {
+            throw new IllegalArgumentException(
+                    "Cannot derive the output row type from column '"
+                            + columnName
+                            + "': its type "
+                            + abstractType
+                            + " is neither a resolved DataType nor a parseable SQL type string.",
+                    e);
+        }
     }
 
     /**
@@ -108,8 +141,10 @@ public final class OutputTypeUtils {
      *   <li>a {@link Row}: projected by name when named, otherwise passed through positionally
      *       after an arity check;
      *   <li>a {@link Map}: read by the row type's field names;
-     *   <li>an object exposing every column name (a POJO): read by name via getters or fields;
-     *   <li>otherwise a scalar value with a single-column row type: wrapped into a one-column row.
+     *   <li>a scalar value with a single-column row type: wrapped into a one-column row, checked
+     *       before the POJO lookup so a column name matching an internal member of the scalar's own
+     *       type does not extract that member;
+     *   <li>an object exposing every column name (a POJO): read by name via getters or fields.
      * </ul>
      *
      * @param value the emitted output object.
@@ -131,6 +166,13 @@ public final class OutputTypeUtils {
             }
             return Row.of(fields);
         }
+        if (arity == 1 && isScalar(value)) {
+            // A scalar output mapped into a single-column table. Recognized before the POJO
+            // property lookup so a column name that happens to match an internal member of the
+            // scalar's own type -- String.value, String.getBytes() -- does not extract that
+            // member instead of wrapping the value itself.
+            return Row.of(value);
+        }
         if (canReadAll(value, names)) {
             Object[] fields = new Object[arity];
             for (int i = 0; i < arity; i++) {
@@ -139,7 +181,8 @@ public final class OutputTypeUtils {
             return Row.of(fields);
         }
         if (arity == 1) {
-            // A scalar output mapped into a single-column table.
+            // A single-column value that is not a recognized scalar (e.g. a nested structure the
+            // schema maps into one column); wrap it whole.
             return Row.of(value);
         }
         throw new IllegalArgumentException(
@@ -213,6 +256,27 @@ public final class OutputTypeUtils {
             throw new IllegalArgumentException(
                     "Failed to read output field '" + name + "' from " + type.getName() + ".", e);
         }
+    }
+
+    /**
+     * Returns whether {@code value} is a scalar (non-decomposable) output rather than a POJO whose
+     * fields should be projected into columns.
+     *
+     * <p>JDK value types carry internal members -- {@code String} has a private {@code value} field
+     * and a {@code getBytes()} accessor -- that a by-name property lookup would otherwise mistake
+     * for schema columns. Treating them as scalars keeps a single-column schema wrapping the value
+     * itself, while a user POJO still projects its fields by name.
+     */
+    private static boolean isScalar(Object value) {
+        return value instanceof CharSequence
+                || value instanceof Number
+                || value instanceof Boolean
+                || value instanceof Character
+                || value instanceof Enum<?>
+                || value instanceof Temporal
+                || value instanceof Date
+                || value instanceof UUID
+                || value instanceof byte[];
     }
 
     private static boolean canReadAll(Object bean, String[] names) {

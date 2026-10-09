@@ -107,6 +107,44 @@ public class OutputTypeUtilsTest {
     }
 
     @Test
+    void schemaToRowTypeInfoResolvesSqlStringColumns() {
+        // A column declared with a SQL type string is an UnresolvedDataType; it resolves to the
+        // same row type as the equivalent DataTypes declaration, for scalars and a nested ROW.
+        RowTypeInfo fromSql =
+                rowType(
+                        Schema.newBuilder()
+                                .column("id", "BIGINT")
+                                .column("label", "STRING")
+                                .column("nested", "ROW<x INT, y STRING>")
+                                .build());
+
+        assertThat(fromSql.getFieldNames()).containsExactly("id", "label", "nested");
+        assertThat(fromSql.getTypeAt("id").getTypeClass()).isEqualTo(Long.class);
+        assertThat(fromSql.getTypeAt("label").getTypeClass()).isEqualTo(String.class);
+        assertThat(((RowTypeInfo) fromSql.<Row>getTypeAt("nested")).getFieldNames())
+                .containsExactly("x", "y");
+
+        // The SQL strings agree with the equivalent DataTypes object columns.
+        RowTypeInfo fromDataTypes =
+                rowType(
+                        Schema.newBuilder()
+                                .column("id", DataTypes.BIGINT())
+                                .column("label", DataTypes.STRING())
+                                .build());
+        RowTypeInfo sqlScalars =
+                rowType(
+                        Schema.newBuilder()
+                                .column("id", "BIGINT")
+                                .column("label", "STRING")
+                                .build());
+        assertThat(sqlScalars.getFieldNames()).containsExactly(fromDataTypes.getFieldNames());
+        assertThat(sqlScalars.getTypeAt("id").getTypeClass())
+                .isEqualTo(fromDataTypes.getTypeAt("id").getTypeClass());
+        assertThat(sqlScalars.getTypeAt("label").getTypeClass())
+                .isEqualTo(fromDataTypes.getTypeAt("label").getTypeClass());
+    }
+
+    @Test
     void adaptToRowWrapsScalarIntoSingleColumn() {
         RowTypeInfo rowType = rowType(Schema.newBuilder().column("f0", DataTypes.STRING()).build());
 
@@ -114,6 +152,20 @@ public class OutputTypeUtilsTest {
 
         assertThat(row.getArity()).isEqualTo(1);
         assertThat(row.getField(0)).isEqualTo("hello");
+    }
+
+    @Test
+    void adaptToRowWrapsScalarWhenColumnNameCollidesWithStringInternals() {
+        // "value" is String's private byte[] field and "bytes" matches String.getBytes(); a scalar
+        // String must be wrapped whole rather than have that internal member extracted, which
+        // would otherwise surface as ClassCastException: byte[] cannot be cast to String.
+        RowTypeInfo valueColumn =
+                rowType(Schema.newBuilder().column("value", DataTypes.STRING()).build());
+        assertThat(OutputTypeUtils.adaptToRow("hello", valueColumn).getField(0)).isEqualTo("hello");
+
+        RowTypeInfo bytesColumn =
+                rowType(Schema.newBuilder().column("bytes", DataTypes.STRING()).build());
+        assertThat(OutputTypeUtils.adaptToRow("hello", bytesColumn).getField(0)).isEqualTo("hello");
     }
 
     @Test
