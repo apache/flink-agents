@@ -581,6 +581,91 @@ class BaseChatModelTest {
         assertNull(connection.capturedTools);
     }
 
+    /** Setup parameters carrying tool-only keys at the top level and nested. */
+    private static Map<String, Object> paramsWithToolChoice() {
+        Map<String, Object> nested = new HashMap<>();
+        nested.put("tool_choice", "auto");
+        nested.put("tool_choice_option", "auto");
+        nested.put("parallel_tool_calls", false);
+        nested.put("top_p", 0.5);
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", "setup-model");
+        params.put("tool_choice", "auto");
+        params.put("tool_choice_option", "auto");
+        params.put("parallel_tool_calls", true);
+        params.put("additional_kwargs", nested);
+        return params;
+    }
+
+    @Test
+    @DisplayName(
+            "Explicit chat() with a schema and no tools omits tool-only parameters, top level and"
+                    + " nested, without mutating the setup's parameters")
+    void testExplicitChatWithSchemaAndNoToolsOmitsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        Map<String, Object> setupParams = paramsWithToolChoice();
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, setupParams);
+
+        setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")), List.of(), null, String.class);
+
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
+        assertEquals(paramsWithToolChoice(), setupParams);
+    }
+
+    @Test
+    @DisplayName("Plain chat() without tools keeps tool-only parameters")
+    void testPlainChatKeepsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+
+        setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")));
+
+        assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Explicit chat() with a schema and tools keeps tool-only parameters")
+    void testExplicitChatWithSchemaAndToolsKeepsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+        Tool tool = new SubagentTool("given", "help", "{\"type\":\"object\"}");
+
+        setup.chat(
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                List.of(tool),
+                null,
+                String.class);
+
+        assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Gate asks the connection with the tool-only parameters omitted")
+    void testWillApplyNativeStructuredOutputQueriesWithoutToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+
+        setup.willApplyNativeStructuredOutput(String.class);
+
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.queriedModelParams);
+    }
+
     @Test
     @DisplayName(
             "chat(messages, promptArgs, modelParams) sends the prepared request and the bound tools"

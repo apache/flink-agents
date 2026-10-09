@@ -45,6 +45,10 @@ import java.util.Set;
 
 public abstract class BaseChatModelSetup extends Resource {
 
+    // Providers reject these parameters on a request that defines no tools.
+    private static final Set<String> TOOL_ONLY_PARAMS =
+            Set.of("tool_choice", "tool_choice_option", "parallel_tool_calls");
+
     protected final String connectionName;
     protected String model;
     protected Object prompt;
@@ -248,6 +252,10 @@ public abstract class BaseChatModelSetup extends Resource {
      * and the bound tools are not added. {@link #chat(List, Map, Map)} prepares the request and
      * sends it through this method.
      *
+     * <p>When {@code outputSchema} is non-null and {@code tools} is empty, the parameters sent to
+     * the connection omit {@code tool_choice}, {@code tool_choice_option} and {@code
+     * parallel_tool_calls}, at the top level and inside a nested {@code additional_kwargs} map.
+     *
      * @param messages the messages to send
      * @param tools the tools to bind to the request
      * @param modelParams parameters for this call, merged over {@link #getParameters()}, may be
@@ -272,7 +280,22 @@ public abstract class BaseChatModelSetup extends Resource {
         if (outputSchema == null) {
             return connection.chat(messages, tools, params);
         }
+        if (tools.isEmpty()) {
+            params = withoutToolOnlyParams(params);
+        }
         return connection.chat(messages, tools, params, outputSchema);
+    }
+
+    private static Map<String, Object> withoutToolOnlyParams(Map<String, Object> params) {
+        Map<String, Object> stripped = new HashMap<>(params);
+        stripped.keySet().removeAll(TOOL_ONLY_PARAMS);
+        Object nested = stripped.get("additional_kwargs");
+        if (nested instanceof Map) {
+            Map<Object, Object> nestedCopy = new HashMap<>((Map<?, ?>) nested);
+            nestedCopy.keySet().removeAll(TOOL_ONLY_PARAMS);
+            stripped.put("additional_kwargs", nestedCopy);
+        }
+        return stripped;
     }
 
     /**
@@ -284,7 +307,8 @@ public abstract class BaseChatModelSetup extends Resource {
      * the outcome through the {@link StructuredOutputStrategy} instead of calling this.
      *
      * <p>The connection is asked about a request carrying this schema, no tools, and the parameters
-     * {@link #getParameters()} returns. Per-call parameters passed to {@link #chat(List, List, Map,
+     * {@link #getParameters()} returns, without the tool-only parameters that a schema-carrying
+     * request with no tools omits. Per-call parameters passed to {@link #chat(List, List, Map,
      * Object)} are not seen here, so a caller that adds parameters affecting feasibility must not
      * rely on this answer.
      *
@@ -317,7 +341,8 @@ public abstract class BaseChatModelSetup extends Resource {
             return false;
         }
         NativeStructuredOutputSupport support =
-                connection.supportsNativeStructuredOutput(outputSchema, List.of(), getParameters());
+                connection.supportsNativeStructuredOutput(
+                        outputSchema, List.of(), withoutToolOnlyParams(getParameters()));
         if (support == NativeStructuredOutputSupport.INFEASIBLE
                 && structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
             throw new IllegalArgumentException(

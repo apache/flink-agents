@@ -378,6 +378,22 @@ class BaseChatModelConnection(Resource, ABC):
         """
 
 
+# Providers reject these parameters on a request that defines no tools.
+_TOOL_ONLY_PARAMS = frozenset(
+    {"tool_choice", "tool_choice_option", "parallel_tool_calls"}
+)
+
+
+def _without_tool_only_params(kwargs: Mapping[str, Any]) -> Dict[str, Any]:
+    stripped = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_PARAMS}
+    nested = stripped.get("additional_kwargs")
+    if isinstance(nested, Mapping):
+        stripped["additional_kwargs"] = {
+            k: v for k, v in nested.items() if k not in _TOOL_ONLY_PARAMS
+        }
+    return stripped
+
+
 def _describe_output_schema(output_schema: OutputSchema) -> str:
     inner = output_schema.output_schema
     if isinstance(inner, type):
@@ -610,6 +626,11 @@ class BaseChatModelSetup(Resource):
         The bound prompt, the skill-discovery message and the bound tools are not
         added. ``chat`` prepares the request and sends it through this method.
 
+        When ``output_schema`` is set and ``tools`` is empty, the parameters sent to
+        the connection omit ``tool_choice``, ``tool_choice_option`` and
+        ``parallel_tool_calls``, at the top level and inside a nested
+        ``additional_kwargs`` dict.
+
         Args:
             messages: The messages to send.
             tools: The tools to bind to the request.
@@ -628,6 +649,8 @@ class BaseChatModelSetup(Resource):
         merged_kwargs.update(kwargs)
         if output_schema is None:
             return connection.chat(messages, tools=tools, **merged_kwargs)
+        if not tools:
+            merged_kwargs = _without_tool_only_params(merged_kwargs)
         return connection.chat(
             messages, tools=tools, output_schema=output_schema, **merged_kwargs
         )
@@ -643,9 +666,10 @@ class BaseChatModelSetup(Resource):
         ``structured_output_strategy`` instead of calling this.
 
         The connection is asked about a request carrying this schema, no tools, and
-        the parameters ``model_kwargs`` returns. Per-call keyword arguments passed to
-        ``chat_explicit`` are not seen here, so a caller that adds parameters
-        affecting feasibility must not rely on this answer.
+        the parameters ``model_kwargs`` returns, without the tool-only parameters that
+        a schema-carrying request with no tools omits. Per-call keyword arguments
+        passed to ``chat_explicit`` are not seen here, so a caller that adds
+        parameters affecting feasibility must not rely on this answer.
 
         A ``True`` answer is not a promise that the call succeeds: a connection may
         still raise once its native branch applies the schema, for example on a
@@ -681,7 +705,7 @@ class BaseChatModelSetup(Resource):
                 raise ValueError(msg)
             return False
         support = connection.supports_native_structured_output(
-            output_schema, [], self.model_kwargs
+            output_schema, [], _without_tool_only_params(self.model_kwargs)
         )
         if (
             support == NativeStructuredOutputSupport.INFEASIBLE

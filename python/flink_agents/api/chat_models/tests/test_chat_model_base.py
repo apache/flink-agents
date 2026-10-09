@@ -661,6 +661,75 @@ def test_chat_explicit_merges_kwargs_over_model_kwargs() -> None:
     assert connection.captured_kwargs == _SETUP_PARAMS
 
 
+def _params_with_tool_choice() -> Dict[str, Any]:
+    return {
+        "model": "setup-model",
+        "tool_choice": "auto",
+        "tool_choice_option": "auto",
+        "parallel_tool_calls": True,
+        "additional_kwargs": {
+            "tool_choice": "auto",
+            "tool_choice_option": "auto",
+            "parallel_tool_calls": False,
+            "top_p": 0.5,
+        },
+    }
+
+
+_STRIPPED_PARAMS = {"model": "setup-model", "additional_kwargs": {"top_p": 0.5}}
+
+
+def test_chat_explicit_with_schema_and_no_tools_omits_tool_only_params() -> None:
+    """A schema-carrying request without tools omits the tool-only parameters, top
+    level and nested, and leaves the setup's parameters untouched.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+
+    setup.chat_explicit(
+        [ChatMessage.of(MessageRole.USER, "hi")],
+        [],
+        OutputSchema(output_schema=_Answer),
+    )
+
+    assert connection.captured_kwargs == _STRIPPED_PARAMS
+    assert setup.setup_params == _params_with_tool_choice()
+
+
+def test_plain_chat_keeps_tool_only_params() -> None:
+    """A plain chat() on a setup without tools sends the tool-only parameters."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+
+    setup.chat([ChatMessage.of(MessageRole.USER, "hi")])
+
+    assert connection.captured_kwargs == _params_with_tool_choice()
+
+
+def test_chat_explicit_with_schema_and_tools_keeps_tool_only_params() -> None:
+    """A schema-carrying request that binds tools sends the tool-only parameters."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+
+    setup.chat_explicit(
+        [ChatMessage.of(MessageRole.USER, "hi")],
+        [_StubTool()],
+        OutputSchema(output_schema=_Answer),
+    )
+
+    assert connection.captured_kwargs == _params_with_tool_choice()
+
+
+def test_will_apply_native_structured_output_queries_without_tool_only_params() -> None:
+    """The gate asks about the same parameters the schema-carrying request sends."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.setup_params = _params_with_tool_choice()
+
+    setup.will_apply_native_structured_output(OutputSchema(output_schema=_Answer))
+
+    assert connection.queried_model_kwargs == _STRIPPED_PARAMS
+
+
 class _ExplicitCallRecordingSetup(_RecordingChatModelSetup):
     """Records what chat() hands to chat_explicit() instead of calling a model."""
 
