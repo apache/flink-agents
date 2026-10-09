@@ -385,20 +385,6 @@ def _describe_output_schema(output_schema: OutputSchema) -> str:
     return str(inner)
 
 
-def _without_tool_traffic(messages: Sequence[ChatMessage]) -> List[ChatMessage]:
-    # Whole tool turns go rather than only their tool calls: some providers reject
-    # tool calls or tool results in a request that defines no tools, and dropping
-    # the whole turn keeps user and assistant turns alternating.
-    stripped: List[ChatMessage] = []
-    for message in messages:
-        if message.role == MessageRole.TOOL:
-            continue
-        if message.role == MessageRole.ASSISTANT and message.tool_calls:
-            continue
-        stripped.append(message)
-    return stripped
-
-
 class BaseChatModelSetup(Resource):
     """Base abstract class for chat model setup.
 
@@ -590,34 +576,7 @@ class BaseChatModelSetup(Resource):
         ChatMessage
             Model response message
         """
-        messages = self.prepare_request_messages(messages, prompt_args)
-
-        # Call chat model connection to execute chat
-        merged_kwargs = self.model_kwargs.copy()
-        merged_kwargs.update(kwargs)
-        connection = self._get_connection()
-        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
-
-    def prepare_request_messages(
-        self,
-        messages: Sequence[ChatMessage],
-        prompt_args: Mapping[str, Any] | None = None,
-    ) -> List[ChatMessage]:
-        """Build the messages ``chat`` sends to the connection.
-
-        Framework-facing. The bound prompt, if any, is rendered with ``prompt_args``
-        stringified via ``str()`` and followed by the input messages that carry
-        content or come from the assistant; the skill-discovery message, if any, is
-        then inserted after the first system message.
-
-        Args:
-            messages: The input messages.
-            prompt_args: Variables filling the bound prompt's template.
-
-        Returns:
-            A new list; ``messages`` is left unchanged.
-        """
-        prepared = list(messages)
+        # Apply prompt template
         if self.prompt is not None:
             str_prompt_args: Dict[str, str] = (
                 {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
@@ -629,30 +588,64 @@ class BaseChatModelSetup(Resource):
             for msg in messages:
                 if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
-            prepared = prompt_messages
+            messages = prompt_messages
 
         if self.skill_discovery_prompt:
             # Right after the first system message, or at the head when there is none.
-            index = find_first_system_message(prepared) + 1
+            index = find_first_system_message(messages) + 1
             injected = [ChatMessage.system(self.skill_discovery_prompt)]
-            prepared = prepared[:index] + injected + prepared[index:]
-        return prepared
+            messages = list(messages[:index]) + injected + list(messages[index:])
+
+        return self.chat_explicit(messages, self._get_tools(), **kwargs)
+
+    def chat_explicit(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool],
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Send the messages and tools exactly as given.
+
+        The bound prompt, the skill-discovery message and the bound tools are not
+        added. ``chat`` prepares the request and sends it through this method.
+
+        Args:
+            messages: The messages to send.
+            tools: The tools to bind to the request.
+            output_schema: The schema the provider applies natively, or ``None`` for
+                an unconstrained request.
+            **kwargs: Model parameters for this call, merged over ``model_kwargs``.
+
+        Returns:
+            The connection's response.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        connection = self._get_connection()
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        if output_schema is None:
+            return connection.chat(messages, tools=tools, **merged_kwargs)
+        return connection.chat(
+            messages, tools=tools, output_schema=output_schema, **merged_kwargs
+        )
 
     def will_apply_native_structured_output(
         self, output_schema: OutputSchema | None
     ) -> bool:
         """Whether ``output_schema`` should travel through the provider's native
-        structured output on a call issued through ``chat_structured``, rather than
-        be described to the model in the prompt.
+        structured output on a call issued through ``chat_explicit`` with no tools,
+        rather than be described to the model in the prompt.
 
         Framework-facing. A user configures the outcome through
         ``structured_output_strategy`` instead of calling this.
 
-        The connection is asked about the request ``chat_structured`` sends: this
-        schema, no tools, and the parameters ``model_kwargs`` returns, read once so
-        that the answer and the request concern the same parameters. Per-call keyword
-        arguments passed to ``chat_structured`` are not seen here, so a caller that
-        adds parameters affecting feasibility must not rely on this answer.
+        The connection is asked about a request carrying this schema, no tools, and
+        the parameters ``model_kwargs`` returns. Per-call keyword arguments passed to
+        ``chat_explicit`` are not seen here, so a caller that adds parameters
+        affecting feasibility must not rely on this answer.
 
         A ``True`` answer is not a promise that the call succeeds: a connection may
         still raise once its native branch applies the schema, for example on a
@@ -704,65 +697,6 @@ class BaseChatModelSetup(Resource):
             )
             raise ValueError(msg)
         return self.structured_output_strategy.resolves_to_native(support)
-
-    def chat_structured(
-        self,
-        messages: Sequence[ChatMessage],
-        output_schema: OutputSchema,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        """Send one schema-carrying request to the connection, for a caller that has
-        decided through ``will_apply_native_structured_output`` that the schema
-        travels natively.
-
-        Framework-facing. A user reaches a model through ``chat``.
-
-        The messages are sent without the bound prompt or the skill-discovery message,
-        because messages that already passed through ``chat`` would otherwise carry
-        them twice. No tools are bound, because a provider may drop a native schema
-        from a request that also binds tools. Tool traffic is removed as well, since
-        some providers reject tool calls and tool results in a request that defines
-        no tools: tool messages and every assistant message carrying tool calls are
-        dropped whole, and every other message is sent as the same object. The
-        caller's list and messages are left unchanged.
-
-        User and assistant turns still alternate only when an assistant message
-        without tool calls follows the tool traffic, which a caller guarantees by
-        including the final answer.
-
-        The caller passes messages already prepared by ``prepare_request_messages``;
-        they are not prepared again here.
-
-        Args:
-            messages: The conversation to send.
-            output_schema: The schema the call carries; must not be ``None``.
-            **kwargs: Model parameters for this call, merged over ``model_kwargs``
-                the same way ``chat`` merges them. Prompt arguments are not accepted,
-                since no prompt is rendered: a ``prompt_args`` passed here would
-                reach the provider as a model parameter.
-
-        Returns:
-            The connection's response.
-
-        Raises:
-            TypeError: If ``open()`` has not resolved the connection yet, or if
-                ``output_schema`` is ``None``.
-        """
-        connection = self._get_connection()
-        if output_schema is None:
-            msg = (
-                "chat_structured() requires an output schema. Call chat() for an "
-                "unconstrained request."
-            )
-            raise TypeError(msg)
-        merged_kwargs = self.model_kwargs.copy()
-        merged_kwargs.update(kwargs)
-        return connection.chat(
-            _without_tool_traffic(messages),
-            tools=[],
-            output_schema=output_schema,
-            **merged_kwargs,
-        )
 
     def _record_token_metrics(
         self,

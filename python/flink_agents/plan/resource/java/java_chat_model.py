@@ -240,22 +240,24 @@ class JavaChatModelSetup(BaseChatModelSetup):
         return False
 
     @override
-    def chat_structured(
+    def chat_explicit(
         self,
         messages: Sequence[ChatMessage],
-        output_schema: OutputSchema,
+        tools: List[Tool],
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Always refuses rather than dropping the schema, so an unconstrained
-        response can never be mistaken for a schema-conforming one.
+        """Always refuses rather than dropping the tools or the schema, or adding the
+        Java setup's bound prompt and tools: the bridge reaches only the Java setup's
+        ``chat``, which prepares the request itself.
 
         Raises:
             NotImplementedError: Always.
         """
         msg = (
-            "A Java chat model setup cannot be given an output schema from Python: "
-            "the bridge carries only messages, prompt arguments and keyword "
-            "arguments to the Java setup's chat. Apply the schema on the Java side "
-            "instead."
+            "A Java chat model setup cannot be sent explicit messages, tools or an "
+            "output schema from Python: the bridge carries only messages, prompt "
+            "arguments and keyword arguments to the Java setup's chat, which adds its "
+            "own bound prompt and tools. Apply the schema on the Java side instead."
         )
         raise NotImplementedError(msg)

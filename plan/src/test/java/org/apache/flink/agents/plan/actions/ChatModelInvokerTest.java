@@ -240,7 +240,6 @@ class ChatModelInvokerTest {
     }
 
     private static RunnerContext syncContext(BaseChatModelSetup model) throws Exception {
-        when(model.prepareRequestMessages(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         RunnerContext ctx = mock(RunnerContext.class);
         ReadableConfiguration config = mock(ReadableConfiguration.class);
         when(ctx.getConfig()).thenReturn(config);
@@ -389,7 +388,7 @@ class ChatModelInvokerTest {
                                         3,
                                         0)));
         verify(ctx, times(2)).durableExecute(any());
-        verify(model, never()).chatStructured(any(), any(), any());
+        verify(model, never()).chat(any(), any(), any(), any());
     }
 
     /**
@@ -402,7 +401,7 @@ class ChatModelInvokerTest {
         RunnerContext ctx = syncContext(model);
         when(model.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
         when(model.chat(any(), any(), any())).thenReturn(ChatMessage.assistant("the answer is 42"));
-        when(model.chatStructured(any(), any(), any()))
+        when(model.chat(any(), any(), any(), any()))
                 .thenReturn(
                         ChatMessage.assistant("not-json"),
                         ChatMessage.assistant("{\"answer\":\"42\"}"));
@@ -456,7 +455,7 @@ class ChatModelInvokerTest {
 
         assertEquals(4, next[0]);
         verify(model, times(2)).chat(any(), any(), any());
-        verify(model, times(2)).chatStructured(any(), any(), any());
+        verify(model, times(2)).chat(any(), any(), any(), any());
         assertEquals(1, replayed.retryCount);
         assertEquals(first.response.getText(), replayed.response.getText());
         assertEquals(

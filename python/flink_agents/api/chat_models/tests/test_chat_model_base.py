@@ -515,8 +515,8 @@ def test_will_apply_native_structured_output_resolves_strategy(
 ) -> None:
     """The gate resolves the strategy against the answer for a toolless request.
 
-    The question concerns the request ``chat_structured`` would send: this schema, the
-    setup's own parameters, and no tools even when the setup binds some.
+    The question concerns a request carrying this schema, the setup's own parameters,
+    and no tools even when the setup binds some.
     """
     setup, connection = _build_structured_setup(strategy, support)
     setup.tools = [_StubTool()]
@@ -615,146 +615,96 @@ def test_will_apply_native_structured_output_none_schema_without_connection(
     assert setup.will_apply_native_structured_output(None) is False
 
 
-def test_chat_structured_requires_open() -> None:
-    """chat_structured() requires a resolved connection."""
+def test_chat_explicit_requires_open() -> None:
+    """chat_explicit() requires a resolved connection."""
     setup = _RecordingChatModelSetup(connection="c", model="m")
 
     with pytest.raises(TypeError, match=r"open\(\)"):
-        setup.chat_structured(
+        setup.chat_explicit(
             [ChatMessage.of(MessageRole.USER, "hi")],
+            [],
             OutputSchema(output_schema=_Answer),
         )
 
 
-def test_chat_structured_sends_messages_as_given_without_tools() -> None:
-    """Messages go out as given, without the bound prompt, skill discovery or tools."""
+def test_chat_explicit_sends_messages_and_tools_as_given() -> None:
+    """Messages and tools go out as given, without the bound prompt, skill discovery
+    or the bound tools.
+    """
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     setup.prompt = Prompt.from_text(text="Bound prompt")
     setup.skill_discovery_prompt = "Available skills"
     setup.tools = [_StubTool()]
-    messages = [
-        ChatMessage.of(MessageRole.SYSTEM, "already prepared"),
-        ChatMessage.of(MessageRole.USER, "hi"),
-    ]
+    given = _StubTool()
+    messages = [ChatMessage.of(MessageRole.USER, "hi")]
     schema = OutputSchema(output_schema=_Answer)
 
-    setup.chat_structured(messages, schema)
+    setup.chat_explicit(messages, [given], schema)
 
     assert connection.captured_messages == messages
-    assert connection.captured_tools == []
+    assert connection.captured_tools is not None
+    assert len(connection.captured_tools) == 1
+    assert connection.captured_tools[0] is given
     assert connection.captured_output_schema is schema
 
 
-def test_chat_structured_merges_kwargs_over_model_kwargs() -> None:
+def test_chat_explicit_merges_kwargs_over_model_kwargs() -> None:
     """Per-call parameters override the setup's parameters, as in chat()."""
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     messages = [ChatMessage.of(MessageRole.USER, "hi")]
     schema = OutputSchema(output_schema=_Answer)
 
-    setup.chat_structured(messages, schema, temperature=0.9)
+    setup.chat_explicit(messages, [], schema, temperature=0.9)
     assert connection.captured_kwargs == {"model": "setup-model", "temperature": 0.9}
 
-    setup.chat_structured(messages, schema)
+    setup.chat_explicit(messages, [], schema)
     assert connection.captured_kwargs == _SETUP_PARAMS
 
 
-def test_chat_structured_rejects_none_schema() -> None:
-    """A None schema is refused instead of sending an unconstrained call."""
-    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+class _ExplicitCallRecordingSetup(_RecordingChatModelSetup):
+    """Records what chat() hands to chat_explicit() instead of calling a model."""
 
-    with pytest.raises(TypeError, match=r"chat\(\)"):
-        setup.chat_structured([ChatMessage.of(MessageRole.USER, "hi")], None)
-    assert connection.captured_messages == []
+    explicit_calls: List[tuple] = Field(default_factory=list)
 
-
-_TOOL_CALL = {
-    "id": "1",
-    "type": "function",
-    "function": {"name": "lookup", "arguments": {}},
-}
-_SYSTEM = ChatMessage.of(MessageRole.SYSTEM, "sys")
-_QUESTION = ChatMessage.of(MessageRole.USER, "question")
-_CALLING_WITH_TEXT = ChatMessage.of(
-    MessageRole.ASSISTANT,
-    "let me look",
-    tool_calls=[_TOOL_CALL],
-    extra_args={"anthropic_content_blocks": [{"type": "tool_use"}]},
-)
-_CALLING_WITHOUT_TEXT = ChatMessage.of(
-    MessageRole.ASSISTANT, "", tool_calls=[_TOOL_CALL]
-)
-_TOOL_RESULT = ChatMessage.of(MessageRole.TOOL, "result")
-_FINAL_ANSWER = ChatMessage.of(MessageRole.ASSISTANT, "final answer")
-_DIRECTIVE = ChatMessage.of(MessageRole.USER, "convert")
+    def chat_explicit(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool],
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        self.explicit_calls.append((list(messages), tools, output_schema, kwargs))
+        return ChatMessage.of(MessageRole.ASSISTANT, "ok")
 
 
-@pytest.mark.parametrize(
-    ("history", "expected"),
-    [
-        (
-            [
-                _SYSTEM,
-                _QUESTION,
-                _CALLING_WITH_TEXT,
-                _TOOL_RESULT,
-                _CALLING_WITHOUT_TEXT,
-                _TOOL_RESULT,
-                _FINAL_ANSWER,
-                _DIRECTIVE,
-            ],
-            [_SYSTEM, _QUESTION, _FINAL_ANSWER, _DIRECTIVE],
-        ),
-        # Tool turns go even when no final answer follows them.
-        (
-            [_SYSTEM, _QUESTION, _CALLING_WITH_TEXT, _TOOL_RESULT, _DIRECTIVE],
-            [_SYSTEM, _QUESTION, _DIRECTIVE],
-        ),
-    ],
-)
-def test_chat_structured_removes_tool_traffic(
-    history: List[ChatMessage], expected: List[ChatMessage]
-) -> None:
-    """Tool results and tool-calling assistant turns are dropped whole.
-
-    The request binds no tools, and some providers reject tool calls or tool results
-    in such a request. Every other message goes out as the same object, and the
-    caller's list and messages, including the dropped ones, are left unchanged.
+def test_chat_sends_the_prepared_request_and_bound_tools_through_chat_explicit() -> (
+    None
+):
+    """chat() renders the bound prompt, injects skill discovery and binds the setup's
+    tools, then sends that request through chat_explicit() without a schema.
     """
-    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
-    messages = [message.model_copy(deep=True) for message in history]
-    expected_sent = [messages[history.index(message)] for message in expected]
-    caller_list = list(messages)
-    snapshot = [message.model_copy(deep=True) for message in messages]
-
-    setup.chat_structured(messages, OutputSchema(output_schema=_Answer))
-
-    sent = connection.captured_messages
-    assert len(sent) == len(expected_sent)
-    assert all(a is b for a, b in zip(sent, expected_sent, strict=True))
-    assert all(a is b for a, b in zip(messages, caller_list, strict=True))
-    assert messages == snapshot
-
-
-def test_prepare_request_messages_matches_what_chat_sends() -> None:
     prompt = Prompt.from_messages(
         messages=[
             ChatMessage.of(MessageRole.SYSTEM, "You are terse."),
             ChatMessage.of(MessageRole.USER, "Task: {task}"),
         ]
     )
-    setup, connection = _build_setup(prompt)
+    bound = _StubTool()
+    setup = _ExplicitCallRecordingSetup(
+        connection="c", model="m", prompt=prompt, tools=[bound]
+    )
     setup.skill_discovery_prompt = "Available skills"
-    raw = [ChatMessage(role=MessageRole.USER)]
 
-    prepared = setup.prepare_request_messages(raw, prompt_args={"task": 7})
-    setup.chat(raw, prompt_args={"task": 7})
+    setup.chat([ChatMessage(role=MessageRole.USER)], prompt_args={"task": 7}, top_p=1)
 
-    assert [(m.role, m.text) for m in prepared] == [
+    assert len(setup.explicit_calls) == 1
+    messages, tools, output_schema, kwargs = setup.explicit_calls[0]
+    assert [(m.role, m.text) for m in messages] == [
         (MessageRole.SYSTEM, "You are terse."),
         (MessageRole.SYSTEM, "Available skills"),
         (MessageRole.USER, "Task: 7"),
     ]
-    assert [(m.role, m.text) for m in connection.captured_messages] == [
-        (m.role, m.text) for m in prepared
-    ]
-    assert raw == [ChatMessage(role=MessageRole.USER)]
+    assert len(tools) == 1
+    assert tools[0] is bound
+    assert output_schema is None
+    assert kwargs == {"top_p": 1}

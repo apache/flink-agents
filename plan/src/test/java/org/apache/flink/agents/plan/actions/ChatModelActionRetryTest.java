@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
@@ -640,12 +641,13 @@ class ChatModelActionRetryTest {
     }
 
     /**
-     * The conversion instruction the schema-carrying call appends, spelled out rather than read
-     * from the invoker so the assertion pins the exact words a provider receives.
+     * The conversion instruction that leads the schema-carrying call's message, spelled out rather
+     * than read from the invoker so the assertion pins the exact words a provider receives.
      */
     private static final String FINALIZE_DIRECTIVE =
-            "Convert the previous assistant response into the required structured output format."
-                    + " Preserve its meaning and do not add or infer any new information.";
+            "Convert the response below into the required structured output format."
+                    + " Preserve its meaning and do not add or infer any new information.\n\n"
+                    + "Response:\n";
 
     private static OutputSchema rowTypeSchema() {
         return new OutputSchema(
@@ -662,7 +664,7 @@ class ChatModelActionRetryTest {
         ChatMessage loopAnswer = new ChatMessage(MessageRole.ASSISTANT, "the answer is 42");
         when(chatModel.chat(any(), any(), any())).thenReturn(loopAnswer);
         when(chatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
-        when(chatModel.chatStructured(any(), any(), any()))
+        when(chatModel.chat(any(), any(), any(), any()))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
 
         ChatModelAction.chat(
@@ -674,14 +676,16 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         ArgumentCaptor<List<ChatMessage>> messages = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<Tool>> tools = ArgumentCaptor.forClass(List.class);
         ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
-        verify(chatModel).chatStructured(messages.capture(), params.capture(), eq(Map.class));
+        verify(chatModel)
+                .chat(messages.capture(), tools.capture(), params.capture(), eq(Map.class));
+        // Only the directive and the answer's text: no part of the loop's request is resent.
         List<ChatMessage> sent = messages.getValue();
-        assertThat(sent).hasSize(3);
-        assertThat(sent.get(0).getText()).isEqualTo("hi");
-        assertThat(sent.get(1)).isSameAs(loopAnswer);
-        assertThat(sent.get(2).getRole()).isEqualTo(MessageRole.USER);
-        assertThat(sent.get(2).getText()).isEqualTo(FINALIZE_DIRECTIVE);
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0).getRole()).isEqualTo(MessageRole.USER);
+        assertThat(sent.get(0).getText()).isEqualTo(FINALIZE_DIRECTIVE + "the answer is 42");
+        assertThat(tools.getValue()).isEmpty();
         assertThat(params.getValue()).isEmpty();
         verify(chatModel, times(1)).chat(any(), any(), any());
         assertThat(durableCallIds).containsExactly("chat", "chat:final");
@@ -722,7 +726,7 @@ class ChatModelActionRetryTest {
         // Consulted and answered no: without this the test cannot tell a suppressed
         // finalization from an invoker that never asks.
         verify(chatModel).willApplyNativeStructuredOutput(schema);
-        verify(chatModel, never()).chatStructured(any(), any(), any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
         assertThat(durableCallIds).containsExactly("chat");
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter, times(1))
@@ -750,7 +754,7 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         verify(chatModel, never()).willApplyNativeStructuredOutput(any());
-        verify(chatModel, never()).chatStructured(any(), any(), any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
     }
 
     @Test
@@ -781,7 +785,7 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         verify(chatModel).willApplyNativeStructuredOutput(Map.class);
-        verify(chatModel, never()).chatStructured(any(), any(), any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
         assertThat(durableCallIds).containsExactly("chat");
         assertThat(sentEvents).hasSize(1);
         assertThat(sentEvents.get(0).getType()).isEqualTo(ToolRequestEvent.EVENT_TYPE);
@@ -795,7 +799,7 @@ class ChatModelActionRetryTest {
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "the answer is 42"));
         when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
-        when(chatModel.chatStructured(any(), any(), any()))
+        when(chatModel.chat(any(), any(), any(), any()))
                 .thenThrow(new RuntimeException("conversion call exploded"));
 
         ChatModelAction.chat(
@@ -808,7 +812,7 @@ class ChatModelActionRetryTest {
 
         // The retry repeats the whole attempt, loop call included.
         verify(chatModel, times(2)).chat(any(), any(), any());
-        verify(chatModel, times(2)).chatStructured(any(), any(), any());
+        verify(chatModel, times(2)).chat(any(), any(), any(), any());
         ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(event.isFailed()).isTrue();
         assertThat(event.getRetryCount()).isEqualTo(1);
@@ -840,7 +844,7 @@ class ChatModelActionRetryTest {
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "the answer is 42"));
         when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
-        when(chatModel.chatStructured(any(), any(), any()))
+        when(chatModel.chat(any(), any(), any(), any()))
                 .thenReturn(
                         new ChatMessage(MessageRole.ASSISTANT, "not-json"),
                         new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
@@ -854,7 +858,7 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         verify(chatModel, times(2)).chat(any(), any(), any());
-        verify(chatModel, times(2)).chatStructured(any(), any(), any());
+        verify(chatModel, times(2)).chat(any(), any(), any(), any());
         assertThat(durableCallIds).containsExactly("chat", "chat:final", "chat", "chat:final");
         ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
         assertThat(event.isFailed()).isFalse();
@@ -911,7 +915,7 @@ class ChatModelActionRetryTest {
                 reportingCtx);
 
         verify(chatModel, never()).chat(any(), any(), any());
-        verify(chatModel, never()).chatStructured(any(), any(), any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
         verify(reportingCtx, never()).durableExecute(any());
         assertThat(sentEvents).hasSize(1);
         ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
@@ -938,7 +942,7 @@ class ChatModelActionRetryTest {
                                         "promptTokens", 10L,
                                         "completionTokens", 5L)));
         when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
-        when(chatModel.chatStructured(any(), any(), any()))
+        when(chatModel.chat(any(), any(), any(), any()))
                 .thenReturn(
                         new ChatMessage(
                                 MessageRole.ASSISTANT,
@@ -967,7 +971,7 @@ class ChatModelActionRetryTest {
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "the answer is 42"));
         when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
-        when(chatModel.chatStructured(any(), any(), any()))
+        when(chatModel.chat(any(), any(), any(), any()))
                 .thenReturn(
                         new ChatMessage(
                                 MessageRole.ASSISTANT,
@@ -1061,7 +1065,6 @@ class ChatModelActionRetryTest {
 
         when(chatModel.getConnectionName()).thenReturn("test-connection");
         when(chatModel.getModel()).thenReturn("configured-model");
-        when(chatModel.prepareRequestMessages(any(), any())).thenAnswer(inv -> inv.getArgument(0));
         when(reportingCtx.getResource(anyString(), eq(ResourceType.CHAT_MODEL)))
                 .thenReturn(chatModel);
         when(reportingCtx.getSensoryMemory()).thenReturn(memory);

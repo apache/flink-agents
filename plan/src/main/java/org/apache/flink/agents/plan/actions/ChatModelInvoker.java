@@ -19,7 +19,6 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -35,7 +34,6 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,12 +52,14 @@ public final class ChatModelInvoker {
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelInvoker.class);
 
     /**
-     * Appended to the schema-carrying call. The schema travels in the request itself, so this says
-     * what to do with the answer already produced rather than restating the shape.
+     * Leads the schema-carrying call's only message, followed by the answer to convert. The schema
+     * travels in the request itself, so this says what to do with the answer rather than restating
+     * the shape.
      */
     private static final String FINALIZE_DIRECTIVE =
-            "Convert the previous assistant response into the required structured output format."
-                    + " Preserve its meaning and do not add or infer any new information.";
+            "Convert the response below into the required structured output format."
+                    + " Preserve its meaning and do not add or infer any new information.\n\n"
+                    + "Response:\n";
 
     private ChatModelInvoker() {}
 
@@ -290,8 +290,6 @@ public final class ChatModelInvoker {
                                         chatModel,
                                         model,
                                         durableCallId,
-                                        messages,
-                                        promptArgs,
                                         response,
                                         outputSchema,
                                         llmMetadata,
@@ -350,9 +348,9 @@ public final class ChatModelInvoker {
 
     /**
      * Issues the tool-free call that carries {@code outputSchema}: the loop call binds tools, and a
-     * provider may drop a native schema from a request that also binds tools. It sends the loop
-     * call's prepared request messages, the loop's final answer and an instruction to convert that
-     * answer, and returns the response to parse.
+     * provider may drop a native schema from a request that also binds tools. It sends one user
+     * message holding an instruction to convert the answer followed by the loop's final answer
+     * text, and returns the response to parse.
      *
      * <p>It holds its own durable slot after the loop call's, and reports its own LLM span.
      */
@@ -360,8 +358,6 @@ public final class ChatModelInvoker {
             BaseChatModelSetup chatModel,
             String model,
             String durableCallId,
-            List<ChatMessage> messages,
-            Map<String, Object> promptArgs,
             ChatMessage loopResponse,
             Object outputSchema,
             Map<String, Object> llmMetadata,
@@ -369,12 +365,11 @@ public final class ChatModelInvoker {
             boolean chatAsync,
             @Nullable FlinkAgentsMetricGroup requestMetricGroup)
             throws Exception {
-        // Prepared as the loop call's request was, so the conversion sees the rendered bound prompt
-        // rather than the raw input it replaced.
+        // A fresh user message rather than resending the response object: it carries no
+        // provider-specific fields of the loop response, and a single user turn avoids provider
+        // rules on turn order and on empty assistant content.
         List<ChatMessage> finalizeMessages =
-                new ArrayList<>(chatModel.prepareRequestMessages(messages, promptArgs));
-        finalizeMessages.add(loopResponse);
-        finalizeMessages.add(new ChatMessage(MessageRole.USER, FINALIZE_DIRECTIVE));
+                List.of(ChatMessage.user(FINALIZE_DIRECTIVE + loopResponse.getText()));
 
         DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
@@ -392,8 +387,8 @@ public final class ChatModelInvoker {
                     public InvocationOutcome call() throws Exception {
                         try {
                             return new InvocationOutcome(
-                                    chatModel.chatStructured(
-                                            finalizeMessages, Map.of(), outputSchema),
+                                    chatModel.chat(
+                                            finalizeMessages, List.of(), Map.of(), outputSchema),
                                     null);
                         } catch (Exception e) {
                             if (ModelRoutingResolver.isCancellation(e)) {

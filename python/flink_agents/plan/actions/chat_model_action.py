@@ -62,16 +62,16 @@ _PROMPT_ARGS = "prompt_args"
 _FINISH_REASON = "finish_reason"
 _TRUNCATED_FINISH_REASON = "length"
 _CONTENT_FILTERED_FINISH_REASON = "content_filter"
+# Leads the schema-carrying call's only message, followed by the answer to convert.
 # The schema travels in the request itself, so the instruction says what to do with
-# the answer already produced rather than restating the shape.
+# the answer rather than restating the shape.
 _FINALIZE_DIRECTIVE = (
-    "Convert the previous assistant response into the required structured output"
-    " format. Preserve its meaning and do not add or infer any new information."
+    "Convert the response below into the required structured output format."
+    " Preserve its meaning and do not add or infer any new information.\n\n"
+    "Response:\n"
 )
-# The finalization call's arguments embed the loop response, which a recovered run
-# holds as an unpickled copy whose pickled form differs, so an identity derived from
-# the arguments would not match its record. The loop call's own record already pins
-# what this call receives, so a fixed identity is enough.
+# The loop call's own record already pins the answer this call converts, so a fixed
+# identity is enough and stays stable whatever form the arguments take on recovery.
 _FINALIZE_DURABLE_ID = "chat:final"
 
 _logger = logging.getLogger(__name__)
@@ -109,22 +109,17 @@ def _invoke_chat(
         return None, _error_text(error)
 
 
-def _invoke_chat_structured(
+def _invoke_finalization(
     chat_model: "BaseChatModelSetup",
-    messages: List[ChatMessage],
-    prompt_args: Dict,
-    loop_response: ChatMessage,
+    answer_text: str,
     output_schema: OutputSchema,
 ) -> tuple[ChatMessage | None, str | None]:
-    # Prepared inside the durable call, as on the loop call, so a prompt render
-    # failure is recorded and retried like a model failure.
+    # A fresh user message rather than resending the response object: it carries
+    # no provider-specific fields of the loop response, and a single user turn
+    # avoids provider rules on turn order and on empty assistant content.
     try:
-        history = [
-            *chat_model.prepare_request_messages(messages, prompt_args),
-            loop_response,
-            ChatMessage.of(MessageRole.USER, _FINALIZE_DIRECTIVE),
-        ]
-        return chat_model.chat_structured(history, output_schema), None
+        request = [ChatMessage.of(MessageRole.USER, _FINALIZE_DIRECTIVE + answer_text)]
+        return chat_model.chat_explicit(request, [], output_schema), None
     except (CancelledError, InterruptedError):
         raise
     except Exception as error:
@@ -568,14 +563,9 @@ async def chat(
         return _invoke_chat(chat_model, messages, prompt_args)
 
     def invoke_structured(
-        messages: List[ChatMessage],
-        prompt_args: Dict,
-        loop_response: ChatMessage,
-        output_schema: OutputSchema,
+        answer_text: str, output_schema: OutputSchema
     ) -> tuple[ChatMessage | None, str | None]:
-        return _invoke_chat_structured(
-            chat_model, messages, prompt_args, loop_response, output_schema
-        )
+        return _invoke_finalization(chat_model, answer_text, output_schema)
 
     def retry_after(attempt: int, error: Exception) -> bool:
         """Account for a failed attempt; False once the budget is spent."""
@@ -640,9 +630,7 @@ async def chat(
                 structured, failure = await _durable_invoke(
                     ctx,
                     invoke_structured,
-                    messages,
-                    prompt_args,
-                    response,
+                    response.text,
                     output_schema,
                     chat_async=chat_async,
                     durable_id=_FINALIZE_DURABLE_ID,

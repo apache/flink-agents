@@ -240,29 +240,53 @@ public abstract class BaseChatModelSetup extends Resource {
         Preconditions.checkNotNull(
                 connection,
                 "Connection is not initialized. Ensure open() is called before chat().");
+        return chat(prepareRequestMessages(messages, promptArgs), tools, modelParams, null);
+    }
 
-        messages = prepareRequestMessages(messages, promptArgs);
-
+    /**
+     * Sends the messages and tools exactly as given: the bound prompt, the skill-discovery message
+     * and the bound tools are not added. {@link #chat(List, Map, Map)} prepares the request and
+     * sends it through this method.
+     *
+     * @param messages the messages to send
+     * @param tools the tools to bind to the request
+     * @param modelParams parameters for this call, merged over {@link #getParameters()}, may be
+     *     null
+     * @param outputSchema the schema the provider applies natively, or null for an unconstrained
+     *     request
+     * @return the connection's response
+     * @throws NullPointerException if {@link #open()} has not bound the connection yet
+     */
+    public ChatMessage chat(
+            List<ChatMessage> messages,
+            List<Tool> tools,
+            @Nullable Map<String, Object> modelParams,
+            @Nullable Object outputSchema) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chat().");
         Map<String, Object> params = this.getParameters();
         if (modelParams != null) {
             params.putAll(modelParams);
         }
-        return connection.chat(messages, tools, params);
+        if (outputSchema == null) {
+            return connection.chat(messages, tools, params);
+        }
+        return connection.chat(messages, tools, params, outputSchema);
     }
 
     /**
      * Whether {@code outputSchema} should travel through the provider's native structured output on
-     * a call issued through {@link #chatStructured(List, Map, Object)}, rather than be described to
-     * the model in the prompt.
+     * a call issued through {@link #chat(List, List, Map, Object)} with no tools, rather than be
+     * described to the model in the prompt.
      *
      * <p>Framework-facing: public because the caller lives in another package. A user configures
      * the outcome through the {@link StructuredOutputStrategy} instead of calling this.
      *
-     * <p>The connection is asked about the request {@link #chatStructured(List, Map, Object)}
-     * sends: this schema, no tools, and the parameters {@link #getParameters()} returns, resolved
-     * once so that the answer and the request concern the same parameters. Per-call parameters
-     * passed to {@link #chatStructured(List, Map, Object)} are not seen here, so a caller that adds
-     * parameters affecting feasibility must not rely on this answer.
+     * <p>The connection is asked about a request carrying this schema, no tools, and the parameters
+     * {@link #getParameters()} returns. Per-call parameters passed to {@link #chat(List, List, Map,
+     * Object)} are not seen here, so a caller that adds parameters affecting feasibility must not
+     * rely on this answer.
      *
      * <p>A true answer is not a promise that the call succeeds: a connection may still raise once
      * its native branch applies the schema, for example on a conflicting caller-supplied response
@@ -316,66 +340,6 @@ public abstract class BaseChatModelSetup extends Resource {
             return String.valueOf(((OutputSchema) outputSchema).getSchema());
         }
         return outputSchema.getClass().getName();
-    }
-
-    /**
-     * Sends one schema-carrying request to the connection, for a caller that has decided through
-     * {@link #willApplyNativeStructuredOutput(Object)} that the schema travels natively.
-     *
-     * <p>Framework-facing: public because the caller lives in another package. A user reaches a
-     * model through {@link #chat(List, Map, Map)}.
-     *
-     * <p>The messages are sent as given, without the bound prompt or the skill-discovery message,
-     * because messages that already passed through {@link #chat(List, Map, Map)} would otherwise
-     * carry them twice. No tools are bound, because a provider may drop a native schema from a
-     * request that also binds tools.
-     *
-     * <p>Because no tools are bound, tool traffic is removed from what is sent: some providers
-     * reject tool calls and tool results in a request that defines no tools. Tool-role messages and
-     * assistant messages carrying tool calls are dropped whole, since keeping a tool-calling turn's
-     * text would leave two assistant turns in a row. Turns still alternate only when an assistant
-     * message without tool calls follows the tool traffic, which a caller guarantees by appending
-     * the final answer. The caller's list and messages are not modified.
-     *
-     * @param messages the conversation to send, used as given apart from its tool traffic
-     * @param modelParams parameters for this call, merged over {@link #getParameters()} the same
-     *     way {@link #chat(List, Map, Map)} merges them, may be null
-     * @param outputSchema the schema the call carries, must not be null
-     * @return the connection's response
-     * @throws NullPointerException if {@code outputSchema} is null, or if {@link #open()} has not
-     *     bound the connection yet
-     */
-    public ChatMessage chatStructured(
-            List<ChatMessage> messages,
-            @Nullable Map<String, Object> modelParams,
-            Object outputSchema) {
-        Preconditions.checkNotNull(
-                connection,
-                "Connection is not initialized. Ensure open() is called before chatStructured().");
-        Preconditions.checkNotNull(
-                outputSchema,
-                "chatStructured() requires an output schema. Call chat(List, Map, Map) for an"
-                        + " unconstrained request.");
-
-        Map<String, Object> params = this.getParameters();
-        if (modelParams != null) {
-            params.putAll(modelParams);
-        }
-        return connection.chat(withoutToolTraffic(messages), List.of(), params, outputSchema);
-    }
-
-    private static List<ChatMessage> withoutToolTraffic(List<ChatMessage> messages) {
-        List<ChatMessage> sent = new ArrayList<>(messages.size());
-        for (ChatMessage message : messages) {
-            boolean toolCall =
-                    message.getRole() == MessageRole.ASSISTANT
-                            && message.getToolCalls() != null
-                            && !message.getToolCalls().isEmpty();
-            if (message.getRole() != MessageRole.TOOL && !toolCall) {
-                sent.add(message);
-            }
-        }
-        return sent;
     }
 
     @Override

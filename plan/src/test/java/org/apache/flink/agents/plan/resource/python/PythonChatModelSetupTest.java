@@ -187,11 +187,12 @@ public class PythonChatModelSetupTest {
     }
 
     @Test
-    void testChatStructuredIsRefused() {
+    void testExplicitChatIsRefused() {
         List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
 
-        assertThatThrownBy(
-                        () -> pythonChatModelSetup.chatStructured(messages, Map.of(), String.class))
+        // Refused even without a schema: the bridge cannot send messages without the Python
+        // setup's bound prompt and tools.
+        assertThatThrownBy(() -> pythonChatModelSetup.chat(messages, List.of(), Map.of(), null))
                 .isInstanceOf(UnsupportedOperationException.class);
         verifyNoInteractions(mockAdapter);
     }

@@ -46,6 +46,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
@@ -125,8 +126,11 @@ public class ChatModelActionRoutingTest {
         }
 
         @Override
-        public ChatMessage chatStructured(
-                List<ChatMessage> messages, Map<String, Object> modelParams, Object outputSchema) {
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                List<Tool> tools,
+                Map<String, Object> modelParams,
+                Object outputSchema) {
             structuredRequests.add(List.copyOf(messages));
             return ChatMessage.assistant("{\"answer\":\"42\"}");
         }
@@ -827,35 +831,6 @@ public class ChatModelActionRoutingTest {
         // Chat calls are asynchronous by default, and the conversion follows the loop call.
         assertThat(ctx.durableAsyncCallIds).containsExactly("chat", "chat:final");
         assertThat(ctx.chatResponse().isFailed()).isFalse();
-    }
-
-    @Test
-    void finalizationSendsThePreparedRequestNotTheRawInput() throws Exception {
-        FakeChatModel model =
-                new TemplateBoundChatModel("Review this SQL: {input}").withNativeStructuredOutput();
-        FakeRunnerContext ctx = new FakeRunnerContext(null).register("plain", model);
-        ChatModelAction.processChatRequestOrToolResponse(
-                new ChatRequestEvent(
-                        "plain",
-                        List.of(new ChatMessage(MessageRole.USER, "")),
-                        Map.of("input", "SELECT 1"),
-                        Map.class),
-                ctx);
-        // The bound prompt rendered with the prompt arguments replaces the empty user turn,
-        // as it does for the loop call.
-        assertThat(model.structuredRequests).hasSize(1);
-        List<ChatMessage> sent = model.structuredRequests.get(0);
-        assertThat(sent)
-                .extracting(ChatMessage::getRole)
-                .containsExactly(MessageRole.USER, MessageRole.ASSISTANT, MessageRole.USER);
-        assertThat(sent)
-                .extracting(ChatMessage::getText)
-                .containsExactly(
-                        "Review this SQL: SELECT 1",
-                        "answer",
-                        "Convert the previous assistant response into the required structured"
-                                + " output format. Preserve its meaning and do not add or infer"
-                                + " any new information.");
     }
 
     @Test

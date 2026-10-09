@@ -24,13 +24,12 @@ from unittest.mock import MagicMock, call
 from uuid import uuid4
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, ImageBlock, MessageRole
 from flink_agents.api.chat_models.chat_model import (
-    BaseChatModelConnection,
     BaseChatModelSetup,
 )
 from flink_agents.api.core_options import (
@@ -39,8 +38,6 @@ from flink_agents.api.core_options import (
 from flink_agents.api.events.chat_event import ChatResponseEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.metric_group import Counter, MetricGroup
-from flink_agents.api.prompts.prompt import Prompt
-from flink_agents.api.tools.tool import Tool
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
     ExecutionProblemCategories,
@@ -140,9 +137,6 @@ def _create_mock_runner_context(
     # that path override this after the helper returns.
     if isinstance(chat_model, MagicMock):
         chat_model.will_apply_native_structured_output = MagicMock(return_value=False)
-        chat_model.prepare_request_messages = MagicMock(
-            side_effect=lambda messages, prompt_args=None: list(messages)
-        )
 
     config = MagicMock()
     option_values = {
@@ -802,8 +796,9 @@ class TestProcessToolResponsePromptArgsForwarding:
 # Spelled out rather than imported from the action, so the assertion pins the exact
 # words a provider receives.
 _FINALIZE_DIRECTIVE_TEXT = (
-    "Convert the previous assistant response into the required structured output"
-    " format. Preserve its meaning and do not add or infer any new information."
+    "Convert the response below into the required structured output format."
+    " Preserve its meaning and do not add or infer any new information.\n\n"
+    "Response:\n"
 )
 _LLM_SPAN = call(ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA)
 
@@ -820,7 +815,7 @@ def _native_chat_model(
     chat_model.chat = MagicMock(
         side_effect=loop_responses or [_assistant("the answer is 42")]
     )
-    chat_model.chat_structured = MagicMock(
+    chat_model.chat_explicit = MagicMock(
         side_effect=final_responses or [_assistant('{"result": 42}')]
     )
     return chat_model
@@ -862,16 +857,16 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, schema)
 
-        chat_model.chat_structured.assert_called_once()
-        sent_args = chat_model.chat_structured.call_args
+        chat_model.chat_explicit.assert_called_once()
+        sent_args = chat_model.chat_explicit.call_args
         assert sent_args.kwargs == {}
-        sent_messages, sent_schema = sent_args.args
+        sent_messages, sent_tools, sent_schema = sent_args.args
+        # Only the directive and the answer's text: no part of the loop's request
+        # is resent.
         assert [(m.role, m.text) for m in sent_messages] == [
-            (MessageRole.USER, "hi"),
-            (MessageRole.ASSISTANT, "the answer is 42"),
-            (MessageRole.USER, _FINALIZE_DIRECTIVE_TEXT),
+            (MessageRole.USER, _FINALIZE_DIRECTIVE_TEXT + "the answer is 42"),
         ]
-        assert sent_messages[1] is loop_answer
+        assert sent_tools == []
         assert sent_schema is schema
         assert chat_model.chat.call_count == 1
 
@@ -900,7 +895,7 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, schema)
 
         chat_model.will_apply_native_structured_output.assert_called_once_with(schema)
-        chat_model.chat_structured.assert_not_called()
+        chat_model.chat_explicit.assert_not_called()
         assert ctx.report_execution_started.call_args_list.count(_LLM_SPAN) == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 7
 
@@ -914,7 +909,7 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, None)
 
         chat_model.will_apply_native_structured_output.assert_not_called()
-        chat_model.chat_structured.assert_not_called()
+        chat_model.chat_explicit.assert_not_called()
         assert sent_events[0].response.text == "the answer is 42"
 
     def test_tool_call_response_issues_no_finalization_call(self) -> None:
@@ -928,7 +923,7 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
 
-        chat_model.chat_structured.assert_not_called()
+        chat_model.chat_explicit.assert_not_called()
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ToolRequestEvent)
 
@@ -968,7 +963,7 @@ class TestNativeStructuredOutputFinalization:
 
         # The retry repeats the whole attempt, loop call included.
         assert chat_model.chat.call_count == 2
-        assert chat_model.chat_structured.call_count == 2
+        assert chat_model.chat_explicit.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
 
@@ -981,7 +976,7 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
 
-        assert chat_model.chat_structured.call_count == 2
+        assert chat_model.chat_explicit.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
         ctx.report_execution_failed.assert_called_once()
@@ -1069,7 +1064,7 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult), request_id)
 
         chat_model.chat.assert_not_called()
-        chat_model.chat_structured.assert_not_called()
+        chat_model.chat_explicit.assert_not_called()
         ctx.report_execution_started.assert_not_called()
         assert len(sent_events) == 1
         assert sent_events[0].request_id == request_id
@@ -1127,7 +1122,7 @@ class TestNativeStructuredOutputFinalization:
         # request-failure path alike.
         assert not sent_events
         assert len(calls) == 2
-        chat_model.chat_structured.assert_not_called()
+        chat_model.chat_explicit.assert_not_called()
 
     def test_finalization_runs_on_the_async_durable_seam(self) -> None:
         chat_model = _native_chat_model()
@@ -1137,80 +1132,6 @@ class TestNativeStructuredOutputFinalization:
 
         assert ctx.durable_execute_async.call_count == 2
         ctx.durable_execute.assert_not_called()
-        assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
-
-
-class _RecordingConnection(BaseChatModelConnection):
-    """Records every request, answering prose without a schema and JSON with one."""
-
-    unconstrained_requests: list = Field(default_factory=list)
-    schema_carrying_requests: list = Field(default_factory=list)
-
-    def chat(
-        self,
-        messages: Sequence[ChatMessage],
-        tools: list[Tool] | None = None,
-        output_schema: OutputSchema | None = None,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        if output_schema is None:
-            self.unconstrained_requests.append(list(messages))
-            return _assistant("the answer is 42")
-        self.schema_carrying_requests.append(list(messages))
-        return _assistant('{"result": 42}')
-
-
-class _NativePromptSetup(BaseChatModelSetup):
-    @property
-    def model_kwargs(self) -> dict[str, Any]:
-        return {}
-
-    def will_apply_native_structured_output(
-        self, output_schema: OutputSchema | None
-    ) -> bool:
-        return output_schema is not None
-
-
-class TestNativeFinalizationHistory:
-    """The finalization replays the history the loop call actually sent."""
-
-    def test_finalization_sends_the_prepared_loop_history(self) -> None:
-        connection = _RecordingConnection()
-        chat_model = _NativePromptSetup(
-            connection="c",
-            model="m",
-            prompt=Prompt.from_messages(
-                messages=[
-                    ChatMessage.of(MessageRole.SYSTEM, "You are terse."),
-                    ChatMessage.of(MessageRole.USER, "Task: {task}"),
-                ]
-            ),
-            skill_discovery_prompt="Available skills",
-        )
-        chat_model._resolved_connection = connection
-        ctx, sent_events, _, _ = _create_mock_runner_context(
-            chat_model, max_retries=0, retry_wait_interval_sec=0
-        )
-
-        asyncio.run(
-            chat(
-                uuid4(),
-                "test-model",
-                [ChatMessage(role=MessageRole.USER)],
-                {"task": "add 2 and 3"},
-                OutputSchema(output_schema=_StructuredResult),
-                ctx,
-            )
-        )
-
-        (loop_request,) = connection.unconstrained_requests
-        (final_request,) = connection.schema_carrying_requests
-        expected = [(m.role, m.text) for m in loop_request] + [
-            (MessageRole.ASSISTANT, "the answer is 42"),
-            (MessageRole.USER, _FINALIZE_DIRECTIVE_TEXT),
-        ]
-        assert [(m.role, m.text) for m in final_request] == expected
-        assert all(m.text for m in final_request)
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
 
 
