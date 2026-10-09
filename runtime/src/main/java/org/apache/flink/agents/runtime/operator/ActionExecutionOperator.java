@@ -1006,7 +1006,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private List<Event> completedActionOutputEvents(
             ActionTask actionTask, ActionState actionState) {
         if (!actionTask.isSubagentEvent()) {
-            return actionState.getOutputEvents();
+            // A root caller owns no sub-agent call, so every envelope it emitted bootstrapped a
+            // child call whose result this completed action already consumed and folded into its
+            // persisted outputs. Replay only the graph-driving events: a finished child's bootstrap
+            // envelope names a call that no longer registers a call status, so re-dispatching it
+            // would abort the replay.
+            List<Event> replayEvents = new ArrayList<>();
+            for (Event event : actionState.getOutputEvents()) {
+                if (!(event instanceof InternalSubagentCallEvent)) {
+                    replayEvents.add(event);
+                }
+            }
+            return replayEvents;
         }
 
         InternalSubagentCallEvent triggeringEnvelope = (InternalSubagentCallEvent) actionTask.event;

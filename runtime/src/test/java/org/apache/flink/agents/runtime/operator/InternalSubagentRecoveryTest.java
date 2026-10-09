@@ -326,6 +326,43 @@ public class InternalSubagentRecoveryTest {
     @Test
     @Timeout(60)
     @EnabledForJreRange(min = JRE.JAVA_21)
+    void replaysCompletedRootCallerWithoutRebootstrappingItsFinishedChildCall() throws Exception {
+        AgentPlan agentPlan = plan();
+        Checkpoint checkpoint;
+        // Suspend the root caller at its child call so the operator state keeps the root task
+        // queued while the child has already completed.
+        try (Attempt original = Attempt.start(agentPlan, true)) {
+            original.queue("handle", "callChild");
+            original.nextMail();
+            original.queue("callChild");
+            checkpoint = original.snapshot(1L);
+        }
+
+        // Model the race where the root finishes in the same dispatch that emitted its bootstrap
+        // envelope, so the envelope is persisted among the completed root's output events. Seed
+        // that state deterministically rather than depending on the timing.
+        ActionState rootState = rootCallerActionState(checkpoint.store, 1L);
+        rootState.getOutputEvents().clear();
+        rootState.addEvent(
+                InternalSubagentCallEvent.bootstrap(
+                        new InputEvent("p"), CHILD_SCOPE, "s-replay#c-replay", "s-replay"));
+        rootState.addEvent(new OutputEvent(List.of("child:p")));
+        rootState.markCompleted();
+
+        // Restore re-dispatches the queued root, sees it completed, and replays its persisted
+        // outputs. The finished child call's bootstrap envelope must be dropped: that call has long
+        // completed and registers no call status, so replaying it would abort the run.
+        try (Attempt restored = Attempt.restore(agentPlan, checkpoint)) {
+            restored.queue("callChild");
+            restored.finish();
+            assertThat(CHILD_EXECUTIONS.get()).isEqualTo(1);
+            restored.assertSingleOutput(List.of("child:p"));
+        }
+    }
+
+    @Test
+    @Timeout(60)
+    @EnabledForJreRange(min = JRE.JAVA_21)
     void restoresDownstreamActionAfterTriggerActionSuspendsAndCompletes() throws Exception {
         firstDurableStarted = new CountDownLatch(1);
         firstDurableGate = new CountDownLatch(1);
@@ -557,6 +594,17 @@ public class InternalSubagentRecoveryTest {
                                 Map.Entry::getValue,
                                 (a, b) -> a,
                                 LinkedHashMap::new));
+    }
+
+    /** The action state whose triggering event is not a sub-agent envelope: the root caller's. */
+    private static ActionState rootCallerActionState(InMemoryActionStateStore store, long key) {
+        return store.getKeyedActionStates().getOrDefault(key, Map.of()).values().stream()
+                .filter(state -> !(state.getTaskEvent() instanceof InternalSubagentCallEvent))
+                .findFirst()
+                .orElseThrow(
+                        () ->
+                                new AssertionError(
+                                        "no root caller action state seeded for key " + key));
     }
 
     private static InMemoryActionStateStore copyStore(InMemoryActionStateStore source) {
