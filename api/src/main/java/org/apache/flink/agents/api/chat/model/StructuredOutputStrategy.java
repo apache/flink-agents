@@ -29,9 +29,7 @@ import java.util.Objects;
  * BaseChatModelConnection#supportsNativeStructuredOutput(Object, java.util.List, java.util.Map)}.
  * {@link #resolvesToNative(NativeStructuredOutputSupport)} combines the two.
  *
- * <p>TODO(#912): strategy resolution is not wired into production yet. Once it is, the native
- * branches must honor the resolved policy rather than vetoing NATIVE through their own capability
- * check.
+ * <p>TODO(#912): strategy resolution is not wired into production yet.
  */
 public enum StructuredOutputStrategy {
     /**

@@ -21,6 +21,7 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.openai.errors.BadRequestException;
+import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
@@ -311,33 +312,6 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("Native NOT applied for a POJO on an incapable model (prompt fallback)")
-    void testNativeNotAppliedForIncapableModel() {
-        ChatCompletionCreateParams params =
-                connection()
-                        .buildRequest(
-                                userMessage(), List.of(), params("gpt-3.5-turbo"), Person.class);
-
-        assertThat(params.responseFormat()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Native NOT applied for a pre-cutoff same-family gpt-4o snapshot")
-    void testNativeNotAppliedForPreCutoffSnapshot() {
-        // gpt-4o-2024-05-13 predates the Structured Outputs cutoff even though it shares the gpt-4o
-        // prefix; treating it as capable would fail silently at the provider.
-        ChatCompletionCreateParams params =
-                connection()
-                        .buildRequest(
-                                userMessage(),
-                                List.of(),
-                                params("gpt-4o-2024-05-13"),
-                                Person.class);
-
-        assertThat(params.responseFormat()).isEmpty();
-    }
-
-    @Test
     @DisplayName("Native NOT applied when no output schema is supplied")
     void testNativeNotAppliedWhenSchemaNull() {
         ChatCompletionCreateParams params =
@@ -349,9 +323,9 @@ class OpenAICompletionsConnectionTest {
     @Test
     @DisplayName("The query judges the connection default when the model parameter is unset")
     void testQueryFallsBackToTheDefaultModel() {
-        // buildRequest applies the same fallback before judging capability, so an answer taken
-        // without it would disagree with the model the request is issued against. The default
-        // gpt-4o is capable, whereas an unresolved model is not.
+        // buildRequest applies the same fallback to pick the model the request is issued against,
+        // so an answer taken without it would judge a different model. The default gpt-4o is
+        // capable, whereas an unresolved model is not.
         for (Map<String, Object> modelParams :
                 List.<Map<String, Object>>of(new HashMap<>(), params(null), params("   "))) {
             assertThat(support(connection(), modelParams))
@@ -360,11 +334,12 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("The model the request builder judges is the one the query judges")
+    @DisplayName("The model the query judges is the one the request is issued against")
     void testQueryJudgesTheModelTheBuilderJudges() {
         // The query duplicates the builder's own model resolution rather than centralizing it, so
-        // capturing what each feeds the capability check is the only thing that keeps the two from
-        // drifting apart. Asserting each against a literal would let them drift in step.
+        // comparing the model it judges with the model the request names is the only thing that
+        // keeps the two from drifting apart. Asserting each against a literal would let them drift
+        // in step.
         AtomicReference<String> judged = new AtomicReference<>();
         OpenAICompletionsConnection connection =
                 new OpenAICompletionsConnection(
@@ -388,10 +363,11 @@ class OpenAICompletionsConnectionTest {
             support(connection, modelParams);
             String queried = judged.get();
 
-            connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
+            ChatCompletionCreateParams request =
+                    connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
 
             assertThat(queried).isNotNull();
-            assertThat(judged.get()).isEqualTo(queried);
+            assertThat(request.model()).isEqualTo(ChatModel.of(queried));
         }
     }
 
@@ -521,11 +497,11 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("An incapable model leaves the request feasible rather than infeasible")
+    @DisplayName("An unlisted model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // A POJO is feasible here even on a model the allowlist rejects, and it is the branch's
-        // separate capability conjunct that keeps that request unconstrained. Folding capability
-        // into feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
+        // gpt-4o-2024-05-13 shares the gpt-4o prefix but predates the cutoff. Folding capability
+        // into feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule; folding
+        // it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = params("gpt-4o-2024-05-13");
 
         assertThat(support(connection(), incapable))
@@ -534,7 +510,7 @@ class OpenAICompletionsConnectionTest {
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
                                 .responseFormat())
-                .isEmpty();
+                .isPresent();
     }
 
     @Test

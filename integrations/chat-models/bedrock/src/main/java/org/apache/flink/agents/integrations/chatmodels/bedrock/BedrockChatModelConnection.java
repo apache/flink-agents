@@ -224,8 +224,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * custom-model-deployment, application-inference-profile or marketplace-endpoint ARN identifies
      * a resource without naming the model behind it, and a prompt-router ARN names a set whose
      * member is chosen per request, so for none of them is an answer derivable from the identifier
-     * the request carries. An unrecognized identifier reports {@code false} so that it degrades to
-     * the prompt-engineering fallback rather than failing at the provider.
+     * the request carries. An unrecognized identifier reports {@code false}. The answer shapes only
+     * the structured-output query; the request carries a schema it is handed whatever this reports.
      *
      * <p>A null or blank model reports {@code false} rather than throwing: {@code resolveModel}
      * rejects one before a request is built, but the structured-output query answers for whatever
@@ -291,9 +291,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Translates {@code outputSchema} into Converse's native {@code outputConfig} when it is a POJO
-     * {@link Class} and the effective model is one AWS documents as supporting it. Any other schema
-     * form — notably a {@code RowTypeInfo} wrapped in {@code OutputSchema} — and any other model
-     * leave the request unconstrained, so that the caller keeps the prompt-engineering fallback.
+     * {@link Class}, whatever the effective model. Any other schema form, notably a {@code
+     * RowTypeInfo} wrapped in {@code OutputSchema}, leaves the request unconstrained.
      */
     @Override
     public ChatMessage chat(
@@ -322,7 +321,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     /**
      * Translate the flink-agents call arguments into a Converse request: the effective model id,
      * the SYSTEM/conversation message split, the tool configuration, the inference configuration,
-     * and the native output configuration when the schema and the model both admit one.
+     * and the native output configuration when the schema admits one.
      *
      * <p>Package-private so a test can assert the request body without issuing a live call through
      * the Bedrock runtime client.
@@ -335,8 +334,8 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * @param modelParams per-call parameters; {@code model}, {@code temperature} and {@code
      *     max_tokens} are read, and {@code null} is accepted
      * @param outputSchema the schema the response should conform to, or {@code null} for an
-     *     unconstrained response; applied natively only for a POJO {@link Class} on a model that
-     *     supports it, and otherwise left to the caller's prompt-engineering fallback
+     *     unconstrained response; applied natively for a POJO {@link Class} on any model, and
+     *     otherwise left off the request
      * @return the request to send to Converse
      * @throws IllegalArgumentException if neither the call nor the connection supplies a model id
      */
@@ -398,10 +397,10 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             }
         }
 
-        // The feasibility and capability checks are shared with the structured-output query rather
-        // than restated, so the query answers what this branch acts on.
-        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
-                && modelSupportsNativeStructuredOutput(modelId)) {
+        // The feasibility check is shared with the structured-output query rather than restated, so
+        // the branch applies whenever the query answers other than INFEASIBLE. Model capability is
+        // not asked: a caller that hands this connection a schema has already chosen to send it.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
             requestBuilder.outputConfig(nativeOutputConfig((Class<?>) outputSchema));
         }
 

@@ -34,7 +34,8 @@ public enum NativeStructuredOutputSupport {
 
     /**
      * The request can carry the schema, but the effective model is not known to honor it. Advisory:
-     * an explicit policy may still choose the native API.
+     * an explicit policy may still choose the native API, and a request built with the schema
+     * carries it exactly as under {@link #NATIVE_RECOMMENDED}.
      */
     FEASIBLE,
 

@@ -147,11 +147,11 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     // temporal rather than nominal. The o1 family is not uniform: o1 is capable while o1-mini is
     // not, so an "o1" prefix would admit an incapable sibling.
     //
-    // A name outside every listed family reports not-capable and degrades to the prompt fallback
-    // rather than failing at the provider. Within a listed family the prefix assumes capability,
-    // so a family variant that ships without json_schema support has to be excluded explicitly,
-    // either by a marker that appears in no capable name or by replacing the family prefix with
-    // exact names.
+    // A name outside every listed family reports not-capable, which the structured-output query
+    // reports as FEASIBLE rather than NATIVE_RECOMMENDED. Within a listed family the prefix assumes
+    // capability, so a family variant that ships without json_schema support has to be excluded
+    // explicitly, either by a marker that appears in no capable name or by replacing the family
+    // prefix with exact names.
     private static final Set<String> NON_TEXT_MODALITY_MARKERS =
             Set.of("-audio", "-realtime", "-tts", "-transcribe");
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES =
@@ -172,7 +172,9 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
 
     /**
      * Whether {@code effectiveModel} is documented to honor a {@code json_schema} response format.
-     * Protected so that a subclass serving models outside this allowlist can replace it alone.
+     * Protected so that a subclass serving models outside this allowlist can replace it alone. The
+     * answer shapes only the structured-output query; the request carries a schema it is handed
+     * whatever this reports.
      *
      * @param effectiveModel the model the request would reach, may be null
      * @return true if the model is known to honor a native schema
@@ -308,14 +310,13 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             builder.tools(convertTools(tools, strictMode));
         }
 
-        // Native structured output applies only for a POJO Class schema on a model the provider
-        // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
-        // the prompt-engineering fallback.
+        // Native structured output applies only for a POJO Class schema; a RowTypeInfo (wrapped in
+        // OutputSchema) carries no response_format.
         //
         // The feasibility check is shared with the structured-output query rather than restated, so
-        // the query answers what this branch acts on.
-        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && modelSupportsNativeStructuredOutput(modelName)) {
+        // the branch applies whenever the query answers other than INFEASIBLE. Model capability is
+        // not asked: a caller that hands this connection a schema has already chosen to send it.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
             builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 
