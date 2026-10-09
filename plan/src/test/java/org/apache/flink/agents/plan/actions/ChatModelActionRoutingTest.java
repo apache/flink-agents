@@ -46,6 +46,7 @@ import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
@@ -94,10 +95,44 @@ public class ChatModelActionRoutingTest {
     static class FakeChatModel extends BaseChatModelSetup {
         private final Deque<Object> outcomes = new ArrayDeque<>();
         private int callCount;
+        private boolean nativeStructuredOutput;
+        private RuntimeException gateFailure;
+        final List<List<ChatMessage>> structuredRequests = new ArrayList<>();
 
         FakeChatModel(Object... outcomes) {
             super(new ResourceDescriptor("fake", Map.of()), null);
             Collections.addAll(this.outcomes, outcomes);
+        }
+
+        /** Resolves a schema to the native channel; schema-carrying calls answer parseably. */
+        FakeChatModel withNativeStructuredOutput() {
+            this.nativeStructuredOutput = true;
+            return this;
+        }
+
+        FakeChatModel withGateFailure(RuntimeException gateFailure) {
+            this.gateFailure = gateFailure;
+            return this;
+        }
+
+        // This fake binds no connection, so it answers the gate itself: a test chooses the native
+        // answer or injects a gate failure.
+        @Override
+        public boolean willApplyNativeStructuredOutput(Object outputSchema) {
+            if (gateFailure != null) {
+                throw gateFailure;
+            }
+            return nativeStructuredOutput && outputSchema != null;
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                List<Tool> tools,
+                Map<String, Object> modelParams,
+                Object outputSchema) {
+            structuredRequests.add(List.copyOf(messages));
+            return ChatMessage.assistant("{\"answer\":\"42\"}");
         }
 
         @Override
@@ -126,6 +161,7 @@ public class ChatModelActionRoutingTest {
         final List<Event> sentEvents = new ArrayList<>();
         final List<String> resolvedChatModels = new ArrayList<>();
         final List<String> durableCallIds = new ArrayList<>();
+        final List<String> durableAsyncCallIds = new ArrayList<>();
         final Map<String, BaseChatModelSetup> models = new HashMap<>();
         final Set<String> unresolvable = new HashSet<>();
         private final ModelRouter router;
@@ -256,6 +292,7 @@ public class ChatModelActionRoutingTest {
         @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableCallIds.add(callable.getId());
+            durableAsyncCallIds.add(callable.getId());
             return new TestDurableFuture<>(
                     callable.getId(),
                     () -> {
@@ -780,6 +817,84 @@ public class ChatModelActionRoutingTest {
                 new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
         // the decision and the chat attempt are distinct durable calls with routed ids
         assertThat(ctx.durableCallIds).containsExactly("route:router", "chat:router:big");
+    }
+
+    @Test
+    void directNativeSchemaRequestUsesDistinctFinalizationDurableCallId() throws Exception {
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(null)
+                        .register("plain", new FakeChatModel().withNativeStructuredOutput());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("plain", List.of(ChatMessage.user("hi")), Map.of(), Map.class),
+                ctx);
+        assertThat(ctx.durableCallIds).containsExactly("chat", "chat:final");
+        // Chat calls are asynchronous by default, and the conversion follows the loop call.
+        assertThat(ctx.durableAsyncCallIds).containsExactly("chat", "chat:final");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+    }
+
+    @Test
+    void routedNativeSchemaRequestExtendsTheCandidateDurableCallId() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .build(),
+                        null);
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("big", new FakeChatModel().withNativeStructuredOutput());
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), Map.of(), Map.class),
+                ctx);
+        assertThat(ctx.durableCallIds)
+                .containsExactly("route:router", "chat:router:big", "chat:router:big:final");
+    }
+
+    @Test
+    void recoveredNativeRequestReplaysBothCallsWithoutTheModel() throws Exception {
+        FakeChatModel model = new FakeChatModel().withNativeStructuredOutput();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(null)
+                        .register("plain", model)
+                        .seedDurable("chat", ChatMessage.assistant("the answer is 42"))
+                        .seedDurable("chat:final", ChatMessage.assistant("{\"answer\":\"7\"}"));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("plain", List.of(ChatMessage.user("hi")), Map.of(), Map.class),
+                ctx);
+        assertThat(model.callCount).isZero();
+        assertThat(model.structuredRequests).isEmpty();
+        assertThat(ctx.chatResponse().getResponse().getText()).isEqualTo("{\"answer\":\"7\"}");
+    }
+
+    @Test
+    void gateFailureFallsBackToTheNextCandidate() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.rules(Map.of("big", "\\bsql\\b")))
+                                .defaultModel("small")
+                                .fallback(true)
+                                .build(),
+                        null);
+        FakeChatModel big =
+                new FakeChatModel()
+                        .withGateFailure(new IllegalArgumentException("NATIVE infeasible"));
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register("big", big)
+                        .register("small", new FakeChatModel(ChatMessage.assistant("{}")));
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router", List.of(ChatMessage.user("write sql")), Map.of(), Map.class),
+                ctx);
+        assertThat(big.callCount).isZero();
+        assertThat(ctx.resolvedChatModels).containsExactly("big", "small");
+        // The failed candidate takes no durable slot.
+        assertThat(ctx.durableCallIds).containsExactly("route:router", "chat:router:small");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
     }
 
     @Test

@@ -154,6 +154,29 @@ class VLLMChatModelConnectionTest {
     }
 
     @Test
+    @DisplayName("A model the capability check declines still gets the schema on the request")
+    void testCapabilityOverrideShapesOnlyTheQuery() {
+        // A blank model is the one input the vLLM capability check declines. It goes on the
+        // descriptor because the builder substitutes the configured default for a blank parameter,
+        // and no default at all would fail in the SDK before the native branch runs.
+        VLLMChatModelConnection conn =
+                new VLLMChatModelConnection(
+                        connectionDescriptor().addInitialArgument("model", "   ").build(), NOOP);
+        Map<String, Object> modelParams = new HashMap<>();
+
+        assertThat(conn.supportsNativeStructuredOutput(Person.class, List.of(), modelParams))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(
+                        conn.buildRequest(
+                                        List.of(ChatMessage.user("hi")),
+                                        List.of(),
+                                        modelParams,
+                                        Person.class)
+                                .responseFormat())
+                .isPresent();
+    }
+
+    @Test
     @DisplayName("Defaults do not leak into the caller's descriptor")
     void testCallerDescriptorNotMutated() {
         ResourceDescriptor desc = connectionDescriptor().build();

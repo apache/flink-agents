@@ -25,6 +25,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    StructuredOutputStrategy,
 )
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
@@ -208,3 +209,55 @@ class JavaChatModelSetup(BaseChatModelSetup):
         )
 
         return from_java_chat_message(j_response_message)
+
+    @override
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Never applies a schema natively, so a caller keeps describing the schema
+        in the prompt, which works here.
+
+        No connection is resolved on this side, and ``chat`` carries only messages,
+        prompt arguments and keyword arguments across the bridge, so a schema has no
+        way to travel natively.
+
+        Raises:
+            ValueError: If ``output_schema`` is not ``None`` and the strategy is
+                ``NATIVE``, which this setup cannot honor.
+        """
+        if (
+            output_schema is not None
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            msg = (
+                "Structured output strategy NATIVE was requested, but a Java chat "
+                "model setup reached from Python through JavaChatModelSetup cannot "
+                "be given an output schema: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's chat. Use AUTO "
+                "or PROMPT, or apply the schema on the Java side."
+            )
+            raise ValueError(msg)
+        return False
+
+    @override
+    def chat_explicit(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool],
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Always refuses rather than dropping the tools or the schema, or adding the
+        Java setup's bound prompt and tools: the bridge reaches only the Java setup's
+        ``chat``, which prepares the request itself.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        msg = (
+            "A Java chat model setup cannot be sent explicit messages, tools or an "
+            "output schema from Python: the bridge carries only messages, prompt "
+            "arguments and keyword arguments to the Java setup's chat, which adds its "
+            "own bound prompt and tools. Apply the schema on the Java side instead."
+        )
+        raise NotImplementedError(msg)

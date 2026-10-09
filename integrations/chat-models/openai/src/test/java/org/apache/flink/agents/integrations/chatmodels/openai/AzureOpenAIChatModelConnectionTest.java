@@ -48,6 +48,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
@@ -351,15 +352,6 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("Native NOT applied when the backing model of the deployment is absent")
-    void testNativeNotAppliedWhenDeploymentModelAbsent() {
-        ChatCompletionCreateParams request =
-                connection().buildRequest(userMessage(), List.of(), params(null), Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
-    }
-
-    @Test
     @DisplayName("The query judges the model backing the deployment, never the deployment")
     void testQueryJudgesTheBackingModelNotTheDeployment() {
         // The deployment name is chosen by the user, so it is named after a capable model here to
@@ -382,31 +374,6 @@ class AzureOpenAIChatModelConnectionTest {
     private static NativeStructuredOutputSupport support(
             AzureOpenAIChatModelConnection connection, Map<String, Object> modelParams) {
         return connection.supportsNativeStructuredOutput(Person.class, List.of(), modelParams);
-    }
-
-    @Test
-    @DisplayName("Native NOT applied for a backing model outside the allowlist")
-    void testNativeNotAppliedForUnknownDeploymentModel() {
-        ChatCompletionCreateParams request =
-                connection()
-                        .buildRequest(
-                                userMessage(),
-                                List.of(),
-                                params("some-unknown-model"),
-                                Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Native NOT applied for a bare gpt-4o backing model")
-    void testNativeNotAppliedForBareGpt4o() {
-        // Azure carries model name and model version as separate properties, so a bare gpt-4o may
-        // be the 2024-05-13 version, which predates structured-output support.
-        ChatCompletionCreateParams request =
-                connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
     }
 
     @ParameterizedTest
@@ -539,22 +506,27 @@ class AzureOpenAIChatModelConnectionTest {
             })
     @DisplayName("The query reports incapable, Responses-only and empty names feasible only")
     void testQueryReportsIncapableModelsFeasible(String model) {
-        // A version-suffixed value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name
-        // Azure reports as the model behind a deployment. The codex, gpt-5-pro and o3-pro names do
-        // support structured outputs but are served only on the Responses API, so they are
-        // incapable on the chat completions API this connection calls.
+        // Azure carries model name and model version as separate properties, so a bare gpt-4o may
+        // be the 2024-05-13 version, which predates structured-output support. A version-suffixed
+        // value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name Azure reports as
+        // the model behind a deployment. The codex, gpt-5-pro and o3-pro names do support
+        // structured outputs but are served only on the Responses API, so they are incapable on the
+        // chat completions API this connection calls.
         assertThat(support(connection(), params(model)))
                 .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
-    @Test
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"gpt-4o-mini", "gpt-3.5-turbo"})
     @DisplayName(
             "A caller-supplied response_format alongside a natively applied schema is rejected")
-    void testCallerResponseFormatConflictsWithNativeSchema() {
+    void testCallerResponseFormatConflictsWithNativeSchema(String modelOfAzureDeployment) {
         // Both values would otherwise reach the same request, where the additional body property
-        // silently competes with the typed response_format the schema produced.
+        // silently competes with the typed response_format the schema produced. A listed, an
+        // unlisted and an unset backing model all reach the native branch.
         AzureOpenAIChatModelConnection conn = connection();
-        Map<String, Object> args = paramsWithCallerResponseFormat("gpt-4o-mini");
+        Map<String, Object> args = paramsWithCallerResponseFormat(modelOfAzureDeployment);
 
         assertThatThrownBy(() -> conn.chat(userMessage(), null, args, Person.class))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -564,7 +536,6 @@ class AzureOpenAIChatModelConnectionTest {
 
     private static Stream<Arguments> nonNativePaths() {
         return Stream.of(
-                Arguments.of("incapable_model", CAPABLE_API_VERSION, "gpt-4o", Person.class),
                 Arguments.of(
                         "non_pojo_schema", CAPABLE_API_VERSION, "gpt-4o-mini", "row<name STRING>"),
                 Arguments.of("no_output_schema", CAPABLE_API_VERSION, "gpt-4o-mini", null),
@@ -799,7 +770,7 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The query recommends native exactly when the native branch applies")
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
     void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
         // literal, is what keeps the query and the branch from drifting in step. The api-version
@@ -832,10 +803,7 @@ class AzureOpenAIChatModelConnectionTest {
                         assertThat(answer).as(label).isEqualTo(expected);
                         assertThat(request.responseFormat().isPresent())
                                 .as(label)
-                                .isEqualTo(
-                                        expected
-                                                == NativeStructuredOutputSupport
-                                                        .NATIVE_RECOMMENDED);
+                                .isEqualTo(expected != NativeStructuredOutputSupport.INFEASIBLE);
                     }
                 }
             }
@@ -854,11 +822,11 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("An incapable backing model leaves the request feasible rather than infeasible")
+    @DisplayName(
+            "An unlisted backing model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // The backing model is outside the allowlist, which says nothing about whether this
-        // connection could translate the schema form at all. Folding capability into
-        // feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
+        // Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule; folding it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = params("gpt-3.5-turbo");
 
         assertThat(support(connection(), incapable))
@@ -867,7 +835,7 @@ class AzureOpenAIChatModelConnectionTest {
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
                                 .responseFormat())
-                .isEmpty();
+                .isPresent();
     }
 
     @Test

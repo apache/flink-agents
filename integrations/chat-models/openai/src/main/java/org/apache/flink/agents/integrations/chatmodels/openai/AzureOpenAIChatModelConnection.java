@@ -115,8 +115,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     // as separate properties, so a name carries no version to discriminate on. The documented list
     // includes gpt-4o only at versions 2024-08-06 and 2024-11-20 while version 2024-05-13 is
     // unsupported, so a bare "gpt-4o" is ambiguous and is deliberately absent from the set below.
-    // An unrecognized name reports not-capable and degrades to the prompt fallback rather than
-    // failing at the provider.
+    // An unrecognized name reports not-capable, which the structured-output query reports as
+    // FEASIBLE rather than NATIVE_RECOMMENDED.
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
             Set.of(
                     "gpt-5.1",
@@ -221,8 +221,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      *
      * <p>{@code effectiveModel} is the model backing an Azure deployment, not the deployment name.
      * See the allowlist above for the source of truth and for why the match is exact. An
-     * unrecognized model reports {@code false} so it degrades to the prompt-engineering fallback
-     * rather than failing at the provider.
+     * unrecognized model reports {@code false}. The answer shapes only the structured-output query;
+     * the request carries a schema it is handed whatever this reports.
      *
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
@@ -240,8 +240,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * <p>The {@code model} parameter carries the deployment name the request is issued against.
      * That name is chosen by the user, and although it commonly echoes the model behind it, nothing
      * keeps the two in step once the deployment is repointed, so it is never the answer here.
-     * Leaving the backing model unset keeps even a capable deployment on the prompt-engineering
-     * fallback rather than classifying a deployment name on its spelling.
+     * Leaving the backing model unset reports even a capable deployment {@code FEASIBLE} rather
+     * than classifying a deployment name on its spelling.
      */
     private String effectiveModelFor(Map<String, Object> modelParams) {
         return modelParams == null ? null : (String) modelParams.get("model_of_azure_deployment");
@@ -322,15 +322,9 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Translates {@code outputSchema} into Azure's native strict {@code response_format}
-     * json_schema when it is a POJO {@link Class}, the model backing the deployment is one Azure
-     * documents json_schema strict support for, and the configured api-version reaches {@code
-     * 2024-08-01-preview}. Any other combination leaves the request unconstrained so that the
-     * prompt-engineering fallback still governs the response, rather than failing at the provider.
-     *
-     * <p>Capability is keyed on the {@code model_of_azure_deployment} model parameter rather than
-     * on the deployment the request targets, because a deployment name is chosen by the user and
-     * carries no model information. Leaving that parameter unset therefore keeps even a capable
-     * deployment on the fallback.
+     * json_schema when it is a POJO {@link Class} and the configured api-version reaches {@code
+     * 2024-08-01-preview}, whatever model backs the deployment. Any other combination leaves the
+     * request unconstrained.
      *
      * <p>When the provider reports a finish reason it is carried verbatim in {@code extraArgs}
      * under {@code finish_reason}, including values outside the documented set, and the entry is
@@ -366,7 +360,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         // consuming: a caller may reuse the same map across calls. The map is assembled fresh for
         // each call and no one retains it, so reading it once the response has arrived yields the
         // same value as reading it before the request was issued. Token metrics report the model
-        // backing the deployment, which buildRequest only uses to decide capability.
+        // backing the deployment.
         String modelOfAzureDeployment =
                 modelParams != null ? (String) modelParams.get("model_of_azure_deployment") : null;
 
@@ -407,7 +401,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         if (azureDeployment == null || azureDeployment.isBlank()) {
             throw new IllegalArgumentException("model is required for Azure OpenAI API calls");
         }
-        String modelOfAzureDeployment = (String) mutableArgs.remove("model_of_azure_deployment");
+        // Read by the structured-output query and the token metrics, never sent to the provider.
+        mutableArgs.remove("model_of_azure_deployment");
 
         ChatCompletionCreateParams.Builder builder =
                 ChatCompletionCreateParams.builder()
@@ -418,17 +413,14 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             builder.tools(convertTools(tools));
         }
 
-        // Capability belongs to the model backing the deployment, so it is the input to the check;
-        // the deployment name is chosen by the user and carries none. Native structured output
-        // applies only for a POJO Class schema — a RowTypeInfo (wrapped in OutputSchema) keeps the
-        // prompt-engineering fallback, as do an incapable model and an api-version below the floor.
+        // Native structured output applies only for a POJO Class schema on an api-version at or
+        // above the floor; a RowTypeInfo (wrapped in OutputSchema) carries no response_format.
         //
-        // The feasibility check (schema form and api-version floor) and the capability check are
-        // shared with the structured-output query rather than restated, so the query answers what
-        // this branch acts on. Both read the parameters as they arrived.
+        // The feasibility check is shared with the structured-output query rather than restated,
+        // so the branch applies whenever the query answers other than INFEASIBLE. Model capability
+        // is not asked: a caller that hands this connection a schema has already chosen to send it.
         String nativeSchemaName = null;
-        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && modelSupportsNativeStructuredOutput(modelOfAzureDeployment)) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
             Class<?> schemaClass = (Class<?>) outputSchema;
             builder.responseFormat(toNativeResponseFormat(schemaClass));
             nativeSchemaName = schemaClass.getSimpleName();

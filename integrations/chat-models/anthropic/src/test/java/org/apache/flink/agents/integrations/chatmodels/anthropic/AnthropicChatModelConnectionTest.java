@@ -48,7 +48,6 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Arrays;
 import java.util.HashMap;
@@ -373,25 +372,14 @@ class AnthropicChatModelConnectionTest {
                 .orElseThrow();
     }
 
-    @ParameterizedTest
-    @ValueSource(strings = {"claude-sonnet-4-5", "claude-opus-4-6"})
-    @DisplayName("a POJO schema on a capable model is sent as output_config")
-    void testNativeSchemaAppliedOnCapableModel(String model) {
-        // One name from each way the capability check can match: a 4.5-generation alias reached by
-        // prefix, and a 4.6 name reached by exact match. The request-build site consults the check
-        // as a whole, so covering only one branch would let it be narrowed to that branch while
-        // silently dropping native structured output for every model on the other.
-        AnthropicChatModelConnection.BuiltRequest built = build(model, Answer.class, null);
+    @Test
+    @DisplayName("a POJO schema is sent as output_config")
+    void testNativeSchemaApplied() {
+        AnthropicChatModelConnection.BuiltRequest built = build(CAPABLE_MODEL, Answer.class, null);
 
         // Asserting the property name rather than mere presence: an output_config built from the
         // wrong class, or from an empty placeholder, would still be present.
         assertThat(nativeSchemaProperties(built)).containsExactly("verdict");
-    }
-
-    @Test
-    @DisplayName("a POJO schema on an incapable model keeps the prompt fallback")
-    void testNativeSchemaNotAppliedOnIncapableModel() {
-        assertThat(build(INCAPABLE_MODEL, Answer.class, null).params.outputConfig()).isEmpty();
     }
 
     @Test
@@ -535,9 +523,8 @@ class AnthropicChatModelConnectionTest {
     @DisplayName("a caller-supplied output_config suppresses json_prefill with no schema supplied")
     void testCallerOutputConfigSuppressesPrefillWithoutSchema() {
         // No output schema, so nothing derives an output_config and the caller's is the only one on
-        // the request. Asserted on both a capable and an incapable model because suppression has to
-        // follow the config the request carries rather than the model's structured-output
-        // capability, which a check folded in beside the capability test would get wrong.
+        // the request. Asserted on both a capable and an incapable model because suppression
+        // follows the config the request carries, not the model's structured-output capability.
         for (String model : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
             Map<String, Object> params = paramsWithModel(model, true);
             params.put("additional_kwargs", Map.of("output_config", Map.of("format", Map.of())));
@@ -596,12 +583,14 @@ class AnthropicChatModelConnectionTest {
     @Test
     @DisplayName("json_prefill is suppressed when the schema is applied natively")
     void testJsonPrefillSuppressedWhenNativeApplies() {
+        // An unlisted model that accepts a prefill: the output_config the request carries is the
+        // only reason to suppress it, so suppression keyed on capability would keep it here.
         AnthropicChatModelConnection connection = connection();
         AnthropicChatModelConnection.BuiltRequest built =
                 connection.buildRequest(
                         userMessage(),
                         List.of(),
-                        paramsWithModel(CAPABLE_MODEL, true),
+                        paramsWithModel(INCAPABLE_MODEL, true),
                         Answer.class);
 
         assertThat(built.jsonPrefillApplied).isFalse();
@@ -616,13 +605,14 @@ class AnthropicChatModelConnectionTest {
     void testJsonPrefillAppliedWhenSchemaFallsBack() {
         // Suppression keys on whether the schema was applied, not on whether one was supplied.
         // Keying it on the schema instead would strip the prefill the fallback still depends on.
+        // A schema that is not a Class has no native translation, so it is supplied but not sent.
         AnthropicChatModelConnection connection = connection();
         AnthropicChatModelConnection.BuiltRequest built =
                 connection.buildRequest(
                         userMessage(),
                         List.of(),
                         paramsWithModel(INCAPABLE_MODEL, true),
-                        Answer.class);
+                        "row<name STRING>");
 
         assertThat(built.jsonPrefillApplied).isTrue();
         assertThat(requestCarriesPrefill(built)).isTrue();
@@ -1065,7 +1055,7 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the query recommends native exactly when the native branch applies")
+    @DisplayName("the query is infeasible exactly when the native branch is skipped")
     void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
         // literal, is what keeps the query and the branch from drifting in step. The schema form,
@@ -1106,9 +1096,7 @@ class AnthropicChatModelConnectionTest {
                             assertThat(built.params.outputConfig().isPresent())
                                     .as(label)
                                     .isEqualTo(
-                                            expected
-                                                    == NativeStructuredOutputSupport
-                                                            .NATIVE_RECOMMENDED);
+                                            expected != NativeStructuredOutputSupport.INFEASIBLE);
                         }
                     }
                 }
@@ -1128,22 +1116,20 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("an incapable model leaves the request feasible rather than infeasible")
+    @DisplayName("an unlisted model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // A POJO is feasible here even on a model Anthropic does not document support for, and
-        // the branch's own capability conjunct is what keeps that request unconstrained. Folding
-        // capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
-        // overrule.
+        // Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule; folding it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = paramsWithModel(INCAPABLE_MODEL, null);
 
         assertThat(support(connection(), incapable))
                 .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
         assertThat(
-                        connection()
-                                .buildRequest(userMessage(), List.of(), incapable, Answer.class)
-                                .params
-                                .outputConfig())
-                .isEmpty();
+                        nativeSchemaProperties(
+                                connection()
+                                        .buildRequest(
+                                                userMessage(), List.of(), incapable, Answer.class)))
+                .containsExactly("verdict");
     }
 
     @Test

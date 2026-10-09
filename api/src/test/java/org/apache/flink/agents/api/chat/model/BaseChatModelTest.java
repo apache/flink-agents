@@ -32,6 +32,12 @@ import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,6 +45,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -259,21 +266,435 @@ class BaseChatModelTest {
         }
     }
 
+    /**
+     * Connection that answers the native structured-output query with a configured value and
+     * records what it was asked and what the schema-carrying chat was sent.
+     */
+    private static class StructuredRecordingConnection extends RecordingConnection {
+        private final NativeStructuredOutputSupport support;
+        int supportQueries;
+        Object queriedSchema;
+        List<Tool> queriedTools;
+        Map<String, Object> queriedModelParams;
+        List<Tool> capturedTools;
+        Object capturedOutputSchema;
+
+        StructuredRecordingConnection(NativeStructuredOutputSupport support) {
+            this.support = support;
+        }
+
+        @Override
+        protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+                Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+            supportQueries++;
+            queriedSchema = outputSchema;
+            queriedTools = tools;
+            queriedModelParams = modelParams == null ? null : new HashMap<>(modelParams);
+            return support;
+        }
+
+        @Override
+        public ChatMessage chat(
+                List<ChatMessage> messages,
+                List<Tool> tools,
+                Map<String, Object> modelParams,
+                Object outputSchema) {
+            capturedTools = new ArrayList<>(tools);
+            capturedOutputSchema = outputSchema;
+            return chat(messages, tools, modelParams);
+        }
+    }
+
     /** Subclass that exposes setters so we can inject the connection and prompt directly. */
     private static class RecordingChatModelSetup extends BaseChatModelSetup {
+        private final Map<String, Object> parameters;
+
         RecordingChatModelSetup(BaseChatModelConnection connection, Prompt prompt) {
+            this(connection, prompt, null, Map.of());
+        }
+
+        RecordingChatModelSetup(
+                BaseChatModelConnection connection,
+                Prompt prompt,
+                @Nullable StructuredOutputStrategy strategy,
+                Map<String, Object> parameters) {
             super(
                     new ResourceDescriptor(
-                            RecordingChatModelSetup.class.getName(), Collections.emptyMap()),
+                            RecordingChatModelSetup.class.getName(),
+                            strategy == null
+                                    ? Collections.emptyMap()
+                                    : Map.of("structured_output_strategy", strategy)),
                     null);
             this.connection = connection;
             this.prompt = prompt;
+            this.parameters = parameters;
         }
 
         @Override
         public Map<String, Object> getParameters() {
-            return new HashMap<>();
+            return new HashMap<>(parameters);
         }
+    }
+
+    private static final Map<String, Object> SETUP_PARAMS =
+            Map.of("model", "setup-model", "temperature", 0.1);
+
+    private static OutputSchema rowOutputSchema() {
+        return new OutputSchema(
+                new RowTypeInfo(
+                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                        new String[] {"name"}));
+    }
+
+    static Stream<Arguments> strategyBySupport() {
+        // A null expectation means the gate must reject the combination.
+        return Stream.of(
+                Arguments.of(
+                        StructuredOutputStrategy.PROMPT,
+                        NativeStructuredOutputSupport.INFEASIBLE,
+                        false),
+                Arguments.of(
+                        StructuredOutputStrategy.PROMPT,
+                        NativeStructuredOutputSupport.FEASIBLE,
+                        false),
+                Arguments.of(
+                        StructuredOutputStrategy.PROMPT,
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+                        false),
+                Arguments.of(
+                        StructuredOutputStrategy.AUTO,
+                        NativeStructuredOutputSupport.INFEASIBLE,
+                        false),
+                Arguments.of(
+                        StructuredOutputStrategy.AUTO,
+                        NativeStructuredOutputSupport.FEASIBLE,
+                        false),
+                Arguments.of(
+                        StructuredOutputStrategy.AUTO,
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+                        true),
+                Arguments.of(
+                        StructuredOutputStrategy.NATIVE,
+                        NativeStructuredOutputSupport.INFEASIBLE,
+                        null),
+                Arguments.of(
+                        StructuredOutputStrategy.NATIVE,
+                        NativeStructuredOutputSupport.FEASIBLE,
+                        true),
+                Arguments.of(
+                        StructuredOutputStrategy.NATIVE,
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+                        true));
+    }
+
+    @ParameterizedTest(name = "{0} with {1} -> {2}")
+    @MethodSource("strategyBySupport")
+    @DisplayName(
+            "Gate resolves the strategy against the connection's answer for a toolless request")
+    void testWillApplyNativeStructuredOutputResolvesStrategy(
+            StructuredOutputStrategy strategy,
+            NativeStructuredOutputSupport support,
+            Boolean expected) {
+        StructuredRecordingConnection connection = new StructuredRecordingConnection(support);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(connection, null, strategy, SETUP_PARAMS);
+        setup.getTools().add(new SubagentTool("helper", "help", "{\"type\":\"object\"}"));
+
+        if (expected == null) {
+            assertThrows(
+                    IllegalArgumentException.class,
+                    () -> setup.willApplyNativeStructuredOutput(String.class));
+        } else {
+            assertEquals(expected, setup.willApplyNativeStructuredOutput(String.class));
+        }
+
+        // The question concerns a request carrying this schema, the setup's own parameters, and no
+        // tools even when the setup binds some.
+        assertEquals(1, connection.supportQueries);
+        assertSame(String.class, connection.queriedSchema);
+        assertTrue(connection.queriedTools.isEmpty());
+        assertEquals(SETUP_PARAMS, connection.queriedModelParams);
+    }
+
+    @Test
+    @DisplayName("Gate answers false for a null schema under every strategy without asking")
+    void testWillApplyNativeStructuredOutputFalseForNullSchema() {
+        for (StructuredOutputStrategy strategy : StructuredOutputStrategy.values()) {
+            StructuredRecordingConnection connection =
+                    new StructuredRecordingConnection(
+                            NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+            RecordingChatModelSetup setup =
+                    new RecordingChatModelSetup(connection, null, strategy, SETUP_PARAMS);
+
+            assertFalse(setup.willApplyNativeStructuredOutput(null), strategy.name());
+            assertEquals(0, connection.supportQueries, strategy.name());
+        }
+    }
+
+    static Stream<Arguments> schemaDescriptions() {
+        OutputSchema rowSchema = rowOutputSchema();
+        return Stream.of(
+                Arguments.of(String.class, String.class.getName()),
+                // The wrapper's toString names no schema, so the inner type is what names it.
+                Arguments.of(rowSchema, rowSchema.getSchema().toString()));
+    }
+
+    @ParameterizedTest
+    @MethodSource("schemaDescriptions")
+    @DisplayName("NATIVE on an infeasible schema names the connection and the schema")
+    void testWillApplyNativeStructuredOutputInfeasibleMessage(
+            Object schema, String expectedDescription) {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.INFEASIBLE);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.NATIVE, SETUP_PARAMS);
+
+        IllegalArgumentException e =
+                assertThrows(
+                        IllegalArgumentException.class,
+                        () -> setup.willApplyNativeStructuredOutput(schema));
+
+        assertTrue(
+                e.getMessage().contains(StructuredRecordingConnection.class.getName()),
+                e.getMessage());
+        assertTrue(e.getMessage().contains(expectedDescription), e.getMessage());
+    }
+
+    @ParameterizedTest
+    @EnumSource(StructuredOutputStrategy.class)
+    @DisplayName("Gate requires a bound connection for a schema under every strategy")
+    void testWillApplyNativeStructuredOutputRequiresOpen(StructuredOutputStrategy strategy) {
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(null, null, strategy, SETUP_PARAMS);
+
+        NullPointerException e =
+                assertThrows(
+                        NullPointerException.class,
+                        () -> setup.willApplyNativeStructuredOutput(String.class));
+        assertTrue(e.getMessage().contains("open()"), e.getMessage());
+        assertTrue(e.getMessage().contains("willApplyNativeStructuredOutput()"), e.getMessage());
+    }
+
+    @ParameterizedTest
+    @EnumSource(StructuredOutputStrategy.class)
+    @DisplayName("Gate answers false for a null schema when no connection is bound")
+    void testWillApplyNativeStructuredOutputNullSchemaWithoutConnection(
+            StructuredOutputStrategy strategy) {
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(null, null, strategy, SETUP_PARAMS);
+
+        assertFalse(setup.willApplyNativeStructuredOutput(null));
+    }
+
+    @Test
+    @DisplayName("Explicit chat() requires open()")
+    void testExplicitChatRequiresOpen() {
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        null, null, StructuredOutputStrategy.AUTO, SETUP_PARAMS);
+
+        NullPointerException e =
+                assertThrows(
+                        NullPointerException.class,
+                        () ->
+                                setup.chat(
+                                        List.of(new ChatMessage(MessageRole.USER, "hi")),
+                                        List.of(),
+                                        Map.of(),
+                                        String.class));
+        assertTrue(e.getMessage().contains("open()"), e.getMessage());
+    }
+
+    @Test
+    @DisplayName(
+            "Explicit chat() sends the messages and tools as given, without the bound prompt,"
+                    + " skill message or tools")
+    void testExplicitChatSendsMessagesAndToolsAsGiven() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection,
+                        Prompt.fromText("Bound prompt"),
+                        StructuredOutputStrategy.AUTO,
+                        SETUP_PARAMS);
+        setup.skillDiscoveryPrompt = "Available skills";
+        setup.getTools().add(new SubagentTool("bound", "help", "{\"type\":\"object\"}"));
+        Tool given = new SubagentTool("given", "help", "{\"type\":\"object\"}");
+        List<ChatMessage> messages = List.of(new ChatMessage(MessageRole.USER, "hi"));
+
+        setup.chat(messages, List.of(given), Map.of(), String.class);
+
+        assertEquals(messages, connection.capturedMessages);
+        assertEquals(List.of(given), connection.capturedTools);
+        assertSame(String.class, connection.capturedOutputSchema);
+    }
+
+    @Test
+    @DisplayName("Explicit chat() merges per-call parameters over the setup's parameters")
+    void testExplicitChatMergesModelParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, SETUP_PARAMS);
+        List<ChatMessage> messages = List.of(new ChatMessage(MessageRole.USER, "hi"));
+
+        setup.chat(messages, List.of(), Map.of("temperature", 0.9), String.class);
+        assertEquals(
+                Map.of("model", "setup-model", "temperature", 0.9), connection.capturedModelParams);
+
+        setup.chat(messages, List.of(), null, String.class);
+        assertEquals(SETUP_PARAMS, connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Explicit chat() with a null schema sends the connection an unconstrained request")
+    void testExplicitChatWithNullSchemaSendsUnconstrainedRequest() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, SETUP_PARAMS);
+        List<ChatMessage> messages = List.of(new ChatMessage(MessageRole.USER, "hi"));
+
+        setup.chat(messages, List.of(), Map.of(), null);
+
+        assertEquals(messages, connection.capturedMessages);
+        // The schema-carrying connection overload records its tools; it was not reached.
+        assertNull(connection.capturedTools);
+    }
+
+    /** Setup parameters carrying tool-only keys at the top level and nested. */
+    private static Map<String, Object> paramsWithToolChoice() {
+        Map<String, Object> nested = new HashMap<>();
+        nested.put("tool_choice", "auto");
+        nested.put("tool_choice_option", "auto");
+        nested.put("parallel_tool_calls", false);
+        nested.put("top_p", 0.5);
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", "setup-model");
+        params.put("tool_choice", "auto");
+        params.put("tool_choice_option", "auto");
+        params.put("parallel_tool_calls", true);
+        params.put("additional_kwargs", nested);
+        return params;
+    }
+
+    @Test
+    @DisplayName(
+            "Explicit chat() with a schema and no tools omits tool-only parameters, top level and"
+                    + " nested, without mutating the setup's parameters")
+    void testExplicitChatWithSchemaAndNoToolsOmitsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        Map<String, Object> setupParams = paramsWithToolChoice();
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, setupParams);
+
+        setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")), List.of(), null, String.class);
+
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.capturedModelParams);
+        assertEquals(paramsWithToolChoice(), setupParams);
+    }
+
+    @Test
+    @DisplayName("Plain chat() without tools keeps tool-only parameters")
+    void testPlainChatKeepsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+
+        setup.chat(List.of(new ChatMessage(MessageRole.USER, "hi")));
+
+        assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Explicit chat() with a schema and tools keeps tool-only parameters")
+    void testExplicitChatWithSchemaAndToolsKeepsToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+        Tool tool = new SubagentTool("given", "help", "{\"type\":\"object\"}");
+
+        setup.chat(
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                List.of(tool),
+                null,
+                String.class);
+
+        assertEquals(paramsWithToolChoice(), connection.capturedModelParams);
+    }
+
+    @Test
+    @DisplayName("Gate asks the connection with the tool-only parameters omitted")
+    void testWillApplyNativeStructuredOutputQueriesWithoutToolOnlyParams() {
+        StructuredRecordingConnection connection =
+                new StructuredRecordingConnection(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        connection, null, StructuredOutputStrategy.AUTO, paramsWithToolChoice());
+
+        setup.willApplyNativeStructuredOutput(String.class);
+
+        assertEquals(
+                Map.of("model", "setup-model", "additional_kwargs", Map.of("top_p", 0.5)),
+                connection.queriedModelParams);
+    }
+
+    @Test
+    @DisplayName(
+            "chat(messages, promptArgs, modelParams) sends the prepared request and the bound tools"
+                    + " through the explicit chat()")
+    void testChatDelegatesPreparedRequestToExplicitChat() {
+        List<Object[]> explicitCalls = new ArrayList<>();
+        RecordingChatModelSetup setup =
+                new RecordingChatModelSetup(
+                        new RecordingConnection(),
+                        Prompt.fromMessages(
+                                List.of(
+                                        new ChatMessage(MessageRole.SYSTEM, "You are terse."),
+                                        new ChatMessage(MessageRole.USER, "Task: {task}"))),
+                        StructuredOutputStrategy.AUTO,
+                        SETUP_PARAMS) {
+                    @Override
+                    public ChatMessage chat(
+                            List<ChatMessage> messages,
+                            List<Tool> tools,
+                            @Nullable Map<String, Object> modelParams,
+                            @Nullable Object outputSchema) {
+                        explicitCalls.add(
+                                new Object[] {messages, tools, modelParams, outputSchema});
+                        return new ChatMessage(MessageRole.ASSISTANT, "ok");
+                    }
+                };
+        setup.skillDiscoveryPrompt = "Available skills";
+        Tool bound = new SubagentTool("bound", "help", "{\"type\":\"object\"}");
+        setup.getTools().add(bound);
+        Map<String, Object> modelParams = Map.of("temperature", 0.9);
+
+        setup.chat(List.of(new ChatMessage(MessageRole.USER, "")), Map.of("task", 7), modelParams);
+
+        assertEquals(1, explicitCalls.size());
+        Object[] call = explicitCalls.get(0);
+        assertEquals(
+                List.of(
+                        new ChatMessage(MessageRole.SYSTEM, "You are terse."),
+                        new ChatMessage(MessageRole.SYSTEM, "Available skills"),
+                        new ChatMessage(MessageRole.USER, "Task: 7")),
+                call[0]);
+        assertEquals(List.of(bound), call[1]);
+        assertSame(modelParams, call[2]);
+        assertNull(call[3]);
     }
 
     @Test

@@ -512,8 +512,7 @@ class WatsonxChatModelConnection(BaseChatModelConnection):
         # prompt-engineering fallback.
         #
         # Feasibility is asked rather than restated, so a caller asking the same
-        # question gets the answer this branch acts on. Capability is unconditional on
-        # this connection, so feasibility alone decides the branch.
+        # question gets the answer this branch acts on.
         if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             native_model = _native_output_model(output_schema)
             # A caller reaches the same request field through either channel, and both

@@ -48,7 +48,8 @@ class NativeStructuredOutputSupport(str, Enum):
         natively. Binding: no structured-output policy can overrule it.
     FEASIBLE : str
         The request can carry the schema natively, but the effective model is not known
-        to honor it. Advisory: a policy may still choose the native path.
+        to honor it. Advisory: a policy may still choose the native path, and a request
+        built with the schema carries it exactly as under ``NATIVE_RECOMMENDED``.
     NATIVE_RECOMMENDED : str
         The request can carry the schema natively and the effective model is known to
         honor it.
@@ -65,10 +66,6 @@ class StructuredOutputStrategy(str, Enum):
     This expresses *policy* only. Whether a connection *can* apply the provider's
     native structured-output API to a request is the connection's own answer, a
     ``NativeStructuredOutputSupport``. ``resolves_to_native`` combines the two.
-
-    TODO(#912): strategy resolution is not wired into production yet. Once it is, the
-    native branches must honor the resolved policy rather than vetoing NATIVE through
-    their own capability check.
 
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
@@ -200,9 +197,14 @@ class BaseChatModelConnection(Resource, ABC):
 
         An override must answer from the same logic its own request path uses to decide
         the native branch, so that the answer cannot drift from what the request ends up
-        carrying. ``FEASIBLE`` or better is not a promise that the call succeeds: a
-        connection may still raise once its native branch has decided to apply the
-        schema, as happens where the caller supplied a conflicting response format.
+        carrying. An override's native branch carries the schema whenever this answer
+        is not ``INFEASIBLE``. Capability only separates ``FEASIBLE`` from
+        ``NATIVE_RECOMMENDED`` and does not change the request; whether to pass a schema
+        at all is the caller's strategy to decide.
+
+        ``FEASIBLE`` or better is not a promise that the call succeeds: a connection may
+        still raise once its native branch has decided to apply the schema, as happens
+        where the caller supplied a conflicting response format.
 
         The default ``INFEASIBLE`` is correct only for a connection that translates no
         schema at all. A connection whose request path has a native branch but which
@@ -349,9 +351,12 @@ class BaseChatModelConnection(Resource, ABC):
             member renders under Pydantic, and one provider's renderer takes it while
             another refuses it. Neither is raised unless the request was going to
             carry a native schema, since an implementation renders only once it has
-            decided to send one — so an unrenderable schema reports nothing when the
-            effective model is not one the implementation calls natively capable, or
-            when some other condition has already ruled the native branch out.
+            decided to send one, so an unrenderable schema reports nothing when some
+            other condition has already ruled the native branch out. An implementation
+            with a native translation sends the schema natively whenever
+            ``supports_native_structured_output`` would answer other than
+            ``INFEASIBLE``, whatever the effective model's capability, since the
+            caller has already decided to send it.
 
             A ``BaseModel`` subclass that renders but declares no fields is sent as
             rendered, leaving the receiving provider to accept or refuse it.
@@ -371,6 +376,29 @@ class BaseChatModelConnection(Resource, ABC):
         ChatMessage
             Model response message
         """
+
+
+# Providers reject these parameters on a request that defines no tools.
+_TOOL_ONLY_PARAMS = frozenset(
+    {"tool_choice", "tool_choice_option", "parallel_tool_calls"}
+)
+
+
+def _without_tool_only_params(kwargs: Mapping[str, Any]) -> Dict[str, Any]:
+    stripped = {k: v for k, v in kwargs.items() if k not in _TOOL_ONLY_PARAMS}
+    nested = stripped.get("additional_kwargs")
+    if isinstance(nested, Mapping):
+        stripped["additional_kwargs"] = {
+            k: v for k, v in nested.items() if k not in _TOOL_ONLY_PARAMS
+        }
+    return stripped
+
+
+def _describe_output_schema(output_schema: OutputSchema) -> str:
+    inner = output_schema.output_schema
+    if isinstance(inner, type):
+        return f"{inner.__module__}.{inner.__qualname__}"
+    return str(inner)
 
 
 class BaseChatModelSetup(Resource):
@@ -584,11 +612,113 @@ class BaseChatModelSetup(Resource):
             injected = [ChatMessage.system(self.skill_discovery_prompt)]
             messages = list(messages[:index]) + injected + list(messages[index:])
 
-        # Call chat model connection to execute chat
+        return self.chat_explicit(messages, self._get_tools(), **kwargs)
+
+    def chat_explicit(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool],
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Send the messages and tools exactly as given.
+
+        The bound prompt, the skill-discovery message and the bound tools are not
+        added. ``chat`` prepares the request and sends it through this method.
+
+        When ``output_schema`` is set and ``tools`` is empty, the parameters sent to
+        the connection omit ``tool_choice``, ``tool_choice_option`` and
+        ``parallel_tool_calls``, at the top level and inside a nested
+        ``additional_kwargs`` dict.
+
+        Args:
+            messages: The messages to send.
+            tools: The tools to bind to the request.
+            output_schema: The schema the provider applies natively, or ``None`` for
+                an unconstrained request.
+            **kwargs: Model parameters for this call, merged over ``model_kwargs``.
+
+        Returns:
+            The connection's response.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet.
+        """
+        connection = self._get_connection()
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
-        connection = self._get_connection()
-        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
+        if output_schema is None:
+            return connection.chat(messages, tools=tools, **merged_kwargs)
+        if not tools:
+            merged_kwargs = _without_tool_only_params(merged_kwargs)
+        return connection.chat(
+            messages, tools=tools, output_schema=output_schema, **merged_kwargs
+        )
+
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Whether ``output_schema`` should travel through the provider's native
+        structured output on a call issued through ``chat_explicit`` with no tools,
+        rather than be described to the model in the prompt.
+
+        Framework-facing. A user configures the outcome through
+        ``structured_output_strategy`` instead of calling this.
+
+        The connection is asked about a request carrying this schema, no tools, and
+        the parameters ``model_kwargs`` returns, without the tool-only parameters that
+        a schema-carrying request with no tools omits. Per-call keyword arguments
+        passed to ``chat_explicit`` are not seen here, so a caller that adds
+        parameters affecting feasibility must not rely on this answer.
+
+        A ``True`` answer is not a promise that the call succeeds: a connection may
+        still raise once its native branch applies the schema, for example on a
+        conflicting caller-supplied response format.
+
+        A setup that resolves no connection, such as one that overrides ``open`` and
+        ``chat`` to answer by itself, overrides this method.
+
+        Args:
+            output_schema: The schema the call would carry, or ``None`` for an
+                unconstrained call.
+
+        Returns:
+            ``True`` if the schema should be applied natively; ``False`` for a
+            ``None`` schema.
+
+        Raises:
+            TypeError: If the schema is not ``None`` and ``open()`` has not resolved
+                the connection.
+            ValueError: If the strategy is ``NATIVE`` and the connection cannot apply
+                this schema to such a request.
+        """
+        if output_schema is None:
+            return False
+        connection = self._resolved_connection
+        if connection is None:
+            msg = (
+                "Connection is not initialized. Ensure open() resolves the "
+                "connection, or override will_apply_native_structured_output() in a "
+                "setup that has none."
+            )
+            raise TypeError(msg)
+        support = connection.supports_native_structured_output(
+            output_schema, [], _without_tool_only_params(self.model_kwargs)
+        )
+        if (
+            support == NativeStructuredOutputSupport.INFEASIBLE
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            cls = type(connection)
+            msg = (
+                f"Structured output strategy NATIVE was requested, but "
+                f"{cls.__module__}.{cls.__qualname__} cannot apply the output schema "
+                f"{_describe_output_schema(output_schema)} natively. Use AUTO or "
+                "PROMPT to describe the schema in the prompt instead, or supply a "
+                "schema this connection can translate."
+            )
+            raise ValueError(msg)
+        return self.structured_output_strategy.resolves_to_native(support)
 
     def _record_token_metrics(
         self,

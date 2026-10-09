@@ -141,8 +141,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     // to retain the minor version: "claude-opus-4" would capture claude-opus-4-1-20250805, which
     // predates the cutoff and is not capable.
     //
-    // A name outside both sets reports not-capable and degrades to the prompt-engineering
-    // fallback rather than failing at the provider.
+    // A name outside both sets reports not-capable, which the structured-output query reports as
+    // FEASIBLE rather than NATIVE_RECOMMENDED.
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
             Set.of(
                     "claude-opus-4-6",
@@ -176,8 +176,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      *
      * <p>See the allowlists above for the source of truth and for why a 4.5-generation alias also
      * matches the dated snapshot behind it while every other name is matched exactly. An
-     * unrecognized name reports {@code false} so that it degrades to the prompt-engineering
-     * fallback rather than failing at the provider.
+     * unrecognized name reports {@code false}. The answer shapes only the structured-output query;
+     * the request carries a schema it is handed whatever this reports.
      *
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
@@ -282,10 +282,8 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * <p>See the list above for the source of truth and for why it is matched exactly and kept
      * apart from the structured-output allowlists. An unrecognized name reports {@code true}, which
      * matches the documented rule: prefilling is the long-standing behaviour and only the listed
-     * names withdraw it. The cost of that default runs the opposite way to {@link
-     * #modelSupportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
-     * prefilled and answered with a 400, where an unrecognized name on the structured-output path
-     * degrades silently to the prompt-engineering fallback instead.
+     * names withdraw it. A rejecting model this list has not caught up with is therefore prefilled
+     * and answered with a 400.
      */
     static boolean supportsJsonPrefill(String effectiveModel) {
         // Load-bearing: the list is an immutable Set, whose contains(null) throws rather than
@@ -459,11 +457,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Translates {@code outputSchema} into Anthropic's native {@code output_config.format} when it
-     * is a POJO {@link Class}, the effective model is one Anthropic documents structured-output
-     * support for, and the caller has not already supplied its own {@code output_config}. Any other
-     * combination sends no derived schema, so the request carries only the output configuration the
-     * caller supplied, if any, and a schema that cannot be sent natively degrades to the
-     * prompt-engineering fallback rather than failing at the provider.
+     * is a POJO {@link Class} and the caller has not already supplied its own {@code
+     * output_config}, whatever the effective model. Any other combination sends no derived schema,
+     * so the request carries only the output configuration the caller supplied, if any.
      *
      * <p>A request that ends up carrying an {@code output_config} — whether derived here or
      * supplied by the caller — also suppresses the {@code json_prefill} parameter, since Anthropic
@@ -582,17 +578,16 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // an output_config without supplying any output schema for the native branch to look at.
         boolean callerSuppliedOutputConfig = carriesCallerOutputConfig(rawModelParams);
 
-        // Native structured output applies only for a POJO Class schema on a model Anthropic
-        // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
-        // the prompt-engineering fallback. A caller-supplied output_config is the caller being
-        // explicit about the exact parameter this branch writes, so it wins and the schema falls
-        // back to prompt engineering rather than the two competing on the same request.
+        // Native structured output applies only for a POJO Class schema; a RowTypeInfo (wrapped in
+        // OutputSchema) carries no derived output_config. A caller-supplied output_config is the
+        // caller being explicit about the exact parameter this branch writes, so it wins and no
+        // derived one is added rather than the two competing on the same request.
         //
-        // The schema form and the caller's output_config are asked rather than restated, so a
-        // caller asking the same question gets the answer this branch acts on.
+        // The branch is exactly the query's feasibility test, so it applies whenever the query
+        // answers other than INFEASIBLE. Model capability is not asked: a caller that hands this
+        // connection a schema has already chosen to send it.
         boolean nativeSchemaApplied = false;
-        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && modelSupportsNativeStructuredOutput(modelName)) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
             builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
             nativeSchemaApplied = true;
         }

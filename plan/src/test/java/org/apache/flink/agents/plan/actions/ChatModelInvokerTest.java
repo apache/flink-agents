@@ -17,23 +17,32 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CancellationException;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -121,8 +130,7 @@ class ChatModelInvokerTest {
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
         when(model.chat(any(), any(), any()))
                 .thenThrow(new IllegalArgumentException("invalid model"));
-        com.fasterxml.jackson.databind.ObjectMapper mapper =
-                new com.fasterxml.jackson.databind.ObjectMapper();
+        ObjectMapper mapper = new ObjectMapper();
         byte[][] stored = new byte[1][];
         when(ctx.durableExecute(any()))
                 .thenAnswer(
@@ -228,5 +236,177 @@ class ChatModelInvokerTest {
         // An ordinary failure must still consume the full retry budget (initial attempt + 2
         // retries), confirming the interruption fix doesn't disturb normal retry behavior.
         verify(ctx, times(3)).durableExecute(any());
+    }
+
+    private static RunnerContext syncContext(BaseChatModelSetup model) throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        ReadableConfiguration config = mock(ReadableConfiguration.class);
+        when(ctx.getConfig()).thenReturn(config);
+        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+        return ctx;
+    }
+
+    @Test
+    void gateFailureIsTheCandidateFailingBeforeAnyModelCall() throws Exception {
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = syncContext(model);
+        IllegalArgumentException infeasible = new IllegalArgumentException("NATIVE infeasible");
+        when(model.willApplyNativeStructuredOutput(Map.class)).thenThrow(infeasible);
+
+        ChatModelInvoker.ChatAttemptFailed failure =
+                assertThrows(
+                        ChatModelInvoker.ChatAttemptFailed.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(),
+                                        Map.of(),
+                                        Map.class,
+                                        ctx,
+                                        2,
+                                        0));
+
+        assertSame(infeasible, failure.error);
+        assertSame(model, failure.chatModel);
+        assertEquals("test-model", failure.model);
+        assertEquals(0, failure.retryCount);
+        verify(ctx, never()).durableExecute(any());
+        verify(model, never()).chat(any(), any(), any());
+    }
+
+    @Test
+    void gateCancellationPropagatesUnconverted() throws Exception {
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = syncContext(model);
+        CancellationException cancelled = new CancellationException("cancelled");
+        when(model.willApplyNativeStructuredOutput(Map.class)).thenThrow(cancelled);
+
+        assertSame(
+                cancelled,
+                assertThrows(
+                        CancellationException.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(),
+                                        Map.of(),
+                                        Map.class,
+                                        ctx,
+                                        2,
+                                        0)));
+        verify(ctx, never()).durableExecute(any());
+    }
+
+    @Test
+    void finalizationDurableInfrastructureFailureIsNotRetriedOrConverted() throws Exception {
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = syncContext(model);
+        when(model.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(model.chat(any(), any(), any())).thenReturn(ChatMessage.assistant("the answer"));
+        IllegalStateException failure = new IllegalStateException("state persistence failed");
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        inv -> {
+                            DurableCallable<?> callable = inv.getArgument(0);
+                            if (callable.getId().endsWith(":final")) {
+                                throw failure;
+                            }
+                            return callable.call();
+                        });
+
+        assertSame(
+                failure,
+                assertThrows(
+                        IllegalStateException.class,
+                        () ->
+                                ChatModelInvoker.chatWithRetries(
+                                        UUID.randomUUID(),
+                                        "test-model",
+                                        "chat",
+                                        List.of(ChatMessage.user("hi")),
+                                        Map.of(),
+                                        Map.class,
+                                        ctx,
+                                        3,
+                                        0)));
+        verify(ctx, times(2)).durableExecute(any());
+        verify(model, never()).chat(any(), any(), any(), any());
+    }
+
+    /**
+     * Contract: the runtime matches durable records by call id in call order, so a recovered native
+     * attempt, retries included, replays every model call from its record.
+     */
+    @Test
+    void recoveredNativeAttemptReplaysEveryCallFromItsRecord() throws Exception {
+        BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = syncContext(model);
+        when(model.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(model.chat(any(), any(), any())).thenReturn(ChatMessage.assistant("the answer is 42"));
+        when(model.chat(any(), any(), any(), any()))
+                .thenReturn(
+                        ChatMessage.assistant("not-json"),
+                        ChatMessage.assistant("{\"answer\":\"42\"}"));
+        ObjectMapper mapper = new ObjectMapper();
+        List<String> recordedIds = new ArrayList<>();
+        List<byte[]> recordedResults = new ArrayList<>();
+        int[] next = {0};
+        boolean[] replaying = {false};
+        when(ctx.durableExecute(any()))
+                .thenAnswer(
+                        inv -> {
+                            DurableCallable<?> callable = inv.getArgument(0);
+                            if (replaying[0]) {
+                                int index = next[0]++;
+                                assertEquals(recordedIds.get(index), callable.getId());
+                                return mapper.readValue(
+                                        recordedResults.get(index), callable.getResultClass());
+                            }
+                            recordedIds.add(callable.getId());
+                            recordedResults.add(mapper.writeValueAsBytes(callable.call()));
+                            return mapper.readValue(
+                                    recordedResults.get(recordedResults.size() - 1),
+                                    callable.getResultClass());
+                        });
+
+        ChatModelInvoker.ChatAttemptResult first =
+                ChatModelInvoker.chatWithRetries(
+                        UUID.randomUUID(),
+                        "test-model",
+                        "chat",
+                        List.of(ChatMessage.user("hi")),
+                        Map.of(),
+                        Map.class,
+                        ctx,
+                        1,
+                        0);
+        assertEquals(List.of("chat", "chat:final", "chat", "chat:final"), recordedIds);
+
+        replaying[0] = true;
+        ChatModelInvoker.ChatAttemptResult replayed =
+                ChatModelInvoker.chatWithRetries(
+                        UUID.randomUUID(),
+                        "test-model",
+                        "chat",
+                        List.of(ChatMessage.user("hi")),
+                        Map.of(),
+                        Map.class,
+                        ctx,
+                        1,
+                        0);
+
+        assertEquals(4, next[0]);
+        verify(model, times(2)).chat(any(), any(), any());
+        verify(model, times(2)).chat(any(), any(), any(), any());
+        assertEquals(1, replayed.retryCount);
+        assertEquals(first.response.getText(), replayed.response.getText());
+        assertEquals(
+                first.response.getExtraArgs().get(Agent.STRUCTURED_OUTPUT),
+                replayed.response.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
     }
 }

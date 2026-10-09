@@ -124,9 +124,9 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     // cover gemini-2.5-flash-image, whose published capability row claims support that the service
     // rejects.
     //
-    // A name outside the family — a Gemma model served by the same endpoint, a tuned model, or a
-    // path-qualified form such as models/gemini-2.5-flash — reports not-capable and degrades to the
-    // prompt fallback rather than failing at the provider.
+    // A name outside the family, a Gemma model served by the same endpoint, a tuned model, or a
+    // path-qualified form such as models/gemini-2.5-flash, reports not-capable, which the
+    // structured-output query reports as FEASIBLE rather than NATIVE_RECOMMENDED.
     private static final String NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIX = "gemini-";
     private static final Set<String> NON_TEXT_MODALITY_MARKERS =
             Set.of("-image", "-tts", "-audio", "-live", "-transcribe", "-embedding", "-omni");
@@ -218,8 +218,9 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
     /**
      * Whether Google documents native structured output for {@code effectiveModel}.
      *
-     * <p>A {@code true} means the request carries the schema as a native {@code responseJsonSchema}
-     * and the model is one Google documents as accepting one. What that buys is structural
+     * <p>A {@code true} means the model is one Google documents as accepting a native {@code
+     * responseJsonSchema}. The answer shapes only the structured-output query; the config carries a
+     * schema it is handed whatever this reports. What a capable model buys is structural
      * conformance: the response is syntactically valid JSON whose object shape, key set and value
      * types follow the schema as the service interpreted it.
      *
@@ -233,9 +234,9 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
      * <p>Capability is read from the model name alone, so a Gemini model released after this was
      * written is treated as capable. One that turns out not to support structured output fails at
      * the provider with {@code 400 INVALID_ARGUMENT}, "JSON mode is not enabled for this model",
-     * rather than degrading quietly. A name outside the family — a Gemma model on the same
-     * endpoint, a tuned model, or the path-qualified {@code models/gemini-2.5-flash} form the SDK
-     * also accepts — reports not-capable and keeps the prompt-engineering fallback.
+     * rather than degrading quietly. A name outside the family, a Gemma model on the same endpoint,
+     * a tuned model, or the path-qualified {@code models/gemini-2.5-flash} form the SDK also
+     * accepts, reports not-capable.
      */
     private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null || effectiveModel.isBlank()) {
@@ -301,10 +302,8 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Translates {@code outputSchema} into Gemini's native {@code responseJsonSchema} when it is a
-     * POJO {@link Class}, the request carries no tools, and the effective model is one Google
-     * documents structured-output support for. Any other combination sends no derived schema, so a
-     * schema that cannot be sent natively degrades to the prompt-engineering fallback rather than
-     * failing at the provider.
+     * POJO {@link Class} and the request carries no tools, whatever the effective model. Any other
+     * combination sends no derived schema.
      *
      * <p>The tools condition is a provider constraint rather than a preference: outside a
      * documented preview, Gemini answers a request that combines function declarations with a JSON
@@ -347,8 +346,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
                             .map(m -> convertToContent(m, toolCallIdToName))
                             .collect(Collectors.toList());
 
-            GenerateContentConfig config =
-                    buildConfig(messages, tools, callerArgs, modelName, outputSchema);
+            GenerateContentConfig config = buildConfig(messages, tools, callerArgs, outputSchema);
 
             GenerateContentResponse response =
                     client.models.generateContent(modelName, contents, config);
@@ -397,9 +395,7 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         return map;
     }
 
-    // Package-visible for unit testing of the request-config assembly. modelName is passed
-    // explicitly rather than read from arguments, because chat() has already resolved it against
-    // the connection's default by this point.
+    // Package-visible for unit testing of the request-config assembly.
     //
     // arguments is the caller's parameter map and is not consumed: the keys recognized here are
     // taken from a copy, so the map stays whole for the feasibility query below, which has to be
@@ -408,7 +404,6 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> arguments,
-            String modelName,
             Object outputSchema) {
         Map<String, Object> consumable =
                 arguments != null ? new HashMap<>(arguments) : new HashMap<>();
@@ -446,11 +441,12 @@ public class GeminiChatModelConnection extends BaseChatModelConnection {
         // temperature and max_output_tokens, and applyAdditionalKwargs recognizes only top_k,
         // top_p and stop_sequences, so there is no caller-supplied value to collide with.
         //
-        // The schema form and the empty-tools precondition are asked rather than restated, so a
-        // caller asking the same question gets the answer this branch acts on. Asked with the
-        // caller's parameters rather than the consumed copy, so both ask about the same map.
-        if (canApplyNativeStructuredOutput(outputSchema, tools, arguments)
-                && modelSupportsNativeStructuredOutput(modelName)) {
+        // The schema form and the empty-tools precondition are asked rather than restated, so the
+        // branch applies whenever the query answers other than INFEASIBLE. Asked with the caller's
+        // parameters rather than the consumed copy, so both ask about the same map. Model
+        // capability is not asked: a caller that hands this connection a schema has already chosen
+        // to send it.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, arguments)) {
             builder.responseMimeType("application/json");
             builder.responseJsonSchema(toNativeJsonSchema((Class<?>) outputSchema));
         }

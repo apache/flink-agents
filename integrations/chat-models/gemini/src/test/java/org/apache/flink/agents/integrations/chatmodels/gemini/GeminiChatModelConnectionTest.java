@@ -30,6 +30,7 @@ import com.google.genai.types.FunctionCall;
 import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
+import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -50,6 +51,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -65,7 +68,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Unit tests for {@link GeminiChatModelConnection}. These exercise the protocol-conversion logic
- * with no network access, so they run in CI without any API key.
+ * with no network access beyond a loopback stub, so they run in CI without any API key.
  */
 class GeminiChatModelConnectionTest {
 
@@ -601,8 +604,7 @@ class GeminiChatModelConnectionTest {
         List<ChatMessage> messages =
                 List.of(ChatMessage.system("be terse"), ChatMessage.user("hi"));
 
-        GenerateContentConfig config =
-                connection().buildConfig(messages, null, params(), CAPABLE_MODEL, null);
+        GenerateContentConfig config = connection().buildConfig(messages, null, params(), null);
 
         Content instruction = config.systemInstruction().orElseThrow();
         // Exactly one part: the USER turn must not be lifted into the system instruction.
@@ -618,7 +620,7 @@ class GeminiChatModelConnectionTest {
         arguments.put("additional_kwargs", Map.of("top_k", 40, "top_p", 0.9));
 
         GenerateContentConfig config =
-                connection().buildConfig(userMessage(), null, arguments, CAPABLE_MODEL, null);
+                connection().buildConfig(userMessage(), null, arguments, null);
 
         assertThat(config.topK()).hasValue(40f);
         assertThat(config.topP()).hasValue(0.9f);
@@ -632,7 +634,7 @@ class GeminiChatModelConnectionTest {
         arguments.put("max_output_tokens", 512);
 
         GenerateContentConfig config =
-                connection().buildConfig(userMessage(), null, arguments, CAPABLE_MODEL, null);
+                connection().buildConfig(userMessage(), null, arguments, null);
 
         assertThat(config.temperature()).hasValue(0.25f);
         assertThat(config.maxOutputTokens()).hasValue(512);
@@ -643,12 +645,7 @@ class GeminiChatModelConnectionTest {
     void buildConfigSetsToolsWhenPresent() {
         GenerateContentConfig config =
                 connection()
-                        .buildConfig(
-                                userMessage(),
-                                List.of(new SchemaOnlyTool()),
-                                params(),
-                                CAPABLE_MODEL,
-                                null);
+                        .buildConfig(userMessage(), List.of(new SchemaOnlyTool()), params(), null);
 
         List<FunctionDeclaration> declarations =
                 config.tools().orElseThrow().get(0).functionDeclarations().orElseThrow();
@@ -710,7 +707,7 @@ class GeminiChatModelConnectionTest {
                 "gemini",
                 "imagen-4.0-generate-001"
             })
-    @DisplayName("A name outside the family is not recommended and keeps the prompt fallback")
+    @DisplayName("A name outside the family is feasible but not recommended")
     void queryReportsOutsideFamilyFeasibleOnly(String model) {
         assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
@@ -728,8 +725,7 @@ class GeminiChatModelConnectionTest {
     @DisplayName("A POJO schema is sent as responseJsonSchema alongside a JSON response mime type")
     void nativeSchemaAppliedForPojo() {
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
+                connection().buildConfig(userMessage(), null, params(), Report.class);
 
         assertThat(config.responseMimeType()).hasValue("application/json");
         JsonNode schema = nativeSchema(config);
@@ -748,8 +744,7 @@ class GeminiChatModelConnectionTest {
         Object nonClassSchema = "row<name STRING>";
 
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, nonClassSchema);
+                connection().buildConfig(userMessage(), null, params(), nonClassSchema);
 
         assertThat(config.responseJsonSchema()).isEmpty();
         assertThat(config.responseMimeType()).isEmpty();
@@ -767,7 +762,6 @@ class GeminiChatModelConnectionTest {
                                 userMessage(),
                                 List.of(new SchemaOnlyTool()),
                                 params(),
-                                CAPABLE_MODEL,
                                 Report.class);
 
         assertThat(config.tools()).isPresent();
@@ -776,26 +770,10 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("A model without documented support is never sent a schema")
-    void nativeSchemaSkippedForIncapableModel() {
-        GenerateContentConfig config =
-                connection()
-                        .buildConfig(
-                                userMessage(),
-                                null,
-                                params(),
-                                "gemini-2.5-flash-image",
-                                Report.class);
-
-        assertThat(config.responseJsonSchema()).isEmpty();
-        assertThat(config.responseMimeType()).isEmpty();
-    }
-
-    @Test
     @DisplayName("No output schema leaves the response format unconstrained")
     void nullSchemaLeavesRequestUnconstrained() {
         GenerateContentConfig config =
-                connection().buildConfig(userMessage(), null, params(), CAPABLE_MODEL, null);
+                connection().buildConfig(userMessage(), null, params(), null);
 
         assertThat(config.responseJsonSchema()).isEmpty();
         assertThat(config.responseMimeType()).isEmpty();
@@ -805,8 +783,7 @@ class GeminiChatModelConnectionTest {
     @DisplayName("The derived schema lists enum constants by the values Jackson deserializes")
     void derivedSchemaListsEnumsByTheirJacksonWireValues() throws Exception {
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Ticket.class);
+                connection().buildConfig(userMessage(), null, params(), Ticket.class);
         JsonNode properties = nativeSchema(config).path("properties");
         JsonNode statusValues = properties.path("status").path("enum");
         JsonNode severityValues = properties.path("severity").path("enum");
@@ -830,8 +807,7 @@ class GeminiChatModelConnectionTest {
     @DisplayName("The derived schema closes objects without unsetting a map's value schema")
     void derivedSchemaClosesObjects() {
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Report.class);
+                connection().buildConfig(userMessage(), null, params(), Report.class);
         JsonNode schema = nativeSchema(config);
 
         // No Gemini document states that a schema without the keyword is closed, so an undeclared
@@ -855,8 +831,7 @@ class GeminiChatModelConnectionTest {
         // starting with $. A described field whose type is reused is extracted into $defs and
         // emits exactly that pairing.
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Addresses.class);
+                connection().buildConfig(userMessage(), null, params(), Addresses.class);
         JsonNode properties = nativeSchema(config).path("properties");
 
         assertThat(properties.path("home").path("$ref").isTextual()).isTrue();
@@ -871,8 +846,7 @@ class GeminiChatModelConnectionTest {
         // $defs rather than under the root's properties, so a walk that only visited the root's
         // own properties would leave it in place.
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Building.class);
+                connection().buildConfig(userMessage(), null, params(), Building.class);
         JsonNode nested = nativeSchema(config).path("$defs").path("Addresses").path("properties");
 
         assertThat(nested.path("home").path("$ref").isTextual()).isTrue();
@@ -888,7 +862,7 @@ class GeminiChatModelConnectionTest {
         // places inside a JSON array rather than inside an object, so a walk that visited object
         // members only would leave all four in place.
         GenerateContentConfig config =
-                connection().buildConfig(userMessage(), null, params(), CAPABLE_MODEL, Owner.class);
+                connection().buildConfig(userMessage(), null, params(), Owner.class);
         JsonNode properties = nativeSchema(config).path("properties");
 
         for (String field : List.of("pet", "backup")) {
@@ -910,13 +884,7 @@ class GeminiChatModelConnectionTest {
         // other property from it while required still listed them, leaving a document that
         // additionalProperties:false makes unsatisfiable.
         GenerateContentConfig config =
-                connection()
-                        .buildConfig(
-                                userMessage(),
-                                null,
-                                params(),
-                                CAPABLE_MODEL,
-                                RefNamedProperty.class);
+                connection().buildConfig(userMessage(), null, params(), RefNamedProperty.class);
         JsonNode schema = nativeSchema(config);
 
         assertThat(fieldNames(schema.path("properties"))).containsExactly("$ref", "other");
@@ -956,9 +924,6 @@ class GeminiChatModelConnectionTest {
         }
     }
 
-    /** Stops the request after the config is assembled, so no call reaches the provider. */
-    private static final class StopBeforeRequest extends RuntimeException {}
-
     private static Map<String, Object> paramsWithModel(String model) {
         Map<String, Object> modelParams = params();
         modelParams.put("model", model);
@@ -966,54 +931,85 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The query judges the model the request path resolves")
-    void queryJudgesTheModelTheRequestPathResolves() {
-        // chat resolves the model and hands it to buildConfig, which is where the native branch
-        // runs. Overriding buildConfig to stop once it has run binds the query to the request
-        // without reaching the provider. Asserting each side against a literal would let the two
-        // drift in step, which is the one failure this has to catch.
-        for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
-            AtomicReference<GenerateContentConfig> built = new AtomicReference<>();
-            GeminiChatModelConnection connection =
-                    new GeminiChatModelConnection(descriptor("test-key", null, configured), NOOP) {
-                        @Override
-                        GenerateContentConfig buildConfig(
-                                List<ChatMessage> messages,
-                                List<Tool> tools,
-                                Map<String, Object> arguments,
-                                String modelName,
-                                Object outputSchema) {
-                            built.set(
-                                    super.buildConfig(
-                                            messages, tools, arguments, modelName, outputSchema));
-                            throw new StopBeforeRequest();
-                        }
-                    };
+    @DisplayName(
+            "The query judges the model the request is issued against, which carries the schema")
+    void queryJudgesTheModelTheRequestPathResolves() throws Exception {
+        // chat resolves the model separately from the query, so the model and the schema are read
+        // off the request a loopback stub receives. The stub answers 400, which the SDK does not
+        // retry.
+        AtomicReference<String> requestedPath = new AtomicReference<>();
+        AtomicReference<String> requestedBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext(
+                "/",
+                exchange -> {
+                    requestedPath.set(exchange.getRequestURI().getPath());
+                    requestedBody.set(
+                            new String(
+                                    exchange.getRequestBody().readAllBytes(),
+                                    StandardCharsets.UTF_8));
+                    byte[] body = "{\"error\":{\"code\":400}}".getBytes(StandardCharsets.UTF_8);
+                    exchange.sendResponseHeaders(400, body.length);
+                    exchange.getResponseBody().write(body);
+                    exchange.close();
+                });
+        server.start();
+        try {
+            String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+            for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+                GeminiChatModelConnection connection =
+                        new GeminiChatModelConnection(
+                                descriptor("test-key", baseUrl, configured), NOOP);
+                try {
+                    for (Map<String, Object> modelParams :
+                            List.<Map<String, Object>>of(
+                                    paramsWithModel(CAPABLE_MODEL),
+                                    paramsWithModel(INCAPABLE_MODEL),
+                                    paramsWithModel("   "),
+                                    params())) {
+                        NativeStructuredOutputSupport answer =
+                                connection.supportsNativeStructuredOutput(
+                                        Report.class, List.of(), modelParams);
+                        String expectedModel =
+                                modelParams.get("model") == null
+                                                || modelParams.get("model").toString().isBlank()
+                                        ? configured
+                                        : modelParams.get("model").toString();
+                        String label =
+                                String.format("configured %s, params %s", configured, modelParams);
 
-            for (Map<String, Object> modelParams :
-                    List.<Map<String, Object>>of(
-                            paramsWithModel(CAPABLE_MODEL),
-                            paramsWithModel(INCAPABLE_MODEL),
-                            paramsWithModel("   "),
-                            params())) {
-                NativeStructuredOutputSupport answer =
-                        connection.supportsNativeStructuredOutput(
-                                Report.class, List.of(), modelParams);
-
-                assertThatThrownBy(
+                        requestedPath.set(null);
+                        requestedBody.set(null);
+                        assertThatThrownBy(
                                 () ->
                                         connection.chat(
-                                                userMessage(), null, modelParams, Report.class))
-                        .hasRootCauseInstanceOf(StopBeforeRequest.class);
+                                                userMessage(), null, modelParams, Report.class));
 
-                // A POJO with no tools is feasible throughout, so only capability moves.
-                assertThat(answer)
-                        .as("configured %s, params %s", configured, modelParams)
-                        .isEqualTo(
-                                built.get().responseJsonSchema().isPresent()
-                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
-                                        : NativeStructuredOutputSupport.FEASIBLE);
+                        assertThat(requestedPath.get())
+                                .as(label)
+                                .endsWith("/models/" + expectedModel + ":generateContent");
+                        // A POJO with no tools is feasible throughout, so the schema is on the
+                        // wire whatever the model, and only the query's answer moves with it.
+                        assertThat(
+                                        new ObjectMapper()
+                                                .readTree(requestedBody.get())
+                                                .path("generationConfig")
+                                                .has("responseJsonSchema"))
+                                .as(label)
+                                .isTrue();
+                        assertThat(answer)
+                                .as(label)
+                                .isEqualTo(
+                                        CAPABLE_MODEL.equals(expectedModel)
+                                                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                                : NativeStructuredOutputSupport.FEASIBLE);
+                    }
+                } finally {
+                    connection.close();
+                }
             }
+        } finally {
+            server.stop(0);
         }
     }
 
@@ -1033,8 +1029,7 @@ class GeminiChatModelConnectionTest {
                                 schema, tools, paramsWithModel(CAPABLE_MODEL));
 
                 GenerateContentConfig config =
-                        connection.buildConfig(
-                                userMessage(), tools, params(), CAPABLE_MODEL, schema);
+                        connection.buildConfig(userMessage(), tools, params(), schema);
 
                 assertThat(answer)
                         .as("schema %s, tools %s", schema, tools)
@@ -1065,12 +1060,10 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("An undocumented model leaves the request feasible rather than infeasible")
+    @DisplayName("An undocumented model answers FEASIBLE and its config still carries the schema")
     void querySeparatesCapabilityFromFeasibility() {
-        // A POJO with no tools bound is feasible here whatever the model is named, and the
-        // branch's own capability conjunct is what keeps an undocumented model's config
-        // unconstrained. Folding capability into feasibility would report INFEASIBLE, which a
-        // NATIVE policy cannot overrule.
+        // Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule; folding it into the config would drop a schema that policy chose to send.
         assertThat(
                         connection()
                                 .supportsNativeStructuredOutput(
@@ -1078,16 +1071,11 @@ class GeminiChatModelConnectionTest {
                                         List.of(),
                                         paramsWithModel("gemini-2.5-flash-image")))
                 .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
-        assertThat(
-                        connection()
-                                .buildConfig(
-                                        userMessage(),
-                                        List.of(),
-                                        params(),
-                                        "gemini-2.5-flash-image",
-                                        Report.class)
-                                .responseJsonSchema())
-                .isEmpty();
+        GenerateContentConfig config =
+                connection().buildConfig(userMessage(), List.of(), params(), Report.class);
+
+        assertThat(config.responseMimeType()).hasValue("application/json");
+        assertThat(nativeSchema(config).path("type").asText()).isEqualTo("object");
     }
 
     @Test

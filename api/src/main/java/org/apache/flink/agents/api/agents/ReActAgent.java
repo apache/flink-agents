@@ -29,10 +29,12 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -48,6 +50,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 
 /** Built-in ReAct Agent implementation based on the function call ability of llm. . */
 public class ReActAgent extends Agent {
@@ -180,6 +183,8 @@ public class ReActAgent extends Agent {
             inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
         }
 
+        Object outputSchema = ctx.getActionConfigValue("output_schema");
+
         Prompt schmaPrompt;
         try {
             schmaPrompt = (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
@@ -187,15 +192,35 @@ public class ReActAgent extends Agent {
             schmaPrompt = null;
         }
 
-        if (schmaPrompt != null) {
+        if (schmaPrompt != null && !appliesSchemaNatively(ctx, outputSchema)) {
             List<ChatMessage> instruct = schmaPrompt.formatMessages(MessageRole.SYSTEM, Map.of());
             int index = ChatMessage.findFirstSystemMessage(inputMessages);
             inputMessages.addAll(index + 1, instruct);
         }
 
-        Object outputSchema = ctx.getActionConfigValue("output_schema");
-
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
+    }
+
+    /**
+     * Whether the default chat model enforces the schema through the provider, which makes the
+     * schema instruction redundant. Any failure to answer, other than cancellation, keeps the
+     * instruction: an infeasible NATIVE strategy is reported by the chat model call itself.
+     */
+    private static boolean appliesSchemaNatively(RunnerContext ctx, Object outputSchema) {
+        try {
+            Resource chatModel = ctx.getResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL);
+            return chatModel instanceof BaseChatModelSetup
+                    && ((BaseChatModelSetup) chatModel)
+                            .willApplyNativeStructuredOutput(outputSchema);
+        } catch (CancellationException e) {
+            throw e;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            LOG.debug("Keeping the schema instruction: native structured output is unresolved.", e);
+            return false;
+        }
     }
 
     @Action(EventType.ChatResponseEvent)

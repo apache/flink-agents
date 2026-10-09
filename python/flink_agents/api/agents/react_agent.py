@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
+from concurrent.futures import CancelledError
 from typing import TYPE_CHECKING, cast
 
 from pydantic import (
@@ -30,6 +32,7 @@ from flink_agents.api.chat_message import (
     MessageRole,
     find_first_system_message,
 )
+from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
@@ -40,6 +43,8 @@ from flink_agents.api.runner_context import RunnerContext
 
 if TYPE_CHECKING:
     from flink_agents.api.events.chat_event import ChatResponseEvent
+
+_LOG = logging.getLogger(__name__)
 
 _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
@@ -200,12 +205,14 @@ class ReActAgent(Agent):
         except KeyError:
             schema_prompt = None
 
-        if schema_prompt:
+        output_schema = ctx.get_action_config_value(key="output_schema")
+
+        if schema_prompt and not ReActAgent._schema_applied_natively(
+            output_schema, ctx
+        ):
             instruct = schema_prompt.format_messages()
             index = find_first_system_message(usr_msgs)
             usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
-
-        output_schema = ctx.get_action_config_value(key="output_schema")
 
         ctx.send_event(
             ChatRequestEvent(
@@ -214,6 +221,31 @@ class ReActAgent(Agent):
                 output_schema=output_schema,
             )
         )
+
+    @staticmethod
+    def _schema_applied_natively(
+        output_schema: OutputSchema | None, ctx: RunnerContext
+    ) -> bool:
+        """Whether the default chat model enforces ``output_schema`` through the
+        provider, making the schema instruction in the prompt redundant.
+
+        Any failure answers ``False`` and keeps the instruction: the chat model
+        action asks the same question and reports the failure itself.
+        """
+        try:
+            chat_model = ctx.get_resource(_DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL)
+            return isinstance(
+                chat_model, BaseChatModelSetup
+            ) and chat_model.will_apply_native_structured_output(output_schema)
+        except (CancelledError, InterruptedError):
+            raise
+        except Exception:
+            _LOG.debug(
+                "Keeping the schema instruction: the chat model could not answer "
+                "whether it applies the schema natively.",
+                exc_info=True,
+            )
+            return False
 
     @action(EventType.ChatResponseEvent)
     @staticmethod
