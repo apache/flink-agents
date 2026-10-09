@@ -353,7 +353,7 @@ class BaseChatModelConnection(Resource, ABC):
             member renders under Pydantic, and one provider's renderer takes it while
             another refuses it. Neither is raised unless the request was going to
             carry a native schema, since an implementation renders only once it has
-            decided to send one — so an unrenderable schema reports nothing when some
+            decided to send one, so an unrenderable schema reports nothing when some
             other condition has already ruled the native branch out. An implementation
             with a native translation sends the schema natively whenever
             ``supports_native_structured_output`` would answer other than
@@ -378,6 +378,27 @@ class BaseChatModelConnection(Resource, ABC):
         ChatMessage
             Model response message
         """
+
+
+def _describe_output_schema(output_schema: OutputSchema) -> str:
+    inner = output_schema.output_schema
+    if isinstance(inner, type):
+        return f"{inner.__module__}.{inner.__qualname__}"
+    return str(inner)
+
+
+def _without_tool_traffic(messages: Sequence[ChatMessage]) -> List[ChatMessage]:
+    # Whole tool turns go rather than only their tool calls: some providers reject
+    # tool calls or tool results in a request that defines no tools, and dropping
+    # the whole turn keeps user and assistant turns alternating.
+    stripped: List[ChatMessage] = []
+    for message in messages:
+        if message.role == MessageRole.TOOL:
+            continue
+        if message.role == MessageRole.ASSISTANT and message.tool_calls:
+            continue
+        stripped.append(message)
+    return stripped
 
 
 class BaseChatModelSetup(Resource):
@@ -596,6 +617,127 @@ class BaseChatModelSetup(Resource):
         merged_kwargs.update(kwargs)
         connection = self._get_connection()
         return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
+
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Whether ``output_schema`` should travel through the provider's native
+        structured output on a call issued through ``chat_structured``, rather than
+        be described to the model in the prompt.
+
+        Framework-facing. A user configures the outcome through
+        ``structured_output_strategy`` instead of calling this.
+
+        The connection is asked about the request ``chat_structured`` sends: this
+        schema, no tools, and the parameters ``model_kwargs`` returns, read once so
+        that the answer and the request concern the same parameters. Per-call keyword
+        arguments passed to ``chat_structured`` are not seen here, so a caller that
+        adds parameters affecting feasibility must not rely on this answer.
+
+        A ``True`` answer is not a promise that the call succeeds: a connection may
+        still raise once its native branch applies the schema, for example on a
+        conflicting caller-supplied response format.
+
+        A setup with no resolved connection, such as one that overrides ``open`` and
+        ``chat`` to answer by itself, answers ``False`` unless the strategy is
+        ``NATIVE``.
+
+        Args:
+            output_schema: The schema the call would carry, or ``None`` for an
+                unconstrained call.
+
+        Returns:
+            ``True`` if the schema should be applied natively; ``False`` for a
+            ``None`` schema or when no connection is resolved.
+
+        Raises:
+            ValueError: If the strategy is ``NATIVE`` and no connection is resolved,
+                or the connection cannot apply this schema to such a request.
+        """
+        if output_schema is None:
+            return False
+        connection = self._resolved_connection
+        if connection is None:
+            if self.structured_output_strategy == StructuredOutputStrategy.NATIVE:
+                setup_cls = type(self)
+                msg = (
+                    f"Structured output strategy NATIVE was requested, but "
+                    f"{setup_cls.__module__}.{setup_cls.__qualname__} has no "
+                    "connection to apply the output schema natively."
+                )
+                raise ValueError(msg)
+            return False
+        support = connection.supports_native_structured_output(
+            output_schema, [], self.model_kwargs
+        )
+        if (
+            support == NativeStructuredOutputSupport.INFEASIBLE
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            cls = type(connection)
+            msg = (
+                f"Structured output strategy NATIVE was requested, but "
+                f"{cls.__module__}.{cls.__qualname__} cannot apply the output schema "
+                f"{_describe_output_schema(output_schema)} natively. Use AUTO or "
+                "PROMPT to describe the schema in the prompt instead, or supply a "
+                "schema this connection can translate."
+            )
+            raise ValueError(msg)
+        return self.structured_output_strategy.resolves_to_native(support)
+
+    def chat_structured(
+        self,
+        messages: Sequence[ChatMessage],
+        output_schema: OutputSchema,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Send one schema-carrying request to the connection, for a caller that has
+        decided through ``will_apply_native_structured_output`` that the schema
+        travels natively.
+
+        Framework-facing. A user reaches a model through ``chat``.
+
+        The messages are sent without the bound prompt or the skill-discovery message,
+        because messages that already passed through ``chat`` would otherwise carry
+        them twice. No tools are bound, because a provider may drop a native schema
+        from a request that also binds tools. Tool traffic is removed as well, since
+        some providers reject tool calls and tool results in a request that defines
+        no tools: tool messages and every assistant message carrying tool calls are
+        dropped whole, and every other message is sent as the same object. The
+        caller's list and messages are left unchanged.
+
+        User and assistant turns still alternate only when an assistant message
+        without tool calls follows the tool traffic, which a caller guarantees by
+        including the final answer.
+
+        Args:
+            messages: The conversation to send.
+            output_schema: The schema the call carries; must not be ``None``.
+            **kwargs: Parameters for this call, merged over ``model_kwargs`` the same
+                way ``chat`` merges them.
+
+        Returns:
+            The connection's response.
+
+        Raises:
+            TypeError: If ``open()`` has not resolved the connection yet, or if
+                ``output_schema`` is ``None``.
+        """
+        connection = self._get_connection()
+        if output_schema is None:
+            msg = (
+                "chat_structured() requires an output schema. Call chat() for an "
+                "unconstrained request."
+            )
+            raise TypeError(msg)
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        return connection.chat(
+            _without_tool_traffic(messages),
+            tools=[],
+            output_schema=output_schema,
+            **merged_kwargs,
+        )
 
     def _record_token_metrics(
         self,

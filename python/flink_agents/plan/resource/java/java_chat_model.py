@@ -25,6 +25,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    StructuredOutputStrategy,
 )
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
@@ -208,3 +209,53 @@ class JavaChatModelSetup(BaseChatModelSetup):
         )
 
         return from_java_chat_message(j_response_message)
+
+    @override
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Never applies a schema natively, so a caller keeps describing the schema
+        in the prompt, which works here.
+
+        No connection is resolved on this side, and ``chat`` carries only messages,
+        prompt arguments and keyword arguments across the bridge, so a schema has no
+        way to travel natively.
+
+        Raises:
+            ValueError: If ``output_schema`` is not ``None`` and the strategy is
+                ``NATIVE``, which this setup cannot honor.
+        """
+        if (
+            output_schema is not None
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            msg = (
+                "Structured output strategy NATIVE was requested, but a Java chat "
+                "model setup reached from Python through JavaChatModelSetup cannot "
+                "be given an output schema: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's chat. Use AUTO "
+                "or PROMPT, or apply the schema on the Java side."
+            )
+            raise ValueError(msg)
+        return False
+
+    @override
+    def chat_structured(
+        self,
+        messages: Sequence[ChatMessage],
+        output_schema: OutputSchema,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        """Always refuses rather than dropping the schema, so an unconstrained
+        response can never be mistaken for a schema-conforming one.
+
+        Raises:
+            NotImplementedError: Always.
+        """
+        msg = (
+            "A Java chat model setup cannot be given an output schema from Python: "
+            "the bridge carries only messages, prompt arguments and keyword "
+            "arguments to the Java setup's chat. Apply the schema on the Java side "
+            "instead."
+        )
+        raise NotImplementedError(msg)

@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -85,9 +85,11 @@ class _RecordingConnection(BaseChatModelConnection):
 class _RecordingChatModelSetup(BaseChatModelSetup):
     """Subclass that lets tests inject a connection without calling open()."""
 
+    setup_params: Dict[str, Any] = Field(default_factory=dict)
+
     @property
     def model_kwargs(self) -> Dict[str, Any]:
-        return {}
+        return dict(self.setup_params)
 
 
 def _build_setup(
@@ -398,3 +400,336 @@ def test_query_does_not_consume_the_tools() -> None:
     )
 
     assert tools == [tool]
+
+
+class _StructuredRecordingConnection(_RecordingConnection):
+    """Connection that answers the native structured-output query with a configured
+    value and records what it was asked and which tools the chat bound.
+    """
+
+    support: NativeStructuredOutputSupport
+    support_queries: int = 0
+    queried_schema: OutputSchema | None = None
+    queried_tools: List[Tool] | None = None
+    queried_model_kwargs: Dict[str, Any] | None = None
+    captured_tools: List[Tool] | None = None
+
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        self.support_queries += 1
+        self.queried_schema = output_schema
+        self.queried_tools = None if tools is None else list(tools)
+        self.queried_model_kwargs = None if model_kwargs is None else dict(model_kwargs)
+        return self.support
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        self.captured_tools = None if tools is None else list(tools)
+        return super().chat(messages, tools, output_schema, **kwargs)
+
+
+_SETUP_PARAMS = {"model": "setup-model", "temperature": 0.1}
+
+
+def _build_structured_setup(
+    strategy: StructuredOutputStrategy,
+    support: NativeStructuredOutputSupport = (
+        NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    ),
+) -> tuple[_RecordingChatModelSetup, _StructuredRecordingConnection]:
+    setup = _RecordingChatModelSetup(
+        connection="c",
+        model="m",
+        structured_output_strategy=strategy,
+        setup_params=_SETUP_PARAMS,
+    )
+    connection = _StructuredRecordingConnection(support=support)
+    setup._resolved_connection = connection
+    return setup, connection
+
+
+def _row_output_schema() -> OutputSchema:
+    return OutputSchema(
+        output_schema=RowTypeInfo(
+            field_types=[BasicTypeInfo.STRING_TYPE_INFO()], field_names=["name"]
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("strategy", "support", "expected"),
+    [
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.INFEASIBLE,
+            False,
+        ),
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.FEASIBLE,
+            False,
+        ),
+        (
+            StructuredOutputStrategy.PROMPT,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            False,
+        ),
+        (
+            StructuredOutputStrategy.AUTO,
+            NativeStructuredOutputSupport.INFEASIBLE,
+            False,
+        ),
+        (StructuredOutputStrategy.AUTO, NativeStructuredOutputSupport.FEASIBLE, False),
+        (
+            StructuredOutputStrategy.AUTO,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            True,
+        ),
+        # None means the gate must reject the combination.
+        (
+            StructuredOutputStrategy.NATIVE,
+            NativeStructuredOutputSupport.INFEASIBLE,
+            None,
+        ),
+        (StructuredOutputStrategy.NATIVE, NativeStructuredOutputSupport.FEASIBLE, True),
+        (
+            StructuredOutputStrategy.NATIVE,
+            NativeStructuredOutputSupport.NATIVE_RECOMMENDED,
+            True,
+        ),
+    ],
+)
+def test_will_apply_native_structured_output_resolves_strategy(
+    strategy: StructuredOutputStrategy,
+    support: NativeStructuredOutputSupport,
+    expected: bool | None,
+) -> None:
+    """The gate resolves the strategy against the answer for a toolless request.
+
+    The question concerns the request ``chat_structured`` would send: this schema, the
+    setup's own parameters, and no tools even when the setup binds some.
+    """
+    setup, connection = _build_structured_setup(strategy, support)
+    setup.tools = [_StubTool()]
+    schema = OutputSchema(output_schema=_Answer)
+
+    if expected is None:
+        with pytest.raises(ValueError, match="NATIVE"):
+            setup.will_apply_native_structured_output(schema)
+    else:
+        assert setup.will_apply_native_structured_output(schema) is expected
+
+    assert connection.support_queries == 1
+    assert connection.queried_schema is schema
+    assert connection.queried_tools == []
+    assert connection.queried_model_kwargs == _SETUP_PARAMS
+
+
+@pytest.mark.parametrize("strategy", list(StructuredOutputStrategy))
+def test_will_apply_native_structured_output_false_for_none_schema(
+    strategy: StructuredOutputStrategy,
+) -> None:
+    """An unconstrained call never goes native, and the connection is not asked."""
+    setup, connection = _build_structured_setup(strategy)
+
+    assert setup.will_apply_native_structured_output(None) is False
+    assert connection.support_queries == 0
+
+
+@pytest.mark.parametrize(
+    ("schema", "expected_description"),
+    [
+        (OutputSchema(output_schema=_Answer), f"{__name__}._Answer"),
+        (_row_output_schema(), "RowTypeInfo(name: String)"),
+    ],
+)
+def test_will_apply_native_structured_output_infeasible_message(
+    schema: OutputSchema, expected_description: str
+) -> None:
+    """NATIVE on an infeasible schema names the connection and the wrapped schema."""
+    setup, _ = _build_structured_setup(
+        StructuredOutputStrategy.NATIVE, NativeStructuredOutputSupport.INFEASIBLE
+    )
+
+    with pytest.raises(ValueError) as excinfo:
+        setup.will_apply_native_structured_output(schema)
+
+    message = str(excinfo.value)
+    assert (
+        f"{_StructuredRecordingConnection.__module__}."
+        f"{_StructuredRecordingConnection.__qualname__}"
+    ) in message
+    assert expected_description in message
+    # The wrapper's own text is a field dump; the inner schema is named directly.
+    assert "output_schema=" not in message
+
+
+@pytest.mark.parametrize(
+    "strategy", [StructuredOutputStrategy.AUTO, StructuredOutputStrategy.PROMPT]
+)
+def test_will_apply_native_structured_output_false_without_connection(
+    strategy: StructuredOutputStrategy,
+) -> None:
+    """A setup with no resolved connection keeps the schema in the prompt."""
+    setup = _RecordingChatModelSetup(
+        connection="c", model="m", structured_output_strategy=strategy
+    )
+
+    schema = OutputSchema(output_schema=_Answer)
+    assert setup.will_apply_native_structured_output(schema) is False
+
+
+def test_will_apply_native_structured_output_native_without_connection() -> None:
+    """NATIVE with no resolved connection fails naming the setup."""
+    setup = _RecordingChatModelSetup(
+        connection="c",
+        model="m",
+        structured_output_strategy=StructuredOutputStrategy.NATIVE,
+    )
+
+    with pytest.raises(ValueError, match="no connection") as excinfo:
+        setup.will_apply_native_structured_output(OutputSchema(output_schema=_Answer))
+
+    setup_cls = _RecordingChatModelSetup
+    assert f"{setup_cls.__module__}.{setup_cls.__qualname__}" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("strategy", list(StructuredOutputStrategy))
+def test_will_apply_native_structured_output_none_schema_without_connection(
+    strategy: StructuredOutputStrategy,
+) -> None:
+    """An unconstrained call answers False even with no resolved connection."""
+    setup = _RecordingChatModelSetup(
+        connection="c", model="m", structured_output_strategy=strategy
+    )
+
+    assert setup.will_apply_native_structured_output(None) is False
+
+
+def test_chat_structured_requires_open() -> None:
+    """chat_structured() requires a resolved connection."""
+    setup = _RecordingChatModelSetup(connection="c", model="m")
+
+    with pytest.raises(TypeError, match=r"open\(\)"):
+        setup.chat_structured(
+            [ChatMessage.of(MessageRole.USER, "hi")],
+            OutputSchema(output_schema=_Answer),
+        )
+
+
+def test_chat_structured_sends_messages_as_given_without_tools() -> None:
+    """Messages go out as given, without the bound prompt, skill discovery or tools."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    setup.prompt = Prompt.from_text(text="Bound prompt")
+    setup.skill_discovery_prompt = "Available skills"
+    setup.tools = [_StubTool()]
+    messages = [
+        ChatMessage.of(MessageRole.SYSTEM, "already prepared"),
+        ChatMessage.of(MessageRole.USER, "hi"),
+    ]
+    schema = OutputSchema(output_schema=_Answer)
+
+    setup.chat_structured(messages, schema)
+
+    assert connection.captured_messages == messages
+    assert connection.captured_tools == []
+    assert connection.captured_output_schema is schema
+
+
+def test_chat_structured_merges_kwargs_over_model_kwargs() -> None:
+    """Per-call parameters override the setup's parameters, as in chat()."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    messages = [ChatMessage.of(MessageRole.USER, "hi")]
+    schema = OutputSchema(output_schema=_Answer)
+
+    setup.chat_structured(messages, schema, temperature=0.9)
+    assert connection.captured_kwargs == {"model": "setup-model", "temperature": 0.9}
+
+    setup.chat_structured(messages, schema)
+    assert connection.captured_kwargs == _SETUP_PARAMS
+
+
+def test_chat_structured_rejects_none_schema() -> None:
+    """A None schema is refused instead of sending an unconstrained call."""
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+
+    with pytest.raises(TypeError, match=r"chat\(\)"):
+        setup.chat_structured([ChatMessage.of(MessageRole.USER, "hi")], None)
+    assert connection.captured_messages == []
+
+
+_TOOL_CALL = {
+    "id": "1",
+    "type": "function",
+    "function": {"name": "lookup", "arguments": {}},
+}
+_SYSTEM = ChatMessage.of(MessageRole.SYSTEM, "sys")
+_QUESTION = ChatMessage.of(MessageRole.USER, "question")
+_CALLING_WITH_TEXT = ChatMessage.of(
+    MessageRole.ASSISTANT,
+    "let me look",
+    tool_calls=[_TOOL_CALL],
+    extra_args={"anthropic_content_blocks": [{"type": "tool_use"}]},
+)
+_CALLING_WITHOUT_TEXT = ChatMessage.of(
+    MessageRole.ASSISTANT, "", tool_calls=[_TOOL_CALL]
+)
+_TOOL_RESULT = ChatMessage.of(MessageRole.TOOL, "result")
+_FINAL_ANSWER = ChatMessage.of(MessageRole.ASSISTANT, "final answer")
+_DIRECTIVE = ChatMessage.of(MessageRole.USER, "convert")
+
+
+@pytest.mark.parametrize(
+    ("history", "expected"),
+    [
+        (
+            [
+                _SYSTEM,
+                _QUESTION,
+                _CALLING_WITH_TEXT,
+                _TOOL_RESULT,
+                _CALLING_WITHOUT_TEXT,
+                _TOOL_RESULT,
+                _FINAL_ANSWER,
+                _DIRECTIVE,
+            ],
+            [_SYSTEM, _QUESTION, _FINAL_ANSWER, _DIRECTIVE],
+        ),
+        # Tool turns go even when no final answer follows them.
+        (
+            [_SYSTEM, _QUESTION, _CALLING_WITH_TEXT, _TOOL_RESULT, _DIRECTIVE],
+            [_SYSTEM, _QUESTION, _DIRECTIVE],
+        ),
+    ],
+)
+def test_chat_structured_removes_tool_traffic(
+    history: List[ChatMessage], expected: List[ChatMessage]
+) -> None:
+    """Tool results and tool-calling assistant turns are dropped whole.
+
+    The request binds no tools, and some providers reject tool calls or tool results
+    in such a request. Every other message goes out as the same object, and the
+    caller's list and messages, including the dropped ones, are left unchanged.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    messages = [message.model_copy(deep=True) for message in history]
+    expected_sent = [messages[history.index(message)] for message in expected]
+    caller_list = list(messages)
+    snapshot = [message.model_copy(deep=True) for message in messages]
+
+    setup.chat_structured(messages, OutputSchema(output_schema=_Answer))
+
+    sent = connection.captured_messages
+    assert len(sent) == len(expected_sent)
+    assert all(a is b for a, b in zip(sent, expected_sent, strict=True))
+    assert all(a is b for a, b in zip(messages, caller_list, strict=True))
+    assert messages == snapshot
