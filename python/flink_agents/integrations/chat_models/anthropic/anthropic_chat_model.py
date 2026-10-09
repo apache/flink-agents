@@ -135,8 +135,8 @@ def convert_to_anthropic_system_prompts(
 # also has to retain the minor version: "claude-opus-4" would capture
 # claude-opus-4-1-20250805, which predates the cutoff and is not capable.
 #
-# A name outside both sets reports not-capable and degrades to the prompt-engineering
-# fallback rather than failing at the provider.
+# A name outside both sets reports not-capable, which the structured-output query
+# reports as FEASIBLE rather than NATIVE_RECOMMENDED.
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {
         "claude-opus-4-6",
@@ -196,11 +196,8 @@ def _supports_json_prefill(effective_model: str | None) -> bool:
     See the list above for the source of truth and for why it is matched exactly and
     kept apart from the structured-output allowlists. An unrecognized name reports
     ``True``, which matches the documented rule: prefilling is the long-standing
-    behaviour and only the listed names withdraw it. The cost of that default runs the
-    opposite way to ``_model_supports_native_structured_output``: a rejecting model
-    this list has not caught up with is prefilled and answered with a 400, where an
-    unrecognized name on the structured-output path degrades silently to the
-    prompt-engineering fallback instead.
+    behaviour and only the listed names withdraw it. A rejecting model this list has
+    not caught up with is therefore prefilled and answered with a 400.
     """
     return effective_model not in _PREFILL_UNSUPPORTED_MODELS
 
@@ -372,9 +369,11 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
     ) -> NativeStructuredOutputSupport:
-        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+        """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
-        The effective model is the ``model`` parameter verbatim.
+        Feasibility is the helper the native branch asks; capability, judged on the
+        ``model`` parameter verbatim, only separates ``FEASIBLE`` from
+        ``NATIVE_RECOMMENDED``.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
@@ -392,8 +391,9 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
         See the module-level allowlists for the source of truth and for why a
         4.5-generation alias also matches the dated snapshot behind it while every other
-        name is matched exactly. A name outside both reports ``False`` so it degrades to
-        the prompt-engineering fallback rather than failing at the provider.
+        name is matched exactly. A name outside both reports ``False``. The answer
+        shapes only the structured-output query; the request carries a schema it is
+        handed whatever this reports.
 
         Reads no instance state, so capability stays answerable independently of how
         the connection was configured.
@@ -466,10 +466,10 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             List of tools that can be called by the model
         output_schema : OutputSchema | None
             The schema the response should conform to, or ``None`` for an unconstrained
-            response. Native structured output is applied only for a ``BaseModel``
-            schema on a model the provider documents as capable, and only when the
-            caller has not already supplied ``output_config``. Any other combination
-            sends no derived schema and keeps the prompt-engineering fallback.
+            response. Native structured output is applied for a ``BaseModel`` schema
+            whatever the model, unless the caller has already supplied
+            ``output_config``. Any other combination sends no derived schema and keeps
+            the prompt-engineering fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.). ``json_prefill`` is consumed here rather than
@@ -503,21 +503,20 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         # it in place would reach messages.create as an unknown request field.
         json_prefill = kwargs.pop("json_prefill", False)
 
-        # Native structured output applies only for a BaseModel schema on a model the
-        # provider documents as capable, and only where the caller supplied no
-        # output_config of its own. That value is the caller being explicit about the
-        # exact parameter this branch writes, so it wins and the schema keeps the
-        # prompt-engineering fallback; writing over it would drop the caller's value
-        # with no error and no other trace.
+        # Native structured output applies only for a BaseModel schema, and only where
+        # the caller supplied no output_config of its own. That value is the caller
+        # being explicit about the exact parameter this branch writes, so it wins and
+        # the schema keeps the prompt-engineering fallback; writing over it would drop
+        # the caller's value with no error and no other trace.
         #
-        # Both feasibility conditions are asked rather than restated, so a caller
-        # asking the same question gets the answer this branch acts on. The schema is
-        # rendered only once that answer is in, because rendering raises on a schema it
-        # cannot express, and rendering one this branch is about to discard would fail
-        # a request the caller had already steered away from the derived config.
-        if self._can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self._model_supports_native_structured_output(kwargs.get("model")):
+        # The feasibility check is shared with the structured-output query rather than
+        # restated, so the branch applies whenever the query answers other than
+        # INFEASIBLE. Model capability is not asked: a caller that hands this
+        # connection a schema has already chosen to send it. The schema is rendered
+        # only once that answer is in, because rendering raises on a schema it cannot
+        # express, and rendering one this branch is about to discard would fail a
+        # request the caller had already steered away from the derived config.
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             kwargs["output_config"] = _native_output_config(output_schema)
 
         # JSON prefill appends a prefilled assistant "{" message to steer the model

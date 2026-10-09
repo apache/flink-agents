@@ -185,43 +185,36 @@ def test_capable_native_request_still_targets_the_deployment() -> None:
     assert _create_call_kwargs(conn)["model"] == DEPLOYMENT
 
 
-def test_native_not_applied_when_deployment_model_absent() -> None:
-    """Native NOT applied when the backing model of the deployment is unknown."""
-    conn = _connection()
-    conn.chat(
-        [ChatMessage.of(MessageRole.USER, "hi")],
-        model=DEPLOYMENT,
-        output_schema=OutputSchema(output_schema=Person),
-    )
-    assert "response_format" not in _create_call_kwargs(conn)
+def test_unlisted_backing_model_answers_feasible_and_still_carries_the_schema() -> None:
+    """An unlisted backing model is merely feasible, yet the request carries the schema.
 
-
-def test_native_not_applied_for_unknown_deployment_model() -> None:
-    """Native NOT applied for a backing model outside the allowlist."""
-    conn = _connection()
-    conn.chat(
-        [ChatMessage.of(MessageRole.USER, "hi")],
-        model=DEPLOYMENT,
-        model_of_azure_deployment="some-unknown-model",
-        output_schema=OutputSchema(output_schema=Person),
-    )
-    assert "response_format" not in _create_call_kwargs(conn)
-
-
-def test_native_not_applied_for_bare_gpt_4o() -> None:
-    """Native NOT applied for a bare `gpt-4o` backing model.
-
-    Azure carries model name and model version as separate properties, so a bare
-    `gpt-4o` may be the 2024-05-13 version, which predates structured output support.
+    Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy
+    cannot overrule; folding it into the request would drop a schema that policy chose
+    to send. The request carries what a listed model's request carries, not a weaker
+    form.
     """
+    schema = OutputSchema(output_schema=Person)
     conn = _connection()
+
+    assert (
+        conn.supports_native_structured_output(
+            schema, [], _model_kwargs("gpt-35-turbo")
+        )
+        is NativeStructuredOutputSupport.FEASIBLE
+    )
+
     conn.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
-        model=DEPLOYMENT,
-        model_of_azure_deployment="gpt-4o",
-        output_schema=OutputSchema(output_schema=Person),
+        output_schema=schema,
+        **_model_kwargs("gpt-4o-mini"),
     )
-    assert "response_format" not in _create_call_kwargs(conn)
+    listed = _create_call_kwargs(conn)["response_format"]
+    conn.chat(
+        [ChatMessage.of(MessageRole.USER, "hi")],
+        output_schema=schema,
+        **_model_kwargs("gpt-35-turbo"),
+    )
+    assert _create_call_kwargs(conn)["response_format"] == listed
 
 
 @pytest.mark.parametrize("api_version", ["2024-08-01", "2024-10-21"])
@@ -332,21 +325,25 @@ def test_native_applied_even_when_tools_bound() -> None:
     assert "response_format" in _create_call_kwargs(conn)
 
 
+@pytest.mark.parametrize(
+    "model_of_azure_deployment", ["gpt-4o-mini", "gpt-35-turbo", None]
+)
 @pytest.mark.parametrize("in_additional_kwargs", [True, False])
 def test_caller_response_format_conflicts_with_native_schema(
-    in_additional_kwargs: bool,
+    in_additional_kwargs: bool, model_of_azure_deployment: str | None
 ) -> None:
     """A caller-supplied response_format alongside a natively applied schema raises.
 
     Both values would otherwise reach the same create() call, where the direct kwarg
     is silently overwritten and the additional_kwargs one becomes a duplicate keyword
-    argument reported by the SDK rather than by this connection.
+    argument reported by the SDK rather than by this connection. A listed, an unlisted
+    and an unset backing model all reach the native branch.
     """
     conn = _connection()
     with pytest.raises(ValueError, match="response_format") as excinfo:
         _chat_with_caller_response_format(
             conn,
-            model_of_azure_deployment="gpt-4o-mini",
+            model_of_azure_deployment=model_of_azure_deployment,
             in_additional_kwargs=in_additional_kwargs,
         )
     assert "Person" in str(excinfo.value)
@@ -373,13 +370,11 @@ def test_caller_response_format_conflict_precedes_the_schema_render() -> None:
 @pytest.mark.parametrize(
     ("api_version", "model_of_azure_deployment", "schema"),
     [
-        (CAPABLE_API_VERSION, "gpt-4o", Person),
         (CAPABLE_API_VERSION, "gpt-4o-mini", ROW_TYPE),
         (CAPABLE_API_VERSION, "gpt-4o-mini", None),
         (BELOW_FLOOR_API_VERSION, "gpt-4o-mini", Person),
     ],
     ids=[
-        "incapable_model",
         "row_type_info_schema",
         "no_output_schema",
         "api_version_below_floor",
@@ -393,12 +388,12 @@ def test_caller_response_format_survives_when_native_is_skipped(
 ) -> None:
     """The same caller input passes through untouched wherever native output is skipped.
 
-    Native output is skipped for an incapable backing model, for a schema kind outside
-    the natively translatable set, for no schema at all, and for an api-version below
-    the floor. Only the branch that actually sends a schema as response_format may
-    reject the caller's own value, so identical caller code has to keep working along
-    every one of those paths, including the no-schema path taken by any caller that
-    drives response_format itself.
+    Native output is skipped for a schema kind outside the natively translatable set,
+    for no schema at all, and for an api-version below the floor. Only the branch that
+    actually sends a schema as response_format may reject the caller's own value, so
+    identical caller code has to keep working along every one of those paths,
+    including the no-schema path taken by any caller that drives response_format
+    itself.
     """
     conn = _connection(api_version=api_version)
     _chat_with_caller_response_format(
@@ -463,6 +458,8 @@ def test_query_recommends_native_for_capable_models(model: str) -> None:
 def test_query_reports_incapable_models_feasible(model: str | None) -> None:
     """Incapable, Responses-only, unset and empty backing models stay merely feasible.
 
+    Azure carries model name and model version as separate properties, so a bare
+    `gpt-4o` may be the 2024-05-13 version, which predates structured output support.
     A version-suffixed value such as `gpt-4o-2024-08-06` is an OpenAI snapshot name,
     not a name Azure reports as the model behind a deployment. The codex, `gpt-5-pro`
     and `o3-pro` names do support structured outputs but are served only on the
@@ -527,39 +524,6 @@ def _model_kwargs(backing_model: str | None = None) -> dict[str, Any]:
     return params
 
 
-def _judging_connection() -> tuple[AzureOpenAIChatModelConnection, list[str | None]]:
-    """A connection recording every model its request path judges for capability.
-
-    Subclassing keeps the predicate itself under test rather than standing a stub in
-    for it: the override notes what it was asked about and delegates to the real one.
-    """
-    judged: list[str | None] = []
-
-    class _JudgingConnection(AzureOpenAIChatModelConnection):
-        def _model_supports_native_structured_output(
-            self, effective_model: str | None
-        ) -> bool:
-            judged.append(effective_model)
-            return super()._model_supports_native_structured_output(effective_model)
-
-    conn = _JudgingConnection(
-        api_key="test-key",
-        azure_endpoint="https://example.openai.azure.com",
-        api_version=CAPABLE_API_VERSION,
-    )
-    mock_client = MagicMock()
-    mock_message = MagicMock()
-    mock_message.role = "assistant"
-    mock_message.content = "ok"
-    mock_message.tool_calls = None
-    mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
-    ]
-    mock_client.chat.completions.create.return_value.usage = None
-    conn._client = mock_client
-    return conn, judged
-
-
 def test_query_never_classifies_the_deployment_name() -> None:
     """A deployment named after a capable model is not recommended on its spelling.
 
@@ -590,45 +554,16 @@ def test_query_does_not_consume_the_backing_model() -> None:
     assert model_kwargs == _model_kwargs("gpt-4o-mini")
 
 
-@pytest.mark.parametrize(
-    "backing_model",
-    ["gpt-4o-mini", "some-unknown-model", None],
-    ids=["capable", "unknown", "unset"],
-)
-def test_query_judges_the_model_the_request_judges(
-    backing_model: str | None,
-) -> None:
-    """The query asks about exactly the model the request path asks about.
-
-    The query resolves the effective model separately from the builder, so only
-    capturing what each feeds the capability check keeps the two from drifting apart;
-    comparing each against a literal would let them drift in step.
-    """
-    conn, judged = _judging_connection()
-    model_kwargs = _model_kwargs(backing_model)
-    schema = OutputSchema(output_schema=Person)
-
-    conn.supports_native_structured_output(schema, [], model_kwargs)
-    conn.chat(
-        [ChatMessage.of(role=MessageRole.USER, content="hi")],
-        output_schema=schema,
-        **model_kwargs,
-    )
-
-    assert len(judged) == 2
-    assert judged[0] == judged[1]
-    assert judged[0] != DEPLOYMENT
-
-
 def test_query_agrees_with_the_native_branch() -> None:
-    """The answer matches whether the request ends up carrying a response_format.
+    """The answer is INFEASIBLE exactly when the request carries no response_format.
 
-    Comparing the answer against what the request carries, rather than against a
-    literal, is what keeps the query and the branch from drifting in step. The backing
-    model is capable throughout, so the api-version and the schema form are what move.
+    Comparing the answer against what the request carries, rather than only against a
+    literal, is what keeps the query and the branch from drifting in step. The
+    api-version floor, the schema form, the tools and the backing model all move; the
+    exact answer is pinned as well, so capability can only separate FEASIBLE from
+    NATIVE_RECOMMENDED.
     """
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
-    model_kwargs = _model_kwargs("gpt-4o-mini")
 
     for api_version in (CAPABLE_API_VERSION, BELOW_FLOOR_API_VERSION):
         conn = _connection(api_version)
@@ -639,26 +574,39 @@ def test_query_agrees_with_the_native_branch() -> None:
             None,
         ):
             for tools in (None, [], [tool]):
-                support = conn.supports_native_structured_output(
-                    schema, tools, model_kwargs
-                )
+                for backing in ("gpt-4o-mini", "gpt-35-turbo", None):
+                    model_kwargs = _model_kwargs(backing)
+                    support = conn.supports_native_structured_output(
+                        schema, tools, model_kwargs
+                    )
 
-                conn.chat(
-                    [ChatMessage.of(role=MessageRole.USER, content="hi")],
-                    tools=tools,
-                    output_schema=schema,
-                    **model_kwargs,
-                )
+                    conn.chat(
+                        [ChatMessage.of(role=MessageRole.USER, content="hi")],
+                        tools=tools,
+                        output_schema=schema,
+                        **model_kwargs,
+                    )
 
-                carried = "response_format" in _create_call_kwargs(conn)
-                expected = (
-                    NativeStructuredOutputSupport.NATIVE_RECOMMENDED
-                    if carried
-                    else NativeStructuredOutputSupport.INFEASIBLE
-                )
-                assert support is expected, (
-                    f"api-version {api_version}, schema {schema}, tools {tools}"
-                )
+                    label = (
+                        f"api-version {api_version}, schema {schema}, "
+                        f"tools {tools}, backing {backing}"
+                    )
+                    feasible = (
+                        schema is not None
+                        and schema.output_schema is Person
+                        and api_version == CAPABLE_API_VERSION
+                    )
+                    if not feasible:
+                        expected = NativeStructuredOutputSupport.INFEASIBLE
+                    elif backing == "gpt-4o-mini":
+                        expected = NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                    else:
+                        expected = NativeStructuredOutputSupport.FEASIBLE
+                    carried = "response_format" in _create_call_kwargs(conn)
+                    assert support is expected, label
+                    assert carried == (
+                        support is not NativeStructuredOutputSupport.INFEASIBLE
+                    ), label
 
 
 def test_query_follows_the_api_version_floor() -> None:

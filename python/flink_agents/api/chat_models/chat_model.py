@@ -48,7 +48,8 @@ class NativeStructuredOutputSupport(str, Enum):
         natively. Binding: no structured-output policy can overrule it.
     FEASIBLE : str
         The request can carry the schema natively, but the effective model is not known
-        to honor it. Advisory: a policy may still choose the native path.
+        to honor it. Advisory: a policy may still choose the native path, and a request
+        built with the schema carries it exactly as under ``NATIVE_RECOMMENDED``.
     NATIVE_RECOMMENDED : str
         The request can carry the schema natively and the effective model is known to
         honor it.
@@ -66,9 +67,7 @@ class StructuredOutputStrategy(str, Enum):
     native structured-output API to a request is the connection's own answer, a
     ``NativeStructuredOutputSupport``. ``resolves_to_native`` combines the two.
 
-    TODO(#912): strategy resolution is not wired into production yet. Once it is, the
-    native branches must honor the resolved policy rather than vetoing NATIVE through
-    their own capability check.
+    TODO(#912): strategy resolution is not wired into production yet.
 
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
@@ -200,9 +199,14 @@ class BaseChatModelConnection(Resource, ABC):
 
         An override must answer from the same logic its own request path uses to decide
         the native branch, so that the answer cannot drift from what the request ends up
-        carrying. ``FEASIBLE`` or better is not a promise that the call succeeds: a
-        connection may still raise once its native branch has decided to apply the
-        schema, as happens where the caller supplied a conflicting response format.
+        carrying. An override's native branch carries the schema whenever this answer
+        is not ``INFEASIBLE``. Capability only separates ``FEASIBLE`` from
+        ``NATIVE_RECOMMENDED`` and does not change the request; whether to pass a schema
+        at all is the caller's strategy to decide.
+
+        ``FEASIBLE`` or better is not a promise that the call succeeds: a connection may
+        still raise once its native branch has decided to apply the schema, as happens
+        where the caller supplied a conflicting response format.
 
         The default ``INFEASIBLE`` is correct only for a connection that translates no
         schema at all. A connection whose request path has a native branch but which
@@ -349,9 +353,12 @@ class BaseChatModelConnection(Resource, ABC):
             member renders under Pydantic, and one provider's renderer takes it while
             another refuses it. Neither is raised unless the request was going to
             carry a native schema, since an implementation renders only once it has
-            decided to send one — so an unrenderable schema reports nothing when the
-            effective model is not one the implementation calls natively capable, or
-            when some other condition has already ruled the native branch out.
+            decided to send one — so an unrenderable schema reports nothing when some
+            other condition has already ruled the native branch out. An implementation
+            with a native translation sends the schema natively whenever
+            ``supports_native_structured_output`` would answer other than
+            ``INFEASIBLE``, whatever the effective model's capability, since the
+            caller has already decided to send it.
 
             A ``BaseModel`` subclass that renders but declares no fields is sent as
             rendered, leaving the receiving provider to accept or refuse it.

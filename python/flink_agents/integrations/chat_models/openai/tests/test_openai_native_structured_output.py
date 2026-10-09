@@ -122,30 +122,36 @@ def test_native_applied_for_basemodel_capable_model() -> None:
     assert response_format["json_schema"]["schema"]["additionalProperties"] is False
 
 
-def test_native_not_applied_for_incapable_model() -> None:
-    """Native NOT applied for a BaseModel on an incapable model (prompt fallback)."""
+def test_unlisted_model_answers_feasible_and_still_carries_the_schema() -> None:
+    """An unlisted model is merely feasible, yet its request carries the full schema.
+
+    gpt-4o-2024-05-13 shares the gpt-4o prefix but predates the cutoff. Folding
+    capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+    overrule; folding it into the request would drop a schema that policy chose to
+    send. The request carries what a listed model's request carries, not a weaker form.
+    """
+    schema = OutputSchema(output_schema=Person)
     conn = _connection()
+
+    assert (
+        conn.supports_native_structured_output(
+            schema, [], {"model": "gpt-4o-2024-05-13"}
+        )
+        is NativeStructuredOutputSupport.FEASIBLE
+    )
+
     conn.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
-        model="gpt-3.5-turbo",
-        output_schema=OutputSchema(output_schema=Person),
+        model="gpt-4o",
+        output_schema=schema,
     )
-    assert "response_format" not in _create_call_kwargs(conn)
-
-
-def test_native_not_applied_for_pre_cutoff_snapshot() -> None:
-    """Native NOT applied for a pre-cutoff same-family gpt-4o snapshot.
-
-    gpt-4o-2024-05-13 predates the Structured Outputs cutoff even though it shares the
-    gpt-4o prefix; treating it as capable would fail silently at the provider.
-    """
-    conn = _connection()
+    listed = _create_call_kwargs(conn)["response_format"]
     conn.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
         model="gpt-4o-2024-05-13",
-        output_schema=OutputSchema(output_schema=Person),
+        output_schema=schema,
     )
-    assert "response_format" not in _create_call_kwargs(conn)
+    assert _create_call_kwargs(conn)["response_format"] == listed
 
 
 def test_native_not_applied_when_schema_none() -> None:
@@ -286,7 +292,7 @@ def test_map_member_schema_is_accepted_and_sent_whole() -> None:
 
 
 def _judging_connection() -> tuple[OpenAIChatModelConnection, list[str | None]]:
-    """A connection recording every model its request path judges for capability.
+    """A connection recording every model it judges for capability.
 
     Subclassing keeps the predicate itself under test rather than standing a stub in
     for it: the override notes what it was asked about and delegates to the real one.
@@ -320,14 +326,14 @@ def _judging_connection() -> tuple[OpenAIChatModelConnection, list[str | None]]:
     [{"model": "gpt-4o-mini"}, {"model": "an-unknown-model"}, {"model": ""}, {}],
     ids=["capable", "unknown", "blank", "absent"],
 )
-def test_query_judges_the_model_the_request_judges(
+def test_query_judges_the_model_the_request_is_issued_against(
     model_kwargs: dict[str, Any],
 ) -> None:
-    """The query asks about exactly the model the request path asks about.
+    """The query asks about exactly the model the request names.
 
-    This connection reads the parameter without a fallback. Pinning the query against
-    what the builder judges is what would catch a fallback being added to one of the
-    two without the other.
+    This connection reads the parameter without a fallback. Comparing the model the
+    query judges with the model the request names is what would catch a fallback being
+    added to one of the two without the other.
     """
     conn, judged = _judging_connection()
     schema = OutputSchema(output_schema=Person)
@@ -339,21 +345,20 @@ def test_query_judges_the_model_the_request_judges(
         **model_kwargs,
     )
 
-    assert len(judged) == 2
-    assert judged[0] == judged[1]
+    assert judged[0] == _create_call_kwargs(conn).get("model")
 
 
 def test_query_agrees_with_the_native_branch() -> None:
-    """The answer matches whether the request ends up carrying a response_format.
+    """The answer is INFEASIBLE exactly when the request carries no response_format.
 
-    Comparing the answer against what the request carries, rather than against a
-    literal, is what keeps the query and the branch from drifting in step. The model is
-    capable in every case, so only feasibility varies.
+    Comparing the answer against what the request carries, rather than only against a
+    literal, is what keeps the query and the branch from drifting in step. The schema
+    form, the tools and the model's capability all move; the exact answer is pinned as
+    well, so capability can only separate FEASIBLE from NATIVE_RECOMMENDED.
     """
     conn = _connection()
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
-    model_kwargs = {"model": "gpt-4o"}
 
     for schema in (
         OutputSchema(output_schema=Person),
@@ -361,21 +366,27 @@ def test_query_agrees_with_the_native_branch() -> None:
         None,
     ):
         for tools in (None, [], [tool]):
-            support = conn.supports_native_structured_output(
-                schema, tools, model_kwargs
-            )
+            for model in ("gpt-4o", "gpt-3.5-turbo"):
+                support = conn.supports_native_structured_output(
+                    schema, tools, {"model": model}
+                )
 
-            conn.chat(
-                [ChatMessage.of(role=MessageRole.USER, content="hi")],
-                tools=tools,
-                output_schema=schema,
-                **model_kwargs,
-            )
+                conn.chat(
+                    [ChatMessage.of(role=MessageRole.USER, content="hi")],
+                    tools=tools,
+                    output_schema=schema,
+                    model=model,
+                )
 
-            carried = "response_format" in _create_call_kwargs(conn)
-            expected = (
-                NativeStructuredOutputSupport.NATIVE_RECOMMENDED
-                if carried
-                else NativeStructuredOutputSupport.INFEASIBLE
-            )
-            assert support is expected, f"schema {schema}, tools {tools}"
+                label = f"schema {schema}, tools {tools}, model {model}"
+                if schema is None or schema.output_schema is not Person:
+                    expected = NativeStructuredOutputSupport.INFEASIBLE
+                elif model == "gpt-4o":
+                    expected = NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                else:
+                    expected = NativeStructuredOutputSupport.FEASIBLE
+                carried = "response_format" in _create_call_kwargs(conn)
+                assert support is expected, label
+                assert carried == (
+                    support is not NativeStructuredOutputSupport.INFEASIBLE
+                ), label

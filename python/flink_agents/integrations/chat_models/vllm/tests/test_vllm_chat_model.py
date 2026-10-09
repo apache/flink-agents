@@ -107,7 +107,7 @@ def test_query_follows_served_model(
     )
 
 
-def test_native_response_format_applied_for_qwen_model() -> None:
+def _connection_with_mock_client() -> tuple[VLLMChatModelConnection, MagicMock]:
     connection = VLLMChatModelConnection()
     mock_client = MagicMock()
     mock_message = MagicMock()
@@ -119,6 +119,11 @@ def test_native_response_format_applied_for_qwen_model() -> None:
     ]
     mock_client.chat.completions.create.return_value.usage = None
     connection._client = mock_client
+    return connection, mock_client
+
+
+def test_native_response_format_applied_for_qwen_model() -> None:
+    connection, mock_client = _connection_with_mock_client()
 
     connection.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
@@ -128,6 +133,25 @@ def test_native_response_format_applied_for_qwen_model() -> None:
 
     kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert "response_format" in kwargs
+    assert kwargs["response_format"]["type"] == "json_schema"
+
+
+def test_capability_override_shapes_only_the_query() -> None:
+    # A blank model is the one input the vLLM capability check declines. The query
+    # reports it FEASIBLE, and the request still carries the schema it was handed.
+    connection, mock_client = _connection_with_mock_client()
+    schema = OutputSchema(output_schema=_Person)
+
+    assert (
+        connection.supports_native_structured_output(schema, [], {"model": " "})
+        is NativeStructuredOutputSupport.FEASIBLE
+    )
+
+    connection.chat(
+        [ChatMessage.of(MessageRole.USER, "hi")], model=" ", output_schema=schema
+    )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert kwargs["response_format"]["type"] == "json_schema"
 
 

@@ -64,8 +64,8 @@ _RESERVED_KWARG_KEYS = frozenset(
 # version as separate properties, so a name carries no version to discriminate on. The
 # documented list includes gpt-4o only at versions 2024-08-06 and 2024-11-20 while
 # version 2024-05-13 is unsupported, so a bare "gpt-4o" is ambiguous and is deliberately
-# absent from the set below. An unrecognized name reports not-capable and degrades to
-# the prompt fallback rather than failing at the provider.
+# absent from the set below. An unrecognized name reports not-capable, which the
+# structured-output query reports as FEASIBLE rather than NATIVE_RECOMMENDED.
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {
         "gpt-5.1",
@@ -223,10 +223,11 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
     ) -> NativeStructuredOutputSupport:
-        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+        """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
-        The effective model is the model backing the deployment, never the deployment
-        name the request targets.
+        Feasibility is the helper the native branch asks; capability only separates
+        ``FEASIBLE`` from ``NATIVE_RECOMMENDED``, judged on the model backing the
+        deployment, never the deployment name the request targets.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
@@ -245,8 +246,9 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
 
         ``effective_model`` is the model backing an Azure deployment, not the deployment
         name. See the module-level allowlist for the source of truth and for why the
-        match is exact. An unrecognized model reports ``False`` so it degrades to the
-        prompt-engineering fallback rather than failing at the provider.
+        match is exact. An unrecognized model reports ``False``. The answer shapes only
+        the structured-output query; the request carries a schema it is handed whatever
+        this reports.
         """
         if not effective_model:
             return False
@@ -261,8 +263,8 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         against. That name is chosen by the user, and although it commonly echoes the
         model behind it, nothing keeps the two in step once the deployment is
         repointed, so it is never the answer here. Leaving the backing model unset
-        keeps even a capable deployment on the prompt-engineering fallback rather than
-        classifying a deployment name on its spelling.
+        reports even a capable deployment ``FEASIBLE`` rather than classifying a
+        deployment name on its spelling.
         """
         if model_kwargs is None:
             return None
@@ -356,11 +358,10 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             List of tools that can be called by the model
         output_schema : OutputSchema | None
             The schema the response should conform to, or ``None`` for an unconstrained
-            response. Native structured output is applied only for a ``BaseModel``
-            schema, on a deployment whose backing model the provider documents as
-            capable, and with an api-version that supports it; a ``RowTypeInfo`` schema,
-            an incapable model, or an older api-version keeps the prompt-engineering
-            fallback. Where native output applies, a caller-supplied
+            response. Native structured output is applied for a ``BaseModel`` schema
+            with an api-version that supports it, whatever model backs the deployment;
+            a ``RowTypeInfo`` schema or an older api-version keeps the
+            prompt-engineering fallback. Where native output applies, a caller-supplied
             ``response_format`` conflicts with it and raises ``ValueError``.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
@@ -383,7 +384,8 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         if tools is not None:
             tool_specs = [to_openai_tool(metadata=tool.metadata) for tool in tools]
 
-        # Extract model (azure_deployment) and model_of_azure_deployment from kwargs
+        # Extract model (azure_deployment) and model_of_azure_deployment from kwargs.
+        # The backing model labels token metrics and is never sent to the provider.
         azure_deployment = kwargs.pop("model", "")
         if not azure_deployment:
             msg = "model is required for Azure OpenAI API calls"
@@ -400,16 +402,15 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             )
             raise ValueError(msg)
 
-        # Capability belongs to the model backing the deployment, so it is the input to
-        # the check. The deployment name is chosen by the user and carries none.
+        # Native structured output applies only for a BaseModel schema on an
+        # api-version at or above the floor; a RowTypeInfo schema carries no
+        # response_format.
         #
-        # The schema form and the api-version floor are asked rather than restated, so
-        # a caller asking the same question gets the answer this branch acts on.
-        # Capability stays a conjunct here because it is keyed on the model backing the
-        # deployment, which the feasibility helper excludes.
-        if self._can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self._model_supports_native_structured_output(model_of_azure_deployment):
+        # The feasibility check is shared with the structured-output query rather than
+        # restated, so the branch applies whenever the query answers other than
+        # INFEASIBLE. Model capability is not asked: a caller that hands this
+        # connection a schema has already chosen to send it.
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             native_model = _native_output_model(output_schema)
             # Tested before the schema is rendered. A caller who supplies both a schema
             # and a response_format has a conflict to resolve whatever the schema turns
@@ -471,7 +472,9 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         List of available tools to use in the chat. (Inherited from BaseChatModelSetup)
     model_of_azure_deployment : Optional[str]
         The underlying model name of the Azure deployment (e.g., 'gpt-4').
-        Used for token counting and cost calculation.
+        Used for token counting and cost calculation. It is also the name native
+        structured-output capability is judged on, since the deployment name carries
+        no model information. Leaving it unset means no deployment is judged capable.
     temperature : Optional[float]
         What sampling temperature to use, between 0 and 2. Higher values like 0.8
         will make the output more random, while lower values like 0.2 will make it
@@ -493,7 +496,8 @@ class AzureOpenAIChatModelSetup(BaseChatModelSetup):
         default=None,
         description="The underlying model name of the Azure deployment (e.g., 'gpt-4', "
         "'gpt-35-turbo'). Used for token counting and cost calculation. "
-        "Required for token metrics tracking.",
+        "Required for token metrics tracking. Also the name native structured-output "
+        "capability is judged on; when unset, no deployment is judged capable.",
     )
     temperature: float | None = Field(
         default=None,

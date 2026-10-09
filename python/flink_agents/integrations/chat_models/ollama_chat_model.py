@@ -247,8 +247,7 @@ class OllamaChatModelConnection(BaseChatModelConnection):
         # omitted altogether when no native translation applies.
         #
         # Feasibility is asked rather than restated, so a caller asking the same
-        # question gets the answer this branch acts on. Capability is unconditional on
-        # this connection, so feasibility alone decides the branch.
+        # question gets the answer this branch acts on.
         format_kwargs: Dict[str, Any] = {}
         if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             format_kwargs = {"format": _native_format(output_schema)}

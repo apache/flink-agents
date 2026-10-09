@@ -53,8 +53,8 @@ DEFAULT_MODEL = "qwen-plus"
 # text- vs multimodal-interface routing:
 #   https://help.aliyun.com/zh/model-studio/text-generation
 #
-# A name outside the set reports not-capable and degrades to the prompt-engineering
-# fallback rather than failing at the provider.
+# A name outside the set reports not-capable, which the structured-output query
+# reports as FEASIBLE rather than NATIVE_RECOMMENDED.
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {
         "qwen3.7-max",
@@ -179,10 +179,11 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
     ) -> NativeStructuredOutputSupport:
-        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+        """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
-        The effective model is the ``model`` parameter, or ``DEFAULT_MODEL`` when it
-        is absent.
+        Feasibility is the helper the native branch asks; capability only separates
+        ``FEASIBLE`` from ``NATIVE_RECOMMENDED``, judged on the ``model`` parameter,
+        or ``DEFAULT_MODEL`` when it is absent.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
@@ -200,8 +201,9 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         """Whether DashScope documents structured output for ``effective_model``.
 
         See the module-level allowlist for the source of truth and for why names are
-        matched exactly. A name outside it reports ``False`` so it degrades to the
-        prompt-engineering fallback rather than failing at the provider.
+        matched exactly. A name outside it reports ``False``. The answer shapes only
+        the structured-output query; the request carries a schema it is handed
+        whatever this reports.
 
         Args:
             effective_model: The model the request will be issued against, may be
@@ -287,11 +289,10 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             List of tools that can be called by the model
         output_schema : OutputSchema | None
             The schema the response should conform to, or ``None`` for an
-            unconstrained response. Native structured output is applied only for a
-            ``BaseModel`` schema on a model the provider documents as capable; a
-            ``RowTypeInfo`` schema or an incapable model keeps the prompt-engineering
-            fallback. A ``response_format`` supplied alongside a schema is refused
-            rather than resolved.
+            unconstrained response. Native structured output is applied for a
+            ``BaseModel`` schema whatever the model; a ``RowTypeInfo`` schema keeps the
+            prompt-engineering fallback. A ``response_format`` supplied alongside a
+            schema is refused rather than resolved.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
@@ -322,18 +323,14 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
 
         model_name = kwargs.pop("model", DEFAULT_MODEL)
 
-        # The predicate reads model_name rather than kwargs.get("model"): the key was
-        # popped on the line above, so a kwargs lookup would yield None on every call
-        # and report every model incapable.
-        #
-        # The feasibility half is asked rather than restated, so a caller asking the
-        # same question gets the answer this branch acts on. A payload with no native
+        # The feasibility check is shared with the structured-output query rather than
+        # restated, so the branch applies whenever the query answers other than
+        # INFEASIBLE. Model capability is not asked: a caller that hands this
+        # connection a schema has already chosen to send it. A payload with no native
         # translation is reported infeasible there, so it never reaches the conflict
         # test below and cannot raise over a response_format this branch was never
         # going to write.
-        if self._can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self._model_supports_native_structured_output(model_name):
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             # Tested before the schema is rendered, because a caller who supplies both
             # a schema and a response_format has a conflict to resolve whatever the
             # schema turns out to render to, and reporting a render failure instead
