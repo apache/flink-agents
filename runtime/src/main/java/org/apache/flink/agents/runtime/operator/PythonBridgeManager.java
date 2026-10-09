@@ -27,6 +27,7 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
@@ -51,7 +52,13 @@ import pemja.core.object.PyObject;
 import javax.annotation.Nullable;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
@@ -144,16 +151,16 @@ class PythonBridgeManager implements AutoCloseable {
             String jobIdentifier,
             ClassLoader userCodeClassLoader)
             throws Exception {
-        boolean containPythonAction =
-                agentPlan.getActions().values().stream()
-                        .anyMatch(action -> action.getExec() instanceof PythonFunction);
-
-        boolean containPythonResource =
-                agentPlan.getResourceProviders().values().stream()
-                        .anyMatch(
-                                resourceProviderMap ->
-                                        resourceProviderMap.values().stream()
-                                                .anyMatch(ResourceProvider::isPythonOwned));
+        // One Python runtime serves the whole plan tree: an internal sub-agent's child scope runs
+        // its Python actions and materializes its Python-owned resources through the root's
+        // executor (ResourceCache.effectivePythonActionExecutor falls back to the parent), and this
+        // runs before sub-agent setups are registered, so it can only inspect plans statically.
+        // Scanning the root alone would leave a Java root with a Python-bearing child uninitialized
+        // and the child's eagerMaterialize would then fail its "no Python runtime was initialized"
+        // guard. Mem0 stays a root-only check: long-term memory is wired against the root plan
+        // (wireLongTermMemory), not a child scope.
+        boolean containPythonAction = treeContainsPythonAction(agentPlan);
+        boolean containPythonResource = treeContainsPythonResource(agentPlan);
 
         boolean mem0Configured = isMem0Configured(agentPlan);
         boolean packageSkills = hasPackageSkills(agentPlan);
@@ -238,6 +245,50 @@ class PythonBridgeManager implements AutoCloseable {
                                 Skills.class);
         return skills.getSources().stream()
                 .anyMatch(source -> "package".equalsIgnoreCase(source.getScheme()));
+    }
+
+    /** Whether any plan in {@code plan}'s tree declares a {@link PythonFunction} action. */
+    static boolean treeContainsPythonAction(AgentPlan plan) {
+        return planTree(plan).stream()
+                .flatMap(p -> p.getActions().values().stream())
+                .anyMatch(action -> action.getExec() instanceof PythonFunction);
+    }
+
+    /** Whether any plan in {@code plan}'s tree declares a Python-owned resource provider. */
+    static boolean treeContainsPythonResource(AgentPlan plan) {
+        return planTree(plan).stream()
+                .flatMap(p -> p.getResourceProviders().values().stream())
+                .flatMap(resourceProviderMap -> resourceProviderMap.values().stream())
+                .anyMatch(ResourceProvider::isPythonOwned);
+    }
+
+    /**
+     * Every plan in the tree rooted at {@code plan}: the plan itself plus each internal sub-agent's
+     * child plan, recursively. Internal sub-agents are the only nested plans reachable from a
+     * parent's {@link ResourceType#AGENT} providers, through {@link
+     * InternalSubagentProvider#getChildPlan()}. Compilation rejects a cycle, and the identity guard
+     * also collapses a child plan shared by more than one parent so it is scanned once.
+     */
+    static List<AgentPlan> planTree(AgentPlan plan) {
+        List<AgentPlan> plans = new ArrayList<>();
+        collectPlanTree(plan, plans, Collections.newSetFromMap(new IdentityHashMap<>()));
+        return plans;
+    }
+
+    private static void collectPlanTree(
+            AgentPlan plan, List<AgentPlan> acc, Set<AgentPlan> visited) {
+        if (!visited.add(plan)) {
+            return;
+        }
+        acc.add(plan);
+        Map<String, ResourceProvider> agents =
+                plan.getResourceProviders()
+                        .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
+        for (ResourceProvider provider : agents.values()) {
+            if (provider instanceof InternalSubagentProvider) {
+                collectPlanTree(((InternalSubagentProvider) provider).getChildPlan(), acc, visited);
+            }
+        }
     }
 
     /**

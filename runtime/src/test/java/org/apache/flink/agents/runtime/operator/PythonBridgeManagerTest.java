@@ -19,10 +19,15 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -32,8 +37,10 @@ import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.JobID;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+import org.mockito.MockedConstruction;
 
 import java.lang.reflect.Field;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,6 +49,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.verify;
 
 /** Contract tests for {@link PythonBridgeManager}. */
@@ -135,6 +143,117 @@ class PythonBridgeManagerTest {
             assertThat(bridge.isInitialized()).isFalse();
             assertThat(bridge.getPythonActionExecutor()).isNull();
             assertThat(bridge.getPythonRunnerContext()).isNull();
+        }
+    }
+
+    /**
+     * {@code open()} decides whether to start the shared Python runtime by inspecting plans, and it
+     * runs before sub-agent setups exist, so the inspection must walk the whole plan tree. An
+     * internal sub-agent's child plan is reachable only through {@link
+     * InternalSubagentProvider#getChildPlan()}; a Java root with a Python-bearing descendant still
+     * has to initialize Python, or the descendant's eager materialization fails its "no Python
+     * runtime" guard. Pins the recursion through two nested layers and both detection paths.
+     */
+    @Test
+    void planTreeRecursesThroughNestedInternalSubagentChildPlans() throws Exception {
+        // Deepest layer: a Python action and a Python-owned resource, neither visible from the
+        // root.
+        Action pythonAction =
+                new Action(
+                        "pyAction",
+                        new PythonFunction("test_module", "py_action"),
+                        List.of(InputEvent.EVENT_TYPE));
+        PythonResourceProvider pythonModel =
+                new PythonResourceProvider(
+                        "pyModel",
+                        ResourceType.CHAT_MODEL,
+                        new PythonResourceDescriptor("test.module", "PyModel", Map.of()));
+        Map<ResourceType, Map<String, ResourceProvider>> grandchildProviders = new HashMap<>();
+        grandchildProviders.put(
+                ResourceType.CHAT_MODEL, new HashMap<>(Map.of("pyModel", pythonModel)));
+        AgentPlan grandchild =
+                new AgentPlan(Map.of(pythonAction.getName(), pythonAction), grandchildProviders);
+
+        // Middle layer: Java-only, wraps the grandchild as an internal sub-agent.
+        InternalSubagentProvider grandchildProvider =
+                new InternalSubagentProvider("grandchild", grandchild);
+        Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
+        childProviders.put(
+                ResourceType.AGENT, new HashMap<>(Map.of("grandchild", grandchildProvider)));
+        AgentPlan child = new AgentPlan(Map.of(), childProviders);
+
+        // Root: one Java action, wraps the child as an internal sub-agent.
+        Action javaAction = TestActions.noopAction();
+        InternalSubagentProvider childProvider = new InternalSubagentProvider("child", child);
+        Map<ResourceType, Map<String, ResourceProvider>> rootProviders = new HashMap<>();
+        rootProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("child", childProvider)));
+        AgentPlan root = new AgentPlan(Map.of(javaAction.getName(), javaAction), rootProviders);
+
+        // Depth-first pre-order: the root, then each descendant through its sub-agent provider.
+        assertThat(PythonBridgeManager.planTree(root)).containsExactly(root, child, grandchild);
+        // The root alone is Java-only; both Python signals live two layers down and must surface.
+        assertThat(PythonBridgeManager.treeContainsPythonResource(root)).isTrue();
+        assertThat(PythonBridgeManager.treeContainsPythonAction(root)).isTrue();
+    }
+
+    /**
+     * Complements {@link #planTreeRecursesThroughNestedInternalSubagentChildPlans}: that test pins
+     * the detection helpers in isolation, this one pins that {@code open()} actually consumes their
+     * whole-tree result. The root is Java-only and the sole Python signal sits in an internal
+     * sub-agent's child plan, so a root-only scan would classify the root as Python-free, take the
+     * no-op branch, and never build the Python environment. Stub the environment manager to
+     * short-circuit at the bootstrap instead of launching a real Pemja runtime; constructing it at
+     * all proves {@code open()} entered the initialization branch on the strength of the child
+     * plan.
+     */
+    @Test
+    void openStartsPythonWhenOnlyASubagentChildPlanBearsPython() throws Exception {
+        // Child plan carries the only Python signal: a Python-owned resource.
+        PythonResourceProvider pythonModel =
+                new PythonResourceProvider(
+                        "pyModel",
+                        ResourceType.CHAT_MODEL,
+                        new PythonResourceDescriptor("test.module", "PyModel", Map.of()));
+        Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
+        childProviders.put(ResourceType.CHAT_MODEL, new HashMap<>(Map.of("pyModel", pythonModel)));
+        AgentPlan child = new AgentPlan(Map.of(), childProviders);
+
+        // Root is Java-only and reaches that child solely through an internal sub-agent provider.
+        Action javaAction = TestActions.noopAction();
+        InternalSubagentProvider childProvider = new InternalSubagentProvider("child", child);
+        Map<ResourceType, Map<String, ResourceProvider>> rootProviders = new HashMap<>();
+        rootProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("child", childProvider)));
+        AgentPlan root = new AgentPlan(Map.of(javaAction.getName(), javaAction), rootProviders);
+
+        try (MockedConstruction<PythonEnvironmentManager> envManagers =
+                mockConstruction(
+                        PythonEnvironmentManager.class,
+                        (mock, context) ->
+                                doThrow(new IllegalStateException("python-bootstrap-reached"))
+                                        .when(mock)
+                                        .open())) {
+            try (PythonBridgeManager bridge = new PythonBridgeManager()) {
+                assertThatThrownBy(
+                                () ->
+                                        bridge.open(
+                                                root,
+                                                /* resourceCache */ null,
+                                                new ExecutionConfig(),
+                                                /* distributedCache */ null,
+                                                /* tmpDirs */
+                                                new String[] {System.getProperty("java.io.tmpdir")},
+                                                /* jobId */ new JobID(),
+                                                /* metricGroup */ null,
+                                                /* mailboxThreadChecker */ () -> {},
+                                                /* jobIdentifier */ "job-1",
+                                                /* userCodeClassLoader */
+                                                Thread.currentThread().getContextClassLoader()))
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessage("python-bootstrap-reached");
+            }
+            // A root-only scan sees a Java-only root, takes the no-op branch, and never constructs
+            // the environment manager; the whole-tree scan finds the child's Python resource.
+            assertThat(envManagers.constructed()).hasSize(1);
         }
     }
 
