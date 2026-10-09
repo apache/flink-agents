@@ -115,8 +115,8 @@ public class ChatModelActionRoutingTest {
             return this;
         }
 
-        // The real gate answers false for this connection-less fake; the override lets a test
-        // choose the native answer or inject a gate failure.
+        // This fake binds no connection, so it answers the gate itself: a test chooses the native
+        // answer or injects a gate failure.
         @Override
         public boolean willApplyNativeStructuredOutput(Object outputSchema) {
             if (gateFailure != null) {

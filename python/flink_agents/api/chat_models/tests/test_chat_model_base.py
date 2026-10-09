@@ -573,34 +573,18 @@ def test_will_apply_native_structured_output_infeasible_message(
     assert "output_schema=" not in message
 
 
-@pytest.mark.parametrize(
-    "strategy", [StructuredOutputStrategy.AUTO, StructuredOutputStrategy.PROMPT]
-)
-def test_will_apply_native_structured_output_false_without_connection(
+@pytest.mark.parametrize("strategy", list(StructuredOutputStrategy))
+def test_will_apply_native_structured_output_requires_open(
     strategy: StructuredOutputStrategy,
 ) -> None:
-    """A setup with no resolved connection keeps the schema in the prompt."""
+    """A schema needs a resolved connection under every strategy."""
     setup = _RecordingChatModelSetup(
         connection="c", model="m", structured_output_strategy=strategy
     )
 
-    schema = OutputSchema(output_schema=_Answer)
-    assert setup.will_apply_native_structured_output(schema) is False
-
-
-def test_will_apply_native_structured_output_native_without_connection() -> None:
-    """NATIVE with no resolved connection fails naming the setup."""
-    setup = _RecordingChatModelSetup(
-        connection="c",
-        model="m",
-        structured_output_strategy=StructuredOutputStrategy.NATIVE,
-    )
-
-    with pytest.raises(ValueError, match="no connection") as excinfo:
+    with pytest.raises(TypeError, match=r"open\(\)") as excinfo:
         setup.will_apply_native_structured_output(OutputSchema(output_schema=_Answer))
-
-    setup_cls = _RecordingChatModelSetup
-    assert f"{setup_cls.__module__}.{setup_cls.__qualname__}" in str(excinfo.value)
+    assert "will_apply_native_structured_output()" in str(excinfo.value)
 
 
 @pytest.mark.parametrize("strategy", list(StructuredOutputStrategy))

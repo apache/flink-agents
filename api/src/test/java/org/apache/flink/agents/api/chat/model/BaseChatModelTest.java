@@ -462,33 +462,18 @@ class BaseChatModelTest {
     }
 
     @ParameterizedTest
-    @EnumSource(
-            value = StructuredOutputStrategy.class,
-            names = {"AUTO", "PROMPT"})
-    @DisplayName("Gate answers false for a schema when no connection is bound")
-    void testWillApplyNativeStructuredOutputFalseWithoutConnection(
-            StructuredOutputStrategy strategy) {
+    @EnumSource(StructuredOutputStrategy.class)
+    @DisplayName("Gate requires a bound connection for a schema under every strategy")
+    void testWillApplyNativeStructuredOutputRequiresOpen(StructuredOutputStrategy strategy) {
         RecordingChatModelSetup setup =
                 new RecordingChatModelSetup(null, null, strategy, SETUP_PARAMS);
 
-        assertFalse(setup.willApplyNativeStructuredOutput(String.class));
-    }
-
-    @Test
-    @DisplayName("NATIVE without a bound connection fails naming the setup")
-    void testWillApplyNativeStructuredOutputNativeWithoutConnection() {
-        RecordingChatModelSetup setup =
-                new RecordingChatModelSetup(
-                        null, null, StructuredOutputStrategy.NATIVE, SETUP_PARAMS);
-
-        IllegalArgumentException e =
+        NullPointerException e =
                 assertThrows(
-                        IllegalArgumentException.class,
+                        NullPointerException.class,
                         () -> setup.willApplyNativeStructuredOutput(String.class));
-
-        assertTrue(
-                e.getMessage().contains(RecordingChatModelSetup.class.getName()), e.getMessage());
-        assertTrue(e.getMessage().contains("no connection"), e.getMessage());
+        assertTrue(e.getMessage().contains("open()"), e.getMessage());
+        assertTrue(e.getMessage().contains("willApplyNativeStructuredOutput()"), e.getMessage());
     }
 
     @ParameterizedTest

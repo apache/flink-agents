@@ -675,9 +675,8 @@ class BaseChatModelSetup(Resource):
         still raise once its native branch applies the schema, for example on a
         conflicting caller-supplied response format.
 
-        A setup with no resolved connection, such as one that overrides ``open`` and
-        ``chat`` to answer by itself, answers ``False`` unless the strategy is
-        ``NATIVE``.
+        A setup that resolves no connection, such as one that overrides ``open`` and
+        ``chat`` to answer by itself, overrides this method.
 
         Args:
             output_schema: The schema the call would carry, or ``None`` for an
@@ -685,25 +684,24 @@ class BaseChatModelSetup(Resource):
 
         Returns:
             ``True`` if the schema should be applied natively; ``False`` for a
-            ``None`` schema or when no connection is resolved.
+            ``None`` schema.
 
         Raises:
-            ValueError: If the strategy is ``NATIVE`` and no connection is resolved,
-                or the connection cannot apply this schema to such a request.
+            TypeError: If the schema is not ``None`` and ``open()`` has not resolved
+                the connection.
+            ValueError: If the strategy is ``NATIVE`` and the connection cannot apply
+                this schema to such a request.
         """
         if output_schema is None:
             return False
         connection = self._resolved_connection
         if connection is None:
-            if self.structured_output_strategy == StructuredOutputStrategy.NATIVE:
-                setup_cls = type(self)
-                msg = (
-                    f"Structured output strategy NATIVE was requested, but "
-                    f"{setup_cls.__module__}.{setup_cls.__qualname__} has no "
-                    "connection to apply the output schema natively."
-                )
-                raise ValueError(msg)
-            return False
+            msg = (
+                "Connection is not initialized. Ensure open() resolves the "
+                "connection, or override will_apply_native_structured_output() in a "
+                "setup that has none."
+            )
+            raise TypeError(msg)
         support = connection.supports_native_structured_output(
             output_schema, [], _without_tool_only_params(self.model_kwargs)
         )

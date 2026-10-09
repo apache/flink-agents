@@ -29,9 +29,6 @@ from pydantic import BaseModel
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, ImageBlock, MessageRole
-from flink_agents.api.chat_models.chat_model import (
-    BaseChatModelSetup,
-)
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -1133,37 +1130,3 @@ class TestNativeStructuredOutputFinalization:
         assert ctx.durable_execute_async.call_count == 2
         ctx.durable_execute.assert_not_called()
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
-
-
-class _ConnectionlessSetup(BaseChatModelSetup):
-    """Answers through its own chat() and resolves no connection."""
-
-    @property
-    def model_kwargs(self) -> dict[str, Any]:
-        return {}
-
-    def chat(
-        self,
-        messages: Sequence[ChatMessage],
-        prompt_args: dict[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        return _assistant('{"result": 7}')
-
-
-def test_connectionless_setup_takes_the_prompt_path_for_a_schema() -> None:
-    """Contract: a setup that overrides chat() and resolves no connection parses
-    its own chat response for a schema-carrying request under the default
-    strategy, with no finalization call.
-    """
-    chat_model = _ConnectionlessSetup(connection="c", model="m")
-    ctx, sent_events, _, _ = _create_mock_runner_context(
-        chat_model, max_retries=0, retry_wait_interval_sec=0
-    )
-
-    _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
-
-    assert ctx.durable_execute.call_count == 1
-    (event,) = sent_events
-    assert isinstance(event, ChatResponseEvent)
-    assert event.response.extra_args[STRUCTURED_OUTPUT].result == 7

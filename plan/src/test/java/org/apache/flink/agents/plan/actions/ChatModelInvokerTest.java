@@ -26,7 +26,6 @@ import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -246,58 +245,6 @@ class ChatModelInvokerTest {
         when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
         when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
         return ctx;
-    }
-
-    /**
-     * Contract: a setup that answers through its own chat() and binds no connection keeps the
-     * prompt path for a schema-carrying request under the default strategy.
-     */
-    @Test
-    void connectionlessSetupTakesThePromptPathForASchema() throws Exception {
-        ChatMessage reply = ChatMessage.assistant("{\"answer\":\"42\"}");
-        BaseChatModelSetup model =
-                new BaseChatModelSetup(new ResourceDescriptor("connectionless", Map.of()), null) {
-                    @Override
-                    public Map<String, Object> getParameters() {
-                        return Map.of();
-                    }
-
-                    @Override
-                    public ChatMessage chat(
-                            List<ChatMessage> messages,
-                            Map<String, Object> promptArgs,
-                            Map<String, Object> modelParams) {
-                        return reply;
-                    }
-                };
-        RunnerContext ctx = mock(RunnerContext.class);
-        ReadableConfiguration config = mock(ReadableConfiguration.class);
-        when(ctx.getConfig()).thenReturn(config);
-        when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
-        when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
-        List<String> callIds = new ArrayList<>();
-        when(ctx.durableExecute(any()))
-                .thenAnswer(
-                        inv -> {
-                            DurableCallable<?> callable = inv.getArgument(0);
-                            callIds.add(callable.getId());
-                            return callable.call();
-                        });
-
-        ChatModelInvoker.ChatAttemptResult result =
-                ChatModelInvoker.chatWithRetries(
-                        UUID.randomUUID(),
-                        "test-model",
-                        "chat",
-                        List.of(ChatMessage.user("hi")),
-                        Map.of(),
-                        Map.class,
-                        ctx,
-                        0,
-                        0);
-
-        assertEquals(reply.getText(), result.response.getText());
-        assertEquals(List.of("chat"), callIds);
     }
 
     @Test

@@ -316,30 +316,24 @@ public abstract class BaseChatModelSetup extends Resource {
      * its native branch applies the schema, for example on a conflicting caller-supplied response
      * format.
      *
-     * <p>A setup with no bound connection, such as one that overrides {@link #open()} and {@link
-     * #chat(List, Map, Map)} to answer by itself, answers false unless the strategy is {@link
-     * StructuredOutputStrategy#NATIVE}.
+     * <p>A setup that binds no connection, such as one that overrides {@link #open()} and {@link
+     * #chat(List, Map, Map)} to answer by itself, overrides this method.
      *
      * @param outputSchema the schema the call would carry, or null for an unconstrained call
-     * @return true if the schema should be applied natively; false for a null schema or when no
-     *     connection is bound
+     * @return true if the schema should be applied natively; false for a null schema
+     * @throws NullPointerException if the schema is non-null and {@link #open()} has not bound the
+     *     connection
      * @throws IllegalArgumentException if the strategy is {@link StructuredOutputStrategy#NATIVE}
-     *     and no connection is bound, or the connection cannot apply this schema to such a request
+     *     and the connection cannot apply this schema to such a request
      */
     public boolean willApplyNativeStructuredOutput(@Nullable Object outputSchema) {
         if (outputSchema == null) {
             return false;
         }
-        if (connection == null) {
-            if (structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
-                throw new IllegalArgumentException(
-                        String.format(
-                                "Structured output strategy NATIVE was requested, but %s has no"
-                                        + " connection to apply the output schema natively.",
-                                getClass().getName()));
-            }
-            return false;
-        }
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() binds the connection, or override"
+                        + " willApplyNativeStructuredOutput() in a setup that has none.");
         NativeStructuredOutputSupport support =
                 connection.supportsNativeStructuredOutput(
                         outputSchema, List.of(), withoutToolOnlyParams(getParameters()));
