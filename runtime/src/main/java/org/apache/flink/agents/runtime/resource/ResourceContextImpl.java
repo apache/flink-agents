@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.runtime.resource;
 
+import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -42,6 +43,7 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
 
     private final BiFunction<String, ResourceType, Resource> getResource;
     private final ClassLoader classLoader;
+    @Nullable private final ReadableConfiguration agentConfig;
 
     @Nullable private SkillManager skillManager;
     private boolean skillManagerInitialized;
@@ -52,14 +54,26 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
      * ResourceCache}); standalone use may use {@link #ResourceContextImpl(BiFunction)}.
      */
     public ResourceContextImpl(
-            BiFunction<String, ResourceType, Resource> getResource, ClassLoader classLoader) {
+            BiFunction<String, ResourceType, Resource> getResource,
+            ClassLoader classLoader,
+            @Nullable ReadableConfiguration agentConfig) {
         this.getResource = getResource;
         this.classLoader = classLoader;
+        this.agentConfig = agentConfig;
+    }
+
+    /**
+     * Convenience overload that uses the current thread's context class loader and default
+     * resources
+     */
+    public ResourceContextImpl(
+            BiFunction<String, ResourceType, Resource> getResource, ClassLoader classLoader) {
+        this(getResource, classLoader, null);
     }
 
     /** Convenience overload that uses the current thread's context class loader. */
     public ResourceContextImpl(BiFunction<String, ResourceType, Resource> getResource) {
-        this(getResource, Thread.currentThread().getContextClassLoader());
+        this(getResource, Thread.currentThread().getContextClassLoader(), null);
     }
 
     @Override
@@ -116,7 +130,7 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
             // No skills config registered — that's fine, return null.
             return null;
         }
-        return new SkillManager(config, classLoader);
+        return new SkillManager(config, classLoader, agentConfig);
     }
 
     /**

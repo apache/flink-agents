@@ -96,4 +96,4 @@ class ResourceContextImpl(ResourceContext):
             )
         except KeyError:
             return None
-        return SkillManager(skills_config)
+        return SkillManager(skills_config, agent_config=self._resource_cache._config)
