@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import pemja.core.object.PyObject;
@@ -149,6 +151,49 @@ public class PythonChatModelSetupTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ChatModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform chat operation");
+    }
+
+    private PythonChatModelSetup setupWithStrategy(String strategy) {
+        return new PythonChatModelSetup(
+                mockAdapter,
+                mockChatModelSetup,
+                new ResourceDescriptor(
+                        PythonChatModelSetup.class.getName(),
+                        Map.of("structured_output_strategy", strategy)),
+                mockGetResource);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"auto", "prompt"})
+    void testWillApplyNativeStructuredOutputIsFalse(String strategy) {
+        // No connection is bound on this side, so the gate must answer without consulting one.
+        assertThat(setupWithStrategy(strategy).willApplyNativeStructuredOutput(String.class))
+                .isFalse();
+    }
+
+    @Test
+    void testWillApplyNativeStructuredOutputRejectsNativeStrategy() {
+        assertThatThrownBy(
+                        () ->
+                                setupWithStrategy("native")
+                                        .willApplyNativeStructuredOutput(String.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bridge");
+    }
+
+    @Test
+    void testWillApplyNativeStructuredOutputIsFalseForNullSchemaUnderNative() {
+        assertThat(setupWithStrategy("native").willApplyNativeStructuredOutput(null)).isFalse();
+    }
+
+    @Test
+    void testChatStructuredIsRefused() {
+        List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
+
+        assertThatThrownBy(
+                        () -> pythonChatModelSetup.chatStructured(messages, Map.of(), String.class))
+                .isInstanceOf(UnsupportedOperationException.class);
+        verifyNoInteractions(mockAdapter);
     }
 
     @Test

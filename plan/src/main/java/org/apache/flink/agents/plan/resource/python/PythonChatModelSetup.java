@@ -19,10 +19,13 @@ package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.chat.model.StructuredOutputStrategy;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import pemja.core.object.PyObject;
+
+import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -85,6 +88,43 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
                     scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
             return adapter.fromPythonChatMessage(pythonMessageResponse);
         }
+    }
+
+    /**
+     * False, so a caller keeps describing the schema in the prompt, which works here. No connection
+     * is bound on this side, and {@link #chat(List, Map, Map)} carries only messages and prompt
+     * arguments across the bridge, so a schema has no way to travel natively.
+     *
+     * @throws IllegalArgumentException if {@code outputSchema} is non-null and the strategy is
+     *     {@link StructuredOutputStrategy#NATIVE}, which this setup cannot honor
+     */
+    @Override
+    public boolean willApplyNativeStructuredOutput(@Nullable Object outputSchema) {
+        if (outputSchema != null && structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
+            throw new IllegalArgumentException(
+                    "Structured output strategy NATIVE was requested, but a Python chat model"
+                            + " setup reached from Java cannot carry an output schema across the"
+                            + " bridge. Use AUTO or PROMPT, or configure structured output on the"
+                            + " Python side.");
+        }
+        return false;
+    }
+
+    /**
+     * Always refuses rather than dropping the schema, so an unconstrained response can never be
+     * mistaken for a schema-conforming one.
+     *
+     * @throws UnsupportedOperationException always
+     */
+    @Override
+    public ChatMessage chatStructured(
+            List<ChatMessage> messages,
+            @Nullable Map<String, Object> modelParams,
+            Object outputSchema) {
+        throw new UnsupportedOperationException(
+                "A Python chat model setup cannot be given an output schema from Java: the bridge"
+                        + " carries only messages and prompt arguments to the Python setup's chat."
+                        + " Apply the schema on the Python side instead.");
     }
 
     @Override

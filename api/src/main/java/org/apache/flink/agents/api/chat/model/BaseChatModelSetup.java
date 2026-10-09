@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -247,6 +248,134 @@ public abstract class BaseChatModelSetup extends Resource {
             params.putAll(modelParams);
         }
         return connection.chat(messages, tools, params);
+    }
+
+    /**
+     * Whether {@code outputSchema} should travel through the provider's native structured output on
+     * a call issued through {@link #chatStructured(List, Map, Object)}, rather than be described to
+     * the model in the prompt.
+     *
+     * <p>Framework-facing: public because the caller lives in another package. A user configures
+     * the outcome through the {@link StructuredOutputStrategy} instead of calling this.
+     *
+     * <p>The connection is asked about the request {@link #chatStructured(List, Map, Object)}
+     * sends: this schema, no tools, and the parameters {@link #getParameters()} returns, resolved
+     * once so that the answer and the request concern the same parameters. Per-call parameters
+     * passed to {@link #chatStructured(List, Map, Object)} are not seen here, so a caller that adds
+     * parameters affecting feasibility must not rely on this answer.
+     *
+     * <p>A true answer is not a promise that the call succeeds: a connection may still raise once
+     * its native branch applies the schema, for example on a conflicting caller-supplied response
+     * format.
+     *
+     * <p>A setup with no bound connection, such as one that overrides {@link #open()} and {@link
+     * #chat(List, Map, Map)} to answer by itself, answers false unless the strategy is {@link
+     * StructuredOutputStrategy#NATIVE}.
+     *
+     * @param outputSchema the schema the call would carry, or null for an unconstrained call
+     * @return true if the schema should be applied natively; false for a null schema or when no
+     *     connection is bound
+     * @throws IllegalArgumentException if the strategy is {@link StructuredOutputStrategy#NATIVE}
+     *     and no connection is bound, or the connection cannot apply this schema to such a request
+     */
+    public boolean willApplyNativeStructuredOutput(@Nullable Object outputSchema) {
+        if (outputSchema == null) {
+            return false;
+        }
+        if (connection == null) {
+            if (structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
+                throw new IllegalArgumentException(
+                        String.format(
+                                "Structured output strategy NATIVE was requested, but %s has no"
+                                        + " connection to apply the output schema natively.",
+                                getClass().getName()));
+            }
+            return false;
+        }
+        NativeStructuredOutputSupport support =
+                connection.supportsNativeStructuredOutput(outputSchema, List.of(), getParameters());
+        if (support == NativeStructuredOutputSupport.INFEASIBLE
+                && structuredOutputStrategy == StructuredOutputStrategy.NATIVE) {
+            throw new IllegalArgumentException(
+                    String.format(
+                            "Structured output strategy NATIVE was requested, but %s cannot apply"
+                                    + " the output schema %s natively. Use AUTO or PROMPT to"
+                                    + " describe the schema in the prompt instead, or supply a"
+                                    + " schema this connection can translate.",
+                            connection.getClass().getName(), describeSchema(outputSchema)));
+        }
+        return structuredOutputStrategy.resolvesToNative(support);
+    }
+
+    private static String describeSchema(Object outputSchema) {
+        if (outputSchema instanceof Class) {
+            return ((Class<?>) outputSchema).getName();
+        }
+        if (outputSchema instanceof OutputSchema) {
+            // The wrapper's toString names no schema.
+            return String.valueOf(((OutputSchema) outputSchema).getSchema());
+        }
+        return outputSchema.getClass().getName();
+    }
+
+    /**
+     * Sends one schema-carrying request to the connection, for a caller that has decided through
+     * {@link #willApplyNativeStructuredOutput(Object)} that the schema travels natively.
+     *
+     * <p>Framework-facing: public because the caller lives in another package. A user reaches a
+     * model through {@link #chat(List, Map, Map)}.
+     *
+     * <p>The messages are sent as given, without the bound prompt or the skill-discovery message,
+     * because messages that already passed through {@link #chat(List, Map, Map)} would otherwise
+     * carry them twice. No tools are bound, because a provider may drop a native schema from a
+     * request that also binds tools.
+     *
+     * <p>Because no tools are bound, tool traffic is removed from what is sent: some providers
+     * reject tool calls and tool results in a request that defines no tools. Tool-role messages and
+     * assistant messages carrying tool calls are dropped whole, since keeping a tool-calling turn's
+     * text would leave two assistant turns in a row. Turns still alternate only when an assistant
+     * message without tool calls follows the tool traffic, which a caller guarantees by appending
+     * the final answer. The caller's list and messages are not modified.
+     *
+     * @param messages the conversation to send, used as given apart from its tool traffic
+     * @param modelParams parameters for this call, merged over {@link #getParameters()} the same
+     *     way {@link #chat(List, Map, Map)} merges them, may be null
+     * @param outputSchema the schema the call carries, must not be null
+     * @return the connection's response
+     * @throws NullPointerException if {@code outputSchema} is null, or if {@link #open()} has not
+     *     bound the connection yet
+     */
+    public ChatMessage chatStructured(
+            List<ChatMessage> messages,
+            @Nullable Map<String, Object> modelParams,
+            Object outputSchema) {
+        Preconditions.checkNotNull(
+                connection,
+                "Connection is not initialized. Ensure open() is called before chatStructured().");
+        Preconditions.checkNotNull(
+                outputSchema,
+                "chatStructured() requires an output schema. Call chat(List, Map, Map) for an"
+                        + " unconstrained request.");
+
+        Map<String, Object> params = this.getParameters();
+        if (modelParams != null) {
+            params.putAll(modelParams);
+        }
+        return connection.chat(withoutToolTraffic(messages), List.of(), params, outputSchema);
+    }
+
+    private static List<ChatMessage> withoutToolTraffic(List<ChatMessage> messages) {
+        List<ChatMessage> sent = new ArrayList<>(messages.size());
+        for (ChatMessage message : messages) {
+            boolean toolCall =
+                    message.getRole() == MessageRole.ASSISTANT
+                            && message.getToolCalls() != null
+                            && !message.getToolCalls().isEmpty();
+            if (message.getRole() != MessageRole.TOOL && !toolCall) {
+                sent.add(message);
+            }
+        }
+        return sent;
     }
 
     @Override
