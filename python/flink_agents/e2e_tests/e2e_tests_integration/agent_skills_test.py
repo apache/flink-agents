@@ -293,17 +293,18 @@ def test_react_agent_with_skills(tmp_path: Path) -> None:
         ["result"],
     )
 
-    # create ReAct agent.
+    # create ReAct agent. The skill is named on the constructor, while the bash
+    # command policy stays on the chat model descriptor that owns it.
     agent = ReActAgent(
         chat_model=ResourceDescriptor(
             clazz=ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP,
             connection="openai",
             model=MODEL,
-            skills=["math-calculator"],
             allowed_commands=["echo", "bc"],
         ),
         prompt=prompt,
         output_schema=output_type_info,
+        skills=["math-calculator"],
     )
 
     output_type = ExternalTypeInfo(output_type_info)

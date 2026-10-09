@@ -57,6 +57,11 @@ class SkillManager:
         """Initialize the SkillManager from a Skills configuration."""
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
+        # Reverse index: for every SkillSourceSpec that was loaded, the skill names
+        # that came from it. When two sources define the same skill name the later
+        # registration wins in _skills, but both sources retain their own entries
+        # here — callers can ask "what names did this source contribute?"
+        self._source_to_skills: Dict[SkillSourceSpec, List[str]] = {}
         # Every opened repo in load order, kept separately from `_repos` because that
         # map is keyed by skill name — duplicate names overwrite the earlier repo's
         # reference, so close() iterates this list (id-deduped) instead.
@@ -182,6 +187,21 @@ class SkillManager:
         repo = self._repos.get(skill_name)
         return None if repo is None else repo.get_skill_dir(skill_name)
 
+    def get_skill_names_for_sources(
+        self, specs: list[SkillSourceSpec]
+    ) -> list[str]:
+        """Return the skill names that were loaded from the given sources.
+
+        Sources that were not loaded contribute an empty list. The order follows the
+        iteration order of *specs*; within each source, names follow load order.
+        """
+        result: list[str] = []
+        for spec in specs:
+            names = self._source_to_skills.get(spec)
+            if names:
+                result.extend(names)
+        return result
+
     def _load_skills(self) -> None:
         try:
             for spec in self._config.sources:
@@ -198,7 +218,7 @@ class SkillManager:
                     msg = f"Failed to load skills from {source_identity}"
                     raise RuntimeError(msg) from e
                 assert origin is not None
-                self._register_repo(repo, origin)
+                self._register_repo(repo, spec, origin)
         except BaseException:
             # Release every repo opened so far — the caller never receives a
             # SkillManager reference to clean them up via close() itself, so
@@ -217,7 +237,10 @@ class SkillManager:
                 )
             raise
 
-    def _register_repo(self, repo: "SkillRepository", origin: SkillOrigin) -> None:
+    def _register_repo(
+        self, repo: "SkillRepository", spec: SkillSourceSpec, origin: SkillOrigin
+    ) -> None:
+        names: list[str] = []
         for skill in repo.get_skills():
             skill.set_resource_loader(
                 lambda name=skill.name, r=repo: r.get_resources(name)
@@ -233,6 +256,8 @@ class SkillManager:
                 )
             self._skills[skill.name] = skill
             self._repos[skill.name] = repo
+            names.append(skill.name)
+        self._source_to_skills[spec] = names
 
     def close(self) -> None:
         """Close every opened :class:`SkillRepository`, releasing any temp directory

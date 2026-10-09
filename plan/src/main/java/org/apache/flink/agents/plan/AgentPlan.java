@@ -489,6 +489,9 @@ public class AgentPlan implements Serializable {
 
         // Collect Skills declarations from both @Skills methods and Agent.addResource(SKILLS, ...)
         Map<String, Skills> skillsObjects = new LinkedHashMap<>();
+        // Collect @Skills methods separately so we can sort them (getDeclaredMethods()
+        // order is non-deterministic across JDKs / class layouts).
+        Map<String, Skills> annotationSkills = new java.util.TreeMap<>();
 
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
         for (Field field : agentClass.getDeclaredFields()) {
@@ -575,6 +578,7 @@ public class AgentPlan implements Serializable {
                                     + " must return org.apache.flink.agents.api.skills.Skills");
                 }
                 skillsObjects.put(method.getName(), (Skills) value);
+                annotationSkills.put(method.getName(), (Skills) value);
             } else if (method.isAnnotationPresent(MCPServer.class)) {
                 // Check the MCPServer annotation version to determine which version to use.
                 MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
@@ -606,6 +610,10 @@ public class AgentPlan implements Serializable {
                 }
             }
         }
+
+        // @Skills-annotated methods are sorted by name for deterministic ordering,
+        // then placed first. Environment and agent-level resources follow in order.
+        skillsObjects.putAll(annotationSkills);
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();
@@ -727,12 +735,11 @@ public class AgentPlan implements Serializable {
                         ResourceType.TOOL,
                         new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
 
-        // Sort by key before merging: getDeclaredMethods() makes no order guarantee, so without
-        // this the winner on a duplicate skill name would vary across JDK / class layout.
-        List<String> orderedKeys = new ArrayList<>(skillsObjects.keySet());
-        Collections.sort(orderedKeys);
+        // Merge sources in insertion order: @Skills methods (sorted by name) →
+        // environment resources → agent resources. Later sources win on duplicate
+        // skill names, matching Python's level-aware precedence.
         LinkedHashSet<SkillSourceSpec> sources = new LinkedHashSet<>();
-        for (String key : orderedKeys) {
+        for (String key : skillsObjects.keySet()) {
             sources.addAll(skillsObjects.get(key).getSources());
         }
         Skills merged = new Skills(new ArrayList<>(sources));

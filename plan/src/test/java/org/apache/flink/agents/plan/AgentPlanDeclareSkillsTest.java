@@ -27,6 +27,8 @@ import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourcePro
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -191,6 +193,62 @@ class AgentPlanDeclareSkillsTest {
         assertEquals(
                 List.of(new SkillSourceSpec("local", Map.of("path", "/tmp/skill-d"))),
                 merged.getSources());
+    }
+
+    @Test
+    void annotationSkillsAreSortedByNameBeforeAgentAddResourceSources() throws Exception {
+        // Agent with @Skills methods declared as zSkills, aSkills, mSkills (declaration order
+        // is non-deterministic across JDKs). The merged sources must appear in sorted-method-name
+        // order (aSkills, mSkills, zSkills) before agent.addResource sources.
+        Agent agent = new AnnotationOrderAgent();
+        agent.addResource("extra", ResourceType.SKILLS, Skills.fromLocalDir("/tmp/skill-extra"));
+        Skills merged = mergedSkillsOf(agent);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/m-skill-a")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/m-skill-b")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/z-skill-a")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/skill-extra"))),
+                merged.getSources());
+    }
+
+    @Test
+    void agentLevelSkillsOverrideEnvironmentLevelBySourceOrder() throws Exception {
+        // Environment skills come before agent skills in the merged sources list so that
+        // agent-level sources win on duplicate skill names (SkillManager last-write-wins).
+        Agent agent = new NoSkillsAgent();
+        // Simulate environment-level skills via addResourcesIfAbsent.
+        Map<ResourceType, Map<String, Object>> envResources = new HashMap<>();
+        Map<String, Object> envSkills = new LinkedHashMap<>();
+        envSkills.put("env-skills", Skills.fromLocalDir("/tmp/env-skill"));
+        envResources.put(ResourceType.SKILLS, envSkills);
+        agent.addResourcesIfAbsent(envResources);
+        // Agent-level skills added afterwards.
+        agent.addResource(
+                "agent-skills", ResourceType.SKILLS, Skills.fromLocalDir("/tmp/agent-skill"));
+        Skills merged = mergedSkillsOf(agent);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/env-skill")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/agent-skill"))),
+                merged.getSources());
+    }
+
+    public static class AnnotationOrderAgent extends Agent {
+        @org.apache.flink.agents.api.annotation.Skills
+        public static Skills zSkills() {
+            return Skills.fromLocalDir("/tmp/z-skill-a");
+        }
+
+        @org.apache.flink.agents.api.annotation.Skills
+        public static Skills aSkills() {
+            return Skills.fromLocalDir("/tmp/m-skill-a");
+        }
+
+        @org.apache.flink.agents.api.annotation.Skills
+        public static Skills mSkills() {
+            return Skills.fromLocalDir("/tmp/m-skill-b");
+        }
     }
 
     private static Skills mergedSkillsOf(Agent agent) throws Exception {

@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, List
 
 if TYPE_CHECKING:
     from flink_agents.api.resource import Resource, ResourceType
+    from flink_agents.api.skills import SkillSourceSpec
 
 
 class ResourceContext(ABC):
@@ -48,4 +49,19 @@ class ResourceContext(ABC):
 
         Returns an empty list if no skills are configured or none of the
         requested skills are filesystem-backed.
+        """
+
+    @abstractmethod
+    def resolve_skill_names_for_sources(
+        self, sources: list["SkillSourceSpec"]
+    ) -> List[str]:
+        """Resolve skill names from the given source specifications.
+
+        At plan time, a descriptor may record a set of source specs as a marker
+        meaning "all skills from these sources." At runtime, this method resolves
+        the marker into actual skill names by looking up the sources in the
+        agent's ``SkillManager``.
+
+        Returns an empty list if no skills are configured or the sources are not
+        loaded.
         """

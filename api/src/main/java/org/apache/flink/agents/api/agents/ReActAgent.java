@@ -38,6 +38,7 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.types.Row;
 import org.slf4j.Logger;
@@ -48,9 +49,11 @@ import javax.annotation.Nullable;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CancellationException;
 
 /**
@@ -74,11 +77,41 @@ public class ReActAgent extends Agent {
             "The final response must include the information for every required field of the"
                     + " following schema. It does not need to be in JSON format. Schema: ";
 
+    private static final String SKILLS_ARGUMENT = "skills";
+    private static final String SKILLS_SOURCES_ARGUMENT = "skills_sources";
+    private static final String SKILLS_RESOURCE_NAME = "_react_agent_skills";
+
     private static final ObjectMapper mapper = new ObjectMapper();
 
     public ReActAgent(
             ResourceDescriptor descriptor, @Nullable Prompt prompt, @Nullable Object outputSchema) {
-        this.addResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, descriptor);
+        this(descriptor, prompt, outputSchema, (List<String>) null);
+    }
+
+    /**
+     * Creates a ReAct agent whose chat model may use the given skills.
+     *
+     * <p>The skills are combined with the {@code skills} argument of {@code descriptor}: the
+     * descriptor's skills come first, followed by these, keeping only the first occurrence of each
+     * name. A {@code null} or empty list adds nothing, so the descriptor is used exactly as given.
+     * The descriptor itself is never modified.
+     *
+     * <p>Only skill names are combined. The {@code bash} tool's command policy, such as {@code
+     * allowed_commands}, stays owned by the chat model descriptor and is left unchanged.
+     *
+     * @param descriptor The descriptor of the chat model used in this agent.
+     * @param prompt Prompt to format the input into user messages.
+     * @param outputSchema A {@link RowTypeInfo} or a Pojo class the response must match.
+     * @param skills Names of the skills to expose to the chat model, each matching the {@code name}
+     *     of a {@code SKILL.md} available to the agent.
+     */
+    public ReActAgent(
+            ResourceDescriptor descriptor,
+            @Nullable Prompt prompt,
+            @Nullable Object outputSchema,
+            @Nullable List<String> skills) {
+        this.addResource(
+                DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, withSkills(descriptor, skills));
         Map<String, Object> actionConfig = new HashMap<>();
 
         if (outputSchema != null) {
@@ -148,6 +181,80 @@ public class ReActAgent extends Agent {
             throw new IllegalStateException(
                     "Can't find the method stopAction, this must be a bug.");
         }
+    }
+
+    /**
+     * Creates a ReAct agent whose chat model may use skills from the given sources.
+     *
+     * <p>This is the {@code Skills}-object form. The constructor registers the {@code Skills}
+     * object as an agent-level resource so its sources are included in the merged {@code
+     * _skills_config}, and records the source declarations as a marker in the chat model
+     * descriptor. At runtime, the marker is expanded into skill names through {@code SkillManager}
+     * and merged with any explicitly named skills on the descriptor.
+     *
+     * <p>The descriptor itself is never modified. The {@code bash} tool's command policy stays
+     * owned by the chat model descriptor and is left unchanged.
+     *
+     * @param descriptor The descriptor of the chat model used in this agent.
+     * @param prompt Prompt to format the input into user messages.
+     * @param outputSchema A {@link RowTypeInfo} or a Pojo class the response must match.
+     * @param skills Skill sources to expose to the chat model — all skills from these sources
+     *     become available. May be {@code null} or empty, in which case no source marker is
+     *     recorded.
+     */
+    public ReActAgent(
+            ResourceDescriptor descriptor,
+            @Nullable Prompt prompt,
+            @Nullable Object outputSchema,
+            @Nullable Skills skills) {
+        this(descriptor, prompt, outputSchema, (List<String>) null);
+        if (skills != null && !skills.getSources().isEmpty()) {
+            this.addResource(SKILLS_RESOURCE_NAME, ResourceType.SKILLS, skills);
+            this.getResources()
+                    .get(ResourceType.CHAT_MODEL)
+                    .put(
+                            DEFAULT_CHAT_MODEL,
+                            withSkillsSources(
+                                    (ResourceDescriptor)
+                                            this.getResources()
+                                                    .get(ResourceType.CHAT_MODEL)
+                                                    .get(DEFAULT_CHAT_MODEL),
+                                    skills));
+        }
+    }
+
+    private static ResourceDescriptor withSkillsSources(
+            ResourceDescriptor descriptor, Skills skills) {
+        if (skills == null || skills.getSources().isEmpty()) {
+            return descriptor;
+        }
+        Map<String, Object> arguments =
+                descriptor.getInitialArguments() == null
+                        ? new HashMap<>()
+                        : new HashMap<>(descriptor.getInitialArguments());
+        arguments.put(SKILLS_SOURCES_ARGUMENT, skills.getSources());
+        // Rebuilt through the language dispatch so a Python chat model stays a Python declaration.
+        return ResourceDescriptor.fromJson(
+                descriptor.getLanguage(), descriptor.getModule(), descriptor.getClazz(), arguments);
+    }
+
+    private static ResourceDescriptor withSkills(
+            ResourceDescriptor descriptor, @Nullable List<String> skills) {
+        if (skills == null || skills.isEmpty()) {
+            return descriptor;
+        }
+        Map<String, Object> arguments =
+                descriptor.getInitialArguments() == null
+                        ? new HashMap<>()
+                        : new HashMap<>(descriptor.getInitialArguments());
+        @SuppressWarnings("unchecked")
+        List<String> declared = (List<String>) arguments.get(SKILLS_ARGUMENT);
+        Set<String> merged = new LinkedHashSet<>(declared == null ? List.of() : declared);
+        merged.addAll(skills);
+        arguments.put(SKILLS_ARGUMENT, new ArrayList<>(merged));
+        // Rebuilt through the language dispatch so a Python chat model stays a Python declaration.
+        return ResourceDescriptor.fromJson(
+                descriptor.getLanguage(), descriptor.getModule(), descriptor.getClazz(), arguments);
     }
 
     public static void startAction(Event event, RunnerContext ctx) {

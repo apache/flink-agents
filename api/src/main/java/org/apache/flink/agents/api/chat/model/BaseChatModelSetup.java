@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.tools.Tool;
@@ -63,9 +64,11 @@ public abstract class BaseChatModelSetup extends Resource {
 
     @Nullable protected BaseChatModelConnection connection;
     protected final List<Tool> tools = new ArrayList<>();
+    protected final ResourceDescriptor descriptor;
 
     public BaseChatModelSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
         super(descriptor, resourceContext);
+        this.descriptor = descriptor;
         this.connectionName = descriptor.getArgument("connection");
         this.model = descriptor.getArgument("model");
         this.prompt = descriptor.getArgument("prompt");
@@ -105,6 +108,23 @@ public abstract class BaseChatModelSetup extends Resource {
             this.prompt =
                     this.resourceContext.getResource((String) this.prompt, ResourceType.PROMPT);
         }
+
+        // Resolve skills_sources marker (plan-time source declarations) into skill names,
+        // then merge with the descriptor's explicit "skills" list. Explicit names come first;
+        // resolved names are appended, de-duplicated while preserving order.
+        @SuppressWarnings("unchecked")
+        List<SkillSourceSpec> skillsSources =
+                (List<SkillSourceSpec>) descriptor.getArgument("skills_sources");
+        if (skillsSources != null && !skillsSources.isEmpty()) {
+            List<String> resolved = this.resourceContext.resolveSkillNamesForSources(skillsSources);
+            Set<String> merged = new LinkedHashSet<>();
+            if (this.skills != null) {
+                merged.addAll(this.skills);
+            }
+            merged.addAll(resolved);
+            this.skills = new ArrayList<>(merged);
+        }
+
         if (this.skills != null) {
             this.skillDiscoveryPrompt =
                     nullIfEmpty(this.resourceContext.generateAvailableSkillsPrompt(this.skills));

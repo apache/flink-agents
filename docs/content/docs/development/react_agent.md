@@ -332,3 +332,36 @@ RowTypeInfo myRowTypeInfo =
 
 {{< /tabs >}}
 
+### Skills
+User can pass the names of [skills]({{< ref "docs/development/skills" >}}) the agent may use directly to the constructor, instead of adding a `skills` argument to the chat model descriptor.
+
+{{< tabs "Skills" >}}
+
+{{< tab "Python" >}}
+```python
+my_react_agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    prompt=my_prompt,
+    skills=["math-calculator"],
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+ReActAgent myReActAgent =
+        new ReActAgent(chatModelDescriptor, myPrompt, null, List.of("math-calculator"));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The constructor skills are combined with any `skills` already set on the chat model descriptor:
+
+- The descriptor's skills come first, followed by the constructor skills; a name listed more than once is kept only at its first occurrence.
+- Passing no skills, or an empty list, adds nothing: the descriptor is used exactly as given.
+- The descriptor you pass in is not modified; the agent uses a copy with the combined skills.
+- Only skill names are combined. The command policy of the built-in `bash` tool, such as `allowed_commands`, is always taken from the chat model descriptor, so set it there.
+
+The skill sources must still be registered on the execution environment with `add_resource(..., ResourceType.SKILLS, ...)`.
+

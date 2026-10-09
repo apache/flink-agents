@@ -228,7 +228,7 @@ public static ResourceDescriptor mathModel() {
 - The `load_skill` and `bash` tools are added automatically — you do not declare them in `tools`. They are added alongside any tools you do declare.
 - Make sure the system prompt instructs the agent to load the relevant skill before acting, for example: *"You must load the skill first and strictly follow its instructions."* Without this nudge, smaller models may answer directly instead of consulting the skill.
 
-Skills work with both the [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}) (configure the chat model via `@chat_model_setup`/`@ChatModelSetup` as above) and the [ReAct Agent]({{< ref "docs/development/react_agent" >}}) (set `skills` and `allowed_commands` on the `ReActAgent`'s chat model descriptor, and register the `Skills` resource on the execution environment with `add_resource(..., ResourceType.SKILLS, ...)`).
+Skills work with both the [Workflow Agent]({{< ref "docs/development/workflow_agent" >}}) (configure the chat model via `@chat_model_setup`/`@ChatModelSetup` as above) and the [ReAct Agent]({{< ref "docs/development/react_agent" >}}) (pass `skills` to the `ReActAgent` constructor or set it on the chat model descriptor, set `allowed_commands` on the chat model descriptor, and register the `Skills` resource on the execution environment with `add_resource(..., ResourceType.SKILLS, ...)`; see [ReAct Agent Skills]({{< ref "docs/development/react_agent#skills" >}}) for how the two `skills` declarations combine).
 
 ## How Skills Work
 

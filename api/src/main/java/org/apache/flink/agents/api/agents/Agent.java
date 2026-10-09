@@ -28,7 +28,6 @@ import org.apache.flink.api.java.tuple.Tuple3;
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -39,9 +38,9 @@ public class Agent {
     private final Map<ResourceType, Map<String, Object>> resources;
 
     public Agent() {
-        this.resources = new HashMap<>();
+        this.resources = new LinkedHashMap<>();
         for (ResourceType type : ResourceType.values()) {
-            this.resources.put(type, new HashMap<>());
+            this.resources.put(type, new LinkedHashMap<>());
         }
         this.actions = new LinkedHashMap<>();
     }
@@ -101,10 +100,22 @@ public class Agent {
         return this;
     }
 
+    /**
+     * Merge environment-level resources into this agent. Entries already present at the agent level
+     * are kept (agent wins on duplicates). Environment entries are placed before agent entries in
+     * iteration order, so downstream merging sees env-then-agent precedence.
+     */
     public void addResourcesIfAbsent(Map<ResourceType, Map<String, Object>> resources) {
         for (ResourceType type : resources.keySet()) {
-            Map<String, Object> typedResources = resources.get(type);
-            typedResources.forEach(this.resources.get(type)::putIfAbsent);
+            Map<String, Object> envTyped = resources.get(type);
+            if (envTyped == null || envTyped.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> existing = this.resources.get(type);
+            // Rebuild to establish env-before-agent iteration order.
+            Map<String, Object> merged = new LinkedHashMap<>(envTyped);
+            existing.forEach(merged::putIfAbsent);
+            this.resources.put(type, merged);
         }
     }
 

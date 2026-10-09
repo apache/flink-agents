@@ -34,7 +34,7 @@ from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import Resource, ResourceType
-from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL
+from flink_agents.api.skills import BASH_TOOL, LOAD_SKILL_TOOL, SkillSourceSpec
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.tool import Tool
 
@@ -432,6 +432,7 @@ class BaseChatModelSetup(Resource):
         description="Names of the AGENT resources this setup may delegate to.",
     )
     skills: List[str] | None = None
+    skills_sources: List[SkillSourceSpec] | None = None
     skill_discovery_prompt: str | None = None
     allowed_commands: List[str] = Field(default_factory=list)
     allowed_script_dirs: List[str] = Field(default_factory=list)
@@ -489,6 +490,20 @@ class BaseChatModelSetup(Resource):
                         self.prompt, ResourceType.PROMPT
                     ),
                 )
+
+        # Resolve skills_sources marker (plan-time source declarations) into skill
+        # names, then merge with the explicit "skills" list. Explicit names come
+        # first; resolved names are appended, de-duplicated while preserving order.
+        if self.skills_sources:
+            resolved = self.resource_context.resolve_skill_names_for_sources(
+                self.skills_sources
+            )
+            merged: list[str] = list(self.skills) if self.skills else []
+            for name in resolved:
+                if name not in merged:
+                    merged.append(name)
+            self.skills = merged or None
+
         if self.skills is not None:
             self.skill_discovery_prompt = (
                 self.resource_context.generate_available_skills_prompt(*self.skills)
