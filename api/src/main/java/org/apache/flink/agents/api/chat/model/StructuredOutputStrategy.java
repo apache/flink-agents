@@ -28,8 +28,6 @@ import java.util.Objects;
  * whether its effective model is known to honor it, is answered per request by {@link
  * BaseChatModelConnection#supportsNativeStructuredOutput(Object, java.util.List, java.util.Map)}.
  * {@link #resolvesToNative(NativeStructuredOutputSupport)} combines the two.
- *
- * <p>TODO(#912): strategy resolution is not wired into production yet.
  */
 public enum StructuredOutputStrategy {
     /**

@@ -92,8 +92,8 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
     /**
      * False, so a caller keeps describing the schema in the prompt, which works here. No connection
-     * is bound on this side, and {@link #chat(List, Map, Map)} carries only messages and prompt
-     * arguments across the bridge, so a schema has no way to travel natively.
+     * is bound on this side, and {@link #chat(List, Map, Map)} carries only messages, prompt
+     * arguments and model parameters across the bridge, so a schema has no way to travel natively.
      *
      * @throws IllegalArgumentException if {@code outputSchema} is non-null and the strategy is
      *     {@link StructuredOutputStrategy#NATIVE}, which this setup cannot honor
@@ -123,8 +123,8 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
             Object outputSchema) {
         throw new UnsupportedOperationException(
                 "A Python chat model setup cannot be given an output schema from Java: the bridge"
-                        + " carries only messages and prompt arguments to the Python setup's chat."
-                        + " Apply the schema on the Python side instead.");
+                        + " carries only messages, prompt arguments and model parameters to the Python"
+                        + " setup's chat. Apply the schema on the Python side instead.");
     }
 
     @Override
