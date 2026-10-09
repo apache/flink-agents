@@ -41,10 +41,10 @@ public class IsolatedCachedMemoryStoreTest {
     }
 
     /**
-     * A child write adds a field to the child scope only. {@link MemoryObjectImpl#set} mutates the
-     * resolved parent item's {@code subKeys} in place, so exposing the parent's item by reference
-     * would add the child's field to the parent's field list; the parent then lists a field it has
-     * no value for and {@link MemoryObjectImpl#getFields()} dereferences a null item.
+     * A child write adds a field to the child scope only. {@link MemoryObjectImpl#set} rebuilds the
+     * resolved item through {@code MemoryItem.withSubKey} and publishes it to the child store's own
+     * cache, so the parent's immutable item keeps its original field list and {@link
+     * MemoryObjectImpl#getFields()} resolves every name the parent lists.
      */
     @Test
     void childFieldWriteDoesNotLeakIntoParentFieldList() throws Exception {
@@ -67,8 +67,8 @@ public class IsolatedCachedMemoryStoreTest {
     }
 
     /**
-     * A child write to a key the parent already holds as a nested object must not add the child's
-     * sub-field to the parent's copy of that object.
+     * A child write to a key the parent already holds as a nested object rebuilds that item into
+     * the child's own cache, so the parent's immutable nested object keeps only its own field.
      */
     @Test
     void childNestedWriteDoesNotLeakIntoParentObject() throws Exception {

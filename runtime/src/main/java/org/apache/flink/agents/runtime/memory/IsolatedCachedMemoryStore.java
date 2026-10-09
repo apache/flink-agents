@@ -41,11 +41,10 @@ public class IsolatedCachedMemoryStore extends CachedMemoryStore {
         if (ownCache.containsKey(key)) {
             return ownCache.get(key);
         }
-        MemoryObjectImpl.MemoryItem parentItem = parent.get(key);
-        // Copy on read so this scope owns the item it exposes: MemoryObjectImpl.set() applies its
-        // field-list updates to the resolved item in place, and the copy confines those updates to
-        // the child scope, leaving the parent's item unchanged.
-        return parentItem == null ? null : new MemoryObjectImpl.MemoryItem(parentItem);
+        // Reading through shares the parent's item directly. MemoryItem is immutable and a child
+        // write rebuilds it via withSubKey into this scope's own cache, so the parent's item is
+        // never mutated in place and needs no defensive copy here.
+        return parent.get(key);
     }
 
     @Override

@@ -183,4 +183,22 @@ public class MemoryObjectTest {
                         new MemoryUpdate("str.new_str.int", 42),
                         new MemoryUpdate("str.new_str.str", "world"));
     }
+
+    @Test
+    void memoryItemIsImmutableAndCopiesOnWrite() {
+        MemoryObjectImpl.MemoryItem obj = new MemoryObjectImpl.MemoryItem();
+        // getSubKeys hands out a defensive copy: mutating it leaves the item unchanged.
+        List<String> subKeys = obj.getSubKeys();
+        subKeys.add("leak");
+        assertThat(obj.getSubKeys()).isEmpty();
+
+        // withSubKey rebuilds a new item, leaving the original untouched.
+        MemoryObjectImpl.MemoryItem withKey = obj.withSubKey("a");
+        assertThat(obj.getSubKeys()).isEmpty();
+        assertThat(withKey.getSubKeys()).containsExactly("a");
+
+        // A value item has no field list, so withSubKey fails fast.
+        MemoryObjectImpl.MemoryItem value = new MemoryObjectImpl.MemoryItem(1);
+        assertThrows(UnsupportedOperationException.class, () -> value.withSubKey("x"));
+    }
 }
