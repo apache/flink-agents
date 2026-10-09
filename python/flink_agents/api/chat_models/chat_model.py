@@ -67,8 +67,6 @@ class StructuredOutputStrategy(str, Enum):
     native structured-output API to a request is the connection's own answer, a
     ``NativeStructuredOutputSupport``. ``resolves_to_native`` combines the two.
 
-    TODO(#912): strategy resolution is not wired into production yet.
-
     Inherits from ``str`` so the value survives the JSON-carried bridge to Java.
     Java serializes this enum as its *name* ("NATIVE") while the value here is
     lowercase, so ``_missing_`` accepts either form in any case — matching the
@@ -592,7 +590,34 @@ class BaseChatModelSetup(Resource):
         ChatMessage
             Model response message
         """
-        # Apply prompt template
+        messages = self.prepare_request_messages(messages, prompt_args)
+
+        # Call chat model connection to execute chat
+        merged_kwargs = self.model_kwargs.copy()
+        merged_kwargs.update(kwargs)
+        connection = self._get_connection()
+        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
+
+    def prepare_request_messages(
+        self,
+        messages: Sequence[ChatMessage],
+        prompt_args: Mapping[str, Any] | None = None,
+    ) -> List[ChatMessage]:
+        """Build the messages ``chat`` sends to the connection.
+
+        Framework-facing. The bound prompt, if any, is rendered with ``prompt_args``
+        stringified via ``str()`` and followed by the input messages that carry
+        content or come from the assistant; the skill-discovery message, if any, is
+        then inserted after the first system message.
+
+        Args:
+            messages: The input messages.
+            prompt_args: Variables filling the bound prompt's template.
+
+        Returns:
+            A new list; ``messages`` is left unchanged.
+        """
+        prepared = list(messages)
         if self.prompt is not None:
             str_prompt_args: Dict[str, str] = (
                 {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
@@ -604,19 +629,14 @@ class BaseChatModelSetup(Resource):
             for msg in messages:
                 if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
                     prompt_messages.append(msg)
-            messages = prompt_messages
+            prepared = prompt_messages
 
         if self.skill_discovery_prompt:
             # Right after the first system message, or at the head when there is none.
-            index = find_first_system_message(messages) + 1
+            index = find_first_system_message(prepared) + 1
             injected = [ChatMessage.system(self.skill_discovery_prompt)]
-            messages = list(messages[:index]) + injected + list(messages[index:])
-
-        # Call chat model connection to execute chat
-        merged_kwargs = self.model_kwargs.copy()
-        merged_kwargs.update(kwargs)
-        connection = self._get_connection()
-        return connection.chat(messages, tools=self._get_tools(), **merged_kwargs)
+            prepared = prepared[:index] + injected + prepared[index:]
+        return prepared
 
     def will_apply_native_structured_output(
         self, output_schema: OutputSchema | None
@@ -710,11 +730,16 @@ class BaseChatModelSetup(Resource):
         without tool calls follows the tool traffic, which a caller guarantees by
         including the final answer.
 
+        The caller passes messages already prepared by ``prepare_request_messages``;
+        they are not prepared again here.
+
         Args:
             messages: The conversation to send.
             output_schema: The schema the call carries; must not be ``None``.
-            **kwargs: Parameters for this call, merged over ``model_kwargs`` the same
-                way ``chat`` merges them.
+            **kwargs: Model parameters for this call, merged over ``model_kwargs``
+                the same way ``chat`` merges them. Prompt arguments are not accepted,
+                since no prompt is rendered: a ``prompt_args`` passed here would
+                reach the provider as a model parameter.
 
         Returns:
             The connection's response.

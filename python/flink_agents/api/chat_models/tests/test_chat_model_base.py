@@ -733,3 +733,28 @@ def test_chat_structured_removes_tool_traffic(
     assert all(a is b for a, b in zip(sent, expected_sent, strict=True))
     assert all(a is b for a, b in zip(messages, caller_list, strict=True))
     assert messages == snapshot
+
+
+def test_prepare_request_messages_matches_what_chat_sends() -> None:
+    prompt = Prompt.from_messages(
+        messages=[
+            ChatMessage.of(MessageRole.SYSTEM, "You are terse."),
+            ChatMessage.of(MessageRole.USER, "Task: {task}"),
+        ]
+    )
+    setup, connection = _build_setup(prompt)
+    setup.skill_discovery_prompt = "Available skills"
+    raw = [ChatMessage(role=MessageRole.USER)]
+
+    prepared = setup.prepare_request_messages(raw, prompt_args={"task": 7})
+    setup.chat(raw, prompt_args={"task": 7})
+
+    assert [(m.role, m.text) for m in prepared] == [
+        (MessageRole.SYSTEM, "You are terse."),
+        (MessageRole.SYSTEM, "Available skills"),
+        (MessageRole.USER, "Task: 7"),
+    ]
+    assert [(m.role, m.text) for m in connection.captured_messages] == [
+        (m.role, m.text) for m in prepared
+    ]
+    assert raw == [ChatMessage(role=MessageRole.USER)]

@@ -18,13 +18,26 @@
 import asyncio
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Sequence
+from unittest.mock import MagicMock
 
 import cloudpickle
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
+from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.tools.tool import Tool
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.durable_exception import deserialize_durable_exception
 from flink_agents.runtime.durable_execution import (
@@ -254,6 +267,119 @@ def _run_async(result: Any) -> object:
             value = None
         except StopIteration as e:  # noqa: PERF203
             return e.value
+
+
+class _ReplayAnswer(BaseModel):
+    result: int
+
+
+class _CountingConnection(BaseChatModelConnection):
+    """Answers prose without a schema and JSON with one, counting each request.
+
+    The first ``failing_schema_calls`` schema-carrying requests raise.
+    """
+
+    unconstrained_calls: int = 0
+    schema_carrying_calls: int = 0
+    failing_schema_calls: int = 0
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatMessage:
+        if output_schema is None:
+            self.unconstrained_calls += 1
+            return ChatMessage.of(MessageRole.ASSISTANT, "the answer is 42")
+        self.schema_carrying_calls += 1
+        if self.schema_carrying_calls <= self.failing_schema_calls:
+            msg = "conversion call failed"
+            raise RuntimeError(msg)
+        return ChatMessage.of(MessageRole.ASSISTANT, '{"result": 42}')
+
+
+class _NativeSetup(BaseChatModelSetup):
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:
+        return {}
+
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        return output_schema is not None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "finalization_failures", [0, 1], ids=["first-attempt", "after-retry"]
+)
+def test_native_finalization_replays_both_calls_without_provider_calls(
+    asynchronous: bool, finalization_failures: int
+) -> None:
+    from flink_agents.plan.actions.chat_model_action import chat
+
+    connection = _CountingConnection(failing_schema_calls=finalization_failures)
+    chat_model = _NativeSetup(connection="c", model="m")
+    chat_model._resolved_connection = connection
+    store = _FakeJavaRunnerContext()
+    sent_events: list = []
+
+    def run_once() -> None:
+        store.current_call_index = 0
+        runner = _create_runner_context(store)
+        ctx = MagicMock(spec=ExecutionReporter)
+        ctx.get_resource = MagicMock(return_value=chat_model)
+        ctx.action_metric_group = None
+        ctx.sensory_memory = MagicMock()
+        ctx.sensory_memory.get = MagicMock(return_value=None)
+        ctx.send_event = MagicMock(side_effect=sent_events.append)
+        ctx.config = MagicMock()
+        ctx.config.get = MagicMock(
+            side_effect=lambda option: {
+                id(AgentExecutionOptions.CHAT_ASYNC): asynchronous,
+                id(AgentExecutionOptions.MAX_RETRIES): finalization_failures,
+                id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): 0,
+            }.get(id(option), option.get_default_value())
+        )
+        ctx.durable_execute = runner.durable_execute
+        ctx.durable_execute_async = runner.durable_execute_async
+        try:
+            _run_async(
+                chat(
+                    uuid.uuid4(),
+                    "test-model",
+                    [ChatMessage.of(MessageRole.USER, "hi")],
+                    {},
+                    OutputSchema(output_schema=_ReplayAnswer),
+                    ctx,
+                )
+            )
+        finally:
+            _close_runner_context(runner)
+
+    attempts = finalization_failures + 1
+    run_once()
+    calls_made = (connection.unconstrained_calls, connection.schema_carrying_calls)
+    assert calls_made == (attempts, attempts)
+    journal = [r.function_id for r in store.call_results]
+    loop_id, finalize_id = journal[:2]
+    assert loop_id != finalize_id
+    assert journal == [loop_id, finalize_id] * attempts
+
+    run_once()
+
+    # A recovered run replays every answer, a failed finalization included, from
+    # its own record.
+    assert (connection.unconstrained_calls, connection.schema_carrying_calls) == (
+        calls_made
+    )
+    assert [r.function_id for r in store.call_results] == journal
+    assert store.current_call_index == len(journal)
+    assert len(sent_events) == 2
+    for event in sent_events:
+        assert event.response.extra_args[STRUCTURED_OUTPUT] == _ReplayAnswer(result=42)
 
 
 def _preload_pending(
