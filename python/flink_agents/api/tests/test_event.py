@@ -124,8 +124,10 @@ def test_event_id_does_not_change_with_event_content() -> None:
 def test_event_id_cannot_be_reassigned() -> None:
     event = Event(type="test")
 
-    with pytest.raises(ValidationError, match="Field is frozen"):
+    with pytest.raises(ValidationError, match="Field is frozen") as raised:
         event.id = uuid4()
+
+    assert "reconstruct_from" in str(raised.value)
 
 
 def test_explicit_none_id_generates_uuid() -> None:

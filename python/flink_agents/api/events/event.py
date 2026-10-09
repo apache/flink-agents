@@ -31,11 +31,12 @@ from pydantic import (
     BaseModel,
     Field,
     SerializerFunctionWrapHandler,
+    ValidationError,
     field_validator,
     model_serializer,
     model_validator,
 )
-from pydantic_core import PydanticSerializationError
+from pydantic_core import PydanticCustomError, PydanticSerializationError
 from pyflink.common import Row
 
 from flink_agents.api.memory_reference import MemoryRef
@@ -229,6 +230,23 @@ class Event(BaseModel, extra="allow"):
         return self
 
     def __setattr__(self, name: str, value: Any) -> None:
+        # Pydantic's own frozen-field error would not say how to keep an identity.
+        if name == "id":
+            raise ValidationError.from_exception_data(
+                type(self).__name__,
+                [
+                    {
+                        "type": PydanticCustomError(
+                            "frozen_event_id",
+                            "Field is frozen. An Event's id is fixed when it is "
+                            "created; to give a typed Event the identity of an "
+                            "existing Event, use typed = typed.reconstruct_from(existing).",
+                        ),
+                        "loc": ("id",),
+                        "input": value,
+                    }
+                ],
+            )
         super().__setattr__(name, value)
         # Raw attachments are offloaded to sensory memory before sending. Validate every
         # other field here without serializing those payloads.

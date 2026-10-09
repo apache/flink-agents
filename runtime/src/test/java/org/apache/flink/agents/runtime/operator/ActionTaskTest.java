@@ -28,6 +28,7 @@ import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -126,6 +127,24 @@ class ActionTaskTest {
         assertThat(result.getOutputEvents()).containsExactly(outputEvent);
         assertThat(outputEvent.getUpstreamEventId()).isEqualTo(triggeringEvent.getId());
         assertThat(outputEvent.getUpstreamActionName()).isEqualTo(action.getName());
+    }
+
+    @Test
+    void resultRebindsLineageOfOutputsRestoredFromActionState() {
+        // Recovered outputs reach finalization without sendEvent, still carrying the lineage
+        // bound before the failure; they keep identity and are bound to this task again.
+        Event triggeringEvent = new InputEvent(1L);
+        Action action = TestActions.noopAction();
+        ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
+        Event restoredOutput = new Event("result");
+        restoredOutput.setUpstreamEventId(UUID.randomUUID());
+        restoredOutput.setUpstreamActionName("previous_action");
+
+        List<Event> outputs = task.finalizeOutputEvents(List.of(restoredOutput));
+
+        assertThat(outputs).containsExactly(restoredOutput);
+        assertThat(restoredOutput.getUpstreamEventId()).isEqualTo(triggeringEvent.getId());
+        assertThat(restoredOutput.getUpstreamActionName()).isEqualTo(action.getName());
     }
 
     @Test

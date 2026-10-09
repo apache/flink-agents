@@ -773,9 +773,12 @@ public static void handleMyEvent(Event event, RunnerContext ctx) {
 
 {{< hint info >}}
 `upstreamEventId` and `upstreamActionName` (`upstream_event_id` and
-`upstream_action_name` in Python) are framework-managed lineage metadata. User code should keep
-user data in `attributes`. Values accepted during deserialization or reconstruction are
-overwritten when an Action emits the Event.
+`upstream_action_name` in Python) are framework-managed lineage metadata, set when an Action
+emits the Event. User code should keep user data in `attributes`. `sendEvent` / `send_event`
+rejects an Event that already carries lineage, such as an Event received from another Action or
+a typed reconstruction of one: emit a new Event instead. Deserialization and typed
+reconstruction keep the lineage an Event already has; after recovery, restored outputs are bound
+to the replayed trigger again.
 {{< /hint >}}
 
 ### JSON Serialization

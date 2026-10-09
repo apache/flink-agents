@@ -79,8 +79,9 @@ public class Event {
     /**
      * Reconstructs an Event with an existing identity and optional framework-managed lineage.
      *
-     * <p>The lineage values support deserialization and reconstruction. When an Action emits this
-     * Event, the runtime overwrites them with the current trigger Event ID and Action name.
+     * <p>The lineage values support deserialization and reconstruction. {@code
+     * RunnerContext#sendEvent} rejects an Event that carries them; the runtime sets lineage to the
+     * current trigger Event ID and Action name when it finalizes the Action's outputs.
      *
      * @param id the existing Event ID
      * @param type the Event type used for routing
@@ -160,7 +161,8 @@ public class Event {
     /**
      * Sets the framework-managed ID of the Event consumed by the emitting Action.
      *
-     * <p>The runtime overwrites this value when an Action emits the Event.
+     * <p>The runtime sets this value when it finalizes an Action's outputs. {@code
+     * RunnerContext#sendEvent} rejects an Event that already carries it.
      */
     public void setUpstreamEventId(@Nullable UUID upstreamEventId) {
         this.upstreamEventId = upstreamEventId;
@@ -176,7 +178,8 @@ public class Event {
     /**
      * Sets the framework-managed name of the Action that emitted this Event.
      *
-     * <p>The runtime overwrites this value when an Action emits the Event.
+     * <p>The runtime sets this value when it finalizes an Action's outputs. {@code
+     * RunnerContext#sendEvent} rejects an Event that already carries it.
      */
     public void setUpstreamActionName(@Nullable String upstreamActionName) {
         this.upstreamActionName = upstreamActionName;

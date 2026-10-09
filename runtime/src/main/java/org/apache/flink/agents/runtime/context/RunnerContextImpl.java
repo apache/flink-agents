@@ -218,6 +218,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Override
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
+        checkNoPresetLineage(event);
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -231,6 +232,34 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     e);
         }
         pendingEvents.add(event);
+    }
+
+    /**
+     * Rejects an emitted Event that already carries lineage. The framework binds lineage to the
+     * emitting Action when it finalizes the Action's outputs; outputs restored from action state
+     * reach that step without passing through here.
+     */
+    private static void checkNoPresetLineage(Event event) {
+        List<String> preset = new ArrayList<>();
+        if (event.getUpstreamEventId() != null) {
+            preset.add("upstreamEventId=" + event.getUpstreamEventId());
+        }
+        if (event.getUpstreamActionName() != null) {
+            preset.add("upstreamActionName=" + event.getUpstreamActionName());
+        }
+        if (preset.isEmpty()) {
+            return;
+        }
+        throw new IllegalArgumentException(
+                "Event '"
+                        + event.getType()
+                        + "' ("
+                        + event.getId()
+                        + ") already carries "
+                        + String.join(" and ", preset)
+                        + ". The runtime sets lineage when an Action emits an Event: emit a new"
+                        + " Event rather than one received from another Action, and keep user"
+                        + " metadata in attributes.");
     }
 
     public List<Event> drainEvents(Long timestamp) {

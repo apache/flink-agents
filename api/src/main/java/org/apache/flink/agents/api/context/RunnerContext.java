@@ -36,7 +36,9 @@ public interface RunnerContext {
     /**
      * Sends an event.
      *
-     * @param event the event to be sent
+     * @param event the event to be sent; a new Event without upstream lineage
+     * @throws IllegalArgumentException if the event already carries {@code upstreamEventId} or
+     *     {@code upstreamActionName}, which the runtime sets when the Action emits it
      */
     void sendEvent(Event event);
 
