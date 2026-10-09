@@ -264,20 +264,33 @@ def to_row(value: Any, shape: tuple) -> Any:
     """Adapt an emitted value to a physical ``Row`` using a :func:`row_shape`.
 
     The raw agent output crosses a JSON boundary, so a structured value arrives
-    as a dict (a Pydantic model / dataclass degraded to its fields) while a value
-    the agent emitted as a ``Row`` is reconstructed as one. Only fields the shape
-    marks as nested rows are converted recursively; every other value -- scalar,
-    map, or list -- is left untouched for its own coder, so no column kind is
-    silently reshaped. This is the payload of the Table/Row conversion operator.
+    as a dict (a Pydantic model / dataclass degraded to its fields) or, for a
+    ``NamedTuple``, as a positional array; a value the agent emitted as a ``Row``
+    is reconstructed as one. Only fields the shape marks as nested rows are
+    converted recursively; every other value -- scalar, map, or list -- is left
+    untouched for its own coder, so no column kind is silently reshaped. This is
+    the payload of the Table/Row conversion operator.
     """
-    if isinstance(value, Row) or not isinstance(value, dict):
+    if isinstance(value, Row):
         return value
     names, children = shape
-    fields = [
-        to_row(value.get(name), child) if child is not None else value.get(name)
-        for name, child in zip(names, children, strict=False)
-    ]
-    return Row(*fields)
+    if isinstance(value, dict):
+        fields = [
+            to_row(value.get(name), child) if child is not None else value.get(name)
+            for name, child in zip(names, children, strict=False)
+        ]
+        return Row(*fields)
+    if isinstance(value, list | tuple) and len(value) == len(names):
+        # A NamedTuple degrades to a positional array across the OutputEvent JSON
+        # boundary (mirroring reconstruct_instance), so rebuild the Row by field
+        # order. A length mismatch means the sequence is one column's own value
+        # (for example an ARRAY), which is left untouched for its coder.
+        fields = [
+            to_row(item, child) if child is not None else item
+            for item, child in zip(value, children, strict=False)
+        ]
+        return Row(*fields)
+    return value
 
 
 def reconstruct_instance(cls: Any, data: Any) -> Any:

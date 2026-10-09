@@ -224,6 +224,33 @@ def test_to_row_passes_through_non_dict():
     assert to_row(42, shape) == 42
 
 
+def test_to_row_named_tuple_through_output_event_boundary():
+    """A ``NamedTuple`` degrades to a positional array across the JSON boundary.
+
+    The Table path runs ``to_row`` (not ``reconstruct_instance``), so the
+    positional array the ``OutputEvent`` boundary produces must be rebuilt into a
+    ``Row`` by field order here; otherwise the declared Row coder receives a bare
+    list and fails with 'list' object has no attribute 'get_fields_by_names'.
+    """
+    event = OutputEvent(output=NtOutput(1, "good"))
+    degraded = Event.from_json(event.model_dump_json()).attributes["output"]
+    assert degraded == [1, "good"]
+
+    shape = row_shape(infer_row_type_info(NtOutput))
+    assert to_row(degraded, shape) == Row(1, "good")
+
+
+def test_to_row_passes_through_sequence_of_mismatched_length():
+    """The positional rebuild fires only when the sequence length matches the row width.
+
+    A sequence whose length differs from the number of columns is a single
+    column's own value (an ARRAY, for instance) rather than a degraded NamedTuple,
+    so it is left untouched for its coder instead of being split across columns.
+    """
+    shape = row_shape(RowTypeInfo([Types.STRING()], ["arr"]))
+    assert to_row([1, 2, 3], shape) == [1, 2, 3]
+
+
 def test_infer_rejects_unsupported_field_type():
     class Bad(BaseModel):
         payload: bytes
