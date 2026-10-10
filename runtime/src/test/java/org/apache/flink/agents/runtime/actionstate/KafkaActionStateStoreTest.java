@@ -55,6 +55,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -246,6 +247,88 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
+    void testPutRestoresInterruptFlagWhenSendIsInterrupted() throws Exception {
+        // Send finishes like a cancelled FutureTask: get() clears the thread's interrupt flag
+        // before throwing InterruptedException. put() must restore the flag.
+        MockProducer<String, ActionState> interruptingProducer =
+                new MockProducer<>(
+                        false,
+                        new ActionStateKeyPartitioner(),
+                        new StringSerializer(),
+                        new ActionStateKafkaSeder()) {
+                    @Override
+                    public Future<RecordMetadata> send(ProducerRecord<String, ActionState> record) {
+                        return new Future<>() {
+                            @Override
+                            public RecordMetadata get() throws InterruptedException {
+                                Thread.interrupted(); // clear the flag like FutureTask.get()
+                                throw new InterruptedException("simulated interruption");
+                            }
+
+                            @Override
+                            public RecordMetadata get(long timeout, TimeUnit unit)
+                                    throws InterruptedException {
+                                return get();
+                            }
+
+                            @Override
+                            public boolean cancel(boolean mayInterruptIfRunning) {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isCancelled() {
+                                return false;
+                            }
+
+                            @Override
+                            public boolean isDone() {
+                                return false;
+                            }
+                        };
+                    }
+                };
+        KafkaActionStateStore store =
+                new KafkaActionStateStore(
+                        new HashMap<>(),
+                        new AgentConfiguration(),
+                        interruptingProducer,
+                        mockConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM));
+        try {
+            Thread.currentThread().interrupt();
+            Throwable thrown =
+                    catchThrowable(
+                            () -> store.put(TEST_KEY, 1L, testAction, testEvent, testActionState));
+            assertThat(thrown).isInstanceOf(InterruptedException.class);
+            assertThat(Thread.currentThread().isInterrupted())
+                    .as("The interrupt flag cleared by Future.get() must be restored")
+                    .isTrue();
+        } finally {
+            Thread.interrupted(); // clear the flag so the remaining tests run clean
+        }
+    }
+
+    @Test
+    void testPruneDropsCheckpointedBoundaryWhenNoLiveStateRemains() throws Exception {
+        String businessKeyIdentity =
+                ActionStateUtil.generateBusinessKeyIdentity(TEST_KEY, KEY_SERIALIZER);
+        actionStates.put(
+                generateKey(TEST_KEY, 6L, testAction, testEvent, MAX_PARALLELISM), testActionState);
+        actionStateStore.markCheckpointedSequence(TEST_KEY, 5L);
+        actionStateStore.pruneState(TEST_KEY, 5L);
+
+        // A later-sequence live state keeps the checkpointed boundary load-bearing.
+        assertThat(actionStateStore.getLatestKeySeqNum()).containsEntry(businessKeyIdentity, 5L);
+
+        // Once the identity has no live state left, prune the boundary too, otherwise the map
+        // grows one entry per key for the whole job lifetime.
+        actionStateStore.pruneState(TEST_KEY, 6L);
+        assertThat(actionStateStore.getLatestKeySeqNum()).isEmpty();
+    }
+
+    @Test
     void testGetCleansFutureStateForKeyContainingUnderscore() throws Exception {
         String flinkKey = "user_123";
         String stateKey = generateKey(flinkKey, 3L, testAction, testEvent, MAX_PARALLELISM);
@@ -288,6 +371,100 @@ public class KafkaActionStateStoreTest {
         assertThat(consumerProperties)
                 .containsEntry(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "none")
                 .containsEntry(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
+    }
+
+    @Test
+    void testRebuildStateKeepsPendingResultBeforeRecoveryMarker() throws Exception {
+        ActionState pendingState = new ActionState(testEvent);
+        actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, pendingState);
+
+        ProducerRecord<String, ActionState> persisted = mockProducer.history().get(0);
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        1L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        1L));
+
+        Object recoveryMarkerObj = actionStateStore.getRecoveryMarker();
+        KafkaActionStateRecoveryMarker recoveryMarker =
+                (KafkaActionStateRecoveryMarker) recoveryMarkerObj;
+        int recoveryPartition =
+                recoveryMarker.getOffsets().entrySet().stream()
+                        .filter(entry -> entry.getValue() == 0L)
+                        .map(Map.Entry::getKey)
+                        .findFirst()
+                        .orElse(0);
+        TopicPartition topicPartition = new TopicPartition(TEST_TOPIC, recoveryPartition);
+
+        MockConsumer<String, ActionState> recoveryConsumer = new MockConsumer<>(EARLIEST.name());
+        recoveryConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        recoveryConsumer.assign(List.of(topicPartition));
+        recoveryConsumer.updateBeginningOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0), 0L,
+                        new TopicPartition(TEST_TOPIC, 1), 0L));
+        recoveryConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0), 1L,
+                        new TopicPartition(TEST_TOPIC, 1), 1L));
+        recoveryConsumer.addRecord(
+                new ConsumerRecord<>(
+                        TEST_TOPIC, recoveryPartition, 0L, persisted.key(), persisted.value()));
+
+        Map<String, ActionState> recoveredStates = new HashMap<>();
+        try (KafkaActionStateStore recoveredStore =
+                new KafkaActionStateStore(
+                        recoveredStates,
+                        new AgentConfiguration(),
+                        null,
+                        recoveryConsumer,
+                        TEST_TOPIC,
+                        createKeyEncoder(MAX_PARALLELISM))) {
+            recoveredStore.rebuildState(List.of(recoveryMarker));
+            assertThat(recoveredStore.get(TEST_KEY, 1L, testAction, testEvent))
+                    .as("Recovery must reuse the saved pending result instead of skipping it")
+                    .isEqualTo(pendingState);
+        }
+    }
+
+    @Test
+    void testRecoveryMarkerSkipsCheckpointedSequenceAndKeepsLaterPendingSequence()
+            throws Exception {
+        ActionState completedState = new ActionState(testEvent);
+        completedState.markCompleted();
+        ActionState pendingState = new ActionState(new InputEvent("pending"));
+
+        actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, completedState);
+        actionStateStore.put(TEST_KEY, 2L, testAction, testEvent, pendingState);
+        actionStateStore.markCheckpointedSequence(TEST_KEY, 1L);
+
+        mockConsumer.updatePartitions(
+                TEST_TOPIC,
+                List.of(
+                        new PartitionInfo(TEST_TOPIC, 0, null, null, null),
+                        new PartitionInfo(TEST_TOPIC, 1, null, null, null)));
+        mockConsumer.updateEndOffsets(
+                Map.of(
+                        new TopicPartition(TEST_TOPIC, 0),
+                        2L,
+                        new TopicPartition(TEST_TOPIC, 1),
+                        2L));
+
+        Object recoveryMarkerObj = actionStateStore.getRecoveryMarker();
+        KafkaActionStateRecoveryMarker recoveryMarker =
+                (KafkaActionStateRecoveryMarker) recoveryMarkerObj;
+
+        assertThat(recoveryMarker.getOffsets().values()).contains(1L).doesNotContain(0L);
     }
 
     @Test

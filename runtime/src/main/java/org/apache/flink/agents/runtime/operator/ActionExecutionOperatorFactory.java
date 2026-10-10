@@ -53,7 +53,7 @@ public class ActionExecutionOperatorFactory<IN, OUT> extends AbstractStreamOpera
     }
 
     @VisibleForTesting
-    protected ActionExecutionOperatorFactory(
+    public ActionExecutionOperatorFactory(
             AgentPlan agentPlan, Boolean inputIsJava, ActionStateStore actionStateStore) {
         this(agentPlan, inputIsJava, false, actionStateStore);
     }
