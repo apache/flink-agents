@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Mapping
 
 from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
+from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
 from flink_agents.runtime.skill.repository.classpath_repository import (
     ClasspathSkillRepository,
@@ -203,7 +203,17 @@ class SkillManager:
             # SkillManager reference to clean them up via close() itself, so
             # without this their temp dirs / atexit handlers leak until
             # interpreter exit.
-            self.close()
+            try:
+                self.close()
+            except Exception as close_failure:
+                # close() surfaces repository failures now, so it can raise here
+                # and would otherwise replace the load failure this cleanup is
+                # running for. Java attaches it with addSuppressed; ExceptionGroup
+                # needs Python 3.11 and this package supports 3.10, so log it.
+                logger.warning(
+                    "Suppressed failure closing skill repositories after a failed load.",
+                    exc_info=close_failure,
+                )
             raise
 
     def _register_repo(self, repo: "SkillRepository", origin: SkillOrigin) -> None:
@@ -225,20 +235,38 @@ class SkillManager:
 
     def close(self) -> None:
         """Close every opened :class:`SkillRepository`, releasing any temp directory
-        materialized for URL / classpath-zip / package sources. Idempotent.
+        materialized for URL / classpath-zip / package sources.
 
         Iterates ``_opened_repos`` rather than ``_repos.values()``: duplicate skill
         names overwrite the earlier repo's reference in ``_repos``, but the displaced
         repo is still owned and must be closed. Dedup by identity in case the same
         repo contributes multiple skills.
+
+        Mirrors the Java ``SkillManager.closeRepos()`` contract from #987 and the
+        Python ``ResourceCache.close()``: every repository is attempted even when an
+        earlier one fails, and the first failure is re-raised after the loop, so a
+        real shutdown bug (locked file, permission denied, disk full) reaches the
+        caller instead of being swallowed. Later failures are logged rather than
+        attached, because ``ExceptionGroup`` needs Python 3.11 and this package
+        supports 3.10.
+
+        Idempotent to the extent repository ``close()`` implementations are: one
+        that fails does so again on a second call, exactly as in Java.
+
+        Only ``Exception`` is caught, matching ``ResourceCache.close()``: cleanup
+        must not swallow ``KeyboardInterrupt`` or ``SystemExit``.
         """
         seen: set[int] = set()
+        first_failure: Exception | None = None
         for repo in self._opened_repos:
             if id(repo) in seen:
                 continue
             seen.add(id(repo))
-            with contextlib.suppress(Exception):
-                repo.close()
+            first_failure = first_or_logged(
+                failure_of(repo.close), first_failure, "skill repository"
+            )
+        if first_failure is not None:
+            raise first_failure
 
     def __enter__(self) -> "SkillManager":
         return self
