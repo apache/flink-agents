@@ -21,9 +21,14 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.fluss.client.Connection;
+import org.apache.fluss.client.admin.Admin;
+import org.apache.fluss.client.admin.ListOffsetsResult;
+import org.apache.fluss.client.admin.OffsetSpec;
 import org.apache.fluss.client.table.Table;
 import org.apache.fluss.client.table.writer.AppendWriter;
+import org.apache.fluss.metadata.TableInfo;
 import org.apache.fluss.row.InternalRow;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -42,8 +47,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -60,6 +68,7 @@ public class FlussActionStateStoreTest {
     private Event testEvent;
     private ActionState testActionState;
     private Map<String, ActionState> actionStates;
+    private Admin mockAdmin;
 
     @BeforeEach
     void setUp() throws Exception {
@@ -76,12 +85,127 @@ public class FlussActionStateStoreTest {
     }
 
     private FlussActionStateStore createStore(int maxParallelism) {
+        Connection connection = mock(Connection.class);
+        Table table = mock(Table.class);
+        TableInfo tableInfo = mock(TableInfo.class);
+        mockAdmin = mock(Admin.class);
+        when(connection.getAdmin()).thenReturn(mockAdmin);
+        when(table.getTableInfo()).thenReturn(tableInfo);
+        when(tableInfo.getNumBuckets()).thenReturn(1);
+        when(mockAdmin.listOffsets(any(), any(), any(OffsetSpec.class)))
+                .thenReturn(
+                        new ListOffsetsResult(Map.of(0, CompletableFuture.completedFuture(10L))));
         return new FlussActionStateStore(
-                actionStates,
-                mock(Connection.class),
-                mock(Table.class),
-                mockWriter,
-                createKeyEncoder(maxParallelism));
+                actionStates, connection, table, mockWriter, createKeyEncoder(maxParallelism));
+    }
+
+    @AfterEach
+    void clearInterruptStatus() {
+        Thread.interrupted();
+    }
+
+    @Test
+    void testCheckpointRefreshesLatestStatesAfterCapturingOffsets() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        testActionState.addCallResult(new CallResult("call", "", new byte[] {1, 2}));
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        // A completed action may belong to an input whose other actions are still pending.
+        ActionState completed = new ActionState(testEvent);
+        completed.markCompleted();
+        store.put("other", 1L, testAction, testEvent, completed);
+        clearInvocations(mockAdmin, mockWriter);
+
+        assertThat(store.getRecoveryMarker()).isEqualTo(Map.of(0, 10L));
+
+        org.mockito.InOrder order = inOrder(mockAdmin, mockWriter);
+        order.verify(mockAdmin).listOffsets(any(), any(), any(OffsetSpec.LatestSpec.class));
+        ArgumentCaptor<InternalRow> rows = ArgumentCaptor.forClass(InternalRow.class);
+        order.verify(mockWriter, times(2)).append(rows.capture());
+        assertThat(rows.getAllValues())
+                .anySatisfy(
+                        row -> {
+                            ActionState saved = ActionStateSerde.deserialize(row.getBytes(1));
+                            assertThat(saved.isCompleted()).isFalse();
+                            assertThat(saved.getCallResults()).hasSize(1);
+                            assertThat(row.getString(2).toString())
+                                    .isEqualTo(
+                                            ActionStateUtil.generateBusinessKeyIdentity(
+                                                    TEST_KEY, KEY_SERIALIZER));
+                        });
+        assertThat(rows.getAllValues())
+                .anySatisfy(
+                        row ->
+                                assertThat(
+                                                ActionStateSerde.deserialize(row.getBytes(1))
+                                                        .isCompleted())
+                                        .isTrue());
+    }
+
+    @Test
+    void testCheckpointDoesNotRefreshPrunedOrDivergedStates() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        store.put(TEST_KEY, 2L, testAction, testEvent, testActionState);
+        store.put(TEST_KEY, 3L, testAction, testEvent, testActionState);
+        store.pruneState(TEST_KEY, 1L);
+        store.get(TEST_KEY, 2L, new NoOpAction("different"), testEvent);
+        clearInvocations(mockWriter);
+
+        store.getRecoveryMarker();
+        ArgumentCaptor<InternalRow> rows = ArgumentCaptor.forClass(InternalRow.class);
+        verify(mockWriter).append(rows.capture());
+        assertThat(rows.getValue().getString(0).toString())
+                .isEqualTo(generateKey(TEST_KEY, 2L, testAction, testEvent, MAX_PARALLELISM));
+        store.pruneState(TEST_KEY, 2L);
+        clearInvocations(mockWriter);
+        store.getRecoveryMarker();
+        verify(mockWriter, never()).append(any());
+    }
+
+    @Test
+    void testFailedCheckpointRefreshRetainsCacheForRetry() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        store.put("other", 1L, testAction, testEvent, testActionState);
+        when(mockWriter.append(any(InternalRow.class)))
+                .thenReturn(CompletableFuture.completedFuture(null))
+                .thenReturn(CompletableFuture.failedFuture(new IOException("append failed")));
+        assertThatThrownBy(store::getRecoveryMarker)
+                .hasMessageContaining("Failed to refresh")
+                .hasRootCauseMessage("append failed");
+        assertThat(actionStates).hasSize(2);
+
+        when(mockWriter.append(any(InternalRow.class)))
+                .thenReturn(CompletableFuture.completedFuture(null));
+        clearInvocations(mockWriter);
+        assertThat(store.getRecoveryMarker()).isEqualTo(Map.of(0, 10L));
+        verify(mockWriter, times(2)).append(any());
+    }
+
+    @Test
+    void testInterruptedRefreshRestoresInterruptFlag() throws Exception {
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        CompletableFuture<org.apache.fluss.client.table.writer.AppendResult> write =
+                mock(CompletableFuture.class);
+        when(write.get()).thenThrow(new InterruptedException("cancelled"));
+        when(mockWriter.append(any(InternalRow.class))).thenReturn(write);
+
+        assertThatThrownBy(store::getRecoveryMarker).hasCauseInstanceOf(InterruptedException.class);
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        assertThat(actionStates).hasSize(1);
+    }
+
+    @Test
+    void testInterruptedOffsetLookupDoesNotRefresh() throws Exception {
+        ListOffsetsResult offsets = mock(ListOffsetsResult.class);
+        CompletableFuture<Map<Integer, Long>> future = mock(CompletableFuture.class);
+        when(future.get()).thenThrow(new InterruptedException("cancelled"));
+        when(offsets.all()).thenReturn(future);
+        when(mockAdmin.listOffsets(any(), any(), any(OffsetSpec.class))).thenReturn(offsets);
+        store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
+        clearInvocations(mockWriter);
+
+        assertThatThrownBy(store::getRecoveryMarker).hasCauseInstanceOf(InterruptedException.class);
+        assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        verify(mockWriter, never()).append(any());
     }
 
     @Test
