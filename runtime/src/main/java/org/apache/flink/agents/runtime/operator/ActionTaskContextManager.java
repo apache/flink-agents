@@ -315,11 +315,7 @@ class ActionTaskContextManager implements AutoCloseable {
                 InternalSubagentCallStatus callStatus = scope.getCallStatus();
                 memoryContext =
                         callStatus.getOrCreateIsolatedMemoryContext(
-                                () ->
-                                        new RunnerContextImpl.MemoryContext(
-                                                        new CachedMemoryStore(sensoryMemState),
-                                                        new CachedMemoryStore(shortTermMemState))
-                                                .createChildContext());
+                                RunnerContextImpl.MemoryContext::createChildContext);
             } else {
                 memoryContext =
                         new RunnerContextImpl.MemoryContext(

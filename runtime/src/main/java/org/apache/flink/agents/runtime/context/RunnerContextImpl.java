@@ -131,10 +131,14 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             return sensoryMemStore;
         }
 
-        public MemoryContext createChildContext() {
+        /**
+         * Builds the isolated memory context for one internal sub-agent call. The child does not
+         * share memory with its caller, so the stores start empty and are not seeded from any
+         * parent view.
+         */
+        public static MemoryContext createChildContext() {
             return new MemoryContext(
-                    new IsolatedCachedMemoryStore(sensoryMemStore),
-                    new IsolatedCachedMemoryStore(shortTermMemStore));
+                    new IsolatedCachedMemoryStore(), new IsolatedCachedMemoryStore());
         }
     }
 

@@ -103,7 +103,7 @@ public class MemoryObjectImpl implements MemoryObject {
                         ? absPath.substring(0, absPath.lastIndexOf(SEPARATOR))
                         : ROOT_KEY;
         MemoryItem parentItem = store.get(parent);
-        parentItem = parentItem.withSubKey(parts[parts.length - 1]);
+        parentItem.getSubKeys().add(parts[parts.length - 1]);
         store.put(parent, parentItem);
 
         MemoryItem existing = store.get(absPath);
@@ -145,7 +145,7 @@ public class MemoryObjectImpl implements MemoryObject {
                         ? absPath.substring(0, absPath.lastIndexOf(SEPARATOR))
                         : ROOT_KEY;
         MemoryItem parentItem = store.get(parent);
-        parentItem = parentItem.withSubKey(parts[parts.length - 1]);
+        parentItem.getSubKeys().add(parts[parts.length - 1]);
         store.put(parent, parentItem);
 
         return new MemoryObjectImpl(
@@ -167,7 +167,7 @@ public class MemoryObjectImpl implements MemoryObject {
         mailboxThreadChecker.run();
         MemoryItem memItem = store.get(prefix);
         if (memItem != null && memItem.getType() == ItemType.OBJECT) {
-            return memItem.getSubKeys();
+            return new ArrayList<>(memItem.getSubKeys());
         }
         return Collections.emptyList();
     }
@@ -234,21 +234,12 @@ public class MemoryObjectImpl implements MemoryObject {
             }
             // update parent.subKeys
             MemoryItem parentNode = store.get(parent);
-            parentNode = parentNode.withSubKey(parts[i]);
+            parentNode.getSubKeys().add(parts[i]);
             store.put(parent, parentNode);
         }
     }
 
-    /**
-     * Represents an item (nested object or primitive value) stored in the short-term memory.
-     *
-     * <p>Items are immutable. {@link MemoryStore#get} hands out the stored instance itself, which
-     * the state backend and any child store reading through to its parent may also hold, so a
-     * structural change goes through {@link #withSubKey} and is published with {@link
-     * MemoryStore#put}. Mutating a returned item in place instead would add the field name to every
-     * other view of it while the value stays in the writer's own store, leaving names that resolve
-     * to nothing.
-     */
+    /** Represents an item (nested object or primitive value) stored in the short-term memory. */
     public static final class MemoryItem implements Serializable {
         private final ItemType type;
         private final Object value;
@@ -256,18 +247,16 @@ public class MemoryObjectImpl implements MemoryObject {
 
         // if the field stores a primitive value
         MemoryItem(Object value) {
-            this(ItemType.VALUE, value, Collections.emptySet());
+            this.type = ItemType.VALUE;
+            this.value = value;
+            this.subKeys = Collections.emptySet();
         }
 
         // if the field represents a nested object
         MemoryItem() {
-            this(ItemType.OBJECT, null, Collections.emptySet());
-        }
-
-        private MemoryItem(ItemType type, Object value, Set<String> subKeys) {
-            this.type = type;
-            this.value = value;
-            this.subKeys = subKeys;
+            this.type = ItemType.OBJECT;
+            this.value = null;
+            this.subKeys = new HashSet<>();
         }
 
         public ItemType getType() {
@@ -282,18 +271,8 @@ public class MemoryObjectImpl implements MemoryObject {
             return value;
         }
 
-        public List<String> getSubKeys() {
-            return new ArrayList<>(subKeys);
-        }
-
-        public MemoryItem withSubKey(String key) {
-            if (this.type != ItemType.OBJECT) {
-                throw new UnsupportedOperationException(
-                        "Cannot add sub-key '" + key + "' to a value item.");
-            }
-            Set<String> newSubKeys = new HashSet<>(subKeys);
-            newSubKeys.add(key);
-            return new MemoryItem(type, value, newSubKeys);
+        public Set<String> getSubKeys() {
+            return subKeys;
         }
     }
 }

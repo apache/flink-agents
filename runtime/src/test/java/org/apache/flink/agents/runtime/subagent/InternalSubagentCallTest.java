@@ -163,6 +163,30 @@ public class InternalSubagentCallTest {
         }
     }
 
+    /**
+     * Reports whether a key the caller wrote to its own short-term memory is visible inside the
+     * sub-agent scope. An internal sub-agent runs against its own isolated memory, so the caller's
+     * key must never be readable here.
+     */
+    public static class MemoryProbeChildAgent extends Agent {
+        public MemoryProbeChildAgent() throws Exception {
+            addAction(
+                    new String[] {InputEvent.EVENT_TYPE},
+                    MemoryProbeChildAgent.class.getMethod(
+                            "probe", Event.class, RunnerContext.class));
+        }
+
+        @SuppressWarnings("unused")
+        public static void probe(Event event, RunnerContext ctx) throws Exception {
+            MemoryObject memory = ctx.getShortTermMemory();
+            String seen =
+                    memory.isExist("callerKey")
+                            ? String.valueOf(memory.get("callerKey").getValue())
+                            : "<missing>";
+            ctx.sendEvent(new OutputEvent("saw:" + seen));
+        }
+    }
+
     // --- caller actions ---
 
     @SuppressWarnings("unused")
@@ -197,6 +221,19 @@ public class InternalSubagentCallTest {
                                 + first.getCallId()
                                 + "!="
                                 + second.getCallId()));
+    }
+
+    /**
+     * Writes a key to the caller's own short-term memory, then calls the child. Across two records
+     * the first record's write is persisted to durable state at action finish, so the second
+     * record's child would read it back only if the sub-agent shared the caller's memory.
+     */
+    @SuppressWarnings("unused")
+    public static void writeMemoryThenCall(Event event, RunnerContext ctx) throws Exception {
+        ctx.getShortTermMemory().set("callerKey", "caller-value");
+        SubagentSetup child = (SubagentSetup) ctx.getResource("child", ResourceType.AGENT);
+        SubagentResult result = child.submit(ctx, InputEvent.fromEvent(event).getInput()).await();
+        ctx.sendEvent(new OutputEvent(result.isSuccess() ? firstOutput(result) : "error"));
     }
 
     // --- tests ---
@@ -249,6 +286,19 @@ public class InternalSubagentCallTest {
         assertThat(output).containsExactly("read:from-write");
     }
 
+    @Test
+    @Timeout(60)
+    void subAgentDoesNotReadCallersPersistedMemory() throws Exception {
+        // Two records under the same key: the first persists "callerKey" into the caller's durable
+        // short-term memory at action finish. In the second record the sub-agent must still not
+        // read it back, because an internal sub-agent runs against its own isolated memory rather
+        // than the caller's.
+        List<Object> output =
+                runRecords(plan("writeMemoryThenCall", new MemoryProbeChildAgent()), 2);
+
+        assertThat(output).containsExactly("saw:<missing>", "saw:<missing>");
+    }
+
     // --- helpers ---
 
     private static String firstOutput(SubagentResult result) {
@@ -276,6 +326,25 @@ public class InternalSubagentCallTest {
             harness.processElement(new StreamRecord<>(input));
             ((ActionExecutionOperator<Long, Object>) harness.getOperator())
                     .waitInFlightEventsFinished();
+            return ((List<StreamRecord<Object>>) harness.getRecordOutput())
+                    .stream().map(StreamRecord::getValue).collect(Collectors.toList());
+        }
+    }
+
+    /** Processes {@code recordCount} records under the same key, draining each before the next. */
+    @SuppressWarnings("unchecked")
+    private static List<Object> runRecords(AgentPlan plan, int recordCount) throws Exception {
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            harness.open();
+            for (int i = 0; i < recordCount; i++) {
+                harness.processElement(new StreamRecord<>(7L));
+                ((ActionExecutionOperator<Long, Object>) harness.getOperator())
+                        .waitInFlightEventsFinished();
+            }
             return ((List<StreamRecord<Object>>) harness.getRecordOutput())
                     .stream().map(StreamRecord::getValue).collect(Collectors.toList());
         }

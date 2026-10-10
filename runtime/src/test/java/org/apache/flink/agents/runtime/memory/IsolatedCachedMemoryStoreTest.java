@@ -23,13 +23,14 @@ import org.junit.jupiter.api.Test;
 
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Tests for {@link IsolatedCachedMemoryStore}: a child scope reads through to the parent but its
- * writes must not mutate the parent's view.
+ * Tests for {@link IsolatedCachedMemoryStore}: an internal sub-agent's memory is self-contained and
+ * ephemeral. It neither reads through to a caller's memory nor flushes its writes to durable state;
+ * the end-to-end no-sharing guarantee is locked by {@code
+ * InternalSubagentCallTest#subAgentDoesNotReadCallersPersistedMemory}.
  */
 public class IsolatedCachedMemoryStoreTest {
 
@@ -40,54 +41,43 @@ public class IsolatedCachedMemoryStoreTest {
         return new MemoryObjectImpl(TYPE, store, MemoryObjectImpl.ROOT_KEY, updates);
     }
 
-    /**
-     * A child write adds a field to the child scope only. {@link MemoryObjectImpl#set} rebuilds the
-     * resolved item through {@code MemoryItem.withSubKey} and publishes it to the child store's own
-     * cache, so the parent's immutable item keeps its original field list and {@link
-     * MemoryObjectImpl#getFields()} resolves every name the parent lists.
-     */
+    /** The store reads back only what its own call wrote; a key it never wrote is absent. */
     @Test
-    void childFieldWriteDoesNotLeakIntoParentFieldList() throws Exception {
-        ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
-        CachedMemoryStore parentStore = new CachedMemoryStore(mapState);
-        MemoryObjectImpl parent = newMemoryObject(parentStore, new LinkedList<>());
-        parent.set("p", 1);
-
-        IsolatedCachedMemoryStore childStore = new IsolatedCachedMemoryStore(parentStore);
-        MemoryObjectImpl child = newMemoryObject(childStore, new LinkedList<>());
+    void readsAndWritesStayWithinTheStore() throws Exception {
+        IsolatedCachedMemoryStore store = new IsolatedCachedMemoryStore();
+        MemoryObjectImpl child = newMemoryObject(store, new LinkedList<>());
         child.set("c", 2);
 
-        // The child still reads its own write, and reads through to the parent's value.
+        assertThat(child.isExist("c")).isTrue();
         assertThat(child.get("c").getValue()).isEqualTo(2);
-        assertThat(child.get("p").getValue()).isEqualTo(1);
-
-        // The parent must neither see the child's field nor fail listing its own fields.
-        Map<String, Object> parentFields = parent.getFields();
-        assertThat(parentFields).containsEntry("p", 1).doesNotContainKey("c");
+        assertThat(child.isExist("never-written")).isFalse();
     }
 
     /**
-     * A child write to a key the parent already holds as a nested object rebuilds that item into
-     * the child's own cache, so the parent's immutable nested object keeps only its own field.
+     * {@link IsolatedCachedMemoryStore#persistCache()} is a no-op: the call's writes stay readable
+     * for the whole call and are never flushed to durable state.
      */
     @Test
-    void childNestedWriteDoesNotLeakIntoParentObject() throws Exception {
-        ForTestMemoryMapState<MemoryObjectImpl.MemoryItem> mapState = new ForTestMemoryMapState<>();
-        CachedMemoryStore parentStore = new CachedMemoryStore(mapState);
-        MemoryObjectImpl parent = newMemoryObject(parentStore, new LinkedList<>());
-        parent.newObject("obj", false).set("kept", 1);
+    void persistCacheRetainsWritesForTheWholeCall() throws Exception {
+        IsolatedCachedMemoryStore store = new IsolatedCachedMemoryStore();
+        MemoryObjectImpl child = newMemoryObject(store, new LinkedList<>());
+        child.set("c", 2);
 
-        IsolatedCachedMemoryStore childStore = new IsolatedCachedMemoryStore(parentStore);
-        MemoryObjectImpl child = newMemoryObject(childStore, new LinkedList<>());
-        child.set("obj.added", 2);
+        store.persistCache();
 
-        assertThat(child.get("obj.added").getValue()).isEqualTo(2);
-        assertThat(child.get("obj.kept").getValue()).isEqualTo(1);
+        assertThat(store.contains("c")).isTrue();
+        assertThat(child.get("c").getValue()).isEqualTo(2);
+    }
 
-        // The parent's nested object keeps only its own field.
-        assertThat(parent.get("obj").getFieldNames()).containsExactly("kept");
-        assertThat(parent.get("obj").getFields())
-                .containsEntry("kept", 1)
-                .doesNotContainKey("added");
+    /** {@link IsolatedCachedMemoryStore#clear()} drops the call's writes. */
+    @Test
+    void clearEmptiesTheStore() throws Exception {
+        IsolatedCachedMemoryStore store = new IsolatedCachedMemoryStore();
+        MemoryObjectImpl child = newMemoryObject(store, new LinkedList<>());
+        child.set("c", 2);
+
+        store.clear();
+
+        assertThat(store.contains("c")).isFalse();
     }
 }
