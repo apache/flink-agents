@@ -18,8 +18,11 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
@@ -67,6 +70,11 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
     public ContinuationContext getContinuationContext() {
         return continuationContext;
+    }
+
+    @Override
+    public DurableFuture<ChatMessage> chat(ChatRequestEvent request) {
+        return new ChatDurableFuture(this, request);
     }
 
     @Override

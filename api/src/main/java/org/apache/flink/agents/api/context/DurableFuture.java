@@ -21,9 +21,10 @@ package org.apache.flink.agents.api.context;
  * A deferred durable call that can be awaited.
  *
  * <p>Creating a durable future does not start the call or reserve durable state. The call is
- * started only when the future is awaited directly or as part of {@link RunnerContext#gather}. This
- * type deliberately does not implement {@link java.util.concurrent.Future}: {@link #await()} lets
- * the runtime yield action execution instead of blocking its thread.
+ * started only when the future is awaited directly or, for supported handles, as part of {@link
+ * RunnerContext#gather}. This type deliberately does not implement {@link
+ * java.util.concurrent.Future}: {@link #await()} lets the runtime yield action execution instead of
+ * blocking its thread.
  *
  * <p>This is an opaque handle and intentionally exposes no completion polling API.
  *
@@ -33,9 +34,11 @@ public interface DurableFuture<T> extends AsyncFuture<T> {
     /**
      * Resolves this durable future and returns its result.
      *
-     * <p>Uses the same runtime-aware waiting mechanism as {@link AsyncFuture#await()}, including
-     * worker execution with the shared lock released on the JDK &lt; 21 parallel engine. Awaiting
-     * an already resolved future returns or rethrows its locally cached outcome without consuming a
+     * <p>The runtime manages execution and recovery replay. Runtime requirements depend on the
+     * operation that created the handle: callable execution uses {@link AsyncFuture#await()}'s
+     * runtime-aware waiting, including releasing the shared lock on the JDK &lt; 21 parallel
+     * engine, while event-backed chat calls currently require JDK 21 continuations. Awaiting an
+     * already resolved future returns or rethrows its locally cached outcome without consuming a
      * second durable slot.
      */
     T await() throws Exception;

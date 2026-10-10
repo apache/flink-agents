@@ -25,6 +25,11 @@ import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.chat.ChatCallEvent;
+import org.apache.flink.agents.runtime.chat.ChatCallManager;
+import org.apache.flink.agents.runtime.chat.ChatCallOwner;
+import org.apache.flink.agents.runtime.chat.ChatContext;
+import org.apache.flink.agents.runtime.chat.ChatInvocation;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
@@ -79,6 +84,7 @@ class ActionTaskContextManager implements AutoCloseable {
     private final DurableExecutionManager durableExecManager;
 
     private RunnerContextImpl runnerContext;
+    private final ChatCallManager chatCallManager = new ChatCallManager();
 
     private final Map<ActionTask, ActionTaskContexts> actionTaskContexts;
 
@@ -105,6 +111,10 @@ class ActionTaskContextManager implements AutoCloseable {
                         numAsyncThreads, asyncThreadCleanup, parallelExecutionLock, this::restore);
     }
 
+    ChatCallManager getChatCallManager() {
+        return chatCallManager;
+    }
+
     /**
      * Mutable holder for every per-task context except durable execution. The pending output events
      * live here rather than in the memory context because they are an output buffer, not memory.
@@ -114,6 +124,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private ContinuationContext continuationContext;
         @Nullable private String pythonAwaitableRef;
         @Nullable private RunnerContextImpl.SubagentScope subagentScope;
+        @Nullable private ChatContext chatContext;
         private List<Event> pendingEvents = new ArrayList<>();
         @Nullable private List<ComponentExecutionListener> componentListeners;
         @Nullable private String contextKey;
@@ -276,6 +287,30 @@ class ActionTaskContextManager implements AutoCloseable {
         if (subagentScope != null) {
             setSubagentScope(actionTask, subagentScope);
         }
+        ActionTaskContexts taskContexts = requireContexts(actionTask);
+        if (taskContexts.chatContext == null) {
+            ChatCallOwner owner =
+                    new ChatCallOwner(
+                            actionTask.getKey(), actionTask.getSequenceNumber(),
+                            actionTask.getAction().getName(), actionTask.getEvent());
+            ChatInvocation activeCall =
+                    actionTask.getEvent() instanceof ChatCallEvent
+                            ? chatCallManager.get(
+                                    ((ChatCallEvent) actionTask.getEvent()).getCallId())
+                            : null;
+            taskContexts.chatContext = new ChatContext(chatCallManager, owner, activeCall);
+        }
+        ChatInvocation call = taskContexts.chatContext.getActiveCall();
+        if (call != null) {
+            taskContexts.subagentScope = call.getSubagentScope();
+            // Share the stores, not the per-action update/observation journal.
+            if (taskContexts.memoryContext == null) {
+                taskContexts.memoryContext =
+                        new RunnerContextImpl.MemoryContext(
+                                call.getMemory().getSensoryMemStore(),
+                                call.getMemory().getShortTermMemStore());
+            }
+        }
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
             context =
@@ -337,6 +372,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // Applied on every switch (possibly null): the shared context must not inherit the scope
         // of whichever task was wired on previously.
         context.setSubagentScope(getSubagentScope(actionTask));
+        context.setChatContext(taskContexts.chatContext);
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -383,6 +419,8 @@ class ActionTaskContextManager implements AutoCloseable {
                 actionTask.getObservationId(),
                 MemoryEvent.isMemoryType(actionTask.event.getType()),
                 requireContexts(actionTask).componentListeners);
+        context.setSubagentScope(getSubagentScope(actionTask));
+        context.setChatContext(requireContexts(actionTask).chatContext);
         if (context instanceof JavaRunnerContextImpl) {
             Preconditions.checkNotNull(
                     continuationContext, "Missing continuation context for Java action task");
@@ -442,6 +480,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // outlives the removed contexts, so events emitted before a suspend survive into the
         // generated task.
         requireContexts(toTask).pendingEvents = fromTask.getRunnerContext().getPendingEvents();
+        requireContexts(toTask).chatContext = fromTask.getRunnerContext().getChatContext();
         // Carry over the execution's very listener instances: one that pairs a component's start
         // report with its terminal report keeps that pairing in itself, so rebuilding them here
         // would orphan the reports of components that started before the suspend.
@@ -521,6 +560,7 @@ class ActionTaskContextManager implements AutoCloseable {
     /** Closes the shared runner context and the continuation executor. */
     @Override
     public void close() throws Exception {
+        chatCallManager.clear();
         // Drain async callbacks before closing resources they may still be using. Close every
         // component even after a failure, preserving later failures as suppressed exceptions.
         Throwable firstFailure = null;

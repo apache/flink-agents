@@ -21,6 +21,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.runtime.chat.ChatCallEvent;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
@@ -156,6 +157,9 @@ public abstract class ActionTask implements Serializable {
      * needed.
      */
     public Event getDelegateEvent() {
+        if (event instanceof ChatCallEvent) {
+            return ((ChatCallEvent) event).getDelegate();
+        }
         if (isSubagentEvent) {
             return ((InternalSubagentCallEvent) event).getDelegate();
         }

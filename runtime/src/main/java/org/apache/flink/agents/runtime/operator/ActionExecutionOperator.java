@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
@@ -40,6 +41,8 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.chat.ChatCallEvent;
+import org.apache.flink.agents.runtime.chat.ChatInvocation;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
@@ -545,6 +548,24 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             throws Exception {
         eventRouter.notifyEventProcessed(event, traceContext);
 
+        if (event instanceof ChatCallEvent) {
+            ChatCallEvent envelope = (ChatCallEvent) event;
+            ChatInvocation call = contextManager.getChatCallManager().get(envelope.getCallId());
+            Event delegate = envelope.getDelegate();
+            if (ChatResponseEvent.EVENT_TYPE.equals(delegate.getType())) {
+                call.complete(ChatResponseEvent.fromEvent(delegate));
+            } else {
+                stateManager.addActionTask(
+                        createActionTask(
+                                key,
+                                call.actionFor(delegate),
+                                envelope,
+                                stateManager.getSequenceNumber(),
+                                traceContext));
+            }
+            return;
+        }
+
         if (event instanceof InternalSubagentCallEvent) {
             InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) event;
             // Dispatch only: the quiesce accounting (addTriggeredActions) is done by the caller
@@ -1005,6 +1026,18 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private List<Event> completedActionOutputEvents(
             ActionTask actionTask, ActionState actionState) {
+        List<Event> graphEvents = new ArrayList<>();
+        for (Event event : actionState.getOutputEvents()) {
+            // A completed caller already consumed its chat result. Only a chat child replays
+            // forwarded graph events; never re-bootstrap a completed nested invocation.
+            if (event instanceof ChatCallEvent) {
+                ChatCallEvent envelope = (ChatCallEvent) event;
+                if (envelope.isBootstrap()) {
+                    continue;
+                }
+            }
+            graphEvents.add(event);
+        }
         if (!actionTask.isSubagentEvent()) {
             // A root caller owns no sub-agent call, so every envelope it emitted bootstrapped a
             // child call whose result this completed action already consumed and folded into its
@@ -1012,7 +1045,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // envelope names a call that no longer registers a call status, so re-dispatching it
             // would abort the replay.
             List<Event> replayEvents = new ArrayList<>();
-            for (Event event : actionState.getOutputEvents()) {
+            for (Event event : graphEvents) {
                 if (!(event instanceof InternalSubagentCallEvent)) {
                     replayEvents.add(event);
                 }
@@ -1022,7 +1055,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
         InternalSubagentCallEvent triggeringEnvelope = (InternalSubagentCallEvent) actionTask.event;
         List<Event> replayEvents = new ArrayList<>();
-        for (Event event : actionState.getOutputEvents()) {
+        for (Event event : graphEvents) {
             if (!(event instanceof InternalSubagentCallEvent)) {
                 replayEvents.add(event);
                 continue;
@@ -1507,6 +1540,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void notifyRecordFinished(Object key) {
+        contextManager.getChatCallManager().finishRecord(key);
         for (TaskLifecycleListener listener : taskLifecycleListeners) {
             listener.onRecordFinished(key);
         }
@@ -1588,7 +1622,8 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 (key, state) -> {
                     List<ActionTask> rootTasks = new ArrayList<>();
                     for (ActionTask task : state.get()) {
-                        if (!task.isSubagentEvent()) {
+                        if (!task.isSubagentEvent()
+                                && !(task.getEvent() instanceof ChatCallEvent)) {
                             rootTasks.add(task);
                         }
                     }

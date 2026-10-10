@@ -19,6 +19,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Dict, Generic, TypeVar
 
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import BaseLongTermMemory
@@ -67,9 +69,10 @@ class Outcome:
 class AsyncFuture(ABC, Generic[T]):
     """A deferred call resolved by the runner's scheduler, without an asyncio loop.
 
-    Creation does not start work. Await directly or compose single-call handles
-    with :meth:`RunnerContext.gather`. Repeated awaits reuse the local result or
-    exception. Persistence across recovery is an additional DurableFuture contract.
+    Creation does not start work. Await directly or compose callable-backed handles
+    with :meth:`RunnerContext.gather`. Event-backed chat handles do not yet support
+    gather. Repeated awaits reuse the local result or exception. Persistence across
+    recovery is an additional DurableFuture contract.
     Handles belong to their creating action execution and are not thread-safe;
     do not await them in callbacks or pass them to another action. Unawaited
     handles perform no work and can be discarded when the action finishes.
@@ -429,6 +432,29 @@ class RunnerContext(ABC):
         batches are rejected before work starts. Mixed batches persist only durable
         children, in their relative input order.
         """
+
+    def chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        *,
+        prompt_args: dict[str, Any] | None = None,
+        output_schema: OutputSchema | None = None,
+    ) -> DurableFuture[ChatMessage]:
+        """Call the chat/tool event loop using this action's resources and memory.
+
+        The runtime records the terminal response when durable execution is enabled.
+        Creating a future does not dispatch events or consume durable state.
+        Await it directly within the action execution that created it, without
+        durable_execute_async. Do not store it for a later event or pass it to
+        another action execution. Cross-execution use is unsupported and is not
+        checked at runtime. Suspending and resuming the creating action is still
+        the same execution.
+        Repeated awaits return the same ChatMessage or raise ChatResponseError for
+        a FAILED response. Parallel composition with gather is not supported yet.
+        """
+        msg = "Chat calls require an event-backed runtime"
+        raise NotImplementedError(msg)
 
     @property
     @abstractmethod

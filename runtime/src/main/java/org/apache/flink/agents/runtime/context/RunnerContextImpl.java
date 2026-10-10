@@ -44,6 +44,8 @@ import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.chat.ChatCallEvent;
+import org.apache.flink.agents.runtime.chat.ChatContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
@@ -163,6 +165,9 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * events wrapped and forwarded) instead of emitting them top-level.
      */
     @Nullable private SubagentScope subagentScope;
+
+    /** Current action's chat context, replaced as a unit on each task switch or restore. */
+    @Nullable private ChatContext chatContext;
 
     /**
      * Index of the internal sub-agent setups owning a bootstrapped call session, keyed by session
@@ -298,6 +303,21 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return subagentScope;
     }
 
+    /** Installs the current task's chat context, or clears it when none is attached. */
+    public void setChatContext(@Nullable ChatContext chatContext) {
+        this.chatContext = chatContext;
+    }
+
+    /** Checks thread confinement for runtime components accessing this shared context. */
+    public void checkMailboxThread() {
+        mailboxThreadChecker.run();
+    }
+
+    /** Returns the current action's chat context, also used by the Python bridge. */
+    public ChatContext getChatContext() {
+        return Preconditions.checkNotNull(chatContext, "Chat calls require an executing action");
+    }
+
     public void switchActionContext(
             String actionName,
             MemoryContext memoryContext,
@@ -337,6 +357,9 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
         checkNoPresetLineage(event);
+        if (chatContext != null && chatContext.getManager().forwardEvent(this, event)) {
+            return;
+        }
         if (subagentScope != null) {
             sendEventInSubagentScope(event);
             return;
@@ -367,11 +390,16 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                                 callStatus.getScope(),
                                 callStatus.getCallId(),
                                 callStatus.getSessionId());
-        callStatus.emitEvent();
+        if (chatContext == null || chatContext.getActiveCall() == null) {
+            // Chat tasks are tracked by their suspended caller, not as sub-agent actions. Their
+            // forwarded observations are counted when dispatched, without an emitted-event debit.
+            callStatus.emitEvent();
+        }
         addPendingEvent(wrapped);
     }
 
-    private void addPendingEvent(Event event) {
+    /** Enqueues a runtime event without applying user-event or sub-agent routing. */
+    public void addPendingEvent(Event event) {
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -392,7 +420,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * emitting Action when it finalizes the Action's outputs; outputs restored from action state
      * reach that step without passing through here.
      */
-    private static void checkNoPresetLineage(Event event) {
+    public static void checkNoPresetLineage(Event event) {
         List<String> preset = new ArrayList<>();
         if (event.getUpstreamEventId() != null) {
             preset.add("upstreamEventId=" + event.getUpstreamEventId());
@@ -421,6 +449,16 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Iterator<Event> iterator = pendingEvents.iterator();
         while (iterator.hasNext()) {
             Event event = iterator.next();
+            if (event instanceof ChatCallEvent) {
+                if (((ChatCallEvent) event).isBootstrap()) {
+                    if (timestamp != null) {
+                        event.setSourceTimestamp(timestamp);
+                    }
+                    events.add(event);
+                    iterator.remove();
+                }
+                continue;
+            }
             if (!(event instanceof InternalSubagentCallEvent)) {
                 continue;
             }
@@ -1159,7 +1197,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * recorded success may carry a {@code null} value (for example a {@code Void} call), so the
      * presence of the outcome, not its value, marks the hit.
      */
-    protected <T> Optional<Outcome<T>> tryGetCachedResult(String functionId, Class<T> resultClass)
+    public <T> Optional<Outcome<T>> tryGetCachedResult(String functionId, Class<T> resultClass)
             throws Exception {
         Object[] cached = matchNextOrClearSubsequentCallResult(functionId);
         if (cached != null && (Boolean) cached[0]) {
@@ -1180,7 +1218,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return Optional.empty();
     }
 
-    protected void recordDurableCompletion(String functionId, Object result, Exception exception)
+    /** Serializes and persists a terminal result for runtime-managed durable calls. */
+    public void recordDurableCompletion(String functionId, Object result, Exception exception)
             throws Exception {
         byte[] resultPayload = serializeDurableResult(result);
         byte[] exceptionPayload = serializeDurableException(exception);

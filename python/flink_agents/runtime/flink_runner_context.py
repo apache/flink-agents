@@ -29,8 +29,11 @@ from typing import Any, Callable, Dict, Literal
 import cloudpickle
 from typing_extensions import override
 
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.configuration import ReadableConfiguration
 from flink_agents.api.core_options import AgentExecutionOptions
+from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory.long_term_memory import (
     BaseLongTermMemory,
@@ -46,6 +49,7 @@ from flink_agents.api.runner_context import (
     RunnerContext,
 )
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.runtime.chat_future import _ChatFuture
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
     durable_exception_message,
@@ -1598,6 +1602,21 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     ) -> AsyncFuture[Any]:
         """Create an ordinary deferred call owned by this runner context."""
         return _SingleAsyncFuture(self, func, args, kwargs)
+
+    @override
+    def chat(
+        self,
+        model: str,
+        messages: list[ChatMessage],
+        *,
+        prompt_args: dict[str, Any] | None = None,
+        output_schema: OutputSchema | None = None,
+    ) -> DurableFuture[ChatMessage]:
+        """Create a lazy chat call driven by the operator's event scheduler."""
+        return _ChatFuture(
+            self._j_runner_context,
+            ChatRequestEvent(model, messages, prompt_args, output_schema),
+        )
 
     @override
     def durable_execute_async(
