@@ -19,6 +19,6 @@
 
 
 class LLMExecutionMetadataKeys:
-    """Shared field names for LLM execution entity metadata."""
+    """Shared field names for metadata reported with an LLM request."""
 
     MODEL = "model"

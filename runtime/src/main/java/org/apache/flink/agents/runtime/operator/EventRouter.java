@@ -23,15 +23,16 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.logger.TraceLogger;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
-import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.operator.queue.SegmentedQueue;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.streaming.api.operators.StreamingRuntimeContext;
@@ -51,13 +52,13 @@ import static org.apache.flink.util.Preconditions.checkState;
 
 /**
  * Handles event-side concerns for {@link ActionExecutionOperator}: input/output transformation
- * between Java/Python representations, action lookup against the {@link AgentPlan}, Event Log
+ * between Java/Python representations, action lookup against the {@link AgentPlan}, Trace Log
  * writing, event-listener notification, and watermark draining via the per-key segment queue.
  *
  * <p>Owned state:
  *
  * <ul>
- *   <li>The shared {@link EventLogWriter} owned by the operator.
+ *   <li>The shared {@link TraceLogWriter} owned by the operator.
  *   <li>The list of registered {@link EventListener}s.
  *   <li>A reused {@link StreamRecord} used to emit outputs without per-record allocation.
  *   <li>The {@link SegmentedQueue} that orders watermarks behind in-flight keys so a watermark is
@@ -76,7 +77,7 @@ import static org.apache.flink.util.Preconditions.checkState;
 class EventRouter<IN, OUT> {
 
     private final boolean inputIsJava;
-    private final EventLogWriter eventLogWriter;
+    private final TraceLogWriter traceLogWriter;
     private final List<EventListener> eventListeners;
     private final AgentPlan agentPlan;
 
@@ -88,18 +89,18 @@ class EventRouter<IN, OUT> {
     private BuiltInMetrics builtInMetrics;
 
     EventRouter(AgentPlan agentPlan, boolean inputIsJava) {
-        this(agentPlan, inputIsJava, EventLogWriter.create(agentPlan));
+        this(agentPlan, inputIsJava, TraceLogWriter.create(agentPlan));
     }
 
     @VisibleForTesting
-    EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogger eventLogger) {
-        this(agentPlan, inputIsJava, EventLogWriter.forEventLogger(eventLogger));
+    EventRouter(AgentPlan agentPlan, boolean inputIsJava, TraceLogger traceLogger) {
+        this(agentPlan, inputIsJava, TraceLogWriter.forTraceLogger(traceLogger));
     }
 
-    EventRouter(AgentPlan agentPlan, boolean inputIsJava, EventLogWriter eventLogWriter) {
+    EventRouter(AgentPlan agentPlan, boolean inputIsJava, TraceLogWriter traceLogWriter) {
         this.agentPlan = agentPlan;
         this.inputIsJava = inputIsJava;
-        this.eventLogWriter = eventLogWriter;
+        this.traceLogWriter = traceLogWriter;
         this.eventListeners = new ArrayList<>();
         this.actionMatcher = new ActionMatcher(agentPlan);
     }
@@ -109,8 +110,7 @@ class EventRouter<IN, OUT> {
      *
      * <p>Allocates the reused stream record and the segmented watermark queue, and stores the
      * supplied {@link BuiltInMetrics} for use in {@link #notifyEventProcessed(Event,
-     * ExecutionTraceContext)}. Called from the operator's {@code open()} once metric groups are
-     * constructed.
+     * TraceContext)}. Called from the operator's {@code open()} once metric groups are constructed.
      *
      * @param builtInMetrics the operator's built-in metrics handle.
      */
@@ -211,20 +211,19 @@ class EventRouter<IN, OUT> {
     /**
      * Notifies the configured event sinks (logger, listeners, metrics) that an event was processed.
      *
-     * <p>If event logging is enabled, appends and immediately flushes the event best-effort. Then
+     * <p>If trace logging is enabled, appends and immediately flushes the event best-effort. Then
      * notifies every registered {@link EventListener}. Finally increments the {@code
-     * eventProcessed} built-in metric. The event logger is flushed per call as a temporary measure
+     * eventProcessed} built-in metric. The trace logger is flushed per call as a temporary measure
      * pending a batched flush mechanism.
      *
      * @param event the event that was just processed.
+     * @param eventTraceContext the context identifying this Event, with its type, ID, and available
+     *     run and source references already populated.
      */
-    void notifyEventProcessed(Event event) throws Exception {
-        notifyEventProcessed(event, null);
-    }
-
-    void notifyEventProcessed(Event event, ExecutionTraceContext traceContext) throws Exception {
+    void notifyEventProcessed(Event event, TraceContext eventTraceContext) throws Exception {
+        traceLogWriter.appendAndFlush(
+                TraceRecord.create(eventTraceContext, null, null, event.getAttributes()));
         EventContext eventContext = new EventContext(event);
-        eventLogWriter.appendBusinessEventAndFlush(eventContext, event, traceContext);
         if (eventListeners != null) {
             // Notify all registered event listeners about the event.
             for (EventListener listener : eventListeners) {
@@ -261,8 +260,8 @@ class EventRouter<IN, OUT> {
 
     @VisibleForTesting
     @Nullable
-    EventLogger getEventLogger() {
-        return eventLogWriter.getEventLogger();
+    TraceLogger getTraceLogger() {
+        return traceLogWriter.getTraceLogger();
     }
 
     @VisibleForTesting

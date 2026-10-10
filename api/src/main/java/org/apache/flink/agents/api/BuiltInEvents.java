@@ -46,7 +46,7 @@ import java.util.function.UnaryOperator;
  * <p>Events cross the Python/Java boundary as JSON and are deserialized into the base {@link
  * Event}, whose {@code attributes} is a {@code Map<String, Object>}. Nested typed values (for
  * example {@link org.apache.flink.agents.api.chat.messages.ChatMessage}) therefore arrive as
- * generic maps, and infrastructure that runs before an Action — the EventRouter, the Event Log, and
+ * generic maps, and infrastructure that runs before an Action — the EventRouter, the Trace Log, and
  * event listeners — observes an untyped event even for a known built-in type.
  *
  * <p>{@link #restore(Event)} maps each built-in event type to its existing {@code fromEvent}

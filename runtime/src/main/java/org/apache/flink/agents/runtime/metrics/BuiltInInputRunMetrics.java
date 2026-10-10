@@ -19,7 +19,7 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 
@@ -92,7 +92,7 @@ final class BuiltInInputRunMetrics {
         }
     }
 
-    void inputRunStarted(Event inputEvent, ExecutionTraceContext traceContext) {
+    void inputRunStarted(Event inputEvent, TraceContext traceContext) {
         String inputRunId = traceContext.getInputRunId();
         if (inputRunId == null || !activeInputRunIds.add(inputRunId)) {
             return;

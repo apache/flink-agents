@@ -18,8 +18,7 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -58,9 +57,9 @@ public abstract class ActionTask implements Serializable {
     /** Stable identifier for observations produced by this logical action execution. */
     protected String observationId;
 
-    protected final ExecutionTraceContext traceContext;
+    protected final TraceContext traceContext;
 
-    private boolean executionStartedEventEmitted;
+    private boolean executionStartedRecordEmitted;
     /**
      * The sequence number of the input record that triggered this task, counted per key by {@link
      * OperatorStateManager#initOrIncSequenceNumber}. Every task generated while processing one
@@ -82,8 +81,7 @@ public abstract class ActionTask implements Serializable {
                 action,
                 sequenceNumber,
                 UUID.randomUUID().toString(),
-                ExecutionTraceContext.forExecution(
-                        null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
+                TraceContext.forAction(null, action.getName(), event.getId().toString()));
     }
 
     protected ActionTask(
@@ -94,8 +92,7 @@ public abstract class ActionTask implements Serializable {
                 action,
                 sequenceNumber,
                 observationId,
-                ExecutionTraceContext.forExecution(
-                        null, null, null, ExecutionReporter.EntityTypes.ACTION, action.getName()));
+                TraceContext.forAction(null, action.getName(), event.getId().toString()));
     }
 
     protected ActionTask(
@@ -103,7 +100,7 @@ public abstract class ActionTask implements Serializable {
             Event event,
             Action action,
             long sequenceNumber,
-            ExecutionTraceContext traceContext) {
+            TraceContext traceContext) {
         this(key, event, action, sequenceNumber, UUID.randomUUID().toString(), traceContext);
     }
 
@@ -113,7 +110,7 @@ public abstract class ActionTask implements Serializable {
             Action action,
             long sequenceNumber,
             String observationId,
-            ExecutionTraceContext traceContext) {
+            TraceContext traceContext) {
         this.key = key;
         this.event = event;
         this.action = action;
@@ -171,7 +168,7 @@ public abstract class ActionTask implements Serializable {
         return observationId;
     }
 
-    public ExecutionTraceContext getTraceContext() {
+    public TraceContext getTraceContext() {
         return traceContext;
     }
 
@@ -179,22 +176,23 @@ public abstract class ActionTask implements Serializable {
         if (source == this) {
             return;
         }
-        this.executionStartedEventEmitted = source.executionStartedEventEmitted;
+        this.executionStartedRecordEmitted = source.executionStartedRecordEmitted;
     }
 
     /**
-     * Returns whether the started lifecycle event has already been emitted for this execution.
+     * Returns whether a TraceRecord with status {@code started} has been emitted for this
+     * execution.
      *
      * <p>This state is part of the pending continuation task so a resumed continuation does not
-     * emit duplicate started events for the same execution.
+     * emit duplicate started records for the same execution.
      */
-    boolean hasExecutionStartedEventEmitted() {
-        return executionStartedEventEmitted;
+    boolean hasExecutionStartedRecordEmitted() {
+        return executionStartedRecordEmitted;
     }
 
-    /** Marks the started lifecycle event as emitted for this execution. */
-    void markExecutionStartedEventEmitted() {
-        executionStartedEventEmitted = true;
+    /** Marks the TraceRecord with status {@code started} as emitted for this execution. */
+    void markExecutionStartedRecordEmitted() {
+        executionStartedRecordEmitted = true;
     }
 
     @Override
@@ -218,13 +216,8 @@ public abstract class ActionTask implements Serializable {
     public abstract ActionTaskResult invoke(
             ClassLoader userCodeClassLoader, PythonActionExecutor executor) throws Exception;
 
-    /**
-     * Validates and binds output Events to this task's Action and trigger Event.
-     *
-     * <p>All outputs are validated before mutation to avoid partial updates. Existing lineage is
-     * overwritten, including during replay.
-     */
-    List<Event> finalizeOutputEvents(List<Event> outputEvents) {
+    /** Validates that output Events have identities distinct from the triggering Event. */
+    List<Event> validateOutputEvents(List<Event> outputEvents) {
         for (Event outputEvent : outputEvents) {
             if (Objects.equals(outputEvent.getId(), event.getId())) {
                 throw new IllegalArgumentException(
@@ -234,10 +227,6 @@ public abstract class ActionTask implements Serializable {
                                 + event.getId()
                                 + "; output Event IDs must differ from the triggering Event ID.");
             }
-        }
-        for (Event outputEvent : outputEvents) {
-            outputEvent.setUpstreamEventId(event.getId());
-            outputEvent.setUpstreamActionName(action.getName());
         }
         return outputEvents;
     }
@@ -252,7 +241,7 @@ public abstract class ActionTask implements Serializable {
                 List<Event> outputEvents,
                 @Nullable ActionTask generatedActionTask) {
             this.finished = finished;
-            this.outputEvents = finalizeOutputEvents(outputEvents);
+            this.outputEvents = validateOutputEvents(outputEvents);
             this.generatedActionTaskOpt = Optional.ofNullable(generatedActionTask);
         }
 

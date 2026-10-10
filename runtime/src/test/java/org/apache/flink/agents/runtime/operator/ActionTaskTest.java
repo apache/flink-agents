@@ -31,7 +31,6 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -40,7 +39,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Tests for output finalization owned by {@link ActionTask}. */
+/** Tests for Action observation identity and output validation. */
 class ActionTaskTest {
 
     @Test
@@ -189,7 +188,7 @@ class ActionTaskTest {
     }
 
     @Test
-    void resultFinalizesOutputLineage() {
+    void resultAcceptsDistinctOutputEvent() {
         Event triggeringEvent = new InputEvent(1L);
         Action action = TestActions.noopAction();
         ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
@@ -199,30 +198,10 @@ class ActionTaskTest {
                 task.new ActionTaskResult(true, List.of(outputEvent), null);
 
         assertThat(result.getOutputEvents()).containsExactly(outputEvent);
-        assertThat(outputEvent.getUpstreamEventId()).isEqualTo(triggeringEvent.getId());
-        assertThat(outputEvent.getUpstreamActionName()).isEqualTo(action.getName());
     }
 
     @Test
-    void resultRebindsLineageOfOutputsRestoredFromActionState() {
-        // Recovered outputs reach finalization without sendEvent, still carrying the lineage
-        // bound before the failure; they keep identity and are bound to this task again.
-        Event triggeringEvent = new InputEvent(1L);
-        Action action = TestActions.noopAction();
-        ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
-        Event restoredOutput = new Event("result");
-        restoredOutput.setUpstreamEventId(UUID.randomUUID());
-        restoredOutput.setUpstreamActionName("previous_action");
-
-        List<Event> outputs = task.finalizeOutputEvents(List.of(restoredOutput));
-
-        assertThat(outputs).containsExactly(restoredOutput);
-        assertThat(restoredOutput.getUpstreamEventId()).isEqualTo(triggeringEvent.getId());
-        assertThat(restoredOutput.getUpstreamActionName()).isEqualTo(action.getName());
-    }
-
-    @Test
-    void resultRejectsSelfLoopBeforeMutatingAnyOutput() {
+    void resultRejectsSelfLoop() {
         Event triggeringEvent = new InputEvent(1L);
         Action action = TestActions.noopAction();
         ActionTask task = new JavaActionTask("key", triggeringEvent, action, 1L);
@@ -236,10 +215,5 @@ class ActionTaskTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining(action.getName())
                 .hasMessageContaining(triggeringEvent.getId().toString());
-
-        assertThat(validOutput.getUpstreamEventId()).isNull();
-        assertThat(validOutput.getUpstreamActionName()).isNull();
-        assertThat(triggeringEvent.getUpstreamEventId()).isNull();
-        assertThat(triggeringEvent.getUpstreamActionName()).isNull();
     }
 }

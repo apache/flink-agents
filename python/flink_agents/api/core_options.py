@@ -36,10 +36,10 @@ class ShortTermMemoryTtlVisibility(Enum):
 
 
 class LoggerType(Enum):
-    """Built-in event logger types.
+    """Built-in trace log output types.
 
     Mirrors the Java ``LoggerType`` enum so Python users can configure the
-    logger type via ``AgentConfigOptions.EVENT_LOGGER_TYPE`` without using
+    output via ``AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE`` without using
     raw strings.
     """
 
@@ -57,15 +57,27 @@ class ConditionEvaluationFailureStrategy(Enum):
     FAIL = "FAIL"
 
 
-class EventLogLevel(Enum):
-    """Log level for event logging.
+class TraceLogDetail(Enum):
+    """Recording detail for matched trace log records.
 
-    Mirrors the Java ``EventLogLevel`` enum.
+    OFF suppresses matching records. STANDARD and VERBOSE preserve identities,
+    relationships, timestamps, and statuses in full. Mirrors the Java
+    ``TraceLogDetail`` enum.
     """
 
     OFF = "OFF"
     STANDARD = "STANDARD"
     VERBOSE = "VERBOSE"
+
+
+class TraceLogScope(Enum):
+    """Preset scopes for trace log recording targets.
+
+    Mirrors the Java ``TraceLogScope`` enum.
+    """
+
+    EVENT_ONLY = "EVENT_ONLY"
+    ALL = "ALL"
 
 
 class AgentConfigOptions:
@@ -75,8 +87,8 @@ class AgentConfigOptions:
     Java ``AgentConfigOptions`` class.
     """
 
-    EVENT_LOGGER_TYPE = ConfigOption(
-        key="eventLoggerType",
+    TRACE_LOG_OUTPUT_TYPE = ConfigOption(
+        key="trace-log.output-type",
         config_type=LoggerType,
         default=LoggerType.SLF4J,
     )
@@ -87,14 +99,14 @@ class AgentConfigOptions:
         default=ConditionEvaluationFailureStrategy.WARN_AND_SKIP,
     )
 
-    BASE_LOG_DIR = ConfigOption(
-        key="baseLogDir",
+    TRACE_LOG_OUTPUT_BASE_DIR = ConfigOption(
+        key="trace-log.base-dir",
         config_type=str,
         default=None,
     )
 
-    PRETTY_PRINT = ConfigOption(
-        key="prettyPrint",
+    TRACE_LOG_OUTPUT_PRETTY_PRINT = ConfigOption(
+        key="trace-log.pretty-print",
         config_type=bool,
         default=False,
     )
@@ -201,32 +213,36 @@ class AgentConfigOptions:
         default=None,
     )
 
-    EVENT_LOG_LEVEL = ConfigOption(
-        key="event-log.level",
-        config_type=EventLogLevel,
-        default=EventLogLevel.STANDARD,
+    # Each target requires scope: EVENT_ONLY/ALL, or an object containing
+    # entityType and optional entityName. Names match exactly, except "com.foo.*",
+    # which also matches "com.foo" and its descendants. Detail is OFF (do not
+    # record), STANDARD (truncate attributes), or VERBOSE (full attributes).
+    # Omitted entity detail inherits a preset, never another entity target:
+    # Events prefer EVENT_ONLY over ALL; other entities use ALL, or EVENT_ONLY
+    # when it is the only preset. Without presets, detail defaults to STANDARD.
+    # ALL defaults to STANDARD; EVENT_ONLY inherits ALL or defaults to STANDARD.
+    # More specific scopes determine detail, independently of target order.
+    # An empty list selects none; more specific targets can override preset OFF.
+    TRACE_LOG_TARGETS = ConfigOption(
+        key="trace-log.targets",
+        config_type=list,
+        default=[{"scope": "EVENT_ONLY", "detail": "STANDARD"}],
     )
 
-    EVENT_LOG_TRACE_ENABLED = ConfigOption(
-        key="event-log.trace.enabled",
-        config_type=bool,
-        default=False,
-    )
-
-    EVENT_LOG_MAX_STRING_LENGTH = ConfigOption(
-        key="event-log.standard.max-string-length",
+    TRACE_LOG_MAX_STRING_LENGTH = ConfigOption(
+        key="trace-log.standard.max-string-length",
         config_type=int,
         default=2000,
     )
 
-    EVENT_LOG_MAX_ARRAY_ELEMENTS = ConfigOption(
-        key="event-log.standard.max-array-elements",
+    TRACE_LOG_MAX_ARRAY_ELEMENTS = ConfigOption(
+        key="trace-log.standard.max-array-elements",
         config_type=int,
         default=20,
     )
 
-    EVENT_LOG_MAX_DEPTH = ConfigOption(
-        key="event-log.standard.max-depth",
+    TRACE_LOG_MAX_DEPTH = ConfigOption(
+        key="trace-log.standard.max-depth",
         config_type=int,
         default=5,
     )

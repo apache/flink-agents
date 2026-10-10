@@ -125,9 +125,9 @@ Here is the list of all built-in core configuration options.
 
 | Key                       | Default                    | Type                  | Description                                                                                                                                                                                                                                                     |
 |---------------------------|----------------------------|-----------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `eventLoggerType`         | `SLF4J`                    | LoggerType            | Which built-in event logger to use. Valid values: `SLF4J` (writes JSON through a dedicated SLF4J logger so events show up in Flink's Web UI **Logs** tab) and `FILE` (writes per-subtask `.log` files under `baseLogDir`). Setting `baseLogDir` overrides this and forces `FILE`. |
-| `baseLogDir`              | (none)                     | String                | Base directory for file-based event logs. If not set, uses `java.io.tmpdir/flink-agents`. Setting this value also implicitly switches `eventLoggerType` to `file`.                                                                                              |
-| `prettyPrint`             | false                      | boolean               | Whether to enable pretty-printed JSON format for event logs. When set to `true`, each event is written as formatted multi-line JSON instead of JSONL (JSON Lines) format. {{< hint info >}}Note: enabling this option makes the log file no longer valid JSONL format.  {{< /hint >}} |
+| `trace-log.output-type` | `SLF4J` | LoggerType | Trace log output: `SLF4J` writes JSON through a dedicated SLF4J logger, visible in Flink's Web UI Logs tab; `FILE` writes per-subtask files. Setting `trace-log.base-dir` selects `FILE`. |
+| `trace-log.base-dir` | (none) | String | Directory for file output; setting it selects `FILE`. When file output is selected without a directory, uses `java.io.tmpdir/flink-agents`. |
+| `trace-log.pretty-print` | false | boolean | Format JSON over multiple lines. When false, each record occupies one line (JSONL). |
 | `event-listeners`         | none                       | `List<String>`        | The list of event listener class names. Each class must implement the EventListener interface and provide a public no-argument constructor. {{< hint warning >}} Note: Currently, custom event listeners are only supported in Java. {{< /hint >}} |
 | `action.trigger-condition.evaluate-failure-strategy` | `WARN_AND_SKIP` | ConditionEvaluationFailureStrategy | Handles event-time failures while preparing variables for or evaluating a compiled condition, including a dynamic non-Boolean result. <br/><ul><li>`WARN_AND_SKIP` (default): log a warning, treat that condition as false, and continue with later OR conditions.</li><li>`FAIL`: throw `IllegalStateException` and fail the Flink task; recovery follows the job's restart configuration.</li></ul> Plan-validation failures and runtime compilation or static type-check failures occur during initialization and are not handled by this option. |
 | `max-retries`             | 0                          | int                   | Number of additional attempts per model call, including routing judge calls. Defaults to 0 (no retries).                                                                                                                                                                                                     |
@@ -141,15 +141,82 @@ Here is the list of all built-in core configuration options.
 | `parallel-execution.enabled` | true                    | boolean               | Whether pure-**Java** agents run actions concurrently on the parallel execution engine when the continuation-based engine is unavailable (**JDK < 21**). Same-key input records still commit in input order, and checkpoint (exactly-once) semantics are unchanged. Set to `false` to fall back to the serial engine. Ignored when the JDK 21 coroutine engine is available, and for plans containing **Python** actions, which never use the parallel engine. {{< hint warning >}}**Experimental.** If you observe unexpected behavior on JDK < 21, set this option to `false` and report an issue.{{< /hint >}} |
 | `max-in-flight-input-records` | 100                   | int                   | Maximum number of input records that may be in flight concurrently. Only enforced by the **JDK < 21** parallel execution engine for pure-**Java** agents; the JDK 21 coroutine engine and plans containing **Python** actions ignore it. Every admitted record consumes one unit of budget; at the cap, admission of further records blocks until an in-flight record retires. |
 | `job-identifier`          | none                       | String                | The unique identifier of job, remaining consistent after restoring from a savepoint. If not set, uses flink job id.                                                                                                                                             |
-| `event-log.level`         | STANDARD                   | EventLogLevel         | Global default verbosity for the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}). Valid values: `OFF` (skip event), `STANDARD` (payload may be truncated/summarized to keep logs concise), `VERBOSE` (full payload). Can be overridden per event type — see [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}). |
-| `event-log.trace.enabled` | false                      | boolean               | Whether to persist Agent Trace information in the Event Log. When enabled, business Events include trace context and Action/LLM/Parser/Tool lifecycle Events are logged. |
-| `event-log.type.<EVENT_TYPE>.level` | (inherits) | EventLogLevel         | Override the log level for a specific event type. `<EVENT_TYPE>` is the event's routing type string (the same value that appears as `eventType` in the JSON log, e.g., `_chat_request_event` for built-ins, or `com.example.myapp.OrderEvent` for user-defined types). For dotted types, resolution walks up dot segments before falling back to `event-log.level`. See [Per-event-type log levels]({{< ref "docs/operations/monitoring#per-event-type-log-levels" >}}) for examples. |
-| `event-log.standard.max-string-length` | 2000              | int                   | At `STANDARD` level, strings in the event payload longer than this are truncated. Has no effect at `VERBOSE`.                                                                                                                                                  |
-| `event-log.standard.max-array-elements` | 20               | int                   | At `STANDARD` level, arrays in the event payload with more than this many elements are truncated. Has no effect at `VERBOSE`.                                                                                                                                  |
-| `event-log.standard.max-depth` | 5                     | int                   | At `STANDARD` level, objects nested deeper than this are summarized. Has no effect at `VERBOSE`.                                                                                                                                                               |
+| `trace-log.targets` | `[{scope: EVENT_ONLY, detail: STANDARD}]` | List of objects | Match records and control recording detail. Each target uses `scope` and optional `detail`; see [Trace log targets](#trace-log-targets). |
+| `trace-log.standard.max-string-length` | 2000 | int | Maximum attribute string length at `STANDARD` detail. No effect at `VERBOSE`. |
+| `trace-log.standard.max-array-elements` | 20 | int | Maximum attribute array length at `STANDARD` detail. No effect at `VERBOSE`. |
+| `trace-log.standard.max-depth` | 5 | int | Maximum attribute nesting depth at `STANDARD` detail. Deeper objects are summarized. No effect at `VERBOSE`. |
 | `short-term-memory.state-ttl.ms` | 0                    | long                  | Time-to-live for short-term memory state in milliseconds. Set to a value greater than 0 to enable TTL; 0 disables it.                                                                                                                                           |
 | `short-term-memory.state-ttl.update-type` | `ON_READ_AND_WRITE` | ShortTermMemoryTtlUpdate | Update policy for short-term memory TTL. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `ON_CREATE_AND_WRITE`, `ON_READ_AND_WRITE`. An enabled run-begin memory snapshot also refreshes TTL for entries it reads under `ON_READ_AND_WRITE`. |
 | `short-term-memory.state-ttl.visibility` | `NEVER_RETURN_EXPIRED` | ShortTermMemoryTtlVisibility | Visibility policy for expired short-term memory state. Only applies when `short-term-memory.state-ttl.ms` is greater than 0. Valid values: `NEVER_RETURN_EXPIRED`, `RETURN_EXPIRED_IF_NOT_CLEANED_UP`.                                                        |
+
+### Trace log targets
+
+Every target combines a `scope` with an optional `detail`. This configuration records all entities at `STANDARD` detail, with full attributes for the `search` Tool:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        detail: STANDARD
+      - scope:
+          entityType: tool
+          entityName: search
+        detail: VERBOSE
+    standard:
+      max-string-length: 2000
+      max-array-elements: 20
+      max-depth: 5
+    output-type: FILE
+    base-dir: /tmp/flink-agent-logs
+    pretty-print: false
+```
+
+`scope` accepts `EVENT_ONLY` (match Events), `ALL` (match all entities), or an object with required `entityType` and optional `entityName`. Built-in entity types include `event`, `action`, `llm`, `parser`, and `tool`. Entity names match exactly. A name ending in `.*` matches its namespace and descendants: `com.foo.*` matches `com.foo` and `com.foo.Event`, but not `com.foobar.Event`. Omitting `entityName` matches the whole type.
+
+`detail` accepts `OFF`, `STANDARD`, and `VERBOSE`. `OFF` writes no record. `STANDARD` truncates or summarizes attributes using the `standard` limits; `VERBOSE` retains full attributes. Both recording settings preserve all identity and relationship fields, entity metadata, timestamps, statuses, and problem categories. Media payload sanitization applies at both recording settings.
+
+An omitted `detail` inherits from a preset, including `OFF`, rather than from a broader entity target:
+
+| Target scope | Detail when omitted |
+|--------------|---------------------|
+| `ALL` | `STANDARD` |
+| `EVENT_ONLY` | The `ALL` detail, or `STANDARD` if `ALL` is absent |
+| An Event entity scope | The `EVENT_ONLY` detail, otherwise the `ALL` detail, otherwise `STANDARD` |
+| Any other entity scope | The `ALL` detail, otherwise the `EVENT_ONLY` detail, otherwise `STANDARD` |
+
+For example, with an `ALL` preset at `VERBOSE`, a Tool target without `detail` also uses `VERBOSE`. A more specific Tool target does not inherit from another Tool type or namespace target. Omitting detail does not opt into recording when the inherited detail is `OFF`; set `STANDARD` or `VERBOSE` explicitly to enable that target.
+
+Only matching entities whose effective detail is not `OFF` are recorded. If several targets match, detail comes from the most specific scope: exact name, longest namespace prefix, entity type, `EVENT_ONLY`, then `ALL`. Target order does not affect the result. Duplicate scopes with conflicting effective details after inheritance are rejected when logging starts. Selecting a Tool does not automatically select its parent Action; recorded relationships retain their IDs even when related records are omitted.
+
+Omitting `targets` selects `EVENT_ONLY` at `STANDARD`. An explicit empty list records nothing. `ALL` with `detail: OFF` closes the default recording range, while more specific targets can enable recording. For example, to record only Tools:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        detail: OFF
+      - scope:
+          entityType: tool
+        detail: VERBOSE
+```
+
+The `ALL` target can also be omitted in this example; an explicit list does not implicitly add `EVENT_ONLY`. To record everything except one Tool, use a local `OFF` target:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        detail: STANDARD
+      - scope:
+          entityType: tool
+          entityName: search
+        detail: OFF
+```
+
+The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` configuration keys are unsupported and rejected at startup. Migrate selection and verbosity to `targets`, truncation limits to `trace-log.standard.*`, and output settings to `trace-log.output-type`, `trace-log.base-dir`, and `trace-log.pretty-print`.
 
 ### Memory Event Options
 

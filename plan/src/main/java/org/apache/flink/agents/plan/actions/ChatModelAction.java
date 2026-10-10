@@ -413,8 +413,8 @@ public class ChatModelAction {
                         result.totalRetryWaitSec);
                 if (selection.isRouter()) {
                     if (!result.model.equals(selection.getSelectedModel())) {
-                        // The strategy's pick failed and another candidate answered; record the
-                        // outcome in the event log, not just on the response.
+                        // The strategy's pick failed and another candidate answered; emit a
+                        // routing Event to report the fallback outcome.
                         ctx.sendEvent(
                                 new ModelRoutingEvent(
                                         initialRequestId,
@@ -743,8 +743,9 @@ public class ChatModelAction {
     }
 
     /**
-     * Reports a nested execution failure, then always throws the original failure. The Exception
-     * return type exists so callers must {@code throw} the result and cannot fall through.
+     * Reports the failure of a call made within the current Action, then always throws the original
+     * failure. The Exception return type exists so callers must {@code throw} the result and cannot
+     * fall through.
      */
     static Exception reportFailedAndPropagate(
             RunnerContext ctx,

@@ -19,9 +19,7 @@
 
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.apache.flink.metrics.Meter;
@@ -104,13 +102,13 @@ public class BuiltInActionMetrics {
         }
     }
 
-    void executionEventObserved(Event event, ExecutionTraceContext traceContext) {
-        String executionId = traceContext.getExecutionId();
+    void executionRecordObserved(TraceRecord record) {
+        String executionId = record.getContext().getExecutionId();
         if (isBlank(executionId)) {
             return;
         }
 
-        if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(event.getType())) {
+        if (TraceRecord.Statuses.STARTED.equals(record.getStatus())) {
             if (activeExecutions.putIfAbsent(executionId, OptionalLong.of(nanoTime.getAsLong()))
                     == null) {
                 activeActionExecutions.increment();
@@ -118,9 +116,9 @@ public class BuiltInActionMetrics {
             return;
         }
 
-        if (!ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(event.getType())
-                && !ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(event.getType())
-                && !ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(event.getType())) {
+        if (!TraceRecord.Statuses.SUCCESS.equals(record.getStatus())
+                && !TraceRecord.Statuses.FAILED.equals(record.getStatus())
+                && !TraceRecord.Statuses.REUSED.equals(record.getStatus())) {
             return;
         }
 

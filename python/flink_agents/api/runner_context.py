@@ -155,12 +155,7 @@ class RunnerContext(ABC):
         Parameters
         ----------
         event : Event
-            The event to be sent; a new Event without upstream lineage.
-
-        Raises:
-            ValueError: If the event already carries ``upstream_event_id`` or
-                ``upstream_action_name``, which the runtime sets when the Action
-                emits it.
+            The event to be sent.
         """
 
     @abstractmethod

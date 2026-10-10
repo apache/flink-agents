@@ -22,6 +22,10 @@ import pytest
 import yaml
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.core_options import (
+    AgentConfigOptions,
+    LoggerType,
+)
 from flink_agents.plan.configuration import AgentConfiguration
 
 
@@ -238,3 +242,40 @@ def test_get_with_null_and_default() -> None:
     config.set_str("nullable.str", None)
 
     assert config.get(nullable_str) == "default"
+
+
+def test_trace_log_defaults_and_empty_targets_survive_json() -> None:
+    config = AgentConfiguration()
+    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == [
+        {"scope": "EVENT_ONLY", "detail": "STANDARD"}
+    ]
+    assert config.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.SLF4J
+
+    config.set(AgentConfigOptions.TRACE_LOG_TARGETS, [])
+    config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE)
+    restored = AgentConfiguration.model_validate_json(config.model_dump_json())
+    assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == []
+    assert restored.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.FILE
+
+
+def test_trace_log_targets_survive_yaml_and_json(tmp_path: Path) -> None:
+    targets = [
+        {"scope": "ALL", "detail": "OFF"},
+        {"scope": "EVENT_ONLY", "detail": "STANDARD"},
+        {
+            "scope": {"entityType": "event", "entityName": "com.foo.*"},
+            "detail": "VERBOSE",
+        },
+        {"scope": {"entityType": "action", "entityName": "process"}},
+        {"scope": {"entityType": "tool"}},
+    ]
+    config_file = tmp_path / "agent.yaml"
+    config_file.write_text(
+        yaml.safe_dump({"agent": {"trace-log": {"targets": targets}}}),
+        encoding="utf-8",
+    )
+    config = AgentConfiguration()
+    config.load_from_file(str(config_file))
+    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets
+    restored = AgentConfiguration.model_validate_json(config.model_dump_json())
+    assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets

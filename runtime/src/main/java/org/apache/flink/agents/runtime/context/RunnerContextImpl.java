@@ -22,7 +22,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
@@ -35,8 +34,10 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
@@ -58,13 +59,16 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
+import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -142,6 +146,81 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
     }
 
+    /**
+     * Call reporting context for one Action execution. The runtime retains it when the Action
+     * resumes through a continuation task and rebinds it when switching the shared runner context.
+     */
+    @Internal
+    public static final class ExecutionReportingContext {
+        private final TraceContext actionTraceContext;
+        private final Map<ReportedExecutionKey, TraceContext> activeCalls = new HashMap<>();
+        private final List<ComponentExecutionListener> listeners;
+
+        public ExecutionReportingContext(
+                TraceContext actionTraceContext, List<ComponentExecutionListener> listeners) {
+            this.actionTraceContext = actionTraceContext;
+            this.listeners = List.copyOf(listeners);
+        }
+
+        private TraceRecord createRecord(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                String timestamp,
+                String status,
+                @Nullable String problemCategory,
+                Map<String, Object> attributes) {
+            return new TraceRecord(
+                    contextForReport(entityType, entityName, entityMetadata, status),
+                    timestamp,
+                    status,
+                    problemCategory,
+                    attributes);
+        }
+
+        private TraceContext contextForReport(
+                String entityType,
+                String entityName,
+                Map<String, Object> entityMetadata,
+                String status) {
+            ReportedExecutionKey key =
+                    new ReportedExecutionKey(entityType, entityName, entityMetadata);
+            TraceContext reportTraceContext;
+            if (TraceRecord.Statuses.CREATED.equals(status)) {
+                reportTraceContext =
+                        actionTraceContext.childExecution(
+                                entityType, entityName, key.getEntityMetadata());
+                TraceContext previous = activeCalls.put(key, reportTraceContext);
+                if (previous != null) {
+                    LOG.debug(
+                            "Execution creation report for {}:{} replaced an active report with the same metadata.",
+                            entityType,
+                            entityName);
+                }
+            } else if (TraceRecord.Statuses.STARTED.equals(status)) {
+                reportTraceContext = activeCalls.get(key);
+                if (reportTraceContext == null) {
+                    reportTraceContext =
+                            actionTraceContext.childExecution(
+                                    entityType, entityName, key.getEntityMetadata());
+                    activeCalls.put(key, reportTraceContext);
+                }
+            } else {
+                reportTraceContext = activeCalls.remove(key);
+                if (reportTraceContext == null) {
+                    LOG.debug(
+                            "Execution terminal report for {}:{} has no matching creation or start report; emitting it with a new execution id.",
+                            entityType,
+                            entityName);
+                    reportTraceContext =
+                            actionTraceContext.childExecution(
+                                    entityType, entityName, key.getEntityMetadata());
+                }
+            }
+            return reportTraceContext;
+        }
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
 
     protected List<Event> pendingEvents = new ArrayList<>();
@@ -190,8 +269,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     /** Whether the fixed job-level configuration enables any LTM observation. */
     private final boolean ltmObservationConfigured;
 
-    /** Component execution listeners of the current action execution, fanned out best-effort. */
-    @Nullable protected List<ComponentExecutionListener> componentExecutionListeners;
+    /** Call reporting context of the current Action execution. */
+    @Nullable private ExecutionReportingContext executionReportingContext;
 
     /** Context for fine-grained durable execution, may be null if not enabled. */
     @Nullable protected DurableExecutionContext durableExecutionContext;
@@ -305,7 +384,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             String contextKey,
             @Nullable String observationId,
             boolean observationSuppressed,
-            @Nullable List<ComponentExecutionListener> componentExecutionListeners) {
+            @Nullable ExecutionReportingContext executionReportingContext) {
         this.actionName = actionName;
         this.memoryContext = memoryContext;
         this.pendingEvents = pendingEvents;
@@ -313,7 +392,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         this.observationId = observationId;
         this.observationSuppressed = observationSuppressed;
         this.ltmObservationEnabled = !observationSuppressed && ltmObservationConfigured;
-        this.componentExecutionListeners = componentExecutionListeners;
+        this.executionReportingContext = executionReportingContext;
         if (ltm != null) {
             ltm.switchContext(contextKey, observationId, observationSuppressed);
         }
@@ -336,7 +415,6 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Override
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
-        checkNoPresetLineage(event);
         if (subagentScope != null) {
             sendEventInSubagentScope(event);
             return;
@@ -385,34 +463,6 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                     e);
         }
         pendingEvents.add(event);
-    }
-
-    /**
-     * Rejects an emitted Event that already carries lineage. The framework binds lineage to the
-     * emitting Action when it finalizes the Action's outputs; outputs restored from action state
-     * reach that step without passing through here.
-     */
-    private static void checkNoPresetLineage(Event event) {
-        List<String> preset = new ArrayList<>();
-        if (event.getUpstreamEventId() != null) {
-            preset.add("upstreamEventId=" + event.getUpstreamEventId());
-        }
-        if (event.getUpstreamActionName() != null) {
-            preset.add("upstreamActionName=" + event.getUpstreamActionName());
-        }
-        if (preset.isEmpty()) {
-            return;
-        }
-        throw new IllegalArgumentException(
-                "Event '"
-                        + event.getType()
-                        + "' ("
-                        + event.getId()
-                        + ") already carries "
-                        + String.join(" and ", preset)
-                        + ". The runtime sets lineage when an Action emits an Event: emit a new"
-                        + " Event rather than one received from another Action, and keep user"
-                        + " metadata in attributes.");
     }
 
     public List<Event> drainEventsAtActionYield(Long timestamp) {
@@ -534,8 +584,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Nullable
-    public List<ComponentExecutionListener> getComponentExecutionListeners() {
-        return this.componentExecutionListeners;
+    public ExecutionReportingContext getExecutionReportingContext() {
+        return this.executionReportingContext;
     }
 
     public List<MemoryUpdate> getSensoryMemoryUpdates() {
@@ -563,18 +613,17 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 entityType,
                 entityName,
                 entityMetadata,
-                ExecutionLifecycleEvents.executionCreated());
+                Instant.now().toString(),
+                TraceRecord.Statuses.CREATED,
+                null,
+                Map.of());
     }
 
     @Override
     public void reportExecutionStarted(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
-        reportChildExecution(
-                entityType,
-                entityName,
-                entityMetadata,
-                ExecutionLifecycleEvents.executionStarted());
+        reportExecutionStartedAt(entityType, entityName, entityMetadata, Instant.now().toString());
     }
 
     @Override
@@ -584,24 +633,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
-        Event event = ExecutionLifecycleEvents.executionStarted();
         reportChildExecution(
                 entityType,
                 entityName,
                 entityMetadata,
-                new EventContext(event.getType(), timestamp),
-                event);
+                timestamp,
+                TraceRecord.Statuses.STARTED,
+                null,
+                Map.of());
     }
 
     @Override
     public void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {
-        reportChildExecution(
-                entityType,
-                entityName,
-                entityMetadata,
-                ExecutionLifecycleEvents.executionFinished());
+        reportExecutionSucceededAt(
+                entityType, entityName, entityMetadata, Instant.now().toString());
     }
 
     @Override
@@ -611,13 +658,14 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
-        Event event = ExecutionLifecycleEvents.executionFinished();
         reportChildExecution(
                 entityType,
                 entityName,
                 entityMetadata,
-                new EventContext(event.getType(), timestamp),
-                event);
+                timestamp,
+                TraceRecord.Statuses.SUCCESS,
+                null,
+                Map.of());
     }
 
     @Override
@@ -628,11 +676,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             Throwable error,
             @Nullable String problemCategory)
             throws Exception {
-        reportChildExecution(
+        reportExecutionFailedAt(
                 entityType,
                 entityName,
                 entityMetadata,
-                ExecutionLifecycleEvents.executionFailed(error, problemCategory));
+                error,
+                problemCategory,
+                Instant.now().toString());
     }
 
     @Override
@@ -644,45 +694,61 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             @Nullable String problemCategory,
             String timestamp)
             throws Exception {
-        Event event = ExecutionLifecycleEvents.executionFailed(error, problemCategory);
         reportChildExecution(
                 entityType,
                 entityName,
                 entityMetadata,
-                new EventContext(event.getType(), timestamp),
-                event);
+                timestamp,
+                TraceRecord.Statuses.FAILED,
+                problemCategory,
+                TraceRecords.errorAttributes(error));
     }
 
     /**
-     * Fans the report out to the current action execution's component listeners best-effort: a
-     * listener that throws is logged and skipped, so reporting never fails the caller.
+     * Reports a call under the current Action's context. Record construction and listener delivery
+     * are best-effort and do not fail the caller.
      */
-    protected void reportChildExecution(
-            String entityType, String entityName, Map<String, Object> entityMetadata, Event event) {
-        reportChildExecution(
-                entityType, entityName, entityMetadata, new EventContext(event), event);
-    }
-
     protected void reportChildExecution(
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
-            EventContext eventContext,
-            Event event) {
+            String timestamp,
+            String status,
+            @Nullable String problemCategory,
+            Map<String, Object> attributes) {
         mailboxThreadChecker.run();
-        if (componentExecutionListeners == null) {
+        ExecutionReportingContext reportingContext = executionReportingContext;
+        if (reportingContext == null) {
             return;
         }
-        for (ComponentExecutionListener listener : componentExecutionListeners) {
+        TraceRecord record;
+        try {
+            record =
+                    reportingContext.createRecord(
+                            entityType,
+                            entityName,
+                            entityMetadata,
+                            timestamp,
+                            status,
+                            problemCategory,
+                            attributes);
+        } catch (Exception | LinkageError error) {
+            LOG.warn(
+                    "TraceRecord construction failed for call {}:{} ({}); report was ignored.",
+                    entityType,
+                    entityName,
+                    error.getClass().getSimpleName());
+            return;
+        }
+        for (ComponentExecutionListener listener : reportingContext.listeners) {
             try {
-                listener.onComponentExecution(
-                        entityType, entityName, entityMetadata, eventContext, event);
-            } catch (Exception | LinkageError e) {
+                listener.onExecutionReported(record);
+            } catch (Exception | LinkageError error) {
                 LOG.warn(
                         "Component execution listener {} failed on a report for action '{}' ({})",
                         listener.getClass().getSimpleName(),
-                        actionName,
-                        e.getClass().getSimpleName());
+                        reportingContext.actionTraceContext.getEntityName(),
+                        error.getClass().getSimpleName());
             }
         }
     }

@@ -43,33 +43,34 @@ def _normalize_arguments(arguments: object) -> dict:
 
 
 def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
-    """Read ``events-*.log`` under ``log_dir`` and return tool invocations in order.
+    """Read ``traces-*.log`` under ``log_dir`` and return tool invocations in order.
 
-    Globs the per-subtask event-log files the ``FileEventLogger`` writes, parses
-    each JSONL record, and extracts every ``_tool_request_event`` tool call. The
-    tool-call dict is nested under ``function`` in the wire format.
+    Globs the per-subtask trace-log files the ``FileTraceLogger`` writes, parses
+    each TraceRecord JSONL object, and extracts every ``_tool_request_event``
+    tool call from its attributes. The tool-call dict is nested under ``function``
+    in the wire format.
 
     Args:
-        log_dir: Directory containing the ``events-*.log`` files (the configured
-            ``baseLogDir``).
+        log_dir: Directory containing the ``traces-*.log`` files (the configured
+            ``trace-log.base-dir``).
 
     Returns:
         Ordered list of ``{"name": str, "arguments": dict | str}``. Empty when the
         model invoked no tool (a legitimate, assertable outcome).
     """
     invocations = []
-    for log_file in sorted(Path(log_dir).glob("events-*.log")):
+    for log_file in sorted(Path(log_dir).glob("traces-*.log")):
         with log_file.open() as handle:
             for line in handle:
                 if not line.strip():
                     continue
                 record = json.loads(line)
-                event_type = record.get("eventType")
-                if event_type != "_tool_request_event":
+                if (
+                    record.get("entityType") != "event"
+                    or record.get("entityName") != "_tool_request_event"
+                ):
                     continue
-                attributes = record.get("eventAttributes")
-                if attributes is None:
-                    attributes = record["event"].get("attributes", {})
+                attributes = record["attributes"]
                 tool_calls = attributes.get("tool_calls", [])
                 for tool_call in tool_calls:
                     function = tool_call["function"]

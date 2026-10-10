@@ -53,8 +53,8 @@ public abstract class ContentBlock {
 
     /**
      * The log-safe projection of this block, as a plain map in the wire's snake_case shape. Each
-     * block type defines its own logging policy: text passes through unchanged (the Event Log's
-     * level-dependent truncation still applies downstream), while media blocks whitelist their
+     * block type defines its own logging policy: text passes through unchanged (the Trace Log's
+     * detail-dependent truncation still applies downstream), while media blocks whitelist their
      * metadata, omit inline payload bytes, and sanitize URLs. Normal Jackson serialization — the
      * Java/Python bridge, event serialization, state recovery — is unaffected and preserves the
      * complete payload.

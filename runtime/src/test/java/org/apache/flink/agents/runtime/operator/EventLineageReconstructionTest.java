@@ -21,19 +21,21 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.MemoryEventOptions;
-import org.apache.flink.agents.api.logger.EventLogLevel;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
-import org.apache.flink.agents.runtime.eventlog.EventLogRecord;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -44,17 +46,23 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/** Verifies that the event log alone contains the minimal causal chain between Events. */
+/** Verifies that Event-only Trace records retain the causal chain despite payload truncation. */
 class EventLineageReconstructionTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    @Test
-    void recordsMinimalEventLineageInTheEventLog(@TempDir Path logDir) throws Exception {
-        AgentPlan agentPlan =
-                ActionExecutionOperatorTest.TestAgent.getAgentPlanWithConfig(
-                        fileLoggerConfig(logDir));
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void recordsMinimalEventLineageWithoutExecutionRecords(
+            boolean parallelExecution, @TempDir Path logDir) throws Exception {
+        if (parallelExecution) {
+            assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        }
+        AgentConfiguration config = fileLoggerConfig(logDir);
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, parallelExecution);
+        AgentPlan agentPlan = ActionExecutionOperatorTest.TestAgent.getAgentPlanWithConfig(config);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -68,18 +76,39 @@ class EventLineageReconstructionTest {
         }
 
         Map<String, JsonNode> recordsByType = readRecordsByType(logDir);
-        EventLogRecord inputRecord =
-                MAPPER.treeToValue(recordsByType.get(InputEvent.EVENT_TYPE), EventLogRecord.class);
-        EventLogRecord outputRecord =
-                MAPPER.treeToValue(recordsByType.get(OutputEvent.EVENT_TYPE), EventLogRecord.class);
-        JsonNode input = recordsByType.get(InputEvent.EVENT_TYPE);
+        TraceRecord inputRecord =
+                MAPPER.treeToValue(recordsByType.get(InputEvent.EVENT_TYPE), TraceRecord.class);
+        TraceRecord middleRecord =
+                MAPPER.treeToValue(
+                        recordsByType.get(
+                                ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE),
+                        TraceRecord.class);
+        TraceRecord outputRecord =
+                MAPPER.treeToValue(recordsByType.get(OutputEvent.EVENT_TYPE), TraceRecord.class);
+        JsonNode input = recordsByType.get(InputEvent.EVENT_TYPE).get("entityMetadata");
         JsonNode middle =
-                recordsByType.get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE);
-        JsonNode output = recordsByType.get(OutputEvent.EVENT_TYPE);
+                recordsByType
+                        .get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE)
+                        .get("entityMetadata");
+        JsonNode output = recordsByType.get(OutputEvent.EVENT_TYPE).get("entityMetadata");
 
         assertThat(recordsByType).hasSize(3);
-        assertThat(inputRecord.getEvent().getType()).isEqualTo(InputEvent.EVENT_TYPE);
-        assertThat(outputRecord.getEvent().getType()).isEqualTo(OutputEvent.EVENT_TYPE);
+        assertThat(inputRecord.getContext().getEntityName()).isEqualTo(InputEvent.EVENT_TYPE);
+        assertThat(outputRecord.getContext().getEntityName()).isEqualTo(OutputEvent.EVENT_TYPE);
+        assertThat(inputRecord.getContext().getEntityType()).isEqualTo("event");
+        assertThat(outputRecord.getContext().getEntityType()).isEqualTo("event");
+        assertThat(inputRecord.getContext().getExecutionId()).isNull();
+        assertThat(outputRecord.getContext().getExecutionId()).isNull();
+        assertThat(inputRecord.getContext().getInputRunId()).isNotBlank();
+        assertThat(middleRecord.getContext().getInputRunId())
+                .isEqualTo(inputRecord.getContext().getInputRunId());
+        assertThat(outputRecord.getContext().getInputRunId())
+                .isEqualTo(inputRecord.getContext().getInputRunId());
+        assertThat(middle.get("producerExecutionId").asText()).isNotBlank();
+        assertThat(output.get("producerExecutionId").asText()).isNotBlank();
+        assertThat(output.get("producerExecutionId").asText())
+                .isNotEqualTo(middle.get("producerExecutionId").asText());
+        assertThat(input.has("producerExecutionId")).isFalse();
         assertThat(input.has("upstreamEventId")).isFalse();
         assertThat(input.has("upstreamActionName")).isFalse();
 
@@ -94,16 +123,25 @@ class EventLineageReconstructionTest {
                 .isEqualTo(middle.get("eventId").asText());
         assertThat(output.get("upstreamActionName").asText()).isEqualTo("action2");
 
-        assertThat(middle.get("eventAttributes").has("upstreamEventId")).isFalse();
-        assertThat(middle.get("eventAttributes").has("upstreamActionName")).isFalse();
+        assertThat(
+                        recordsByType
+                                .get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE)
+                                .get("attributes")
+                                .has("upstreamEventId"))
+                .isFalse();
+        assertThat(
+                        recordsByType
+                                .get(ActionExecutionOperatorTest.TestAgent.MiddleEvent.EVENT_TYPE)
+                                .get("attributes")
+                                .has("upstreamActionName"))
+                .isFalse();
     }
 
     private static AgentConfiguration fileLoggerConfig(Path logDir) {
         AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.EVENT_LOGGER_TYPE, LoggerType.FILE);
-        config.set(AgentConfigOptions.BASE_LOG_DIR, logDir.toString());
-        config.set(AgentConfigOptions.EVENT_LOG_LEVEL, EventLogLevel.STANDARD);
-        config.set(AgentConfigOptions.EVENT_LOG_MAX_STRING_LENGTH, 3);
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE);
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR, logDir.toString());
+        config.set(AgentConfigOptions.TRACE_LOG_MAX_STRING_LENGTH, 3);
         config.set(MemoryEventOptions.MEMORY_GENERATE_EVENT, false);
         return config;
     }
@@ -121,7 +159,8 @@ class EventLineageReconstructionTest {
         Map<String, JsonNode> recordsByType = new LinkedHashMap<>();
         for (String line : lines) {
             JsonNode record = MAPPER.readTree(line);
-            recordsByType.put(record.get("eventType").asText(), record);
+            assertThat(record.get("entityType").asText()).isEqualTo("event");
+            assertThat(recordsByType.put(record.get("entityName").asText(), record)).isNull();
         }
         return recordsByType;
     }

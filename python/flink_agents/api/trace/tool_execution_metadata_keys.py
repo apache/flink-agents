@@ -19,7 +19,7 @@
 
 
 class ToolExecutionMetadataKeys:
-    """Shared field names for Tool execution entity metadata."""
+    """Shared field names for metadata reported with a Tool or Subagent call."""
 
     TOOL_REQUEST_EVENT_ID = "toolRequestEventId"
     TOOL_CALL_ID = "toolCallId"

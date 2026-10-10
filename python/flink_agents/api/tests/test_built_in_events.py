@@ -236,20 +236,15 @@ def test_restore_is_idempotent_for_already_typed_events() -> None:
     assert again.id == typed.id
 
 
-def test_restore_preserves_lineage_and_attachments() -> None:
-    """Reconstruction keeps id, lineage metadata, and attachments."""
-    upstream = uuid4()
+def test_restore_preserves_identity_and_attachments() -> None:
+    """Reconstruction keeps the Event identity and attachments."""
     base = Event(type=InputEvent.EVENT_TYPE, attributes={"input": "hello"})
-    base.upstream_event_id = upstream
-    base.upstream_action_name = "input_action"
     base.set_attachment("payload", "attachment-value")
 
     restored = restore(base)
 
     assert type(restored) is InputEvent
     assert restored.id == base.id
-    assert restored.upstream_event_id == upstream
-    assert restored.upstream_action_name == "input_action"
     assert restored.get_attachment("payload") == "attachment-value"
     assert restored.input == "hello"
 

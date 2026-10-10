@@ -17,16 +17,14 @@
  */
 package org.apache.flink.agents.runtime.context;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.junit.jupiter.api.Test;
-
-import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -39,12 +37,14 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 /** Tests for execution reports fanned out from {@link RunnerContextImpl} to its listeners. */
 class RunnerContextImplExecutionReporterTest {
 
+    private static final String TIMESTAMP = "2026-01-01T00:00:00.001Z";
+
     @Test
-    void reportsFanOutToComponentExecutionListeners() throws Exception {
-        RecordingComponentListener listener = new RecordingComponentListener();
+    void reportsReachListenersWithCompleteContext() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
-        switchToChatModelAction(runnerContext, List.of(listener));
+        TraceContext actionContext = switchToChatModelAction(runnerContext, List.of(records::add));
 
         runnerContext.reportExecutionCreated(
                 ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
@@ -59,59 +59,234 @@ class RunnerContextImplExecutionReporterTest {
                 Map.of("temperature", 0.7),
                 "2026-01-01T00:00:00.025Z");
 
-        assertThat(listener.created).hasSize(1);
-        assertThat(listener.created.get(0).identity)
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
                 .containsExactly(
-                        ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
-        assertThat(listener.started).hasSize(1);
-        assertThat(listener.started.get(0).identity)
-                .containsExactly(
-                        ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
-        assertThat(listener.started.get(0).eventContext.getTimestamp())
-                .isEqualTo("2026-01-01T00:00:00.001Z");
-        assertThat(listener.succeeded).hasSize(1);
-        assertThat(listener.succeeded.get(0).identity)
-                .containsExactly(
-                        ExecutionReporter.EntityTypes.LLM, "model-a", Map.of("temperature", 0.7));
-        assertThat(listener.succeeded.get(0).eventContext.getTimestamp())
-                .isEqualTo("2026-01-01T00:00:00.025Z");
+                        TraceRecord.Statuses.CREATED,
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.SUCCESS);
+        assertThat(records)
+                .allSatisfy(
+                        record -> {
+                            TraceContext context = record.getContext();
+                            assertThat(context.getEntityType())
+                                    .isEqualTo(ExecutionReporter.EntityTypes.LLM);
+                            assertThat(context.getEntityName()).isEqualTo("model-a");
+                            assertThat(context.getEntityMetadata())
+                                    .containsExactlyEntriesOf(Map.of("temperature", 0.7));
+                            assertThat(context.getExecutionId())
+                                    .isEqualTo(records.get(0).getContext().getExecutionId())
+                                    .isNotBlank();
+                            assertThat(context.getParentExecutionId())
+                                    .isEqualTo(actionContext.getExecutionId());
+                            assertThat(context.getInputRunId())
+                                    .isEqualTo(actionContext.getInputRunId());
+                            assertThat(context.getBusinessKey()).isEqualTo("business-key");
+                            assertThat(context.getAgentName()).isEqualTo("test-agent");
+                            assertThat(record.getProblemCategory()).isNull();
+                            assertThat(record.getAttributes()).isEmpty();
+                        });
+        assertThat(records.get(1).getTimestamp()).isEqualTo("2026-01-01T00:00:00.001Z");
+        assertThat(records.get(2).getTimestamp()).isEqualTo("2026-01-01T00:00:00.025Z");
     }
 
     @Test
     void failedReportResolvesRootCauseTypeAndMessage() throws Exception {
-        RecordingComponentListener listener = new RecordingComponentListener();
+        List<TraceRecord> records = new ArrayList<>();
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
-        switchToChatModelAction(runnerContext, List.of(listener));
+        TraceContext actionContext = switchToChatModelAction(runnerContext, List.of(records::add));
 
-        runnerContext.reportExecutionFailed(
+        runnerContext.reportExecutionFailedAt(
                 ExecutionReporter.EntityTypes.TOOL,
                 "search",
                 Map.of("toolCallId", "call-1"),
                 new RuntimeException(new IllegalStateException("backend down")),
-                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                "2026-01-01T00:00:00.125Z");
 
-        assertThat(listener.failed).hasSize(1);
-        RecordedFailure failure = listener.failed.get(0);
-        assertThat(failure.entityType).isEqualTo(ExecutionReporter.EntityTypes.TOOL);
-        assertThat(failure.entityName).isEqualTo("search");
-        assertThat(failure.entityMetadata).containsEntry("toolCallId", "call-1");
-        assertThat(failure.errorType).isEqualTo(IllegalStateException.class.getName());
-        assertThat(failure.errorMessage).isEqualTo("backend down");
-        assertThat(failure.problemCategory)
+        assertThat(records).hasSize(1);
+        TraceRecord failure = records.get(0);
+        assertThat(failure.getContext().getEntityType())
+                .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
+        assertThat(failure.getContext().getEntityName()).isEqualTo("search");
+        assertThat(failure.getContext().getEntityMetadata()).containsEntry("toolCallId", "call-1");
+        assertThat(failure.getContext().getExecutionId()).isNotBlank();
+        assertThat(failure.getContext().getParentExecutionId())
+                .isEqualTo(actionContext.getExecutionId());
+        assertThat(failure.getTimestamp()).isEqualTo("2026-01-01T00:00:00.125Z");
+        assertThat(failure.getStatus()).isEqualTo(TraceRecord.Statuses.FAILED);
+        assertThat(failure.getAttributes())
+                .containsEntry("errorType", IllegalStateException.class.getName())
+                .containsEntry("errorMessage", "backend down");
+        assertThat(failure.getProblemCategory())
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
     }
 
     @Test
-    void throwingListenerNeverFailsTheReportingCall() throws Exception {
-        RecordingComponentListener receiver = new RecordingComponentListener();
+    void failureBeforeStartKeepsTheIdentityAssignedAtCreation() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+        switchToChatModelAction(runnerContext, List.of(records::add));
+        Map<String, Object> metadata = Map.of("toolCallId", "call-1");
+
+        runnerContext.reportExecutionCreated(
+                ExecutionReporter.EntityTypes.TOOL, "search", metadata);
+        runnerContext.reportExecutionFailedAt(
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                metadata,
+                new IllegalStateException("failed before invocation"),
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                TIMESTAMP);
+
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(TraceRecord.Statuses.CREATED, TraceRecord.Statuses.FAILED);
+        TraceRecord failure = records.get(1);
+        assertThat(failure.getContext().getExecutionId())
+                .isEqualTo(records.get(0).getContext().getExecutionId());
+        assertThat(failure.getContext().getEntityMetadata()).containsExactlyEntriesOf(metadata);
+        assertThat(failure.getAttributes())
+                .containsEntry("errorType", IllegalStateException.class.getName())
+                .containsEntry("errorMessage", "failed before invocation");
+        assertThat(failure.getProblemCategory())
+                .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
+        assertThat(failure.getTimestamp()).isEqualTo(TIMESTAMP);
+    }
+
+    @Test
+    void repeatedStartsReuseTheActiveCallAndANewCallGetsANewIdentity() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+        TraceContext actionContext = switchToChatModelAction(runnerContext, List.of(records::add));
+
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), TIMESTAMP);
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), TIMESTAMP);
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), TIMESTAMP);
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.LLM, "model-a", Map.of(), TIMESTAMP);
+
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.SUCCESS,
+                        TraceRecord.Statuses.STARTED);
+        String firstExecutionId = records.get(0).getContext().getExecutionId();
+        assertThat(firstExecutionId).isNotBlank();
+        assertThat(records.subList(0, 3))
+                .extracting(record -> record.getContext().getExecutionId())
+                .containsOnly(firstExecutionId);
+        assertThat(records.get(3).getContext().getExecutionId())
+                .isNotBlank()
+                .isNotEqualTo(firstExecutionId);
+        assertThat(records)
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getParentExecutionId())
+                                    .isEqualTo(actionContext.getExecutionId());
+                            assertThat(record.getTimestamp()).isEqualTo(TIMESTAMP);
+                        });
+    }
+
+    @Test
+    void interleavedCallsWithDifferentMetadataKeepSeparateIdentities() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+        switchToChatModelAction(runnerContext, List.of(records::add));
+
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "a"), TIMESTAMP);
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "b"), TIMESTAMP);
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "a"), TIMESTAMP);
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of("toolCallId", "b"), TIMESTAMP);
+
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.SUCCESS,
+                        TraceRecord.Statuses.SUCCESS);
+        String executionA = records.get(0).getContext().getExecutionId();
+        String executionB = records.get(1).getContext().getExecutionId();
+        assertThat(executionA).isNotBlank().isNotEqualTo(executionB);
+        assertThat(executionB).isNotBlank();
+        assertThat(List.of(records.get(0), records.get(2)))
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getExecutionId()).isEqualTo(executionA);
+                            assertThat(record.getContext().getEntityMetadata())
+                                    .containsEntry("toolCallId", "a");
+                        });
+        assertThat(List.of(records.get(1), records.get(3)))
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getExecutionId()).isEqualTo(executionB);
+                            assertThat(record.getContext().getEntityMetadata())
+                                    .containsEntry("toolCallId", "b");
+                        });
+    }
+
+    @Test
+    void invalidObservationDoesNotFailReportingOrPreventLaterReports() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
+        RunnerContextImpl runnerContext =
+                new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+        switchToChatModelAction(runnerContext, List.of(records::add));
+
+        assertThatCode(
+                        () -> {
+                            runnerContext.reportExecutionStartedAt(
+                                    TraceContext.EVENT_ENTITY_TYPE,
+                                    "invalid-call",
+                                    Map.of(),
+                                    TIMESTAMP);
+                            runnerContext.reportExecutionStartedAt(
+                                    ExecutionReporter.EntityTypes.TOOL,
+                                    "invalid-time",
+                                    Map.of(),
+                                    "");
+                        })
+                .doesNotThrowAnyException();
+        assertThat(records).isEmpty();
+
+        runnerContext.reportExecutionStartedAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of(), TIMESTAMP);
+        runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of(), TIMESTAMP);
+
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(TraceRecord.Statuses.STARTED, TraceRecord.Statuses.SUCCESS);
+        assertThat(records.get(1).getContext().getExecutionId())
+                .isEqualTo(records.get(0).getContext().getExecutionId());
+    }
+
+    @Test
+    void everyListenerReceivesTheSameRecordEvenWhenAnotherListenerThrows() throws Exception {
+        List<TraceRecord> first = new ArrayList<>();
+        List<TraceRecord> throwing = new ArrayList<>();
+        List<TraceRecord> last = new ArrayList<>();
         ComponentExecutionListener thrower =
-                (entityType, entityName, entityMetadata, eventContext, event) -> {
+                record -> {
+                    throwing.add(record);
                     throw new IllegalStateException("listener boom");
                 };
         RunnerContextImpl runnerContext =
                 new RunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
-        switchToChatModelAction(runnerContext, List.of(thrower, receiver));
+        switchToChatModelAction(runnerContext, List.of(first::add, thrower, last::add));
 
         assertThatCode(
                         () -> {
@@ -128,10 +303,18 @@ class RunnerContextImplExecutionReporterTest {
                         })
                 .doesNotThrowAnyException();
 
-        // The throwing listener is skipped; the remaining listener still receives every report.
-        assertThat(receiver.started).hasSize(1);
-        assertThat(receiver.succeeded).hasSize(1);
-        assertThat(receiver.failed).hasSize(1);
+        assertThat(first)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.SUCCESS,
+                        TraceRecord.Statuses.FAILED);
+        assertThat(throwing).hasSize(first.size());
+        assertThat(last).hasSize(first.size());
+        for (int i = 0; i < first.size(); i++) {
+            assertThat(throwing.get(i)).isSameAs(first.get(i));
+            assertThat(last.get(i)).isSameAs(first.get(i));
+        }
     }
 
     @Test
@@ -153,17 +336,10 @@ class RunnerContextImplExecutionReporterTest {
 
     @Test
     void pythonReporterBridgePreservesMetadataAndPythonErrorFields() throws Exception {
-        RecordingComponentListener listener = new RecordingComponentListener();
+        List<TraceRecord> records = new ArrayList<>();
         PythonRunnerContextImpl runnerContext =
                 new PythonRunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
-        runnerContext.switchActionContext(
-                "tool_call_action",
-                null,
-                new ArrayList<>(),
-                "business-key",
-                "obs-1",
-                false,
-                List.of(listener));
+        switchToChatModelAction(runnerContext, List.of(records::add));
 
         String metadata = "{\"toolCallId\":\"call-1\",\"toolType\":\"function\"}";
         runnerContext.reportExecutionCreatedJson(
@@ -179,31 +355,84 @@ class RunnerContextImplExecutionReporterTest {
                 ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
                 "2026-01-01T00:00:01.125Z");
 
-        assertThat(listener.created).hasSize(1);
-        assertThat(listener.created.get(0).identity.get(2))
-                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                .containsEntry("toolCallId", "call-1")
-                .containsEntry("toolType", "function");
-        assertThat(listener.started).hasSize(1);
-        assertThat(listener.started.get(0).identity.get(2))
-                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.MAP)
-                .containsEntry("toolCallId", "call-1")
-                .containsEntry("toolType", "function");
-
-        assertThat(listener.failed).hasSize(1);
-        RecordedFailure failure = listener.failed.get(0);
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(
+                        TraceRecord.Statuses.CREATED,
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.FAILED);
+        assertThat(records)
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getEntityType())
+                                    .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
+                            assertThat(record.getContext().getEntityName()).isEqualTo("search");
+                            assertThat(record.getContext().getEntityMetadata())
+                                    .containsEntry("toolCallId", "call-1")
+                                    .containsEntry("toolType", "function");
+                            assertThat(record.getContext().getExecutionId())
+                                    .isEqualTo(records.get(0).getContext().getExecutionId());
+                        });
+        TraceRecord failure = records.get(2);
         // Python reports cross the bridge as strings and must reach listeners verbatim.
-        assertThat(failure.errorType).isEqualTo("builtins.ValueError");
-        assertThat(failure.errorMessage).isEqualTo("bad response");
-        assertThat(failure.problemCategory)
+        assertThat(failure.getAttributes())
+                .containsEntry("errorType", "builtins.ValueError")
+                .containsEntry("errorMessage", "bad response")
+                .doesNotContainKeys("status", "problemCategory");
+        assertThat(failure.getProblemCategory())
                 .isEqualTo(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED);
-        assertThat(listener.started.get(0).eventContext.getTimestamp())
-                .isEqualTo("2026-01-01T00:00:01.001Z");
-        assertThat(failure.eventContext.getTimestamp()).isEqualTo("2026-01-01T00:00:01.125Z");
+        assertThat(records.get(1).getTimestamp()).isEqualTo("2026-01-01T00:00:01.001Z");
+        assertThat(failure.getTimestamp()).isEqualTo("2026-01-01T00:00:01.125Z");
     }
 
-    private static void switchToChatModelAction(
+    @Test
+    void pythonReporterWithoutTimestampsUsesTheSameLifecycleAndErrorSchema() throws Exception {
+        List<TraceRecord> records = new ArrayList<>();
+        PythonRunnerContextImpl runnerContext =
+                new PythonRunnerContextImpl(null, () -> {}, emptyAgentPlan(), null, "job");
+        switchToChatModelAction(runnerContext, List.of(records::add));
+
+        runnerContext.reportExecutionStartedJson(ExecutionReporter.EntityTypes.PARSER, "json", "");
+        runnerContext.reportExecutionSucceededJson(
+                ExecutionReporter.EntityTypes.PARSER, "json", null);
+        runnerContext.reportExecutionFailedJson(
+                ExecutionReporter.EntityTypes.PARSER,
+                "json",
+                null,
+                "builtins.ValueError",
+                "invalid JSON",
+                ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
+
+        assertThat(records)
+                .extracting(TraceRecord::getStatus)
+                .containsExactly(
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.SUCCESS,
+                        TraceRecord.Statuses.FAILED);
+        assertThat(records)
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getEntityType())
+                                    .isEqualTo(ExecutionReporter.EntityTypes.PARSER);
+                            assertThat(record.getContext().getEntityName()).isEqualTo("json");
+                            assertThat(record.getContext().getEntityMetadata()).isEmpty();
+                            assertThat(record.getTimestamp()).isNotBlank();
+                        });
+        TraceRecord failure = records.get(2);
+        assertThat(failure.getAttributes())
+                .containsEntry("errorType", "builtins.ValueError")
+                .containsEntry("errorMessage", "invalid JSON");
+        assertThat(failure.getProblemCategory())
+                .isEqualTo(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR);
+    }
+
+    private static TraceContext switchToChatModelAction(
             RunnerContextImpl runnerContext, List<ComponentExecutionListener> listeners) {
+        TraceContext actionContext =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("business-key", "test-agent"),
+                        "chat_model_action",
+                        "event-1");
         runnerContext.switchActionContext(
                 "chat_model_action",
                 null,
@@ -211,91 +440,11 @@ class RunnerContextImplExecutionReporterTest {
                 "business-key",
                 "obs-1",
                 false,
-                listeners);
+                new ExecutionReportingContext(actionContext, listeners));
+        return actionContext;
     }
 
     private static AgentPlan emptyAgentPlan() {
         return new AgentPlan(new HashMap<>(), new HashMap<>());
-    }
-
-    /** Records the raw arguments of every component report it receives. */
-    private static final class RecordingComponentListener implements ComponentExecutionListener {
-        private final List<RecordedComponentReport> created = new ArrayList<>();
-        private final List<RecordedComponentReport> started = new ArrayList<>();
-        private final List<RecordedComponentReport> succeeded = new ArrayList<>();
-        private final List<RecordedFailure> failed = new ArrayList<>();
-
-        @Override
-        public void onComponentExecution(
-                String entityType,
-                String entityName,
-                Map<String, Object> entityMetadata,
-                EventContext eventContext,
-                Event event) {
-            switch (event.getType()) {
-                case ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE:
-                    created.add(
-                            new RecordedComponentReport(
-                                    entityType, entityName, entityMetadata, eventContext));
-                    break;
-                case ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE:
-                    started.add(
-                            new RecordedComponentReport(
-                                    entityType, entityName, entityMetadata, eventContext));
-                    break;
-                case ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE:
-                    succeeded.add(
-                            new RecordedComponentReport(
-                                    entityType, entityName, entityMetadata, eventContext));
-                    break;
-                case ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE:
-                    failed.add(
-                            new RecordedFailure(
-                                    entityType, entityName, entityMetadata, eventContext, event));
-                    break;
-                default:
-                    throw new AssertionError("Unexpected event type " + event.getType());
-            }
-        }
-    }
-
-    private static final class RecordedComponentReport {
-        private final List<Object> identity;
-        private final EventContext eventContext;
-
-        private RecordedComponentReport(
-                String entityType,
-                String entityName,
-                Map<String, Object> entityMetadata,
-                EventContext eventContext) {
-            this.identity = List.of(entityType, entityName, entityMetadata);
-            this.eventContext = eventContext;
-        }
-    }
-
-    private static final class RecordedFailure {
-        private final String entityType;
-        private final String entityName;
-        private final Map<String, Object> entityMetadata;
-        private final EventContext eventContext;
-        private final String errorType;
-        @Nullable private final String errorMessage;
-        @Nullable private final String problemCategory;
-
-        private RecordedFailure(
-                String entityType,
-                String entityName,
-                Map<String, Object> entityMetadata,
-                EventContext eventContext,
-                Event event) {
-            this.entityType = entityType;
-            this.entityName = entityName;
-            this.entityMetadata = entityMetadata;
-            this.eventContext = eventContext;
-            this.errorType = (String) event.getAttr("errorType");
-            this.errorMessage = (String) event.getAttr("errorMessage");
-            this.problemCategory =
-                    (String) event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE);
-        }
     }
 }

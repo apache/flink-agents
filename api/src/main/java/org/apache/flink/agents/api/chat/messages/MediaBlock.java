@@ -38,7 +38,7 @@ import java.util.Objects;
  * {@code source}, and its {@code type} discriminator says whether it is an inline {@link
  * Base64Source} or an externally managed {@link UrlSource}.
  *
- * <p>The optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Event Log,
+ * <p>The optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Trace Log,
  * which records media metadata instead of payload bytes — see {@link #sanitize()}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
@@ -105,7 +105,7 @@ public abstract class MediaBlock extends ContentBlock {
     }
 
     /**
-     * The metadata-only Event Log projection: type, media type, the optional {@code name}/{@code
+     * The metadata-only Trace Log projection: type, media type, the optional {@code name}/{@code
      * size_bytes}/{@code sha256} (with {@code size_bytes} derived from the source when not stored),
      * and the source's own log-safe projection — never payload bytes, never credentials.
      */

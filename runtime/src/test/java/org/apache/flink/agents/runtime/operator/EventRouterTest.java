@@ -22,7 +22,10 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
+import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogger;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
@@ -43,7 +46,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
@@ -86,9 +88,9 @@ class EventRouterTest {
      * {@link EventListener} with the same {@link EventContext} and event payload.
      */
     @Test
-    void notifyEventProcessedNotifiesAllListeners() throws Exception {
+    void notifyEventProcessedDispatchesListenersRecordsAndMetrics() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
-        EventLogger mockLogger = mock(EventLogger.class);
+        TraceLogger mockLogger = mock(TraceLogger.class);
         EventRouter<Long, Object> router =
                 new EventRouter<>(plan, /* inputIsJava */ true, mockLogger);
 
@@ -97,66 +99,44 @@ class EventRouterTest {
         router.addEventListener(listener1);
         router.addEventListener(listener2);
 
-        router.open(makeMetrics());
-
-        InputEvent inputEvent = new InputEvent(7L);
-        router.notifyEventProcessed(inputEvent);
-
-        ArgumentCaptor<EventContext> logContext = ArgumentCaptor.forClass(EventContext.class);
-        ArgumentCaptor<EventContext> listener1Context = ArgumentCaptor.forClass(EventContext.class);
-        ArgumentCaptor<EventContext> listener2Context = ArgumentCaptor.forClass(EventContext.class);
-        verify(mockLogger).append(logContext.capture(), eq(inputEvent), isNull());
-        verify(listener1).onEventProcessed(listener1Context.capture(), eq(inputEvent));
-        verify(listener2).onEventProcessed(listener2Context.capture(), eq(inputEvent));
-        assertThat(logContext.getValue().getEventType()).isEqualTo(InputEvent.EVENT_TYPE);
-        assertThat(listener1Context.getValue()).isSameAs(logContext.getValue());
-        assertThat(listener2Context.getValue()).isSameAs(logContext.getValue());
-    }
-
-    /**
-     * Verifies {@code notifyEventProcessed} increments the {@code numOfEventProcessed} metric by
-     * delegating to {@link BuiltInMetrics#markEventProcessed()}.
-     */
-    @Test
-    void notifyEventProcessedIncrementsMetric() throws Exception {
-        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
-        EventLogger mockLogger = mock(EventLogger.class);
-        EventRouter<Long, Object> router =
-                new EventRouter<>(plan, /* inputIsJava */ true, mockLogger);
-
         BuiltInMetrics spyMetrics = spy(makeMetrics());
         router.open(spyMetrics);
 
-        router.notifyEventProcessed(new InputEvent(1L));
+        InputEvent inputEvent = new InputEvent(7L);
+        TraceContext producerContext =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("business-key", "test-agent"),
+                        "producer-action",
+                        "upstream-event");
+        TraceContext eventTraceContext =
+                TraceContext.forEvent(
+                        producerContext,
+                        inputEvent.getType(),
+                        inputEvent.getId().toString(),
+                        "upstream-event",
+                        "producer-action");
+        router.notifyEventProcessed(inputEvent, eventTraceContext);
 
+        ArgumentCaptor<TraceRecord> logRecord = ArgumentCaptor.forClass(TraceRecord.class);
+        ArgumentCaptor<EventContext> listener1Context = ArgumentCaptor.forClass(EventContext.class);
+        ArgumentCaptor<EventContext> listener2Context = ArgumentCaptor.forClass(EventContext.class);
+        verify(mockLogger).append(logRecord.capture(), eq(TraceLogDetail.STANDARD));
+        verify(listener1).onEventProcessed(listener1Context.capture(), eq(inputEvent));
+        verify(listener2).onEventProcessed(listener2Context.capture(), eq(inputEvent));
+        assertThat(logRecord.getValue().getContext()).isSameAs(eventTraceContext);
+        assertThat(logRecord.getValue().getAttributes()).isEqualTo(inputEvent.getAttributes());
+        assertThat(listener1Context.getValue().getEventType()).isEqualTo(InputEvent.EVENT_TYPE);
+        assertThat(listener2Context.getValue()).isSameAs(listener1Context.getValue());
+        InOrder ordered = inOrder(mockLogger);
+        ordered.verify(mockLogger).append(logRecord.getValue(), TraceLogDetail.STANDARD);
+        ordered.verify(mockLogger).flush();
         verify(spyMetrics).markEventProcessed();
     }
 
-    /**
-     * Verifies {@code notifyEventProcessed} calls {@code append} on the event logger followed by
-     * {@code flush}, in that order.
-     */
     @Test
-    void notifyEventProcessedAppendsAndFlushesLogger() throws Exception {
+    void notifyEventProcessedIgnoresTraceLogWriteFailure() throws Exception {
         AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
-        EventLogger mockLogger = mock(EventLogger.class);
-        EventRouter<Long, Object> router =
-                new EventRouter<>(plan, /* inputIsJava */ true, mockLogger);
-
-        router.open(makeMetrics());
-
-        InputEvent inputEvent = new InputEvent(3L);
-        router.notifyEventProcessed(inputEvent);
-
-        InOrder ordered = inOrder(mockLogger);
-        ordered.verify(mockLogger).append(any(EventContext.class), eq(inputEvent), isNull());
-        ordered.verify(mockLogger).flush();
-    }
-
-    @Test
-    void notifyEventProcessedIgnoresEventLogWriteFailure() throws Exception {
-        AgentPlan plan = new AgentPlan(new HashMap<>(), new HashMap<>());
-        EventLogger mockLogger = mock(EventLogger.class);
+        TraceLogger mockLogger = mock(TraceLogger.class);
         EventRouter<Long, Object> router =
                 new EventRouter<>(plan, /* inputIsJava */ true, mockLogger);
         EventListener listener = mock(EventListener.class);
@@ -165,11 +145,19 @@ class EventRouterTest {
         router.open(spyMetrics);
 
         InputEvent inputEvent = new InputEvent(3L);
+        TraceContext eventTraceContext =
+                TraceContext.forEvent(
+                        TraceContext.forInputRun("business-key", "test-agent"),
+                        inputEvent.getType(),
+                        inputEvent.getId().toString(),
+                        null,
+                        null);
         doThrow(new RuntimeException("log failed"))
                 .when(mockLogger)
-                .append(any(EventContext.class), eq(inputEvent), isNull());
+                .append(any(TraceRecord.class), any(TraceLogDetail.class));
 
-        assertThatCode(() -> router.notifyEventProcessed(inputEvent)).doesNotThrowAnyException();
+        assertThatCode(() -> router.notifyEventProcessed(inputEvent, eventTraceContext))
+                .doesNotThrowAnyException();
         verify(listener).onEventProcessed(any(EventContext.class), eq(inputEvent));
         verify(spyMetrics).markEventProcessed();
     }

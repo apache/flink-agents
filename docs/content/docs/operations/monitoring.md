@@ -50,8 +50,8 @@ We offer data monitoring for built-in metrics, including input runs, events, act
 | **Action** | action.\<action_name\>.numOfPendingActionTasks | Current number of physical Action task segments waiting to run, including continuations. | Gauge |
 | **Action** | action.\<action_name\>.numOfActiveActionExecutions | Current number of logical Action executions that have started but have not reached a terminal state. | Gauge |
 | **Action**  | action.\<action_name\>.routingDecisionLatencyMs | Wall-clock time, in milliseconds, spent resolving a model-routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`. Recorded once per routing decision, including replayed ones; see [Model Routing]({{< ref "docs/development/model_routing#observability" >}}). | Histogram |
-| **Agent**   | eventLogTruncatedEvents                          | Number of event log records whose payload was truncated at `STANDARD` level. Increments once per event, regardless of how many fields inside it were truncated. Use this to decide whether to raise truncation thresholds or move specific event types to `VERBOSE`. | Count |
-| **Agent**   | eventLogWriteFailures                           | Number of Event Log write attempts for which `append`, `flush`, or both failed. Event Log writes are best-effort and do not fail the job. | Count |
+| **Agent**   | traceLogTruncatedRecords                          | Number of Trace Log records whose attributes were truncated at `STANDARD` detail. Increments once per record, regardless of how many fields were truncated. Use this to adjust truncation limits or select entities at `VERBOSE`. | Count |
+| **Agent**   | traceLogWriteFailures                           | Number of Trace Log write attempts for which `append`, `flush`, or both failed. Trace Log writes are best-effort and do not fail the job. | Count |
 
 For a locally observed input run, `inputRunLatencyMs` is split into queueing and processing time at the input-run start boundary. `numOfPendingInputEvents` counts buffered inputs, while `numOfActiveInputRuns` counts logical runs; an asynchronous run remains active while it is waiting for its continuation.
 
@@ -201,324 +201,169 @@ We can check the log result in the WebUI of Flink Job:
 
 {{< img src="/fig/operations/logwebui.png" alt="Log Web UI" >}}
 
-## Event Log
+## Trace Log
 
-The system supports two types of event loggers: **SLF4J Event Log** (default) and **File Event Log**.
+Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` detail. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their detail.
 
-By default, the SLF4J Event Log is used. If `baseLogDir` is configured, the system automatically switches to the File Event Log.
+The default output is **SLF4J Trace Log**. Setting `trace-log.base-dir` selects **File Trace Log**; `trace-log.output-type` can also select the output explicitly.
 
-Event Log is an observability output. An `append` or `flush` failure does not fail Event processing or the Flink job. The first failure is logged at `WARN`, subsequent failures are logged at `DEBUG`, and every failed write attempt increments `eventLogWriteFailures`.
+Trace Log writes are best-effort. An `append` or `flush` failure does not fail Event processing or the Flink job. The first failure is logged at `WARN`, subsequent failures at `DEBUG`, and every failed write attempt increments `traceLogWriteFailures`.
 
-### SLF4J Event Log (Default)
+### SLF4J Trace Log (Default)
 
-The **SLF4J Event Log** outputs events through a dedicated SLF4J logger (`org.apache.flink.agents.EventLog`). On startup, the logger **automatically configures** log4j2 to write events to a separate file (`{log.file}.event-log.log`) in Flink's log directory, making them visible in Flink's Web UI **Logs** tab. **No manual log4j2 configuration is required.**
+The SLF4J logger uses the category `org.apache.flink.agents.TraceLog`. On startup, it automatically configures log4j2 with `FlinkAgentsTraceLogAppender` to write records to `{log.file}.trace-log.log` in Flink's log directory. The file is visible in the Flink Web UI **Logs** tab; no manual log4j2 configuration is required.
 
-Because all subtasks on a TaskManager share the same log destination, each record additionally carries `jobId`, `taskName`, and `subtaskId` top-level fields so consumers can still distinguish events from different subtasks. The rest of the record follows the common [JSON Format](#json-format) described below.
+All subtasks on a TaskManager share this destination. Each record therefore carries additional top-level `jobId`, `taskName`, and `subtaskId` fields.
 
-### File Event Log
+### File Trace Log
 
-The **File Event Log** is a file-based event logging system that stores events in structured files within a flat directory. To use it, configure `baseLogDir` in your Flink `config.yaml`.
+File output stores one file per operator subtask in `trace-log.base-dir`:
 
-By default, each event is recorded in **JSON Lines (JSONL)** format, with one JSON object per line. When [`prettyPrint`]({{< ref "docs/operations/configuration#core-options" >}}) is enabled, each event is written as formatted multi-line JSON instead, and the log file is no longer in valid JSONL format.
-
-#### File Structure
-
-The log files follow a naming convention consistent with Flink's logging standards and are stored in a flat directory structure:
-
-```
-{baseLogDir}/
-├── events-{jobId}-{taskName}-{subtaskId}.log
-├── events-{jobId}-{taskName}-{subtaskId}.log
-└── events-{jobId}-{taskName}-{subtaskId}.log
+```text
+{trace-log.base-dir}/
+├── traces-{jobId}-{taskName}-{subtaskId}.log
+├── traces-{jobId}-{taskName}-{subtaskId}.log
+└── traces-{jobId}-{taskName}-{subtaskId}.log
 ```
 
-By default, all File-based Event Logs are stored in the `flink-agents` subdirectory under the system temporary directory (`java.io.tmpdir`). You can override the base log directory with the `agent.baseLogDir` setting in Flink `config.yaml`.
+When `FILE` is selected without a base directory, files are stored under `java.io.tmpdir/flink-agents`.
+
+By default, each record occupies one line of JSONL. Setting `trace-log.pretty-print: true` writes multi-line JSON objects instead, so the file is no longer JSONL.
 
 ### JSON Format
 
-The JSON record format described here applies to both the SLF4J and File event loggers. The SLF4J logger adds `jobId`, `taskName`, and `subtaskId` fields on top (see [SLF4J Event Log](#slf4j-event-log-default)); the File logger encodes those values in the file path instead.
+Both outputs serialize the same `TraceRecord` fields. The observed object's context is flattened into the record; its metadata and attributes remain separate objects.
 
-Each record is a flat JSON object. Framework-owned field names use camelCase, consistent with the existing Event Log format. A record contains the event occurrence time, the resolved `logLevel`, optional execution trace fields, the event identity, and the event payload in `eventAttributes`. The flat `eventType` field makes it easy for downstream tools (e.g. `grep`, `jq`, log shippers) to filter by event type without parsing nested JSON.
+| Field | Meaning |
+|-------|---------|
+| `timestamp` | Observation or occurrence time. |
+| `detail` | Resolved `STANDARD` or `VERBOSE` detail. |
+| `inputRunId`, `businessKey`, `agentName` | Available run identity and agent context. |
+| `entityType`, `entityName` | The observed entity's type and name. For an Event, its routing type is the entity name. |
+| `executionId`, `parentExecutionId` | Identity of an Action execution or component call, and its containing execution when available. These fields are absent for Events. |
+| `entityMetadata` | Identity and relationship metadata, such as Event ID, producer, upstream Event, triggering Event, or configured model. |
+| `status`, `problemCategory` | Progress or outcome, and optional failure classification. These fields are absent for Events. |
+| `attributes` | Event payload or details of the observed execution or call. Only this object is subject to `STANDARD` truncation. |
 
-Agent Trace persistence is disabled by default. Set `event-log.trace.enabled: true` to add trace context to business Event records and persist Action, LLM, Parser, and Tool lifecycle Events. When Trace persistence is disabled, business Events continue to be logged without the trace fields shown below.
-
-After fine-grained recovery, a cached durable child result is recorded as a new execution because cache reuse is not exposed to execution reporting. Cached LLM results are recorded as successful; cached Tool results retain the success or failure represented by their normalized Tool response. Distinguishing reused child executions is follow-up work.
-
-Tool executions use an optional creation phase because the runtime can identify a call before its callable starts. LLM and Parser executions currently begin directly with a started Event. All lifecycle Events for one Tool call use the same `executionId`.
-
-| Event | Occurrence time | Publication time |
-|-------|-----------------|------------------|
-| `_execution_created_event` | After the call identity and metadata are available, before a preparation failure is reported or an invocable call is submitted for durable execution. | Immediately at that boundary. |
-| `_execution_started_event` | When an invocable Tool enters its callable. | After the durable call or parallel batch returns or raises, while retaining the callable-entry timestamp. |
-| Terminal Event: `_execution_finished_event` or `_execution_failed_event` | When the callable exits, or when the Action observes an outcome without observing a completed invocation at that boundary, such as a preparation failure, durable cache hit, or timeout. | Immediately for a preparation failure; otherwise after the durable call or parallel batch returns or raises. |
-
-Because started and terminal Events can be published after their occurrences, a missing Event only means that its report was not published. In particular, a Tool represented only by a created Event may still be queued, or it may have started or completed before the batch blocked or the task exited. Its invocation state cannot be inferred from the created Event alone. Tool latency is recorded only when matching started and terminal Events are both available, and is calculated from their occurrence timestamps rather than publication times.
-
-Example Trace record:
+For example, an output Event produced by an Action is recorded as:
 
 ```json
 {
   "timestamp": "2024-01-15T10:30:00Z",
-  "logLevel": "STANDARD",
-  "inputRunId": "7f1b5d20-86c6-4a5d-b65a-9c41757f2e11",
+  "detail": "STANDARD",
+  "inputRunId": "run-1",
   "businessKey": "order-1001",
-  "agentName": "ReActAgent",
-  "executionId": "9cb3c3df-1d3b-4c45-ae7d-1b28a1b86522",
-  "parentExecutionId": "55cc59a8-f4e8-4f15-badf-4833f8a8a97a",
-  "entityType": "llm",
-  "entityName": "_default_chat_model",
-  "entityMetadata": {"model": "qwen-max"},
-  "eventId": "80f30736-2759-41d8-aa59-9c8ad481ab42",
-  "eventType": "_execution_finished_event",
-  "status": "success",
-  "eventAttributes": {}
-}
-```
-
-For an LLM execution, `entityName` identifies the configured ChatModel Resource, while
-`entityMetadata.model` identifies the model or deployment configured on that Resource. This value
-is the requested identifier and is not a provider-confirmed model identity.
-
-`upstreamEventId` identifies the Event consumed by the Action that emitted the current Event, and `upstreamActionName` identifies that Action. Both are top-level Event Log fields derived from framework-managed Event lineage and remain outside `eventAttributes`. A root `InputEvent` omits both fields.
-
-### Trace Tree Reconstruction
-
-The `flink-agents-trace-tree` command is installed with the Flink Agents Python wheel. It rebuilds InputEvent-rooted Trace Trees from business Events in a saved File Event Log and ignores execution lifecycle Events. The five lifecycle types `_execution_created_event`, `_execution_started_event`, `_execution_finished_event`, `_execution_failed_event`, and `_execution_reused_event` are reserved for the framework. A record is ignored only when its type, status, and execution identity match the corresponding framework lifecycle shape. A business Event that uses a reserved type without that shape is retained and reported with a reconstruction warning. The reader accepts both the current flat record shape and the previous nested `event` shape, including files that contain both formats. Pass either one log file for text output or a log directory for Trace Tree JSON:
-
-```bash
-flink-agents-trace-tree /path/to/events-job-task-0.log
-flink-agents-trace-tree /path/to/event-log-directory --format json
-```
-
-For example, the text output for an `InputEvent -> MiddleEvent -> OutputEvent` lineage is:
-
-```text
-Trace Tree 1
-  _input_event (dad5ed00-80e2-4746-8bdb-f126bad504b5)
-    [Action: action1]
-      MiddleEvent (39361629-4f1d-4b62-b734-a48b181cb6e0)
-        [Action: action2]
-          _output_event (f452ce08-c672-4c9c-841f-d81d15a900c5)
-```
-
-In JSON output:
-
-- `roots` lists the Event IDs of the root `InputEvent`s, one per reconstructed Trace Tree.
-- `nodes` maps each logical Event ID to one Event node with the following fields:
-  - `eventId`: the logical Event ID of the node.
-  - `eventType`: the top-level `eventType` routing key from the Event Log record.
-  - `timestamp`: the `timestamp` of the first Event Log record observed for this Event ID.
-  - `observationCount`: Number of times this Event was recorded in the Event Log. Values greater
-    than 1 usually mean the Event was reused during replay.
-  - `upstreamEdges`: the distinct recorded causal edges retained on this Event, each with an
-    `upstreamEventId` and an `upstreamActionName`. Repeated observations of the same
-    `(Event ID, upstream Event ID, upstream Action name)` edge are deduplicated. An edge that would
-    close a cycle is omitted. An invalid edge may remain for diagnosis even when a reconstruction
-    warning prevents it from being added to the parent Event's `actions`.
-  - `actions`: the virtual Action nodes triggered by this Event, each with the Action `name` and
-    the `children` Event IDs it emitted.
-- `warnings` contains the reconstruction warnings described below.
-
-Distinct edges are retained, so reused Events can be shared by multiple InputEvent-rooted
-branches and the combined result is a DAG rather than a strict tree. For example, two roots that
-share one reused output Event through the same Action produce:
-
-```json
-{
-  "roots": ["root-1", "root-2"],
-  "nodes": {
-    "root-1": {
-      "eventId": "root-1",
-      "eventType": "_input_event",
-      "timestamp": "2024-01-15T10:30:00Z",
-      "observationCount": 1,
-      "upstreamEdges": [],
-      "actions": [
-        {"name": "action1", "children": ["shared-1"]}
-      ]
-    },
-    "root-2": {
-      "eventId": "root-2",
-      "eventType": "_input_event",
-      "timestamp": "2024-01-15T10:31:00Z",
-      "observationCount": 1,
-      "upstreamEdges": [],
-      "actions": [
-        {"name": "action1", "children": ["shared-1"]}
-      ]
-    },
-    "shared-1": {
-      "eventId": "shared-1",
-      "eventType": "_output_event",
-      "timestamp": "2024-01-15T10:30:01Z",
-      "observationCount": 2,
-      "upstreamEdges": [
-        {"upstreamEventId": "root-1", "upstreamActionName": "action1"},
-        {"upstreamEventId": "root-2", "upstreamActionName": "action1"}
-      ],
-      "actions": []
-    }
+  "agentName": "OrderAgent",
+  "entityType": "event",
+  "entityName": "_output_event",
+  "entityMetadata": {
+    "eventId": "output-1",
+    "producerExecutionId": "action-1",
+    "upstreamEventId": "input-1",
+    "upstreamActionName": "process_order"
   },
-  "warnings": []
+  "attributes": {"output": {"orderId": "order-1001"}}
 }
 ```
 
-{{< hint info >}}
-During ActionStateStore recovery, a reused output Event keeps its Event ID when a completed
-Action result is replayed, while its lineage is rebound to the recovered execution's current
-triggering Event. The same logical Event ID may therefore appear in multiple physical Event Log
-records with distinct upstream edges, as in the example above. Reusing an Event ID with the same
-Event type and content is valid.
-{{< /hint >}}
+`producerExecutionId` identifies the Action execution that directly produced the Event. `upstreamEventId` identifies the preceding Event in its flow, and `upstreamActionName` identifies the associated Action. A runtime-generated Event may have an upstream Event without an Action producer. These references remain in `entityMetadata` even when `STANDARD` truncates attributes.
 
-When observations with the same Event ID disagree on Event type or content, only observations
-matching the first add distinct entries to `upstreamEdges`, while all observations count toward
-`observationCount`. For conflicting observations, the reader emits one `EVENT_ID_CONFLICT`
-warning per distinct (`upstreamEventId`, `upstreamActionName`) pair and includes each field when
-present. The resulting canonical node and its descendants remain in the reconstructed trace.
-
-The reader derives virtual Action nodes from `upstreamActionName`; they are not separate Event Log
-records. Log order does not add execution-order semantics, but it controls display order and
-first-observation fields such as `timestamp`. For a fixed set of reconstructed nodes and edges,
-cycle detection uses Event IDs and Action names in a stable order, so reordering non-conflicting
-records does not change which cycle-closing edge is omitted. For `EVENT_ID_CONFLICT`, the first
-observation determines the canonical Event type and content, so the order of conflicting
-observations remains significant.
-
-Reconstruction warnings are written to standard error and included in JSON output while valid
-InputEvent-rooted branches are retained. The reader keeps valid records from the same input and
-continues with other Event Log files.
-
-A `CYCLE_DETECTED` warning identifies an omitted edge with `eventId` for the child,
-`upstreamEventId` for the parent, and `upstreamActionName` for the Action. The edge is omitted from
-both the parent's `actions` and the child's `upstreamEdges`, so cycle pruning is represented
-consistently in both directions.
-
-| Warning Code           | Trigger Condition                                                          |
-|------------------------|----------------------------------------------------------------------------|
-| `EVENT_ID_CONFLICT`    | Records carrying the same Event ID disagree on the Event type or content.  |
-| `INVALID_ROOT_LINEAGE` | An InputEvent carries upstream lineage, which a root Event must not have.  |
-| `UNLINKED_EVENT`       | A non-InputEvent has no upstream Event.                                    |
-| `MISSING_ACTION_NAME`  | An Event has an upstream Event but no upstream Action name.                |
-| `MISSING_PARENT`       | An Event references an upstream Event with no valid node in the Event Log. |
-| `CYCLE_DETECTED`       | A lineage edge closes a cycle and is omitted from the reconstructed DAG.   |
-| `MALFORMED_RECORD`     | An Event Log record is invalid or partially written.                       |
-| `RESERVED_EVENT_TYPE`  | A business Event uses a framework-reserved lifecycle Event type.           |
-| `UNREADABLE_FILE`      | An Event Log file could not be read.                                       |
-
-### Event Log Levels
-
-Each event type is logged at a configurable verbosity. Three levels are supported:
-
-| Level      | Behavior                                                                                                       |
-|------------|----------------------------------------------------------------------------------------------------------------|
-| `OFF`      | Events of this type are not logged.                                                                            |
-| `STANDARD` | Events are logged, but the payload may be truncated or summarized to keep logs concise. **This is the default.** |
-| `VERBOSE`  | Events are logged without truncation, after applicable media sanitization.                                    |
-
-The global default is set by [`event-log.level`]({{< ref "docs/operations/configuration#core-options" >}}). At `STANDARD` level, the payload is shrunk along three independent axes — long strings, large arrays, and deep nesting — controlled by `event-log.standard.max-string-length`, `event-log.standard.max-array-elements`, and `event-log.standard.max-depth` respectively. Setting any threshold to `0` disables that specific truncation; setting all three to `0` makes `STANDARD` behave identically to `VERBOSE` (apart from the `logLevel` label). The exact truncation strategy may evolve over time; `VERBOSE` disables truncation but does not disable media sanitization.
-
-**Media sanitization.** When logging `ChatMessage` objects, all enabled log levels
-omit inline Base64 media data and remove userinfo, query strings, and fragments
-from media URLs. Media metadata is retained. Message text is not automatically
-redacted.
-
-**Fields that are never truncated.** Structural and identifying fields are always preserved in full so log consumers can still group, route, and correlate records: `timestamp`, `logLevel`, trace fields such as `inputRunId` and `executionId`, `eventId`, `eventType`, and lifecycle fields such as `status` and `problemCategory`. Truncation only applies to large nested content under `eventAttributes` (long strings, big arrays, deeply nested objects).
-
-**Truncation wrapper format.** When a field is truncated at `STANDARD` level it is replaced by a JSON object that records what was retained and what was dropped. This keeps the record valid JSON and lets downstream tooling detect truncation programmatically:
-
-| Truncated content | Replacement                                                            |
-|-------------------|------------------------------------------------------------------------|
-| Long string       | `{"truncatedString": "<first N chars>...", "omittedChars": M}`         |
-| Large array       | `{"truncatedList": [<first N elements>], "omittedElements": M}`        |
-| Deeply nested object | `{"truncatedObject": {<scalar fields only>}, "omittedFields": N}`   |
-
-A truncated field changes JSON type (e.g. a `string` field becomes an `object`). Consumers that need a stable schema should switch the affected event type to `VERBOSE`. A counter metric `eventLogTruncatedEvents` (see [Event and Action Metrics](#event-and-action-metrics)) records how often truncation kicked in — use it to decide whether to raise the thresholds or move noisy event types to `VERBOSE`.
-
-Example record at `STANDARD` with a long string and a large array truncated:
+An LLM call uses its configured ChatModel Resource as `entityName`:
 
 ```json
 {
-  "timestamp": "2024-01-15T10:30:00Z",
-  "logLevel": "STANDARD",
-  "eventId": "...",
-  "eventType": "_chat_request_event",
-  "eventAttributes": {
-    "model": "gpt-4",
-    "messages": {
-      "truncatedList": [
-        {"role": "system", "blocks": [{"type": "text", "text": "You are a helpful assistant..."}]},
-        {"role": "user", "blocks": [{"type": "text", "text": {"truncatedString": "Analyze this doc...", "omittedChars": 1000}}]}
-      ],
-      "omittedElements": 30
-    }
-  }
+  "timestamp": "2024-01-15T10:30:01Z",
+  "detail": "STANDARD",
+  "inputRunId": "run-1",
+  "businessKey": "order-1001",
+  "agentName": "OrderAgent",
+  "entityType": "llm",
+  "entityName": "primary_model",
+  "executionId": "llm-1",
+  "parentExecutionId": "action-1",
+  "entityMetadata": {"model": "qwen-max"},
+  "status": "success",
+  "attributes": {}
 }
 ```
 
-### Per-event-type log levels
+`entityMetadata.model` is the model or deployment configured on the Resource. It is the requested identifier, not a provider-confirmed model identity. Action metadata carries `triggerEventId`, linking the execution to the Event that triggered it.
 
-You can override the level for individual event types using the `event-log.type.<EVENT_TYPE>.level` config key, where `<EVENT_TYPE>` is the event's routing type string (the same string that appears as `eventType` in the JSON log). Although the field name uses camelCase, built-in Event type values remain snake-cased:
+One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
 
-| Event                    | `<EVENT_TYPE>` value             |
-|--------------------------|----------------------------------|
-| `InputEvent`             | `_input_event`                   |
-| `OutputEvent`            | `_output_event`                  |
-| `ChatRequestEvent`       | `_chat_request_event`            |
-| `ChatResponseEvent`      | `_chat_response_event`           |
-| `ToolRequestEvent`       | `_tool_request_event`            |
-| `ToolResponseEvent`      | `_tool_response_event`           |
-| `ContextRetrievalRequestEvent`  | `_context_retrieval_request_event`  |
-| `ContextRetrievalResponseEvent` | `_context_retrieval_response_event` |
-| `ModelRoutingEvent`      | `_model_routing_event`           |
-| Execution lifecycle: created    | `_execution_created_event`          |
-| Execution lifecycle: started    | `_execution_started_event`          |
-| Execution lifecycle: finished   | `_execution_finished_event`         |
-| Execution lifecycle: failed     | `_execution_failed_event`           |
-| Execution lifecycle: reused     | `_execution_reused_event`           |
+### Recording Targets and Detail
 
-Each event type has its own independently overridable key, so a job-level override does not clobber other entries from `config.yaml`.
-
-`event-log.trace.enabled` controls whether execution lifecycle Events are produced. When Trace recording is enabled, these Events still use the per-event-type level resolution above. Setting any `_execution_*` type to `OFF` suppresses that lifecycle Event and may make the recorded Trace incomplete.
-
-Resolution is hierarchical — the resolver walks up dot-separated segments of the event type, mirroring Log4j's logger hierarchy. For a user-defined event type `com.example.myapp.OrderEvent`, the lookup order is:
-
-1. `event-log.type.com.example.myapp.OrderEvent.level` (exact match)
-2. `event-log.type.com.example.myapp.level` (package prefix)
-3. `event-log.type.com.example.level`
-4. … (continues walking up)
-5. `event-log.level` (global default)
-6. Built-in default: `STANDARD`
-
-Built-in event type strings like `_chat_request_event` contain no dots, so they are matched exactly against the configured key.
-
-Example `config.yaml`:
+Every target pairs a `scope` with an optional `detail`. For example:
 
 ```yaml
-# Keep all events at STANDARD by default
-event-log.level: STANDARD
-
-# Log every ChatRequestEvent with the full payload
-event-log.type._chat_request_event.level: VERBOSE
-
-# Skip context retrieval requests entirely
-event-log.type._context_retrieval_request_event.level: OFF
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        detail: STANDARD
+      - scope:
+          entityType: tool
+          entityName: search
+        detail: VERBOSE
+    standard:
+      max-string-length: 2000
+      max-array-elements: 20
+      max-depth: 5
+    output-type: FILE
+    base-dir: /tmp/flink-agent-logs
+    pretty-print: false
 ```
 
-Because each event type has its own config key, you can override a single level at job submission time without touching the shared `config.yaml`:
+The preset scopes are `EVENT_ONLY` and `ALL`. An entity scope matches a whole `entityType` or an `entityName` within that type. A matching target with `detail: OFF` suppresses recording; `OFF` is not a scope. An explicit empty `targets` list also records nothing. Selection of an entity does not automatically select its parent or child entities.
+
+For overlapping targets, the most specific match supplies detail: exact name, longest `.*` namespace prefix, whole entity type, `EVENT_ONLY`, then `ALL`. A local `OFF` target can therefore suppress one entity within an `ALL` recording range. Conversely, an explicit local `STANDARD` or `VERBOSE` target can enable recording under an `ALL` preset with `detail: OFF`. Target order does not affect the result.
+
+An entity target with omitted `detail` inherits a preset's detail, including `OFF`; it never inherits another entity target. Event targets prefer `EVENT_ONLY` over `ALL`. Other entity targets use `ALL`, falling back to `EVENT_ONLY` when it is the only preset. Without presets, entity targets use `STANDARD`. An `ALL` preset defaults to `STANDARD`; an `EVENT_ONLY` preset inherits `ALL` or defaults to `STANDARD`. See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for name matching and validation rules.
+
+| Detail | Behavior |
+|--------|----------|
+| `OFF` | Write no matching record. |
+| `STANDARD` | Truncate or summarize large values under `attributes`. Default when no preset supplies detail. |
+| `VERBOSE` | Retain attributes without truncation, after media sanitization. |
+
+`trace-log.standard.max-string-length`, `trace-log.standard.max-array-elements`, and `trace-log.standard.max-depth` control long strings, large arrays, and deep nesting respectively. Setting a threshold to `0` disables that truncation limit. Setting all three to `0` makes `STANDARD` retain the same content as `VERBOSE`, apart from the `detail` label.
+
+**Media sanitization.** Both recording detail settings (`STANDARD` and `VERBOSE`) omit inline Base64 media data from typed `ChatMessage` objects and remove userinfo, query strings, and fragments from media URLs. Media metadata is retained. Message text is not automatically redacted.
+
+**Fields preserved in full.** Truncation never changes entity identity, relationships, entity metadata, timestamps, statuses, or problem categories. It applies only under `attributes`, so `STANDARD` retains the relationships needed to correlate the records that were selected.
+
+When content is truncated, its value is replaced with a wrapper:
+
+| Truncated content | Replacement |
+|-------------------|-------------|
+| Long string | `{"truncatedString": "<first N chars>...", "omittedChars": M}` |
+| Large array | `{"truncatedList": [<first N elements>], "omittedElements": M}` |
+| Deep object | `{"truncatedObject": {<scalar fields only>}, "omittedFields": N}` |
+
+A truncated field changes JSON type. Consumers requiring the full attribute schema should select that entity at `VERBOSE`. `traceLogTruncatedRecords` increments once per record with truncated attributes, regardless of the number of truncated fields.
+
+### Trace Tree Reader
+
+The `flink-agents-trace-tree` command is installed with the Python wheel. It reconstructs Event causal trees from the `TraceRecord` format described above. Pass a file directly or a directory containing `traces-*.log` or `*.trace-log.log` files. Both JSONL and pretty-printed JSON are supported.
+
+The reader uses `entityMetadata.eventId`, `upstreamEventId`, and `upstreamActionName` to build an Event–Action–Event graph. An InputEvent with no upstream Event starts a tree; an InputEvent produced by an Action can be a descendant. An edge without an Action name produces a `MISSING_ACTION_NAME` warning and is not linked. The reader does not require Action observations, so the default `EVENT_ONLY` scope is sufficient. Other observed entities are skipped; component calls and their statuses are not displayed in this Event view.
+
+For example:
 
 ```bash
-flink run ... \
-  -Devent-log.type._chat_request_event.level=VERBOSE
+flink-agents-trace-tree /path/to/trace-logs --format text
+flink-agents-trace-tree /path/to/traces-job-task-0.log --format json
 ```
 
-Other per-type levels from `config.yaml` are preserved — the `-D` flag only overrides the one key it names.
+The JSON result contains `roots`, Event `nodes`, and reconstruction `warnings`. Each Event node has `actions`, whose `children` list contains the IDs of Events produced by that Action. Observations with the same Event ID and type share one node and deduplicated edges, so shared descendants can appear under several branches. Attribute differences, including `STANDARD` truncation, do not affect identity or lineage. Sibling order is only a presentation order and does not indicate execution order.
 
-### Compatibility Notes
+Malformed records, conflicting Event identities, missing upstream Events, and cycles produce warnings. Recoverable records remain available in the JSON result, and cycle edges are removed before rendering. If recording targets filtered an upstream Event, the reader cannot reconstruct that missing part of the tree. Historical formats using `eventType`/`eventAttributes` or a nested `event` object are unsupported.
 
-- **Default behavior changed.** Before this feature, every event was logged in full. The new default is `STANDARD`, which truncates large payloads. To restore the previous behavior either globally or per type, set the level to `VERBOSE`.
-- **Old log records still parse.** Records written in the previous nested format (`eventType` plus `event`) continue to deserialize. They do not contain run or execution context and therefore cannot reconstruct a complete Agent Trace.
-- **External consumers must migrate to the flat record shape.** The nested `event` object is removed: `event.id` becomes the top-level `eventId`, and `event.attributes` becomes the top-level `eventAttributes`. `eventType` was already available at the top level and remains there. Compatibility in the framework deserializer does not automatically update existing `jq` expressions, log-shipper mappings, or downstream queries that read the previous nested JSON shape directly.
-- **Python Event IDs now identify occurrences.** Python previously generated a deterministic UUID from Event content and regenerated it when the content changed. It now assigns a UUID4 to each Event occurrence, matching the identity semantics used by Agent Trace. Consumers must not rely on equal Event payloads producing equal IDs for deduplication.
-- **Existing pending ActionTask state is not compatible with the new schema.** Agent Trace adds execution identity and Action lifecycle state to pending `ActionTask` state. Restoring savepoints containing that state from before this change would require a versioned `ActionTask` state serializer, which is not included in this feature.
-- **Event Log write failures are now best-effort.** Earlier versions propagated `append` or `flush` failures into Event processing. Write failures now leave the job running and are reported through the `eventLogWriteFailures` metric and a first-failure `WARN` log.
+### Migration Notes
+
+- The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`, and the current output settings.
+- Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `detail`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
+- File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
+- The log metrics are `traceLogTruncatedRecords` and `traceLogWriteFailures`. Update dashboards and alert queries using their old names.
+- Python Event IDs identify occurrences using UUID4. Equal payloads do not imply equal Event IDs.
+- Pending ActionTask state from before the execution-identity schema is not compatible with this state format. A versioned state migration is not included.

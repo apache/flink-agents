@@ -13,7 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Reconstruct InputEvent-rooted Trace Trees from an Event Log."""
+"""Reconstruct Event causal trees from Trace Log records."""
 
 import argparse
 import json
@@ -22,36 +22,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator
 
-from flink_agents.api.trace import ExecutionLifecycleEvents
-
 INPUT_EVENT_TYPE = "_input_event"
 
 
-def _is_execution_lifecycle_record(record: Any) -> bool:
-    """Return whether a record has the framework lifecycle Event shape."""
-    if not isinstance(record, dict):
-        return False
-    expected_status = ExecutionLifecycleEvents.expected_status(record.get("eventType"))
-    return (
-        expected_status is not None
-        and record.get("status") == expected_status
-        and all(
-            isinstance(record.get(field), str) and record[field]
-            for field in ("executionId", "entityType", "entityName")
-        )
-    )
-
-
-def _json_fingerprint(value: Any) -> str:
-    """Return a deterministic, type-sensitive representation of JSON data."""
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-
-
 def find_log_files(path: Path) -> list[Path]:
-    """Return Event Log files in deterministic file-name order."""
+    """Return trace log files in deterministic file-name order."""
     if path.is_file():
         return [path]
-    return sorted(path.glob("events-*.log"))
+    return sorted(set(path.glob("traces-*.log")) | set(path.glob("*.trace-log.log")))
 
 
 def read_json_objects(path: Path, warnings: list[dict[str, Any]]) -> Iterator[Any]:
@@ -63,7 +41,7 @@ def read_json_objects(path: Path, warnings: list[dict[str, Any]]) -> Iterator[An
             warning(
                 "UNREADABLE_FILE",
                 None,
-                f"Could not read Event Log file {path}.",
+                f"Could not read Trace Log file {path}.",
                 file_path=path,
             )
         )
@@ -83,7 +61,7 @@ def read_json_objects(path: Path, warnings: list[dict[str, Any]]) -> Iterator[An
                 warning(
                     "MALFORMED_RECORD",
                     None,
-                    f"Could not decode an Event Log record in {path} "
+                    f"Could not decode a Trace Log record in {path} "
                     f"at line {error.lineno}, column {error.colno}: {error.msg}.",
                     file_path=path,
                     line_number=error.lineno,
@@ -102,43 +80,30 @@ def read_json_objects(path: Path, warnings: list[dict[str, Any]]) -> Iterator[An
 def _normalize_event_record(
     record: Any,
 ) -> tuple[dict[str, Any] | None, str | None, str | None]:
-    """Normalize flat and legacy Event Log records for lineage reconstruction."""
+    """Extract Event identity and lineage; skip other observed entities."""
     if not isinstance(record, dict):
         return None, None, "record must be a JSON object"
 
-    event_type = record.get("eventType")
-    flat_record = "eventId" in record or "eventAttributes" in record
-    if flat_record:
-        event_id_value = record.get("eventId")
-        event_attributes = record.get("eventAttributes")
-        upstream_event_id = record.get("upstreamEventId")
-        upstream_action_name = record.get("upstreamActionName")
-        event_id_field = "eventId"
-        attributes_field = "eventAttributes"
-        lineage_prefix = ""
-    else:
-        event = record.get("event")
-        if not isinstance(event, dict):
-            return None, None, "field 'event' must be a JSON object"
-        event_id_value = event.get("id")
-        event_attributes = event.get("attributes")
-        upstream_event_id = event.get("upstreamEventId")
-        upstream_action_name = event.get("upstreamActionName")
-        event_id_field = "event.id"
-        attributes_field = "event.attributes"
-        lineage_prefix = "event."
-
-    if not isinstance(event_id_value, str) or not event_id_value:
-        return None, None, f"field '{event_id_field}' must be a non-empty string"
+    entity_type = record.get("entityType")
+    event_type = record.get("entityName")
+    if not isinstance(entity_type, str) or not entity_type:
+        return None, None, "field 'entityType' must be a non-empty string"
     if not isinstance(event_type, str) or not event_type:
-        return None, event_id_value, "field 'eventType' must be a non-empty string"
-    if not isinstance(event_attributes, dict):
-        return (
-            None,
-            event_id_value,
-            f"field '{attributes_field}' must be a JSON object",
-        )
+        return None, None, "field 'entityName' must be a non-empty string"
+    if entity_type != "event":
+        return None, None, None
 
+    metadata = record.get("entityMetadata")
+    if not isinstance(metadata, dict):
+        return None, None, "field 'entityMetadata' must be a JSON object"
+    event_id_value = metadata.get("eventId")
+    if not isinstance(event_id_value, str) or not event_id_value:
+        return None, None, "field 'entityMetadata.eventId' must be a non-empty string"
+    if not isinstance(record.get("attributes"), dict):
+        return None, event_id_value, "field 'attributes' must be a JSON object"
+
+    upstream_event_id = metadata.get("upstreamEventId")
+    upstream_action_name = metadata.get("upstreamActionName")
     for field_name, field_value in (
         ("upstreamEventId", upstream_event_id),
         ("upstreamActionName", upstream_action_name),
@@ -147,7 +112,7 @@ def _normalize_event_record(
             return (
                 None,
                 event_id_value,
-                f"field '{lineage_prefix}{field_name}' must be a string or null",
+                f"field 'entityMetadata.{field_name}' must be a string or null",
             )
 
     return (
@@ -157,7 +122,6 @@ def _normalize_event_record(
             "timestamp": record.get("timestamp"),
             "upstreamEventId": upstream_event_id,
             "upstreamActionName": upstream_action_name,
-            "eventContent": event_attributes,
         },
         event_id_value,
         None,
@@ -170,7 +134,7 @@ def read_event_records(
     """Read the fields needed to reconstruct Trace Trees."""
     log_files = find_log_files(path)
     if not log_files:
-        message = f"No Event Log files found at {path}"
+        message = f"No Trace Log files found at {path}"
         raise FileNotFoundError(message)
 
     for log_file in log_files:
@@ -184,26 +148,14 @@ def read_event_records(
                     warning(
                         "MALFORMED_RECORD",
                         event_id,
-                        f"Invalid Event Log record in {log_file}: {invalid_reason}.",
+                        f"Invalid Trace Log record in {log_file}: {invalid_reason}.",
                         file_path=log_file,
                     )
                 )
                 continue
 
-            assert normalized_record is not None
-            if _is_execution_lifecycle_record(record):
+            if normalized_record is None:
                 continue
-            if normalized_record["eventType"] in ExecutionLifecycleEvents.EVENT_TYPES:
-                warnings.append(
-                    warning(
-                        "RESERVED_EVENT_TYPE",
-                        event_id,
-                        f"Event {event_id} uses reserved execution lifecycle type "
-                        f"{normalized_record['eventType']} without the corresponding "
-                        "execution lifecycle fields; it was retained as a business Event.",
-                        file_path=log_file,
-                    )
-                )
             yield normalized_record
 
 
@@ -222,15 +174,10 @@ def build_trace_forest(
     lineage_edges_by_id: dict[str, list[tuple[str | None, str | None]]] = {}
     for event_id, matching_records in records_by_id.items():
         first_record = matching_records[0]
-        first_content_fingerprint = _json_fingerprint(first_record["eventContent"])
         lineage_records = [first_record]
         warned_conflicting_edges: set[tuple[str | None, str | None]] = set()
         for record in matching_records[1:]:
-            if (
-                record["eventType"] != first_record["eventType"]
-                or _json_fingerprint(record["eventContent"])
-                != first_content_fingerprint
-            ):
+            if record["eventType"] != first_record["eventType"]:
                 conflicting_edge = (
                     record["upstreamEventId"],
                     record["upstreamActionName"],
@@ -239,7 +186,7 @@ def build_trace_forest(
                     continue
                 warned_conflicting_edges.add(conflicting_edge)
                 message = (
-                    f"Event ID {event_id} has inconsistent Event type or content "
+                    f"Event ID {event_id} has inconsistent Event type "
                     f"across {len(matching_records)} records."
                 )
                 if (
@@ -299,28 +246,21 @@ def build_trace_forest(
     for event_id, node in nodes.items():
         lineage_edges = lineage_edges_by_id[event_id]
 
-        if node["eventType"] == INPUT_EVENT_TYPE:
-            if (None, None) in lineage_edges:
-                roots.append(event_id)
-            for upstream_event_id, upstream_action_name in lineage_edges:
-                if upstream_event_id is None and upstream_action_name is None:
-                    continue
-                warnings.append(
-                    warning(
-                        "INVALID_ROOT_LINEAGE",
-                        event_id,
-                        f"InputEvent {event_id} must not have upstream lineage.",
-                    )
-                )
-            continue
+        if node["eventType"] == INPUT_EVENT_TYPE and (None, None) in lineage_edges:
+            roots.append(event_id)
 
         for upstream_event_id, upstream_action_name in lineage_edges:
             if upstream_event_id is None:
+                if (
+                    node["eventType"] == INPUT_EVENT_TYPE
+                    and upstream_action_name is None
+                ):
+                    continue
                 warnings.append(
                     warning(
                         "UNLINKED_EVENT",
                         event_id,
-                        f"Non-InputEvent {event_id} has no upstream Event.",
+                        f"Event {event_id} has no upstream Event.",
                     )
                 )
                 continue
@@ -507,7 +447,7 @@ def render_text(trace_forest: dict[str, Any]) -> str:
 def main() -> None:
     """Run the command-line reader."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="Event Log file or directory")
+    parser.add_argument("path", type=Path, help="Trace Log file or directory")
     parser.add_argument("--format", choices=("text", "json"), default="text")
     args = parser.parse_args()
 

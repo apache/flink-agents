@@ -24,11 +24,11 @@ under the License.
 
 ## Overview
 
-Flink Agents can publish memory operations as framework-generated events. These events make it possible to audit what an action read or wrote, subscribe another action to memory changes, and inspect short-lived memory values from the Event Log for debugging.
+Flink Agents can publish memory operations as framework-generated events. These events make it possible to audit what an action read or wrote, subscribe another action to memory changes, and inspect short-lived memory values from the Trace Log for debugging.
 
 When an action finishes, the framework folds the memory operations performed by that action into **memory events**. It emits at most one event for each memory scope and operation kind, for example one short-term write event and one sensory write event. Failed or unfinished actions do not emit memory events. An action failure fails the operator task, and recovery rebuilds the interpreter instead of continuing with later actions in the same interpreter instance.
 
-Memory events use the same event infrastructure as other Flink Agents events. They can be written to the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}), observed by registered `EventListener`s, and used to trigger actions through normal event routing.
+Memory events use the same event infrastructure as other Flink Agents events. They can be written to the [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}), observed by registered `EventListener`s, and used to trigger actions through normal event routing.
 
 The framework can also emit an **agent-run begin event** (`_agent_run_begin_event`) when an `InputEvent` starts a run for a key. This opt-in event is disabled by default. When enabled, it is emitted before any action in that run executes and carries the key's short-term memory **values** as a flat map. Its Event Lineage points to the triggering `InputEvent` through the framework virtual Action `agent_run_begin_action`, so the event and any Actions it triggers remain in the same Trace Tree. Object nodes and empty-object structure are outside the event contract.
 
@@ -39,7 +39,7 @@ Memory events are useful when you need to:
 - audit which memory entries an action changed;
 - trigger follow-up actions from memory changes;
 - inspect memory reads during debugging by enabling read events;
-- inspect short-term or sensory values from an Event Log captured at `VERBOSE` level.
+- inspect short-term or sensory values from a Trace Log captured at `VERBOSE` detail.
 
 Memory events are not a replacement for the memory backends themselves. In particular, long-term memory events describe requested operations and observed read/search results; they do not provide a complete copy of the long-term memory store.
 
@@ -158,7 +158,7 @@ All memory events and run-begin events are emitted for keyed streams and carry t
 The `key` and `value` fields are nested under `attributes`; they are not top-level event fields:
 
 ```json
-{"timestamp": "2026-07-03T04:22:36.087914Z", "logLevel": "VERBOSE", "eventType": "_short_term_write_event", "event": {"eventType": "_short_term_write_event", "id": "da8ca017-25cc-4942-9085-ae38490e303c", "attributes": {"key": "user-42", "value": {"user.tier": "gold"}}, "type": "_short_term_write_event"}}
+{"timestamp": "2026-07-03T04:22:36.087914Z", "detail": "VERBOSE", "entityType": "event", "entityName": "_short_term_write_event", "entityMetadata": {"eventId": "da8ca017-25cc-4942-9085-ae38490e303c"}, "attributes": {"key": "user-42", "value": {"user.tier": "gold"}}}
 ```
 
 ### Value Semantics
@@ -214,16 +214,16 @@ public static void onStmWrite(Event event, RunnerContext ctx) {
 
 {{< /tabs >}}
 
-## Inspecting Memory Values from the Event Log
+## Inspecting Memory Values from the Trace Log
 
-Short-term and sensory changes can be followed offline from the Event Log if the job logs events at `VERBOSE` level. Write events may contain ambiguous `null` object markers, while run-begin events contain only value nodes, so these events are not a complete reconstruction format.
+Short-term and sensory changes can be followed offline from the Trace Log if the job logs events at `VERBOSE` detail. Write events may contain ambiguous `null` object markers, while run-begin events contain only value nodes, so these events are not a complete reconstruction format.
 
 **Short-term memory** for a key at time *t*:
 
 1. Locate the latest `_agent_run_begin_event` for that key at or before *t*. Its `value` is the short-term value snapshot at run begin.
 2. Apply subsequent `_short_term_write_event` values for the same key in log order until *t*.
 
-Because `agent-run.begin-event` is disabled by default, the Event Log has no built-in short-term value snapshot unless you opt in.
+Because `agent-run.begin-event` is disabled by default, the Trace Log has no built-in short-term value snapshot unless you opt in.
 
 **Sensory memory** starts empty at each run begin. Apply that run's `_sensory_write_event` values in log order until *t*.
 
@@ -231,14 +231,14 @@ Because `agent-run.begin-event` is disabled by default, the Event Log has no bui
 
 ## Semantics & Caveats
 
-- **Event Log level.** Use `event-log.level: VERBOSE` when the full memory-event payload is required.
+- **Trace Log detail.** Configure `trace-log.targets` with `scope: EVENT_ONLY` and `detail: VERBOSE` when full memory-event attributes are required, or select individual Event names with an entity scope.
 - **Durable execution.** A long-term memory operation wrapped in `durable_execute` is not recorded again when the durable result is replayed from state. The generated events describe operations that actually executed in the current attempt.
 - **Observation failures.** Unsupported short-term or sensory values are omitted. Invalid long-term records are skipped individually after a valid batch is parsed, but a bridge, batch-serialization, or malformed-payload failure drops the current partition key's LTM observation batch. Warnings do not include observed values. These failures do not fail the action or roll back a completed long-term backend operation.
 - **Failed actions.** A failed action does not reach the memory-event emission boundary. The operator task fails and recovery rebuilds the interpreter, so queued actions do not continue in the same interpreter instance after the failure.
 - **Performance.** When enabled, the run-begin event scans the key's short-term memory on every input. Keep it disabled when you do not need offline value inspection.
 
 {{< hint warning >}}
-**At-least-once on recovery.** After a failure, replayed completed actions can re-log their persisted output events, including generated memory events. A replayed input can also re-emit its run-begin event with restored short-term memory. Event Log consumers should tolerate duplicates.
+**At-least-once on recovery.** After a failure, replayed completed actions can re-log their persisted output events, including generated memory events. A replayed input can also re-emit its run-begin event with restored short-term memory. Trace Log consumers should tolerate duplicates.
 {{< /hint >}}
 
 {{< hint warning >}}
