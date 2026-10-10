@@ -26,7 +26,7 @@ under the License.
 
 ## Overview
 
-Model routing lets one chat request choose between several registered chat models at runtime. Instead of naming a chat model in a `ChatRequestEvent`, an agent names a **model router**. The router carries a list of **candidate** chat models and a **routing strategy**. For each request the strategy either **selects** one candidate or **abstains**, in which case the router's default model is used. The chosen model is then invoked through the ordinary chat path, so its prompt, tools, skills, retries, token metrics, and event logging apply as usual.
+Model routing lets one chat request choose between several registered chat models at runtime. Instead of naming a chat model in a `ChatRequestEvent`, an agent names a **model router**. The router carries a list of **candidate** chat models and a **routing strategy**. For each request the strategy either **selects** one candidate or **abstains**, in which case the router's default model is used. The chosen model is then invoked through the ordinary chat path, so its prompt, tools, skills, retries, token metrics, and trace logging apply as usual.
 
 Typical uses are sending short requests to a small, cheap model and code, SQL, or multi-step reasoning to a large one; keeping a default model for everything the strategy cannot classify; and falling through to the next candidate when the selected model fails.
 
@@ -254,7 +254,9 @@ A judge call that exhausts its retries or a throwing rule/custom strategy produc
 
 ## Observability
 
-Every accepted routing decision emits a `ModelRoutingEvent`, event type `_model_routing_event`. Subscribe with `@Action(EventType.ModelRoutingEvent)`, or read it from the [Event Log]({{< ref "docs/operations/monitoring#event-log" >}}). A fallback that changes the model emits a second event with source `fallback`.
+Every accepted routing decision emits a `ModelRoutingEvent`, event type `_model_routing_event`. Subscribe with `@Action(EventType.ModelRoutingEvent)`, or read it from the [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}). A fallback that changes the model emits a second event with source `fallback`.
+
+In Trace Log output, these Events have `entityType: event` and `entityName: _model_routing_event`. The Event fields below are recorded under `attributes`.
 
 | Event field | Description |
 |-------------|-------------|

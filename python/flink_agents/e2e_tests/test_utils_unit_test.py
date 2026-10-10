@@ -27,13 +27,14 @@ from flink_agents.e2e_tests.test_utils import (
 
 
 def _tool_request_record(tool_calls: list) -> dict:
-    """Build a record matching the FileEventLogger wire format for a tool request."""
+    """Build a native TraceRecord for a tool request Event."""
     return {
         "timestamp": "2026-05-31T00:00:00Z",
-        "logLevel": "STANDARD",
-        "eventId": "00000000-0000-0000-0000-000000000001",
-        "eventType": "_tool_request_event",
-        "eventAttributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
+        "detail": "STANDARD",
+        "entityType": "event",
+        "entityName": "_tool_request_event",
+        "entityMetadata": {"eventId": "00000000-0000-0000-0000-000000000001"},
+        "attributes": {"model": "qwen3:1.7b", "tool_calls": tool_calls},
     }
 
 
@@ -47,81 +48,72 @@ def _function_tool_call(name: str, arguments: object) -> dict:
 
 def _write_log(log_dir: Path, records: list) -> None:
     log_dir.mkdir(parents=True, exist_ok=True)
-    with (log_dir / "events-0.log").open("w") as handle:
+    with (log_dir / "traces-0.log").open("w") as handle:
         for record in records:
             handle.write(json.dumps(record) + "\n")
 
 
 def test_collect_tool_invocations(tmp_path: Path) -> None:
-    """Parser extracts nested function.name/function.arguments from a tool request line.
+    """Extract paired names and arguments from successive tool request rounds.
 
-    Records with a different eventType are ignored.
+    Other Events and call observations are ignored.
     """
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     other_event = {
         "timestamp": "2026-05-31T00:00:00Z",
-        "logLevel": "STANDARD",
-        "eventId": "00000000-0000-0000-0000-000000000002",
-        "eventType": "_input_event",
-        "eventAttributes": {},
+        "detail": "STANDARD",
+        "entityType": "event",
+        "entityName": "_input_event",
+        "entityMetadata": {"eventId": "00000000-0000-0000-0000-000000000002"},
+        "attributes": {},
     }
     _write_log(
         log_dir,
         [
             other_event,
-            _tool_request_record([_function_tool_call("add", {"a": 1, "b": 2})]),
+            _tool_request_record(
+                [
+                    _function_tool_call("add", {"a": 1, "b": 2}),
+                    _function_tool_call("subtract", {"a": 9, "b": 4}),
+                ]
+            ),
+            {
+                "timestamp": "2026-05-31T00:00:00Z",
+                "entityType": "tool",
+                "entityName": "_tool_request_event",
+                "executionId": "tool-call",
+                "status": "success",
+                "attributes": {"tool_calls": [_function_tool_call("ignored", {})]},
+            },
+            _tool_request_record([_function_tool_call("multiply", {"a": 3, "b": 5})]),
         ],
     )
 
     assert collect_tool_invocations(log_dir) == [
-        {"name": "add", "arguments": {"a": 1, "b": 2}}
+        {"name": "add", "arguments": {"a": 1, "b": 2}},
+        {"name": "subtract", "arguments": {"a": 9, "b": 4}},
+        {"name": "multiply", "arguments": {"a": 3, "b": 5}},
     ]
 
 
 def test_collect_tool_invocations_no_tool(tmp_path: Path) -> None:
     """A run with no tool request event yields an empty list."""
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     _write_log(
         log_dir,
         [
             {
                 "timestamp": "2026-05-31T00:00:00Z",
-                "logLevel": "STANDARD",
-                "eventId": "00000000-0000-0000-0000-000000000003",
-                "eventType": "_output_event",
-                "eventAttributes": {},
+                "detail": "STANDARD",
+                "entityType": "event",
+                "entityName": "_output_event",
+                "entityMetadata": {"eventId": "00000000-0000-0000-0000-000000000003"},
+                "attributes": {},
             }
         ],
     )
 
     assert collect_tool_invocations(log_dir) == []
-
-
-def test_collect_tool_invocations_legacy_format(tmp_path: Path) -> None:
-    """Parser remains compatible with the old nested event log format."""
-    log_dir = tmp_path / "event_logs"
-    _write_log(
-        log_dir,
-        [
-            {
-                "timestamp": "2026-05-31T00:00:00Z",
-                "logLevel": "STANDARD",
-                "eventType": "_tool_request_event",
-                "event": {
-                    "eventType": "_tool_request_event",
-                    "id": "00000000-0000-0000-0000-000000000001",
-                    "attributes": {
-                        "model": "qwen3:1.7b",
-                        "tool_calls": [_function_tool_call("add", {"a": 1, "b": 2})],
-                    },
-                },
-            }
-        ],
-    )
-
-    assert collect_tool_invocations(log_dir) == [
-        {"name": "add", "arguments": {"a": 1, "b": 2}}
-    ]
 
 
 def test_assert_tool_invoked_dict_args() -> None:

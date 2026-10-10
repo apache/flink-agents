@@ -22,7 +22,7 @@ Events cross the Python/Java boundary as JSON and are deserialized into the base
 ``Dict[str, Any]``. Nested typed values (for example
 :class:`~flink_agents.api.chat_message.ChatMessage`) therefore arrive as generic
 dicts, and infrastructure that runs before an action — the event router, the
-event log, and event listeners — observes an untyped event even for a known
+trace log, and event listeners — observes an untyped event even for a known
 built-in type.
 
 :func:`restore` maps each built-in event type to its existing ``from_event``

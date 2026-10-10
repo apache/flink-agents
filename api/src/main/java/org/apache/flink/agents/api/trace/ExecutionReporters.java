@@ -26,12 +26,15 @@ import javax.annotation.Nullable;
 import java.util.Map;
 
 /**
- * Utilities for reporting optional nested executions through a {@link RunnerContext}.
+ * Helpers for reporting the creation, start, and outcome of calls made within an Action through a
+ * {@link RunnerContext} that implements {@link ExecutionReporter}.
  *
- * <p>These helpers are best-effort: reporter failures are ignored so execution reporting never
- * changes action success or failure. When reporting a failed execution, reporter failures are also
- * attached as suppressed exceptions to the business error so callers that later throw that error
- * can still inspect the reporting failure.
+ * <p>Contexts that do not implement this capability are ignored.
+ *
+ * <p>These helpers are best-effort: reporter failures are ignored so reporting never changes Action
+ * success or failure. When reporting a failed call, reporter failures are also attached as
+ * suppressed exceptions to the business error so callers that later throw that error can still
+ * inspect the reporting failure.
  */
 public final class ExecutionReporters {
 

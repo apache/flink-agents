@@ -96,9 +96,9 @@ def test_react_agent_on_remote_runner(
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    env.get_config().set_str("baseLogDir", str(log_dir))
+    env.get_config().set_str("trace-log.base-dir", str(log_dir))
 
     # register resource to execution environment
     (
@@ -180,7 +180,7 @@ def test_react_agent_on_remote_runner(
     # correctly and threaded into multiply; the model often does the addition
     # without the add tool, so add is not a reliable signal to assert on. This
     # exercises the same reasoning chain as the local-runner test, but read back
-    # through the event-log capture path.
+    # through the trace-log capture path.
     invocations = collect_tool_invocations(log_dir)
     assert_tool_invoked(invocations, "multiply", {"a": 4444, "b": 312})
 
@@ -216,9 +216,9 @@ def test_react_agent_no_output_schema_on_remote_runner(
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    env.get_config().set_str("baseLogDir", str(log_dir))
+    env.get_config().set_str("trace-log.base-dir", str(log_dir))
 
     # register resource to execution environment
     (

@@ -82,7 +82,7 @@ class BuiltInEventsTest {
         return new ChatRequestEvent(FIXED_ID, attrs);
     }
 
-    /** Attributes for a {@link ModelRoutingEvent}, whose reconstructor must keep full lineage. */
+    /** Attributes for a {@link ModelRoutingEvent}. */
     private static Map<String, Object> routingAttrs() {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("request_id", REQUEST_ID);
@@ -257,7 +257,7 @@ class BuiltInEventsTest {
         assertThat(((ShortTermWriteEvent) restored).getKey()).isEqualTo("user-42");
     }
 
-    // ── Fallback, idempotency, lineage, null ───────────────────────────────
+    // ── Fallback, idempotency, reconstruction, null ───────────────────────
 
     @Test
     void restoreReturnsUnknownTypeUnchanged() {
@@ -283,11 +283,8 @@ class BuiltInEventsTest {
     }
 
     @Test
-    void restorePreservesLineageAndAttachments() {
-        UUID upstream = UUID.randomUUID();
+    void restorePreservesIdentityTimestampAndAttachments() {
         Event base = new Event(FIXED_ID, InputEvent.EVENT_TYPE, Map.of("input", "hello"));
-        base.setUpstreamEventId(upstream);
-        base.setUpstreamActionName("input_action");
         base.setSourceTimestamp(1_700_000_000_000L);
         base.setAttachment("payload", "attachment-value");
 
@@ -295,22 +292,16 @@ class BuiltInEventsTest {
 
         assertThat(restored).isInstanceOf(InputEvent.class);
         assertThat(restored.getId()).isEqualTo(FIXED_ID);
-        assertThat(restored.getUpstreamEventId()).isEqualTo(upstream);
-        assertThat(restored.getUpstreamActionName()).isEqualTo("input_action");
         assertThat(restored.getSourceTimestamp()).isEqualTo(1_700_000_000_000L);
         assertThat(restored.getAttachment("payload")).isEqualTo("attachment-value");
         assertThat(((InputEvent) restored).getInput()).isEqualTo("hello");
     }
 
     @Test
-    void restorePreservesLineageAndAttachmentsForModelRoutingEvent() {
-        // Regression: ModelRoutingEvent.fromEvent must reconstruct through the shared path like
-        // every other built-in, so restoring it at the JSON boundary keeps upstream lineage and
-        // attachments instead of silently dropping all but id, attributes, and source timestamp.
-        UUID upstream = UUID.randomUUID();
+    void restorePreservesIdentityTimestampAndAttachmentsForModelRoutingEvent() {
+        // ModelRoutingEvent.fromEvent must use the shared reconstruction path to preserve
+        // attachments, identity, and source timestamp.
         Event base = new Event(FIXED_ID, ModelRoutingEvent.EVENT_TYPE, routingAttrs());
-        base.setUpstreamEventId(upstream);
-        base.setUpstreamActionName("router_action");
         base.setSourceTimestamp(1_700_000_000_000L);
         base.setAttachment("payload", "attachment-value");
 
@@ -318,8 +309,6 @@ class BuiltInEventsTest {
 
         assertThat(restored).isInstanceOf(ModelRoutingEvent.class);
         assertThat(restored.getId()).isEqualTo(FIXED_ID);
-        assertThat(restored.getUpstreamEventId()).isEqualTo(upstream);
-        assertThat(restored.getUpstreamActionName()).isEqualTo("router_action");
         assertThat(restored.getSourceTimestamp()).isEqualTo(1_700_000_000_000L);
         assertThat(restored.getAttachment("payload")).isEqualTo("attachment-value");
         assertThat(((ModelRoutingEvent) restored).getSelectedModel()).isEqualTo("model-a");

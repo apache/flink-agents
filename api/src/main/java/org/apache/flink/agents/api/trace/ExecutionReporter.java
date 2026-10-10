@@ -22,15 +22,19 @@ import javax.annotation.Nullable;
 import java.util.Map;
 
 /**
- * Optional capability for reporting logical executions nested inside the current action.
+ * Optional capability for reporting the creation, start, and outcome of calls made within the
+ * current Action.
  *
- * <p>Implementations decide how reports are consumed or ignored. Callers should provide stable
- * entity type/name pairs and keep metadata small, structured, serializable, and stable for equality
- * matching between lifecycle reports of the same logical execution.
+ * <p>A reported execution is one call, such as an LLM request, parser invocation, Tool call, or
+ * Subagent call. Reports about the same call must use the same entity type, name, and metadata.
+ * Metadata must distinguish calls with the same type and name that can overlap, and should remain
+ * small, structured, and serializable.
+ *
+ * <p>Implementations decide how reports are consumed or ignored.
  */
 public interface ExecutionReporter {
 
-    /** Shared entity type names for execution reports. */
+    /** Shared entity type names for observing Actions and calls made within Actions. */
     final class EntityTypes {
         public static final String ACTION = "action";
         public static final String LLM = "llm";
@@ -41,7 +45,7 @@ public interface ExecutionReporter {
         private EntityTypes() {}
     }
 
-    /** Shared low-cardinality problem categories for failed execution reports. */
+    /** Shared low-cardinality failure categories for Actions and calls made within Actions. */
     final class ProblemCategories {
         public static final String ACTION_EXECUTION_FAILED = "action_execution_failed";
         public static final String MODEL_CALL_FAILED = "model_call_failed";
@@ -52,38 +56,35 @@ public interface ExecutionReporter {
     }
 
     /**
-     * Reports that a logical execution has been created but has not necessarily started.
+     * Reports that a call has been created but has not necessarily started.
      *
-     * <p>This is an optional lifecycle phase for executions whose admission and invocation are
-     * observably separate. Implementations that do not consume it may keep the default no-op. A
-     * later start or terminal report is not guaranteed, so consumers must not infer whether the
-     * underlying invocation ran from the absence of either report.
+     * <p>This optional report can describe a call prepared separately from its invocation. The
+     * default implementation ignores it. A later start, success, or failure report is not
+     * guaranteed; missing reports do not establish whether the call ran.
      *
-     * @param entityType stable category of the reported execution, such as LLM, parser, or tool
-     * @param entityName stable name of the reported execution, such as model or tool name
-     * @param entityMetadata small structured metadata used to match subsequent lifecycle reports
+     * @param entityType the call type, such as LLM, parser, tool, or subagent
+     * @param entityName the call target's name, such as a model or tool name
+     * @param entityMetadata small structured metadata shared by all reports about the call
      */
     default void reportExecutionCreated(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception {}
 
     /**
-     * Reports that a logical execution started within the current action.
+     * Reports that a call made within the current Action started.
      *
-     * @param entityType stable category of the reported execution, such as LLM, parser, or tool
-     * @param entityName stable name of the reported execution, such as model or tool name
-     * @param entityMetadata small structured metadata used to distinguish repeated executions with
-     *     the same type/name
+     * @param entityType the call type, such as LLM, parser, tool, or subagent
+     * @param entityName the call target's name, such as a model or tool name
+     * @param entityMetadata small structured metadata shared by all reports about the call
      */
     void reportExecutionStarted(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception;
 
     /**
-     * Reports that a logical execution started at the given occurrence timestamp.
+     * Reports that a call started at the supplied timestamp.
      *
-     * <p>The default implementation delegates to {@link #reportExecutionStarted(String, String,
-     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionStartedAt(
             String entityType,
@@ -95,20 +96,18 @@ public interface ExecutionReporter {
     }
 
     /**
-     * Reports that a logical execution completed successfully.
+     * Reports that a call completed successfully.
      *
-     * <p>The entity type/name/metadata should match the corresponding start report when one was
-     * reported.
+     * <p>The entity type, name, and metadata must match any creation or start report for the call.
      */
     void reportExecutionSucceeded(
             String entityType, String entityName, Map<String, Object> entityMetadata)
             throws Exception;
 
     /**
-     * Reports that a logical execution completed successfully at the given occurrence timestamp.
+     * Reports that a call completed successfully at the supplied timestamp.
      *
-     * <p>The default implementation delegates to {@link #reportExecutionSucceeded(String, String,
-     * Map)}, so reporters that do not retain occurrence timestamps may use their observation time.
+     * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionSucceededAt(
             String entityType,
@@ -120,10 +119,10 @@ public interface ExecutionReporter {
     }
 
     /**
-     * Reports that a logical execution failed.
+     * Reports that a call failed.
      *
-     * <p>The entity type/name/metadata should match the corresponding start report when one was
-     * reported. The problem category should be a stable, low-cardinality classification.
+     * <p>The entity type, name, and metadata must match any creation or start report for the call.
+     * The problem category should be a stable, low-cardinality classification.
      */
     void reportExecutionFailed(
             String entityType,
@@ -134,11 +133,9 @@ public interface ExecutionReporter {
             throws Exception;
 
     /**
-     * Reports that a logical execution failed at the given occurrence timestamp.
+     * Reports that a call failed at the supplied timestamp.
      *
-     * <p>The default implementation delegates to {@link #reportExecutionFailed(String, String, Map,
-     * Throwable, String)}, so reporters that do not retain occurrence timestamps may use their
-     * observation time.
+     * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionFailedAt(
             String entityType,

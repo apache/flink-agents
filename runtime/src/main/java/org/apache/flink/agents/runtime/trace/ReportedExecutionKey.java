@@ -25,7 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
-/** Runtime key used to match lifecycle reports for the same reported execution. */
+/** Runtime key used to match creation, start, and outcome reports about the same call. */
 @Internal
 public final class ReportedExecutionKey implements Serializable {
     private static final long serialVersionUID = 1L;

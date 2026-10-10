@@ -19,8 +19,8 @@
 package org.apache.flink.agents.runtime.metrics;
 
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.metrics.Histogram;
 
 import java.util.Objects;
@@ -57,7 +57,7 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
     @Override
     public void record(
             FlinkAgentsMetricGroupImpl actionMetricGroup,
-            ExecutionTraceContext traceContext,
+            TraceContext traceContext,
             Outcome outcome,
             Long latencyMs) {
         String requestedToolName = traceContext.getEntityName();
@@ -114,12 +114,12 @@ final class ToolExecutionMetricRecorder implements ExecutionMetricRecorder {
         }
     }
 
-    private static String metadataValue(ExecutionTraceContext traceContext, String metadataKey) {
+    private static String metadataValue(TraceContext traceContext, String metadataKey) {
         Object value = traceContext.getEntityMetadata().get(metadataKey);
         return value == null ? null : String.valueOf(value);
     }
 
-    private static boolean isRegisteredSkill(ExecutionTraceContext traceContext) {
+    private static boolean isRegisteredSkill(TraceContext traceContext) {
         return Boolean.TRUE.equals(
                 traceContext.getEntityMetadata().get(ToolExecutionMetadataKeys.SKILL_REGISTERED));
     }

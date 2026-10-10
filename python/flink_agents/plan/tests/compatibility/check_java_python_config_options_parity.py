@@ -28,6 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from py4j.java_collections import JavaList, JavaMap
 from pyflink.java_gateway import get_gateway
 from pyflink.util.java_utils import add_jars_to_context_class_loader
 
@@ -36,6 +37,8 @@ from flink_agents.api.core_options import (
     AgentConfigOptions,
     AgentExecutionOptions,
     MemoryEventOptions,
+    TraceLogDetail,
+    TraceLogScope,
 )
 
 _JAVA_PRIMITIVE_TYPE_TO_PYTHON: dict[str, type] = {
@@ -90,12 +93,23 @@ def _java_type_matches_python(java_type_name: str, python_config_type: type) -> 
     return python_config_type.__name__ == java_simple_name
 
 
+def _normalize_java_collection(value: Any) -> Any:
+    if isinstance(value, JavaMap):
+        return {key: _normalize_java_collection(item) for key, item in value.items()}
+    if isinstance(value, JavaList):
+        return [_normalize_java_collection(item) for item in value]
+    return value
+
+
 def normalize_java_default(
     java_default: Any, java_type_name: str, python_config_type: type
 ) -> Any:
     """Convert a Java default value into a Python-comparable form."""
     if java_default is None:
         return None
+
+    if python_config_type is list:
+        return [_normalize_java_collection(item) for item in java_default]
 
     if hasattr(java_default, "name") and callable(java_default.name):
         enum_name = java_default.name()
@@ -166,6 +180,15 @@ def assert_options_class_matches_java(
         )
 
 
+def assert_enum_matches_java(python_enum: type[Enum], java_enum_class: Any) -> None:
+    """Compare enum names used inside trace log targets."""
+    java_names = {value.name() for value in java_enum_class.getEnumConstants()}
+    assert set(python_enum.__members__) == java_names, (
+        f"{python_enum.__name__}: enum values differ "
+        f"(python={sorted(python_enum.__members__)!r}, java={sorted(java_names)!r})"
+    )
+
+
 def main() -> None:
     current_dir = Path(__file__).parent
 
@@ -194,6 +217,13 @@ def main() -> None:
     assert_options_class_matches_java(
         MemoryEventOptions, java_memory_event_options, jvm
     )
+    for python_enum in (TraceLogDetail, TraceLogScope):
+        assert_enum_matches_java(
+            python_enum,
+            class_loader.loadClass(
+                f"org.apache.flink.agents.api.logger.{python_enum.__name__}"
+            ),
+        )
 
 
 if __name__ == "__main__":

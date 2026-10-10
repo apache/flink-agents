@@ -879,7 +879,7 @@ public class ChatModelActionRoutingTest {
         List<String> tried = (List<String>) routing.get("fallback_models_tried");
         assertThat(tried).containsExactly("small");
 
-        // the fallback outcome is also in the event log: decision event + fallback event
+        // A separate routing Event reports the fallback outcome.
         assertThat(ctx.routingEventCount()).isEqualTo(2L);
         ModelRoutingEvent fallbackEvent =
                 ctx.sentEvents.stream()

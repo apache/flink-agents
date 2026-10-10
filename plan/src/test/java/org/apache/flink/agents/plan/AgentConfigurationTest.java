@@ -18,12 +18,15 @@
 
 package org.apache.flink.agents.plan;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
+import org.apache.flink.agents.api.logger.LoggerType;
 import org.junit.jupiter.api.*;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -229,5 +232,50 @@ public class AgentConfigurationTest {
         config.setStr("nullable.str", null);
 
         assertEquals("default", config.get(nullableStr));
+    }
+
+    @Test
+    void traceLogDefaultsAndEmptyTargetsSurvivePlanJson() throws Exception {
+        AgentConfiguration config = new AgentConfiguration();
+        assertEquals(
+                List.of(Map.of("scope", "EVENT_ONLY", "detail", "STANDARD")),
+                config.get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        assertEquals(LoggerType.SLF4J, config.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE));
+
+        config.set(AgentConfigOptions.TRACE_LOG_TARGETS, List.of());
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE);
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(
+                        mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                        AgentPlan.class);
+        assertTrue(restored.getConfig().get(AgentConfigOptions.TRACE_LOG_TARGETS).isEmpty());
+        assertEquals(
+                LoggerType.FILE,
+                restored.getConfig().get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE));
+    }
+
+    @Test
+    void traceLogTargetsSurviveNestedConfigurationAndPlanJson() throws Exception {
+        List<Map<String, Object>> targets =
+                List.of(
+                        Map.of("scope", "ALL", "detail", "OFF"),
+                        Map.of("scope", "EVENT_ONLY", "detail", "STANDARD"),
+                        Map.of(
+                                "scope",
+                                Map.of("entityType", "event", "entityName", "com.foo.*"),
+                                "detail",
+                                "VERBOSE"),
+                        Map.of("scope", Map.of("entityType", "action", "entityName", "process")),
+                        Map.of("scope", Map.of("entityType", "tool")));
+        AgentConfiguration config =
+                new AgentConfiguration(Map.of("trace-log", Map.of("targets", targets)));
+        assertEquals(targets, config.get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(
+                        mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                        AgentPlan.class);
+        assertEquals(targets, restored.getConfig().get(AgentConfigOptions.TRACE_LOG_TARGETS));
     }
 }

@@ -27,7 +27,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -164,21 +163,16 @@ public class MemoryEventTest {
 
     @Test
     void testFromEventPreservesFrameworkMetadata() {
-        UUID upstreamEventId = UUID.randomUUID();
         Event generic =
                 new Event(
                         LongTermUpdateEvent.EVENT_TYPE,
                         Map.of("key", "k1", "value", Map.of("profile.name", "Alice")));
         generic.setSourceTimestamp(123456789L);
-        generic.setUpstreamEventId(upstreamEventId);
-        generic.setUpstreamActionName("update_profile");
 
         MemoryEvent restored = MemoryEvent.fromEvent(generic);
 
         assertEquals(generic.getId(), restored.getId());
         assertEquals(123456789L, restored.getSourceTimestamp());
-        assertEquals(upstreamEventId, restored.getUpstreamEventId());
-        assertEquals("update_profile", restored.getUpstreamActionName());
     }
 
     @Test

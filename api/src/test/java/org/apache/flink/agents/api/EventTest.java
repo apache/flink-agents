@@ -143,8 +143,6 @@ class EventTest {
         assertEquals(id, event.getId());
         assertEquals("MyEvent", event.getType());
         assertEquals(1, event.getAttr("x"));
-        assertNull(event.getUpstreamEventId());
-        assertNull(event.getUpstreamActionName());
     }
 
     @Test
@@ -192,32 +190,7 @@ class EventTest {
     }
 
     @Test
-    void testLineageJsonRoundTrip() throws Exception {
-        UUID eventId = UUID.randomUUID();
-        UUID upstreamEventId = UUID.randomUUID();
-        Event original =
-                new Event(
-                        eventId,
-                        "ChildEvent",
-                        Map.of("key", "value"),
-                        upstreamEventId,
-                        "child_action");
-
-        String json = objectMapper.writeValueAsString(original);
-        JsonNode node = objectMapper.readTree(json);
-        Event deserialized = objectMapper.readValue(json, Event.class);
-
-        assertEquals(eventId.toString(), node.get("id").asText());
-        assertEquals(upstreamEventId.toString(), node.get("upstreamEventId").asText());
-        assertEquals("child_action", node.get("upstreamActionName").asText());
-        assertEquals(eventId, deserialized.getId());
-        assertEquals("value", deserialized.getAttr("key"));
-        assertEquals(upstreamEventId, deserialized.getUpstreamEventId());
-        assertEquals("child_action", deserialized.getUpstreamActionName());
-    }
-
-    @Test
-    void testRootEventOmitsLineageFieldsFromJson() throws Exception {
+    void testEventOmitsLineageFieldsFromJson() throws Exception {
         JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(new InputEvent(1L)));
 
         assertFalse(node.has("upstreamEventId"));
@@ -319,36 +292,13 @@ class EventTest {
 
     @Test
     void testFromEventReconstructsSameOccurrence() {
-        UUID upstreamEventId = UUID.randomUUID();
         Event original = new Event("Test");
         original.setSourceTimestamp(123456789L);
-        original.setUpstreamEventId(upstreamEventId);
-        original.setUpstreamActionName("test_action");
 
         Event copy = Event.fromEvent(original);
 
         assertEquals(original.getId(), copy.getId());
         assertEquals(123456789L, copy.getSourceTimestamp());
-        assertEquals(upstreamEventId, copy.getUpstreamEventId());
-        assertEquals("test_action", copy.getUpstreamActionName());
-    }
-
-    @Test
-    void testTypedFromEventCopiesLineage() {
-        UUID upstreamEventId = UUID.randomUUID();
-        Event original =
-                new Event(
-                        UUID.randomUUID(),
-                        OutputEvent.EVENT_TYPE,
-                        new HashMap<>(Map.of("output", "result")));
-        original.setUpstreamEventId(upstreamEventId);
-        original.setUpstreamActionName("output_action");
-
-        OutputEvent copy = OutputEvent.fromEvent(original);
-
-        assertEquals(original.getId(), copy.getId());
-        assertEquals(upstreamEventId, copy.getUpstreamEventId());
-        assertEquals("output_action", copy.getUpstreamActionName());
     }
 
     @Test
@@ -368,23 +318,18 @@ class EventTest {
 
     @Test
     void testCustomFactoryReconstructsSameOccurrenceWithoutManualMetadataCopy() {
-        UUID upstreamEventId = UUID.randomUUID();
         Event original =
                 new Event(
                         UUID.randomUUID(),
                         CustomPayloadEvent.EVENT_TYPE,
                         new HashMap<>(Map.of("value", "result")));
         original.setSourceTimestamp(123456789L);
-        original.setUpstreamEventId(upstreamEventId);
-        original.setUpstreamActionName("custom_action");
 
         CustomPayloadEvent copy = CustomPayloadEvent.fromEvent(original);
 
         assertEquals(original.getId(), copy.getId());
         assertEquals("result", copy.getAttr("value"));
         assertEquals(123456789L, copy.getSourceTimestamp());
-        assertEquals(upstreamEventId, copy.getUpstreamEventId());
-        assertEquals("custom_action", copy.getUpstreamActionName());
     }
 
     @Test

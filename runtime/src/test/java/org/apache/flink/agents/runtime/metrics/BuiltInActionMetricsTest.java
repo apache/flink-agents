@@ -18,8 +18,8 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -61,11 +61,11 @@ class BuiltInActionMetricsTest {
 
     @Test
     void actionLifecycleRecordsExecutionLatency() {
-        ExecutionTraceContext action = actionExecution();
+        TraceContext action = actionExecution();
 
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionStarted(), action);
+        metrics.executionRecordObserved(TraceRecords.started(action));
         nanoTime.set(35_000_000L);
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionFinished(), action);
+        metrics.executionRecordObserved(TraceRecords.succeeded(action));
 
         assertThat(
                         metricGroup
@@ -78,17 +78,17 @@ class BuiltInActionMetricsTest {
 
     @Test
     void continuationCanBePendingWhileLogicalExecutionIsActive() {
-        ExecutionTraceContext action = actionExecution();
+        TraceContext action = actionExecution();
         String executionId = action.getExecutionId();
 
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionStarted(), action);
+        metrics.executionRecordObserved(TraceRecords.started(action));
         metrics.actionTaskEnqueued(executionId, true);
 
         assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isEqualTo(1L);
         assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isEqualTo(1L);
 
         metrics.actionTaskDequeued(executionId, true);
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionFinished(), action);
+        metrics.executionRecordObserved(TraceRecords.succeeded(action));
 
         assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isZero();
         assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isZero();
@@ -101,14 +101,14 @@ class BuiltInActionMetricsTest {
 
     @Test
     void restoredContinuationRebuildsPendingAndActiveGauges() {
-        ExecutionTraceContext action = actionExecution();
+        TraceContext action = actionExecution();
 
         metrics.restoreActionTask(action.getExecutionId(), true);
         assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isEqualTo(1L);
         assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isEqualTo(1L);
 
         metrics.actionTaskDequeued(action.getExecutionId(), true);
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionFinished(), action);
+        metrics.executionRecordObserved(TraceRecords.succeeded(action));
 
         assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isZero();
         assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isZero();
@@ -121,11 +121,11 @@ class BuiltInActionMetricsTest {
 
     @Test
     void reusedRestoredExecutionEndsActiveGaugeWithoutLatency() {
-        ExecutionTraceContext action = actionExecution();
+        TraceContext action = actionExecution();
 
         metrics.restoreActionTask(action.getExecutionId(), true);
         metrics.actionTaskDequeued(action.getExecutionId(), true);
-        metrics.executionEventObserved(ExecutionLifecycleEvents.executionReused(), action);
+        metrics.executionRecordObserved(TraceRecords.reused(action));
 
         assertThat(gauge(BuiltInActionMetrics.NUM_PENDING_ACTION_TASKS)).isZero();
         assertThat(gauge(BuiltInActionMetrics.NUM_ACTIVE_ACTION_EXECUTIONS)).isZero();
@@ -140,8 +140,8 @@ class BuiltInActionMetricsTest {
         return (Long) metricGroup.getGauge(name).getValue();
     }
 
-    private static ExecutionTraceContext actionExecution() {
-        return ExecutionTraceContext.forAction(
-                ExecutionTraceContext.forInputRun("key", "agent"), "action");
+    private static TraceContext actionExecution() {
+        return TraceContext.forAction(
+                TraceContext.forInputRun("key", "agent"), "action", "trigger-event");
     }
 }

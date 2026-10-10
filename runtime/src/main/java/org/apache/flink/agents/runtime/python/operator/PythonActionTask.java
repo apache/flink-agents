@@ -18,7 +18,7 @@
 package org.apache.flink.agents.runtime.python.operator;
 
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -51,7 +51,7 @@ public class PythonActionTask extends ActionTask {
             Event event,
             Action action,
             long sequenceNumber,
-            ExecutionTraceContext traceContext) {
+            TraceContext traceContext) {
         super(key, event, action, sequenceNumber, traceContext);
         checkState(action.getExec() instanceof PythonFunction);
     }
@@ -62,7 +62,7 @@ public class PythonActionTask extends ActionTask {
             Action action,
             long sequenceNumber,
             String observationId,
-            ExecutionTraceContext traceContext) {
+            TraceContext traceContext) {
         super(key, event, action, sequenceNumber, observationId, traceContext);
         checkState(action.getExec() instanceof PythonFunction);
     }

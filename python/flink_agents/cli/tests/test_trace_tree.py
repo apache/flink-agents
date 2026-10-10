@@ -22,7 +22,6 @@ from pathlib import Path
 
 import pytest
 
-from flink_agents.api.trace import ExecutionLifecycleEvents
 from flink_agents.cli.trace_tree import find_log_files
 
 
@@ -33,51 +32,19 @@ def _record(
     upstream_action_name: str | None = None,
     attributes: dict | None = None,
 ) -> dict:
+    metadata = {"eventId": event_id}
+    if upstream_event_id is not None:
+        metadata["upstreamEventId"] = upstream_event_id
+    if upstream_action_name is not None:
+        metadata["upstreamActionName"] = upstream_action_name
     record = {
         "timestamp": "2026-07-17T10:00:00Z",
-        "eventId": event_id,
-        "eventType": event_type,
-        "eventAttributes": attributes or {},
-    }
-    if upstream_event_id is not None:
-        record["upstreamEventId"] = upstream_event_id
-    if upstream_action_name is not None:
-        record["upstreamActionName"] = upstream_action_name
-    return record
-
-
-def _legacy_record(
-    event_id: str,
-    event_type: str,
-    upstream_event_id: str | None = None,
-    upstream_action_name: str | None = None,
-    attributes: dict | None = None,
-) -> dict:
-    event = {
-        "id": event_id,
-        "eventType": event_type,
+        "entityType": "event",
+        "entityName": event_type,
+        "entityMetadata": metadata,
         "attributes": attributes or {},
     }
-    if upstream_event_id is not None:
-        event["upstreamEventId"] = upstream_event_id
-    if upstream_action_name is not None:
-        event["upstreamActionName"] = upstream_action_name
-    return {
-        "timestamp": "2026-07-17T10:00:00Z",
-        "eventType": event_type,
-        "event": event,
-    }
-
-
-def _execution_record(event_id: str, event_type: str, status: str) -> dict:
-    return {
-        **_record(event_id, event_type),
-        "inputRunId": "run-1",
-        "executionId": f"execution-{event_id}",
-        "entityType": "action",
-        "entityName": "test_action",
-        "status": status,
-    }
+    return record
 
 
 def _write_log(path: Path, records: list[dict]) -> None:
@@ -122,6 +89,7 @@ def test_reader_reconstructs_text_and_json_in_log_order(tmp_path: Path) -> None:
     text_result = _run_reader(log_path, "text")
 
     assert trace_forest["roots"] == ["root"]
+    assert all("children" not in node for node in trace_forest["nodes"].values())
     assert trace_forest["nodes"]["root"]["actions"] == [
         {"name": "branch_action", "children": ["child-1", "child-2"]},
         {"name": "second_action", "children": ["child-3"]},
@@ -146,19 +114,16 @@ def test_reader_reconstructs_text_and_json_in_log_order(tmp_path: Path) -> None:
     assert text_result.stderr == ""
 
 
-def test_reader_keeps_enabled_run_begin_branch_in_input_trace(tmp_path: Path) -> None:
+def test_reader_links_action_generated_input(
+    tmp_path: Path,
+) -> None:
     log_path = tmp_path / "events.log"
     _write_log(
         log_path,
         [
             _record("root", "_input_event"),
-            _record(
-                "run-begin",
-                "_agent_run_begin_event",
-                "root",
-                "agent_run_begin_action",
-            ),
-            _record("output", "_output_event", "run-begin", "on_run_begin"),
+            _record("new-input", "_input_event", "root", "send_input"),
+            _record("output", "_output_event", "new-input", "process_input"),
         ],
     )
 
@@ -167,13 +132,28 @@ def test_reader_keeps_enabled_run_begin_branch_in_input_trace(tmp_path: Path) ->
 
     assert trace_forest["roots"] == ["root"]
     assert trace_forest["nodes"]["root"]["actions"] == [
-        {"name": "agent_run_begin_action", "children": ["run-begin"]}
+        {"name": "send_input", "children": ["new-input"]}
     ]
-    assert trace_forest["nodes"]["run-begin"]["actions"] == [
-        {"name": "on_run_begin", "children": ["output"]}
+    assert trace_forest["nodes"]["new-input"]["actions"] == [
+        {"name": "process_input", "children": ["output"]}
+    ]
+    assert trace_forest["nodes"]["new-input"]["upstreamEdges"] == [
+        {"upstreamEventId": "root", "upstreamActionName": "send_input"}
     ]
     assert trace_forest["warnings"] == []
     assert result.stderr == ""
+
+    text_result = _run_reader(log_path, "text")
+    expected_text_order = [
+        "_input_event (root)",
+        "[Action: send_input]",
+        "_input_event (new-input)",
+        "[Action: process_input]",
+        "_output_event (output)",
+    ]
+    positions = [text_result.stdout.index(item) for item in expected_text_order]
+    assert positions == sorted(positions)
+    assert text_result.stderr == ""
 
 
 def test_reader_reconstructs_pretty_printed_records(tmp_path: Path) -> None:
@@ -205,26 +185,15 @@ def test_reader_reconstructs_pretty_printed_records(tmp_path: Path) -> None:
     assert text_result.stderr == ""
 
 
-def test_reader_merges_flat_and_legacy_records(tmp_path: Path) -> None:
+def test_reader_rejects_old_flat_and_nested_record_formats(tmp_path: Path) -> None:
     log_path = tmp_path / "events.log"
     _write_log(
         log_path,
         [
             _record("root", "_input_event"),
-            _legacy_record(
-                "child",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"value": 1},
-            ),
-            _record(
-                "child",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"value": 1},
-            ),
+            {"eventId": "flat", "eventType": "OldEvent", "eventAttributes": {}},
+            {"eventType": "OldEvent", "event": {"id": "nested", "attributes": {}}},
+            _record("child", "ChildEvent", "root", "child_action"),
         ],
     )
 
@@ -235,42 +204,30 @@ def test_reader_merges_flat_and_legacy_records(tmp_path: Path) -> None:
     assert trace_forest["nodes"]["root"]["actions"] == [
         {"name": "child_action", "children": ["child"]}
     ]
-    assert trace_forest["nodes"]["child"]["observationCount"] == 2
-    assert trace_forest["warnings"] == []
-    assert result.stderr == ""
+    assert set(trace_forest["nodes"]) == {"root", "child"}
+    assert [item["code"] for item in trace_forest["warnings"]] == [
+        "MALFORMED_RECORD",
+        "MALFORMED_RECORD",
+    ]
+    assert result.stderr.count("MALFORMED_RECORD") == 2
 
 
-def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
+def test_reader_ignores_non_event_entities(tmp_path: Path) -> None:
     log_path = tmp_path / "events.log"
     _write_log(
         log_path,
         [
             _record("root", "_input_event"),
-            _execution_record(
-                "created",
-                ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
-                ExecutionLifecycleEvents.STATUS_CREATED,
-            ),
-            _execution_record(
-                "started",
-                ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                ExecutionLifecycleEvents.STATUS_STARTED,
-            ),
-            _execution_record(
-                "finished",
-                ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
-                ExecutionLifecycleEvents.STATUS_SUCCESS,
-            ),
-            _execution_record(
-                "failed",
-                ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                ExecutionLifecycleEvents.STATUS_FAILED,
-            ),
-            _execution_record(
-                "reused",
-                ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
-                ExecutionLifecycleEvents.STATUS_REUSED,
-            ),
+            *[
+                {
+                    "entityType": entity_type,
+                    "entityName": "component",
+                    "executionId": f"execution-{entity_type}",
+                    "status": "success",
+                    "attributes": {"output": "value"},
+                }
+                for entity_type in ("action", "llm", "tool", "parser")
+            ],
             _record("child", "ChildEvent", "root", "child_action"),
         ],
     )
@@ -283,11 +240,11 @@ def test_reader_ignores_execution_lifecycle_records(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
-def test_reader_retains_business_event_using_reserved_lifecycle_type(
+def test_reader_treats_lifecycle_names_as_ordinary_event_names(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "events.log"
-    reserved_type = ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE
+    reserved_type = "_execution_started_event"
     _write_log(
         log_path,
         [
@@ -307,11 +264,8 @@ def test_reader_retains_business_event_using_reserved_lifecycle_type(
     assert trace_forest["nodes"]["reserved"]["actions"] == [
         {"name": "child_action", "children": ["child"]}
     ]
-    assert [item["code"] for item in trace_forest["warnings"]] == [
-        "RESERVED_EVENT_TYPE"
-    ]
-    assert trace_forest["warnings"][0]["eventId"] == "reserved"
-    assert "[RESERVED_EVENT_TYPE]" in result.stderr
+    assert trace_forest["warnings"] == []
+    assert result.stderr == ""
 
 
 def test_reader_warns_on_truncated_tail_and_keeps_valid_records(
@@ -336,7 +290,7 @@ def test_reader_warns_on_truncated_tail_and_keeps_valid_records(
         {
             "code": "MALFORMED_RECORD",
             "message": (
-                f"Could not decode an Event Log record in {log_path} "
+                f"Could not decode a Trace Log record in {log_path} "
                 "at line 3, column 10: Expecting value."
             ),
             "filePath": str(log_path),
@@ -378,28 +332,21 @@ def test_reader_resynchronizes_after_malformed_pretty_record(
     [
         ([], None),
         ({}, None),
-        ({"eventType": "BadEvent", "event": []}, None),
-        ({"eventType": "BadEvent", "event": {"attributes": {}}}, None),
-        ({"eventType": 123, "event": {"id": "bad"}}, "bad"),
-        (
-            {"eventId": "bad-flat", "eventType": 123, "eventAttributes": {}},
-            "bad-flat",
-        ),
+        ({**_record("bad", "BadEvent"), "entityName": 123}, None),
+        ({**_record("bad", "BadEvent"), "entityMetadata": []}, None),
+        ({**_record("bad", "BadEvent"), "entityMetadata": {}}, None),
+        ({**_record("bad", "BadEvent"), "attributes": []}, "bad"),
         (
             {
-                "eventType": "BadEvent",
-                "event": {"id": "bad-legacy", "attributes": []},
+                **_record("bad", "BadEvent"),
+                "entityMetadata": {"eventId": "bad", "upstreamEventId": []},
             },
-            "bad-legacy",
+            "bad",
         ),
         (
             {
-                "eventType": "BadEvent",
-                "event": {
-                    "id": "bad",
-                    "attributes": {},
-                    "upstreamEventId": [],
-                },
+                **_record("bad", "BadEvent"),
+                "entityMetadata": {"eventId": "bad", "upstreamActionName": 123},
             },
             "bad",
         ),
@@ -429,7 +376,7 @@ def test_reader_warns_on_invalid_record_shape_and_continues(
     malformed_warning = trace_forest["warnings"][0]
     assert malformed_warning["filePath"] == str(log_path)
     assert malformed_warning["message"].startswith(
-        f"Invalid Event Log record in {log_path}: "
+        f"Invalid Trace Log record in {log_path}: "
     )
     assert "lineNumber" not in malformed_warning
     assert "columnNumber" not in malformed_warning
@@ -439,18 +386,31 @@ def test_reader_warns_on_invalid_record_shape_and_continues(
         assert malformed_warning["eventId"] == expected_event_id
 
 
-def test_directory_discovery_ignores_unrelated_log_files(tmp_path: Path) -> None:
+def test_directory_discovery_finds_backend_logs_without_duplicates(
+    tmp_path: Path,
+) -> None:
     unrelated_log = tmp_path / "taskmanager.log"
-    unrelated_log.write_text("not an Event Log", encoding="utf-8")
+    unrelated_log.write_text("not a Trace Log", encoding="utf-8")
 
     assert find_log_files(tmp_path) == []
+
+    expected_names = [
+        "jobmanager.trace-log.log",
+        "traces-1.log",
+        "traces-2.trace-log.log",
+    ]
+    for name in reversed(expected_names):
+        (tmp_path / name).touch()
+
+    assert find_log_files(tmp_path) == [tmp_path / name for name in expected_names]
+    assert find_log_files(unrelated_log) == [unrelated_log]
 
 
 def test_reader_warns_on_unreadable_file_and_keeps_other_files(
     tmp_path: Path,
 ) -> None:
-    unreadable_log = tmp_path / "events-1-unreadable.log"
-    valid_log = tmp_path / "events-2-valid.log"
+    unreadable_log = tmp_path / "traces-1-unreadable.log"
+    valid_log = tmp_path / "traces-2-valid.log"
     unreadable_log.write_bytes(b"\xff")
     _write_log(valid_log, [_record("root", "_input_event")])
 
@@ -461,14 +421,14 @@ def test_reader_warns_on_unreadable_file_and_keeps_other_files(
     assert trace_forest["warnings"] == [
         {
             "code": "UNREADABLE_FILE",
-            "message": f"Could not read Event Log file {unreadable_log}.",
+            "message": f"Could not read Trace Log file {unreadable_log}.",
             "filePath": str(unreadable_log),
         }
     ]
     assert "[UNREADABLE_FILE]" in result.stderr
 
 
-def test_reader_models_reused_event_as_dag_and_deduplicates_edges(
+def test_reader_preserves_reused_event_edges_across_detail_levels(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "events.log"
@@ -477,8 +437,13 @@ def test_reader_models_reused_event_as_dag_and_deduplicates_edges(
         "SharedEvent",
         "root-1",
         "shared_action",
-        {"value": 1},
+        {"value": {"truncatedString": "abc...", "omittedChars": 3}},
     )
+    reused_record["detail"] = "STANDARD"
+    verbose_record = _record(
+        "shared-output", "SharedEvent", "root-2", "shared_action", {"value": "abcdef"}
+    )
+    verbose_record["detail"] = "VERBOSE"
     _write_log(
         log_path,
         [
@@ -486,13 +451,7 @@ def test_reader_models_reused_event_as_dag_and_deduplicates_edges(
             reused_record,
             reused_record,
             _record("root-2", "_input_event"),
-            _record(
-                "shared-output",
-                "SharedEvent",
-                "root-2",
-                "shared_action",
-                {"value": 1},
-            ),
+            verbose_record,
         ],
     )
 
@@ -596,7 +555,7 @@ def test_reader_prunes_same_cycle_edge_independent_of_log_order(
 
     results = []
     for index, records in enumerate(record_orders):
-        log_path = tmp_path / f"events-{index}.log"
+        log_path = tmp_path / f"traces-{index}.log"
         _write_log(log_path, records)
         reader_result = _run_reader(log_path, "json")
         trace_forest = json.loads(reader_result.stdout)
@@ -675,15 +634,13 @@ def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict
                 "ConflictingEvent",
                 "root",
                 "root_to_conflicting",
-                {"value": "first"},
             ),
             _record("other-root", "_input_event"),
             _record(
                 "conflicting",
-                "ConflictingEvent",
+                "DifferentEvent",
                 "other-root",
                 "other_to_conflicting",
-                {"value": "second"},
             ),
             _record("replay-root", "_input_event"),
             _record(
@@ -691,7 +648,6 @@ def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict
                 "ConflictingEvent",
                 "replay-root",
                 "replay_to_conflicting",
-                {"value": "first"},
             ),
             _record("child", "ChildEvent", "conflicting", "conflicting_to_child"),
             _record("grandchild", "ChildEvent", "child", "child_to_grandchild"),
@@ -743,7 +699,7 @@ def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict
             "code": "EVENT_ID_CONFLICT",
             "eventId": "conflicting",
             "message": (
-                "Event ID conflicting has inconsistent Event type or content across "
+                "Event ID conflicting has inconsistent Event type across "
                 "3 records. Conflicting observation records lineage from other-root "
                 "to conflicting through Action other_to_conflicting; that observation "
                 "does not contribute lineage to the canonical Event node."
@@ -760,88 +716,21 @@ def test_reader_keeps_matching_observations_and_descendants_on_event_id_conflict
     assert "[EVENT_ID_CONFLICT]" in text_result.stderr
 
 
-def test_reader_compares_event_content_by_json_type(tmp_path: Path) -> None:
-    log_path = tmp_path / "events.log"
-    _write_log(
-        log_path,
-        [
-            _record("root", "_input_event"),
-            _record(
-                "type-sensitive",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"value": True},
-            ),
-            _record(
-                "type-sensitive",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"value": 1},
-            ),
-            _record(
-                "equivalent",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"nested": {"first": 1, "second": 2}},
-            ),
-            _record(
-                "equivalent",
-                "ChildEvent",
-                "root",
-                "child_action",
-                {"nested": {"second": 2, "first": 1}},
-            ),
-        ],
-    )
-
-    result = _run_reader(log_path, "json")
-    trace_forest = json.loads(result.stdout)
-
-    assert trace_forest["nodes"]["type-sensitive"]["eventType"] == "ChildEvent"
-    assert trace_forest["nodes"]["type-sensitive"]["observationCount"] == 2
-    assert trace_forest["nodes"]["type-sensitive"]["upstreamEdges"] == [
-        {
-            "upstreamEventId": "root",
-            "upstreamActionName": "child_action",
-        }
-    ]
-    assert trace_forest["nodes"]["equivalent"]["observationCount"] == 2
-    assert trace_forest["warnings"] == [
-        {
-            "code": "EVENT_ID_CONFLICT",
-            "eventId": "type-sensitive",
-            "message": (
-                "Event ID type-sensitive has inconsistent Event type or content "
-                "across 2 records. Conflicting observation records lineage from root "
-                "to type-sensitive through Action child_action; that observation does "
-                "not contribute lineage to the canonical Event node."
-            ),
-            "upstreamEventId": "root",
-            "upstreamActionName": "child_action",
-        }
-    ]
-
-
 def test_reader_deduplicates_conflict_warnings_by_recorded_lineage(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "events.log"
     root_b_conflict = _record(
         "conflicting",
-        "ConflictingEvent",
+        "DifferentEvent",
         "root-b",
         "action-b",
-        {"value": "conflict-b"},
     )
     root_c_conflict = _record(
         "conflicting",
-        "ConflictingEvent",
+        "DifferentEvent",
         "root-c",
         "action-c",
-        {"value": "conflict-c"},
     )
     _write_log(
         log_path,
@@ -852,7 +741,6 @@ def test_reader_deduplicates_conflict_warnings_by_recorded_lineage(
                 "ConflictingEvent",
                 "root-a",
                 "action-a",
-                {"value": "canonical"},
             ),
             _record("root-b", "_input_event"),
             root_b_conflict,
@@ -879,7 +767,9 @@ def test_reader_deduplicates_conflict_warnings_by_recorded_lineage(
     assert result.stderr.count("EVENT_ID_CONFLICT") == 2
 
 
-def test_reader_warns_and_keeps_valid_input_tree(tmp_path: Path) -> None:
+def test_reader_warns_on_missing_lineage_and_keeps_valid_nodes(
+    tmp_path: Path,
+) -> None:
     log_path = tmp_path / "events.log"
     _write_log(
         log_path,
@@ -887,35 +777,8 @@ def test_reader_warns_and_keeps_valid_input_tree(tmp_path: Path) -> None:
             _record("root", "_input_event"),
             _record("valid-child", "ChildEvent", "root", "valid_action"),
             _record("unlinked", "UnlinkedEvent"),
+            _record("unnamed", "UnnamedEvent", "root"),
             _record("missing", "MissingEvent", "absent", "missing_action"),
-            _record(
-                "type-conflict",
-                "FirstType",
-                "root",
-                "conflicting_action",
-                {"value": 1},
-            ),
-            _record(
-                "type-conflict",
-                "SecondType",
-                "root",
-                "conflicting_action",
-                {"value": 1},
-            ),
-            _record(
-                "content-conflict",
-                "ConflictingEvent",
-                "root",
-                "conflicting_action",
-                {"value": 1},
-            ),
-            _record(
-                "content-conflict",
-                "ConflictingEvent",
-                "root",
-                "conflicting_action",
-                {"value": 2},
-            ),
         ],
     )
 
@@ -926,20 +789,15 @@ def test_reader_warns_and_keeps_valid_input_tree(tmp_path: Path) -> None:
     assert trace_forest["roots"] == ["root"]
     assert trace_forest["nodes"]["root"]["actions"] == [
         {"name": "valid_action", "children": ["valid-child"]},
-        {
-            "name": "conflicting_action",
-            "children": ["type-conflict", "content-conflict"],
-        },
     ]
     assert "unlinked" in trace_forest["nodes"]
+    assert "unnamed" in trace_forest["nodes"]
     assert "missing" in trace_forest["nodes"]
-    assert trace_forest["nodes"]["type-conflict"]["eventType"] == "FirstType"
-    assert trace_forest["nodes"]["content-conflict"]["eventType"] == "ConflictingEvent"
     assert warning_codes == {
-        "EVENT_ID_CONFLICT",
+        "MISSING_ACTION_NAME",
         "MISSING_PARENT",
         "UNLINKED_EVENT",
     }
-    assert result.stderr.count("EVENT_ID_CONFLICT") == 2
     assert "MISSING_PARENT" in result.stderr
+    assert "MISSING_ACTION_NAME" in result.stderr
     assert "UNLINKED_EVENT" in result.stderr

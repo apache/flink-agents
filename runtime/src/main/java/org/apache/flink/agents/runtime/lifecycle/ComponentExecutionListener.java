@@ -18,48 +18,35 @@
 
 package org.apache.flink.agents.runtime.lifecycle;
 
-import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.EventContext;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
-
-import java.util.Map;
+import org.apache.flink.agents.api.trace.TraceRecord;
 
 /**
- * Observes component executions reported from within an action, at LLM, parser, and tool
- * granularity.
+ * Observes the creation, start, and outcome of calls made within an Action, such as LLM requests,
+ * parser invocations, Tool calls, and Subagent calls.
  *
- * <p>A component reports its lifecycle as a status event rather than as one callback per outcome,
- * so a listener that only cares about a subset matches on the event type and ignores the rest.
+ * <p>Each callback receives one complete observation of a call. Its context identifies the call and
+ * the containing Action execution.
  *
  * <p>Invariants a listener may rely on, and must not break:
  *
  * <ul>
- *   <li>The callback runs on the mailbox thread, so a listener needs no synchronization of its own.
+ *   <li>Callbacks for an operator are serialized by the runtime's execution context. They may run
+ *       on the mailbox thread or on a worker holding the execution lock.
  *   <li>An exception thrown by a listener is logged and swallowed, so reporting never fails the
  *       reporting component and never starves the remaining listeners.
- *   <li>The event carries the lifecycle status only; the reporting component is identified by the
- *       entity triple, which repeats on every report of the same execution.
- *   <li>The event instance is shared with every other listener, so a listener must treat it as
- *       read-only.
+ *   <li>The call's identity and relationship to its containing Action are populated before the
+ *       callback.
+ *   <li>The same TraceRecord is shared with other listeners. Its metadata, attributes, and nested
+ *       payload values must be treated as read-only.
  * </ul>
  */
 @FunctionalInterface
 public interface ComponentExecutionListener {
 
     /**
-     * A component execution reported a lifecycle event.
+     * Receives one report about a call made within an Action.
      *
-     * @param entityType the component entity type, one of {@code
-     *     org.apache.flink.agents.api.trace.ExecutionReporter.EntityTypes}.
-     * @param entityName the component entity name.
-     * @param entityMetadata the entity metadata reported with the execution.
-     * @param eventContext the occurrence context of the lifecycle event.
-     * @param event the lifecycle event, one of those produced by {@link ExecutionLifecycleEvents}.
+     * @param record the call's identity, relationships, timestamp, status, and observation details
      */
-    void onComponentExecution(
-            String entityType,
-            String entityName,
-            Map<String, Object> entityMetadata,
-            EventContext eventContext,
-            Event event);
+    void onExecutionReported(TraceRecord record);
 }

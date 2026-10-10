@@ -60,9 +60,7 @@ def test_import_core_options_does_not_call_get_gateway() -> None:
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setitem(sys.modules, "pyflink", fake_pyflink_module)
-        monkeypatch.setitem(
-            sys.modules, "pyflink.java_gateway", fake_gateway_module
-        )
+        monkeypatch.setitem(sys.modules, "pyflink.java_gateway", fake_gateway_module)
 
         importlib.import_module("flink_agents.api.core_options")
 
@@ -102,17 +100,14 @@ def test_agent_config_options_are_explicitly_declared() -> None:
     from flink_agents.api.core_options import (
         AgentConfigOptions,
         ConditionEvaluationFailureStrategy,
-        EventLogLevel,
     )
 
     options = _collect_config_options(AgentConfigOptions)
-    assert options["BASE_LOG_DIR"].get_key() == "baseLogDir"
+    assert options["TRACE_LOG_OUTPUT_BASE_DIR"].get_key() == "trace-log.base-dir"
     assert options["KAFKA_BOOTSTRAP_SERVERS"].get_default_value() == "localhost:9092"
     cleanup_control_topic = options["KAFKA_ACTION_STATE_CLEANUP_CONTROL_TOPIC"]
     assert cleanup_control_topic.get_key() == "kafkaActionStateCleanupControlTopic"
     assert cleanup_control_topic.get_default_value() is None
-    assert options["EVENT_LOG_LEVEL"].get_default_value() is EventLogLevel.STANDARD
-    assert options["EVENT_LOG_TRACE_ENABLED"].get_default_value() is False
     condition_failure = options["CONDITION_EVALUATION_FAILURE_STRATEGY"]
     assert (
         condition_failure.get_key()
@@ -142,3 +137,11 @@ def test_unknown_agent_config_option_raises_attribute_error() -> None:
 
     with pytest.raises(AttributeError):
         _ = AgentConfigOptions.UNKNOWN_OPTION
+
+
+def test_trace_log_off_is_a_detail_setting() -> None:
+    from flink_agents.api.core_options import TraceLogDetail, TraceLogScope
+
+    assert TraceLogDetail("OFF") is TraceLogDetail.OFF
+    with pytest.raises(ValueError):
+        TraceLogScope("OFF")

@@ -34,12 +34,10 @@ class ChatResponseEventTest {
         UUID requestId = UUID.randomUUID();
         ChatResponseEvent original =
                 ChatResponseEvent.failed(requestId, "TimeoutException: timed out", 2, 3);
-        original.setUpstreamEventId(UUID.randomUUID());
         ChatResponseEvent restored =
                 ChatResponseEvent.fromEvent(
                         Event.fromJson(new ObjectMapper().writeValueAsString(original)));
         assertThat(restored.getId()).isEqualTo(original.getId());
-        assertThat(restored.getUpstreamEventId()).isEqualTo(original.getUpstreamEventId());
         assertThat(restored.isFailed()).isTrue();
         assertThat(restored.getError()).isEqualTo("TimeoutException: timed out");
         assertThat(restored.getRetryCount()).isEqualTo(2);

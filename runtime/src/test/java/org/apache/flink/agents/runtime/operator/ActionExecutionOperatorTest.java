@@ -29,21 +29,23 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.EventLogger;
-import org.apache.flink.agents.api.logger.EventLoggerConfig;
-import org.apache.flink.agents.api.logger.EventLoggerFactory;
-import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogger;
+import org.apache.flink.agents.api.logger.TraceLoggerConfig;
+import org.apache.flink.agents.api.logger.TraceLoggerFactory;
+import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.memory.MemorySet;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
@@ -67,15 +69,15 @@ import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
-import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
-import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
-import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
+import org.apache.flink.agents.runtime.tracelog.FileTraceLogger;
+import org.apache.flink.agents.runtime.tracelog.Slf4jTraceLogger;
+import org.apache.flink.agents.runtime.tracelog.TraceLogWriter;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
@@ -96,6 +98,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InOrder;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
@@ -111,7 +115,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -147,13 +150,13 @@ public class ActionExecutionOperatorTest {
         TestAgent.resetReconcilableRecoveryFixture();
         TestAgent.resetMixedRecoveryFixture();
         TestAgent.FOLLOWING_ACTION_EXECUTED.set(false);
-        RecordingEventLogger.reset();
-        EventLoggerFactory.registerFactory(LoggerType.SLF4J, config -> new RecordingEventLogger());
+        RecordingTraceLogger.reset();
+        TraceLoggerFactory.registerFactory(LoggerType.SLF4J, config -> new RecordingTraceLogger());
     }
 
     @AfterEach
-    void restoreEventLoggerFactory() {
-        EventLoggerFactory.registerFactory(LoggerType.SLF4J, Slf4jEventLogger::new);
+    void restoreTraceLoggerFactory() {
+        TraceLoggerFactory.registerFactory(LoggerType.SLF4J, Slf4jTraceLogger::new);
     }
 
     @Test
@@ -1308,19 +1311,12 @@ public class ActionExecutionOperatorTest {
                     .hasMessageContaining("synthetic missing runtime dependency");
         }
 
-        RecordedEvent started =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        "linkageErrorAction",
-                        ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent failed =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                        "linkageErrorAction",
-                        ExecutionLifecycleEvents.STATUS_FAILED);
-        assertThat(failed.traceContext().getExecutionId())
-                .isEqualTo(started.traceContext().getExecutionId());
-        assertThat(failed.event.getAttr("errorType"))
+        TraceRecord started =
+                findExecutionRecord("linkageErrorAction", TraceRecord.Statuses.STARTED);
+        TraceRecord failed = findExecutionRecord("linkageErrorAction", TraceRecord.Statuses.FAILED);
+        assertThat(failed.getContext().getExecutionId())
+                .isEqualTo(started.getContext().getExecutionId());
+        assertThat(failed.getAttributes().get("errorType"))
                 .isEqualTo(NoClassDefFoundError.class.getName());
     }
 
@@ -1351,42 +1347,32 @@ public class ActionExecutionOperatorTest {
                     .hasMessageContaining("synthetic missing runtime dependency");
         }
 
-        RecordedEvent started =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        "linkageErrorTool",
-                        ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent toolFailed =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                        "linkageErrorTool",
-                        ExecutionLifecycleEvents.STATUS_FAILED);
-        RecordedEvent actionFailed =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                        "tool_call_action",
-                        ExecutionLifecycleEvents.STATUS_FAILED);
-        assertThat(started.traceContext().getEntityType())
+        TraceRecord started = findExecutionRecord("linkageErrorTool", TraceRecord.Statuses.STARTED);
+        TraceRecord toolFailed =
+                findExecutionRecord("linkageErrorTool", TraceRecord.Statuses.FAILED);
+        TraceRecord actionFailed =
+                findExecutionRecord("tool_call_action", TraceRecord.Statuses.FAILED);
+        assertThat(started.getContext().getEntityType())
                 .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
-        assertThat(toolFailed.traceContext().getExecutionId())
-                .isEqualTo(started.traceContext().getExecutionId());
-        assertThat(actionFailed.traceContext().getExecutionId())
-                .isEqualTo(started.traceContext().getParentExecutionId());
-        assertThat(toolFailed.event.getAttr("errorType"))
+        assertThat(toolFailed.getContext().getExecutionId())
+                .isEqualTo(started.getContext().getExecutionId());
+        assertThat(actionFailed.getContext().getExecutionId())
+                .isEqualTo(started.getContext().getParentExecutionId());
+        assertThat(toolFailed.getAttributes().get("errorType"))
                 .isEqualTo(NoClassDefFoundError.class.getName());
-        assertThat(actionFailed.event.getAttr("errorType"))
+        assertThat(actionFailed.getAttributes().get("errorType"))
                 .isEqualTo(NoClassDefFoundError.class.getName());
-        assertThat(RecordingEventLogger.events())
+        assertThat(RecordingTraceLogger.records())
                 .filteredOn(
                         record ->
-                                started.traceContext()
+                                started.getContext()
                                         .getExecutionId()
-                                        .equals(record.traceContext().getExecutionId()))
-                .extracting(record -> record.event.getType())
+                                        .equals(record.getContext().getExecutionId()))
+                .extracting(TraceRecord::getStatus)
                 .containsExactly(
-                        ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE,
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE);
+                        TraceRecord.Statuses.CREATED,
+                        TraceRecord.Statuses.STARTED,
+                        TraceRecord.Statuses.FAILED);
     }
 
     @Test
@@ -1707,7 +1693,7 @@ public class ActionExecutionOperatorTest {
         private final ActionTaskContextManager contextManager =
                 mock(ActionTaskContextManager.class);
         private final PythonBridgeManager pythonBridge = mock(PythonBridgeManager.class);
-        private final EventLogWriter eventLogWriter = mock(EventLogWriter.class);
+        private final TraceLogWriter traceLogWriter = mock(TraceLogWriter.class);
         private final DurableExecutionManager durableExecManager =
                 mock(DurableExecutionManager.class);
 
@@ -1716,7 +1702,7 @@ public class ActionExecutionOperatorTest {
             replaceOperatorField(operator, "resourceCache", resourceCache);
             replaceOperatorField(operator, "contextManager", contextManager);
             replaceOperatorField(operator, "pythonBridge", pythonBridge);
-            replaceOperatorField(operator, "eventLogWriter", eventLogWriter);
+            replaceOperatorField(operator, "traceLogWriter", traceLogWriter);
             replaceOperatorField(operator, "durableExecManager", durableExecManager);
         }
 
@@ -1726,7 +1712,7 @@ public class ActionExecutionOperatorTest {
             replaceOperatorField(operator, "resourceCache", null);
             replaceOperatorField(operator, "contextManager", null);
             replaceOperatorField(operator, "pythonBridge", null);
-            replaceOperatorField(operator, "eventLogWriter", null);
+            replaceOperatorField(operator, "traceLogWriter", null);
             replaceOperatorField(operator, "durableExecManager", null);
         }
 
@@ -1745,7 +1731,7 @@ public class ActionExecutionOperatorTest {
                             resourceCache,
                             contextManager,
                             pythonBridge,
-                            eventLogWriter,
+                            traceLogWriter,
                             durableExecManager,
                             stateHandler);
             inOrder.verify(coordinator).shutdown();
@@ -1754,7 +1740,7 @@ public class ActionExecutionOperatorTest {
             inOrder.verify(contextManager).close();
             inOrder.verify(resourceCache).close();
             inOrder.verify(pythonBridge).close();
-            inOrder.verify(eventLogWriter).close();
+            inOrder.verify(traceLogWriter).close();
             inOrder.verify(durableExecManager).close();
             inOrder.verify(stateHandler).dispose();
         }
@@ -2032,28 +2018,6 @@ public class ActionExecutionOperatorTest {
         }
     }
 
-    private static final class EventSnapshot {
-        private final UUID id;
-        private final UUID upstreamEventId;
-        private final String upstreamActionName;
-
-        private EventSnapshot(Event event) {
-            this.id = event.getId();
-            this.upstreamEventId = event.getUpstreamEventId();
-            this.upstreamActionName = event.getUpstreamActionName();
-        }
-    }
-
-    private static Map<String, EventSnapshot> recordEventSnapshotsByType(
-            ActionExecutionOperator<Long, Object> operator) {
-        Map<String, EventSnapshot> snapshotsByType = new HashMap<>();
-        operator.getEventRouter()
-                .addEventListener(
-                        (context, event) ->
-                                snapshotsByType.put(event.getType(), new EventSnapshot(event)));
-        return snapshotsByType;
-    }
-
     /** Fails while processing an Action's output Event. */
     public static class FailingMiddleEventListener implements EventListener {
         @Override
@@ -2064,28 +2028,28 @@ public class ActionExecutionOperatorTest {
         }
     }
 
-    /** Records events appended to Event Log for assertions. */
-    public static class RecordingEventLogger implements EventLogger {
-        private static final List<RecordedEvent> EVENTS = new ArrayList<>();
+    /** Records TraceRecord instances appended by the operator. */
+    public static class RecordingTraceLogger implements TraceLogger {
+        private static final List<TraceRecord> RECORDS = new ArrayList<>();
         private static int createdCount;
         private static int openCount;
         private static int flushCount;
         private static int closeCount;
 
-        public RecordingEventLogger() {
+        public RecordingTraceLogger() {
             createdCount++;
         }
 
         static void reset() {
-            EVENTS.clear();
+            RECORDS.clear();
             createdCount = 0;
             openCount = 0;
             flushCount = 0;
             closeCount = 0;
         }
 
-        static List<RecordedEvent> events() {
-            return List.copyOf(EVENTS);
+        static List<TraceRecord> records() {
+            return List.copyOf(RECORDS);
         }
 
         static int createdCount() {
@@ -2105,19 +2069,13 @@ public class ActionExecutionOperatorTest {
         }
 
         @Override
-        public void open(EventLoggerOpenParams params) {
+        public void open(TraceLoggerOpenParams params) {
             openCount++;
         }
 
         @Override
-        public void append(EventContext eventContext, Event event) {
-            append(eventContext, event, null);
-        }
-
-        @Override
-        public void append(
-                EventContext eventContext, Event event, ExecutionTraceContext traceContext) {
-            EVENTS.add(new RecordedEvent(event, traceContext));
+        public void append(TraceRecord record, TraceLogDetail detail) {
+            RECORDS.add(record);
         }
 
         @Override
@@ -2131,61 +2089,35 @@ public class ActionExecutionOperatorTest {
         }
     }
 
-    private static class RecordedEvent {
-        private final Event event;
-        private final ExecutionTraceContext traceContext;
-
-        private RecordedEvent(Event event, ExecutionTraceContext traceContext) {
-            this.event = event;
-            this.traceContext = traceContext;
-        }
-
-        private ExecutionTraceContext traceContext() {
-            if (traceContext == null) {
-                throw new AssertionError("Missing ExecutionTraceContext");
-            }
-            return traceContext;
-        }
-
-        private String status() {
-            return (String) event.getAttr(ExecutionLifecycleEvents.STATUS_ATTRIBUTE);
-        }
-
-        private String problemCategory() {
-            return (String) event.getAttr(ExecutionLifecycleEvents.PROBLEM_CATEGORY_ATTRIBUTE);
-        }
-    }
-
-    private static RecordedEvent findRecordedLifecycleEvent(
-            String eventType, String entityName, String status) {
-        return RecordingEventLogger.events().stream()
-                .filter(record -> eventType.equals(record.event.getType()))
-                .filter(record -> entityName.equals(record.traceContext().getEntityName()))
-                .filter(record -> status.equals(record.status()))
+    private static TraceRecord findExecutionRecord(String entityName, String status) {
+        return RecordingTraceLogger.records().stream()
+                .filter(
+                        record ->
+                                !TraceContext.EVENT_ENTITY_TYPE.equals(
+                                        record.getContext().getEntityType()))
+                .filter(record -> entityName.equals(record.getContext().getEntityName()))
+                .filter(record -> status.equals(record.getStatus()))
                 .findFirst()
                 .orElseThrow(
                         () ->
                                 new AssertionError(
-                                        String.format(
-                                                "Missing lifecycle event type=%s entity=%s status=%s in %s",
-                                                eventType,
-                                                entityName,
-                                                status,
-                                                RecordingEventLogger.events().stream()
-                                                        .map(
-                                                                record ->
-                                                                        record.event.getType()
-                                                                                + "/"
-                                                                                + record.traceContext()
-                                                                                        .getEntityName()
-                                                                                + "/"
-                                                                                + record.status())
-                                                        .collect(Collectors.toList()))));
+                                        "Missing TraceRecord: " + entityName + "/" + status));
+    }
+
+    private static TraceRecord findEventRecord(String eventType) {
+        return RecordingTraceLogger.records().stream()
+                .filter(
+                        record ->
+                                TraceContext.EVENT_ENTITY_TYPE.equals(
+                                        record.getContext().getEntityType()))
+                .filter(record -> eventType.equals(record.getContext().getEntityName()))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Missing TraceRecord: " + eventType));
     }
 
     private static AgentConfiguration traceEnabledConfig() {
         AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.EVENT_LOG_TRACE_ENABLED, true);
+        config.set(AgentConfigOptions.TRACE_LOG_TARGETS, List.of(Map.of("scope", "ALL")));
         return config;
     }
 
@@ -2228,18 +2160,25 @@ public class ActionExecutionOperatorTest {
             called = testEventListener.called;
             assertThat(called).isTrue();
             assertThat(testEventListener.eventTypes)
-                    .noneMatch(ExecutionLifecycleEvents::isExecutionLifecycleEvent);
-            assertThat(RecordingEventLogger.events())
-                    .anyMatch(
-                            record ->
-                                    ExecutionLifecycleEvents.isExecutionLifecycleEvent(
-                                            record.event.getType()));
+                    .contains(
+                            InputEvent.EVENT_TYPE,
+                            TestAgent.MiddleEvent.EVENT_TYPE,
+                            OutputEvent.EVENT_TYPE)
+                    .allMatch(type -> !type.startsWith("_execution_"));
+            assertThat(RecordingTraceLogger.records())
+                    .anyMatch(record -> TraceRecord.Statuses.STARTED.equals(record.getStatus()));
         }
     }
 
-    @Test
-    void testActionLifecycleEventsCarryExecutionContext() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void testActionExecutionRecordsCarryContext(boolean parallelExecution) throws Exception {
+        if (parallelExecution) {
+            assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        }
         final AgentConfiguration config = traceEnabledConfig();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, parallelExecution);
+        config.set(AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT, true);
         final AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -2255,65 +2194,177 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
         }
 
-        RecordedEvent action1Started =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        "action1",
-                        ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent action1Finished =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
-                        "action1",
-                        ExecutionLifecycleEvents.STATUS_SUCCESS);
-        RecordedEvent action2Started =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        "action2",
-                        ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent action2Finished =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
-                        "action2",
-                        ExecutionLifecycleEvents.STATUS_SUCCESS);
+        TraceRecord action1Started = findExecutionRecord("action1", TraceRecord.Statuses.STARTED);
+        TraceRecord action1Finished = findExecutionRecord("action1", TraceRecord.Statuses.SUCCESS);
+        TraceRecord action2Started = findExecutionRecord("action2", TraceRecord.Statuses.STARTED);
+        TraceRecord action2Finished = findExecutionRecord("action2", TraceRecord.Statuses.SUCCESS);
 
-        assertThat(action1Started.traceContext().getInputRunId()).isNotBlank();
-        assertThat(action1Started.traceContext().getBusinessKey()).isEqualTo("1");
-        assertThat(action1Started.traceContext().getEntityType()).isEqualTo("action");
-        assertThat(action1Started.status()).isEqualTo(ExecutionLifecycleEvents.STATUS_STARTED);
-        assertThat(action1Finished.traceContext().getExecutionId())
-                .isEqualTo(action1Started.traceContext().getExecutionId());
-        assertThat(action1Finished.status()).isEqualTo(ExecutionLifecycleEvents.STATUS_SUCCESS);
+        assertThat(action1Started.getContext().getInputRunId()).isNotBlank();
+        assertThat(action1Started.getContext().getBusinessKey()).isEqualTo("1");
+        assertThat(action1Started.getContext().getEntityType()).isEqualTo("action");
+        assertThat(action1Started.getStatus()).isEqualTo(TraceRecord.Statuses.STARTED);
+        assertThat(action1Finished.getContext().getExecutionId())
+                .isEqualTo(action1Started.getContext().getExecutionId());
+        assertThat(action1Finished.getStatus()).isEqualTo(TraceRecord.Statuses.SUCCESS);
 
-        assertThat(action2Started.traceContext().getInputRunId())
-                .isEqualTo(action1Started.traceContext().getInputRunId());
-        assertThat(action2Started.traceContext().getParentExecutionId()).isNull();
-        assertThat(action2Finished.traceContext().getExecutionId())
-                .isEqualTo(action2Started.traceContext().getExecutionId());
+        assertThat(action2Started.getContext().getInputRunId())
+                .isEqualTo(action1Started.getContext().getInputRunId());
+        assertThat(action2Started.getContext().getParentExecutionId()).isNull();
+        assertThat(action2Finished.getContext().getExecutionId())
+                .isEqualTo(action2Started.getContext().getExecutionId());
 
-        RecordedEvent middleEvent =
-                RecordingEventLogger.events().stream()
-                        .filter(
-                                record ->
-                                        TestAgent.MiddleEvent.EVENT_TYPE.equals(
-                                                record.event.getType()))
-                        .findFirst()
-                        .orElseThrow();
-        assertThat(middleEvent.traceContext().getExecutionId())
-                .isEqualTo(action1Started.traceContext().getExecutionId());
-        assertThat(middleEvent.traceContext().getEntityName()).isEqualTo("action1");
+        TraceRecord inputEvent = findEventRecord(InputEvent.EVENT_TYPE);
+        TraceRecord runBeginEvent = findEventRecord(AgentRunBeginEvent.EVENT_TYPE);
+        TraceRecord middleEvent = findEventRecord(TestAgent.MiddleEvent.EVENT_TYPE);
+        assertThat(inputEvent.getContext().getInputRunId())
+                .isEqualTo(action1Started.getContext().getInputRunId());
+        assertThat(inputEvent.getContext().getEntityMetadata())
+                .doesNotContainKeys("producerExecutionId", "upstreamEventId", "upstreamActionName");
+        assertThat(runBeginEvent.getContext().getInputRunId())
+                .isEqualTo(inputEvent.getContext().getInputRunId());
+        assertThat(runBeginEvent.getContext().getBusinessKey())
+                .isEqualTo(inputEvent.getContext().getBusinessKey());
+        assertThat(runBeginEvent.getContext().getExecutionId()).isNull();
+        assertThat(runBeginEvent.getContext().getEntityMetadata())
+                .containsEntry(
+                        "upstreamEventId",
+                        inputEvent.getContext().getEntityMetadata().get("eventId"))
+                .containsEntry("upstreamActionName", "agent_run_begin_action")
+                .doesNotContainKey("producerExecutionId");
+        assertThat(action1Started.getContext().getEntityMetadata().get("triggerEventId"))
+                .isEqualTo(inputEvent.getContext().getEntityMetadata().get("eventId"));
+        assertThat(action2Started.getContext().getEntityMetadata().get("triggerEventId"))
+                .isEqualTo(middleEvent.getContext().getEntityMetadata().get("eventId"));
+        assertThat(middleEvent.getContext().getInputRunId())
+                .isEqualTo(action1Started.getContext().getInputRunId());
+        assertThat(middleEvent.getContext().getExecutionId()).isNull();
+        assertThat(middleEvent.getContext().getEntityMetadata())
+                .containsEntry("producerExecutionId", action1Started.getContext().getExecutionId())
+                .containsEntry(
+                        "upstreamEventId",
+                        inputEvent.getContext().getEntityMetadata().get("eventId"))
+                .containsEntry("upstreamActionName", "action1");
+        assertThat(middleEvent.getContext().getEntityName())
+                .isEqualTo(TestAgent.MiddleEvent.EVENT_TYPE);
+        assertThat(middleEvent.getContext().getEntityType())
+                .isEqualTo(TraceContext.EVENT_ENTITY_TYPE);
 
-        RecordedEvent outputEvent =
-                RecordingEventLogger.events().stream()
-                        .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
-                        .findFirst()
-                        .orElseThrow();
-        assertThat(outputEvent.traceContext().getExecutionId())
-                .isEqualTo(action2Started.traceContext().getExecutionId());
-        assertThat(outputEvent.traceContext().getEntityName()).isEqualTo("action2");
+        TraceRecord outputEvent = findEventRecord(OutputEvent.EVENT_TYPE);
+        assertThat(outputEvent.getContext().getInputRunId())
+                .isEqualTo(inputEvent.getContext().getInputRunId());
+        assertThat(outputEvent.getContext().getExecutionId()).isNull();
+        assertThat(outputEvent.getContext().getEntityMetadata())
+                .containsEntry("producerExecutionId", action2Started.getContext().getExecutionId())
+                .containsEntry(
+                        "upstreamEventId",
+                        middleEvent.getContext().getEntityMetadata().get("eventId"))
+                .containsEntry("upstreamActionName", "action2");
+        assertThat(outputEvent.getContext().getEntityName()).isEqualTo(OutputEvent.EVENT_TYPE);
+        assertThat(outputEvent.getContext().getEntityType())
+                .isEqualTo(TraceContext.EVENT_ENTITY_TYPE);
     }
 
     @Test
-    void testActionFailureLifecycleEventCarriesProblemCategory() throws Exception {
+    @Timeout(10)
+    void runBeginForActionProducedInputReferencesTheInput() throws Exception {
+        AgentConfiguration config = traceEnabledConfig();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        config.set(AgentExecutionOptions.AGENT_RUN_BEGIN_EVENT, true);
+        Action action =
+                new Action(
+                        "emitChildInputOnce",
+                        new JavaFunction(
+                                TestAgent.class,
+                                "emitChildInputOnce",
+                                new Class<?>[] {Event.class, RunnerContext.class}),
+                        List.of(InputEvent.EVENT_TYPE));
+        AgentPlan agentPlan =
+                new AgentPlan(Map.of(action.getName(), action), new HashMap<>(), config);
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(agentPlan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            harness.open();
+            harness.processElement(new StreamRecord<>(1L));
+            ((ActionExecutionOperator<Long, Object>) harness.getOperator())
+                    .waitInFlightEventsFinished();
+            List<StreamRecord<Object>> output =
+                    (List<StreamRecord<Object>>) harness.getRecordOutput();
+            assertThat(output).extracting(StreamRecord::getValue).containsExactly(2L);
+        }
+
+        Map<Object, TraceRecord> inputsByValue =
+                RecordingTraceLogger.records().stream()
+                        .filter(
+                                record ->
+                                        InputEvent.EVENT_TYPE.equals(
+                                                record.getContext().getEntityName()))
+                        .collect(
+                                Collectors.toMap(
+                                        record -> record.getAttributes().get("input"),
+                                        record -> record));
+        assertThat(inputsByValue).containsOnlyKeys(1L, 2L);
+        TraceRecord rootInput = inputsByValue.get(1L);
+        TraceRecord childInput = inputsByValue.get(2L);
+        String rootInputId = (String) rootInput.getContext().getEntityMetadata().get("eventId");
+        String childInputId = (String) childInput.getContext().getEntityMetadata().get("eventId");
+        assertThat(rootInputId).isNotBlank().isNotEqualTo(childInputId);
+        assertThat(childInputId).isNotBlank();
+
+        Map<Object, TraceRecord> markersByUpstream =
+                RecordingTraceLogger.records().stream()
+                        .filter(
+                                record ->
+                                        AgentRunBeginEvent.EVENT_TYPE.equals(
+                                                record.getContext().getEntityName()))
+                        .collect(
+                                Collectors.toMap(
+                                        record ->
+                                                record.getContext()
+                                                        .getEntityMetadata()
+                                                        .get("upstreamEventId"),
+                                        record -> record));
+        assertThat(markersByUpstream).containsOnlyKeys(rootInputId, childInputId);
+        TraceRecord rootMarker = markersByUpstream.get(rootInputId);
+        TraceRecord childMarker = markersByUpstream.get(childInputId);
+        TraceRecord producer =
+                RecordingTraceLogger.records().stream()
+                        .filter(record -> TraceRecord.Statuses.STARTED.equals(record.getStatus()))
+                        .filter(
+                                record ->
+                                        rootInputId.equals(
+                                                record.getContext()
+                                                        .getEntityMetadata()
+                                                        .get("triggerEventId")))
+                        .findFirst()
+                        .orElseThrow(() -> new AssertionError("Missing child InputEvent producer"));
+
+        assertThat(producer.getContext().getEntityName()).isEqualTo("emitChildInputOnce");
+        assertThat(childInput.getContext().getEntityMetadata())
+                .containsEntry("producerExecutionId", producer.getContext().getExecutionId())
+                .containsEntry("upstreamEventId", rootInputId)
+                .containsEntry("upstreamActionName", "emitChildInputOnce");
+        assertThat(childMarker.getContext().getEntityMetadata())
+                .containsEntry("upstreamEventId", childInputId)
+                .containsEntry("upstreamActionName", "agent_run_begin_action")
+                .doesNotContainKey("producerExecutionId");
+        assertThat(rootMarker.getContext().getEntityMetadata())
+                .containsEntry("upstreamEventId", rootInputId)
+                .doesNotContainKey("producerExecutionId");
+        assertThat(rootInput.getContext().getInputRunId()).isNotBlank();
+        assertThat(List.of(rootInput, childInput, rootMarker, childMarker))
+                .allSatisfy(
+                        record -> {
+                            assertThat(record.getContext().getInputRunId())
+                                    .isEqualTo(rootInput.getContext().getInputRunId());
+                            assertThat(record.getContext().getExecutionId()).isNull();
+                        });
+    }
+
+    @Test
+    void testActionFailureRecordCarriesProblemCategory() throws Exception {
         final AgentConfiguration config = traceEnabledConfig();
         AgentPlan basePlan = TestAgent.getDurableExceptionUncaughtAgentPlan();
         AgentPlan agentPlan =
@@ -2337,16 +2388,13 @@ public class ActionExecutionOperatorTest {
                     .hasCauseInstanceOf(ActionExecutionOperator.ActionTaskExecutionException.class);
         }
 
-        RecordedEvent failed =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE,
-                        "durableExceptionUncaughtAction",
-                        ExecutionLifecycleEvents.STATUS_FAILED);
-        assertThat(failed.problemCategory())
+        TraceRecord failed =
+                findExecutionRecord("durableExceptionUncaughtAction", TraceRecord.Statuses.FAILED);
+        assertThat(failed.getProblemCategory())
                 .isEqualTo(ExecutionReporter.ProblemCategories.ACTION_EXECUTION_FAILED);
-        assertThat(failed.event.getAttr("errorType"))
+        assertThat(failed.getAttributes().get("errorType"))
                 .isEqualTo(IllegalStateException.class.getName());
-        assertThat(String.valueOf(failed.event.getAttr("errorMessage")))
+        assertThat(String.valueOf(failed.getAttributes().get("errorMessage")))
                 .contains("Simulated LLM failure");
     }
 
@@ -2374,28 +2422,19 @@ public class ActionExecutionOperatorTest {
                     .hasMessage("Failed to process Action output Event");
         }
 
-        RecordedEvent started =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                        "action1",
-                        ExecutionLifecycleEvents.STATUS_STARTED);
-        RecordedEvent finished =
-                findRecordedLifecycleEvent(
-                        ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE,
-                        "action1",
-                        ExecutionLifecycleEvents.STATUS_SUCCESS);
-        assertThat(finished.traceContext().getExecutionId())
-                .isEqualTo(started.traceContext().getExecutionId());
-        assertThat(RecordingEventLogger.events())
+        TraceRecord started = findExecutionRecord("action1", TraceRecord.Statuses.STARTED);
+        TraceRecord finished = findExecutionRecord("action1", TraceRecord.Statuses.SUCCESS);
+        assertThat(finished.getContext().getExecutionId())
+                .isEqualTo(started.getContext().getExecutionId());
+        assertThat(RecordingTraceLogger.records())
                 .noneMatch(
                         record ->
-                                ExecutionLifecycleEvents.EXECUTION_FAILED_EVENT_TYPE.equals(
-                                                record.event.getType())
-                                        && "action1".equals(record.traceContext().getEntityName()));
+                                TraceRecord.Statuses.FAILED.equals(record.getStatus())
+                                        && "action1".equals(record.getContext().getEntityName()));
     }
 
     @Test
-    void testActionContinuationEmitsStartedLifecycleEventOnce() throws Exception {
+    void testActionContinuationEmitsStartedRecordOnce() throws Exception {
         final AgentConfiguration config = traceEnabledConfig();
         AgentPlan basePlan = TestAgent.getAsyncAgentPlan(false);
         AgentPlan agentPlan =
@@ -2418,13 +2457,12 @@ public class ActionExecutionOperatorTest {
             operator.waitInFlightEventsFinished();
         }
 
-        assertThat(RecordingEventLogger.events())
+        assertThat(RecordingTraceLogger.records())
                 .filteredOn(
                         record ->
-                                ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(
-                                                record.event.getType())
+                                TraceRecord.Statuses.STARTED.equals(record.getStatus())
                                         && "asyncAction1"
-                                                .equals(record.traceContext().getEntityName()))
+                                                .equals(record.getContext().getEntityName()))
                 .hasSize(1);
     }
 
@@ -2485,9 +2523,23 @@ public class ActionExecutionOperatorTest {
         }
     }
 
-    @Test
-    void testBusinessAndExecutionEventsShareSingleEventLogger() throws Exception {
-        AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(traceEnabledConfig());
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void testEventAndExecutionRecordsShareSingleLogger(boolean selectAction1Only) throws Exception {
+        AgentConfiguration config =
+                selectAction1Only ? new AgentConfiguration() : traceEnabledConfig();
+        if (selectAction1Only) {
+            config.set(
+                    AgentConfigOptions.TRACE_LOG_TARGETS,
+                    List.of(
+                            Map.of("scope", "EVENT_ONLY"),
+                            Map.of(
+                                    "scope",
+                                    Map.of("entityType", "action", "entityName", "action1"),
+                                    "detail",
+                                    "VERBOSE")));
+        }
+        AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory(agentPlan, true),
@@ -2500,22 +2552,32 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(1L));
             operator.waitInFlightEventsFinished();
 
-            assertThat(RecordingEventLogger.createdCount()).isEqualTo(1);
-            assertThat(RecordingEventLogger.openCount()).isEqualTo(1);
-            assertThat(RecordingEventLogger.flushCount())
-                    .isEqualTo(RecordingEventLogger.events().size());
-            assertThat(RecordingEventLogger.events())
+            assertThat(RecordingTraceLogger.createdCount()).isEqualTo(1);
+            assertThat(RecordingTraceLogger.openCount()).isEqualTo(1);
+            assertThat(RecordingTraceLogger.flushCount())
+                    .isEqualTo(RecordingTraceLogger.records().size());
+            assertThat(RecordingTraceLogger.records())
                     .anySatisfy(
                             record ->
-                                    assertThat(record.event.getType())
+                                    assertThat(record.getContext().getEntityName())
                                             .isEqualTo(InputEvent.EVENT_TYPE));
-            assertThat(RecordingEventLogger.events())
+            assertThat(RecordingTraceLogger.records())
                     .anySatisfy(
                             record ->
-                                    assertThat(record.event.getType())
-                                            .isEqualTo(
-                                                    ExecutionLifecycleEvents
-                                                            .EXECUTION_STARTED_EVENT_TYPE));
+                                    assertThat(record.getStatus())
+                                            .isEqualTo(TraceRecord.Statuses.STARTED));
+            if (selectAction1Only) {
+                assertThat(
+                                RecordingTraceLogger.records().stream()
+                                        .filter(
+                                                record ->
+                                                        "action"
+                                                                .equals(
+                                                                        record.getContext()
+                                                                                .getEntityType()))
+                                        .map(record -> record.getContext().getEntityName()))
+                        .containsOnly("action1");
+            }
 
             Field metricGroupField = ActionExecutionOperator.class.getDeclaredField("metricGroup");
             metricGroupField.setAccessible(true);
@@ -2535,43 +2597,16 @@ public class ActionExecutionOperatorTest {
                     .isEqualTo(1L);
         }
 
-        assertThat(RecordingEventLogger.closeCount()).isEqualTo(1);
+        assertThat(RecordingTraceLogger.closeCount()).isEqualTo(1);
     }
 
     @Test
-    void testTraceRecordingIsDisabledByDefault() throws Exception {
-        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
-                new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(false), true),
-                        (KeySelector<Long, Long>) value -> value,
-                        TypeInformation.of(Long.class))) {
-            testHarness.open();
-            ActionExecutionOperator<Long, Object> operator =
-                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-
-            testHarness.processElement(new StreamRecord<>(1L));
-            operator.waitInFlightEventsFinished();
-
-            assertThat(RecordingEventLogger.events()).isNotEmpty();
-            assertThat(RecordingEventLogger.events())
-                    .allSatisfy(
-                            record -> {
-                                assertThat(record.traceContext).isNull();
-                                assertThat(
-                                                ExecutionLifecycleEvents.isExecutionLifecycleEvent(
-                                                        record.event.getType()))
-                                        .isFalse();
-                            });
-        }
-    }
-
-    @Test
-    void testEventLogBaseDirFromAgentConfig() throws Exception {
+    void testTraceLogBaseDirFromAgentConfig() throws Exception {
         String baseLogDir = "/tmp/flink-agents-test";
         AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.EVENT_LOGGER_TYPE, LoggerType.FILE);
-        config.set(AgentConfigOptions.BASE_LOG_DIR, baseLogDir);
-        config.set(AgentConfigOptions.PRETTY_PRINT, true);
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE, LoggerType.FILE);
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR, baseLogDir);
+        config.set(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT, true);
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -2582,12 +2617,12 @@ public class ActionExecutionOperatorTest {
             testHarness.open();
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-            Object eventLogger = operator.getEventRouter().getEventLogger();
-            assertThat(eventLogger).isInstanceOf(FileEventLogger.class);
+            Object traceLogger = operator.getEventRouter().getTraceLogger();
+            assertThat(traceLogger).isInstanceOf(FileTraceLogger.class);
 
-            Field configField = FileEventLogger.class.getDeclaredField("config");
+            Field configField = FileTraceLogger.class.getDeclaredField("config");
             configField.setAccessible(true);
-            Object loggerConfig = configField.get(eventLogger);
+            Object loggerConfig = configField.get(traceLogger);
             Field propertiesField = loggerConfig.getClass().getDeclaredField("properties");
             propertiesField.setAccessible(true);
             @SuppressWarnings("unchecked")
@@ -2596,10 +2631,11 @@ public class ActionExecutionOperatorTest {
             @SuppressWarnings("unchecked")
             Map<String, Object> agentConfig =
                     (Map<String, Object>)
-                            properties.get(EventLoggerConfig.AGENT_CONFIG_PROPERTY_KEY);
-            assertThat(agentConfig.get(AgentConfigOptions.BASE_LOG_DIR.getKey()))
+                            properties.get(TraceLoggerConfig.AGENT_CONFIG_PROPERTY_KEY);
+            assertThat(agentConfig.get(AgentConfigOptions.TRACE_LOG_OUTPUT_BASE_DIR.getKey()))
                     .isEqualTo(baseLogDir);
-            assertThat(agentConfig.get(AgentConfigOptions.PRETTY_PRINT.getKey())).isEqualTo(true);
+            assertThat(agentConfig.get(AgentConfigOptions.TRACE_LOG_OUTPUT_PRETTY_PRINT.getKey()))
+                    .isEqualTo(true);
         }
     }
 
@@ -2678,7 +2714,7 @@ public class ActionExecutionOperatorTest {
     }
 
     @Test
-    void testCompletedActionStatePersistsOutputEventLineage() throws Exception {
+    void testCompletedActionStateOmitsEventSources() throws Exception {
         AgentPlan agentPlan = TestAgent.getAgentPlan(false);
         SerializingActionStateStore actionStateStore = new SerializingActionStateStore();
 
@@ -2696,14 +2732,13 @@ public class ActionExecutionOperatorTest {
         }
 
         assertThat(actionStateStore.getCompletedStateBytes()).hasSize(2);
-        for (Map.Entry<String, byte[]> entry :
-                actionStateStore.getCompletedStateBytes().entrySet()) {
-            JsonNode state = OBJECT_MAPPER.readTree(entry.getValue());
-            JsonNode outputEvent = state.path("outputEvents").get(0);
-
-            assertThat(outputEvent.path("upstreamEventId").asText())
-                    .isEqualTo(state.path("taskEvent").path("id").asText());
-            assertThat(outputEvent.path("upstreamActionName").asText()).isEqualTo(entry.getKey());
+        for (byte[] stateBytes : actionStateStore.getCompletedStateBytes().values()) {
+            JsonNode state = OBJECT_MAPPER.readTree(stateBytes);
+            for (JsonNode event :
+                    List.of(state.path("taskEvent"), state.path("outputEvents").get(0))) {
+                assertThat(event.has("upstreamEventId")).isFalse();
+                assertThat(event.has("upstreamActionName")).isFalse();
+            }
         }
     }
 
@@ -2911,8 +2946,9 @@ public class ActionExecutionOperatorTest {
                         basePlan.getAgentName());
         InMemoryActionStateStore actionStateStore;
         String originalInputRunId;
-        UUID originalMiddleEventId;
-        UUID originalOutputEventId;
+        String originalInputEventId;
+        String originalMiddleEventId;
+        String originalOutputEventId;
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -2931,32 +2967,30 @@ public class ActionExecutionOperatorTest {
             testHarness.processElement(new StreamRecord<>(inputValue));
             operator.waitInFlightEventsFinished();
 
-            RecordedEvent action1Started =
-                    findRecordedLifecycleEvent(
-                            ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE,
-                            "action1",
-                            ExecutionLifecycleEvents.STATUS_STARTED);
-            originalInputRunId = action1Started.traceContext().getInputRunId();
+            TraceRecord action1Started =
+                    findExecutionRecord("action1", TraceRecord.Statuses.STARTED);
+            originalInputRunId = action1Started.getContext().getInputRunId();
+            originalInputEventId =
+                    (String)
+                            findEventRecord(InputEvent.EVENT_TYPE)
+                                    .getContext()
+                                    .getEntityMetadata()
+                                    .get("eventId");
             originalMiddleEventId =
-                    RecordingEventLogger.events().stream()
-                            .filter(
-                                    record ->
-                                            TestAgent.MiddleEvent.EVENT_TYPE.equals(
-                                                    record.event.getType()))
-                            .findFirst()
-                            .orElseThrow()
-                            .event
-                            .getId();
+                    (String)
+                            findEventRecord(TestAgent.MiddleEvent.EVENT_TYPE)
+                                    .getContext()
+                                    .getEntityMetadata()
+                                    .get("eventId");
             originalOutputEventId =
-                    RecordingEventLogger.events().stream()
-                            .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
-                            .findFirst()
-                            .orElseThrow()
-                            .event
-                            .getId();
+                    (String)
+                            findEventRecord(OutputEvent.EVENT_TYPE)
+                                    .getContext()
+                                    .getEntityMetadata()
+                                    .get("eventId");
         }
 
-        RecordingEventLogger.reset();
+        RecordingTraceLogger.reset();
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
@@ -2978,59 +3012,46 @@ public class ActionExecutionOperatorTest {
             assertThat(outputRecords.get(0).getValue()).isEqualTo((inputValue + 1) * 2);
             assertThat(actionStateStore.getKeyedActionStates().get(inputValue)).hasSize(2);
 
-            List<RecordedEvent> replayEvents = RecordingEventLogger.events();
+            List<TraceRecord> replayEvents = RecordingTraceLogger.records();
             assertThat(replayEvents)
-                    .filteredOn(
-                            record ->
-                                    ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE.equals(
-                                            record.event.getType()))
-                    .extracting(record -> record.traceContext().getEntityName())
+                    .filteredOn(record -> TraceRecord.Statuses.REUSED.equals(record.getStatus()))
+                    .extracting(record -> record.getContext().getEntityName())
                     .containsExactlyInAnyOrder("action1", "action2");
             assertThat(replayEvents)
                     .noneMatch(
                             record ->
-                                    ExecutionLifecycleEvents.EXECUTION_FINISHED_EVENT_TYPE.equals(
-                                                    record.event.getType())
-                                            && ExecutionLifecycleEvents.STATUS_SUCCESS.equals(
-                                                    record.status())
+                                    TraceRecord.Statuses.SUCCESS.equals(record.getStatus())
                                             && List.of("action1", "action2")
-                                                    .contains(
-                                                            record.traceContext().getEntityName()));
+                                                    .contains(record.getContext().getEntityName()));
 
-            RecordedEvent action1Reused =
-                    findRecordedLifecycleEvent(
-                            ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
-                            "action1",
-                            ExecutionLifecycleEvents.STATUS_REUSED);
-            RecordedEvent action2Reused =
-                    findRecordedLifecycleEvent(
-                            ExecutionLifecycleEvents.EXECUTION_REUSED_EVENT_TYPE,
-                            "action2",
-                            ExecutionLifecycleEvents.STATUS_REUSED);
-            RecordedEvent replayedMiddleEvent =
-                    replayEvents.stream()
-                            .filter(
-                                    record ->
-                                            TestAgent.MiddleEvent.EVENT_TYPE.equals(
-                                                    record.event.getType()))
-                            .findFirst()
-                            .orElseThrow();
-            RecordedEvent replayedOutputEvent =
-                    replayEvents.stream()
-                            .filter(record -> OutputEvent.EVENT_TYPE.equals(record.event.getType()))
-                            .findFirst()
-                            .orElseThrow();
+            TraceRecord action1Reused = findExecutionRecord("action1", TraceRecord.Statuses.REUSED);
+            TraceRecord action2Reused = findExecutionRecord("action2", TraceRecord.Statuses.REUSED);
+            TraceRecord replayedInputEvent = findEventRecord(InputEvent.EVENT_TYPE);
+            TraceRecord replayedMiddleEvent = findEventRecord(TestAgent.MiddleEvent.EVENT_TYPE);
+            TraceRecord replayedOutputEvent = findEventRecord(OutputEvent.EVENT_TYPE);
 
-            assertThat(action1Reused.traceContext().getInputRunId())
-                    .isNotEqualTo(originalInputRunId);
-            assertThat(action2Reused.traceContext().getInputRunId())
-                    .isEqualTo(action1Reused.traceContext().getInputRunId());
-            assertThat(replayedMiddleEvent.event.getId()).isEqualTo(originalMiddleEventId);
-            assertThat(replayedMiddleEvent.traceContext().getExecutionId())
-                    .isEqualTo(action1Reused.traceContext().getExecutionId());
-            assertThat(replayedOutputEvent.event.getId()).isEqualTo(originalOutputEventId);
-            assertThat(replayedOutputEvent.traceContext().getExecutionId())
-                    .isEqualTo(action2Reused.traceContext().getExecutionId());
+            Object replayedInputEventId =
+                    replayedInputEvent.getContext().getEntityMetadata().get("eventId");
+            assertThat(replayedInputEventId).isNotEqualTo(originalInputEventId);
+            assertThat(action1Reused.getContext().getInputRunId()).isNotEqualTo(originalInputRunId);
+            assertThat(action2Reused.getContext().getInputRunId())
+                    .isEqualTo(action1Reused.getContext().getInputRunId());
+            assertThat(replayedMiddleEvent.getContext().getEntityMetadata().get("eventId"))
+                    .isEqualTo(originalMiddleEventId);
+            assertThat(replayedMiddleEvent.getContext().getExecutionId()).isNull();
+            assertThat(replayedMiddleEvent.getContext().getEntityMetadata())
+                    .containsEntry(
+                            "producerExecutionId", action1Reused.getContext().getExecutionId())
+                    .containsEntry("upstreamEventId", replayedInputEventId)
+                    .containsEntry("upstreamActionName", "action1");
+            assertThat(replayedOutputEvent.getContext().getEntityMetadata().get("eventId"))
+                    .isEqualTo(originalOutputEventId);
+            assertThat(replayedOutputEvent.getContext().getExecutionId()).isNull();
+            assertThat(replayedOutputEvent.getContext().getEntityMetadata())
+                    .containsEntry(
+                            "producerExecutionId", action2Reused.getContext().getExecutionId())
+                    .containsEntry("upstreamEventId", originalMiddleEventId)
+                    .containsEntry("upstreamActionName", "action2");
         }
     }
 
@@ -3143,67 +3164,6 @@ public class ActionExecutionOperatorTest {
                     .as("Completed action must not be re-executed during replay")
                     .isEqualTo(2);
         }
-    }
-
-    @Test
-    void testReplayRebindsOutputLineage() throws Exception {
-        AgentPlan agentPlan = TestAgent.getAgentPlan(false);
-        long inputValue = 7L;
-        InMemoryActionStateStore actionStateStore = new InMemoryActionStateStore(false);
-        Map<String, EventSnapshot> firstSnapshots;
-        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
-                new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
-                        (KeySelector<Long, Long>) value -> value,
-                        TypeInformation.of(Long.class))) {
-            testHarness.open();
-            ActionExecutionOperator<Long, Object> operator =
-                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-
-            firstSnapshots = recordEventSnapshotsByType(operator);
-
-            // Execute the actions and persist their completed states.
-            testHarness.processElement(new StreamRecord<>(inputValue));
-            operator.waitInFlightEventsFinished();
-        }
-
-        Map<String, EventSnapshot> replaySnapshots;
-        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
-                new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(agentPlan, true, actionStateStore),
-                        (KeySelector<Long, Long>) value -> value,
-                        TypeInformation.of(Long.class))) {
-            testHarness.open();
-            ActionExecutionOperator<Long, Object> operator =
-                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
-            replaySnapshots = recordEventSnapshotsByType(operator);
-
-            // Replay the same input and reuse the completed action states.
-            testHarness.processElement(new StreamRecord<>(inputValue));
-            operator.waitInFlightEventsFinished();
-        }
-
-        EventSnapshot firstInput = firstSnapshots.get(InputEvent.EVENT_TYPE);
-        EventSnapshot replayInput = replaySnapshots.get(InputEvent.EVENT_TYPE);
-        EventSnapshot firstMiddle = firstSnapshots.get(TestAgent.MiddleEvent.EVENT_TYPE);
-        EventSnapshot replayMiddle = replaySnapshots.get(TestAgent.MiddleEvent.EVENT_TYPE);
-        EventSnapshot firstOutput = firstSnapshots.get(OutputEvent.EVENT_TYPE);
-        EventSnapshot replayOutput = replaySnapshots.get(OutputEvent.EVENT_TYPE);
-
-        assertThat(firstInput.id).isNotEqualTo(replayInput.id);
-
-        assertThat(replayMiddle.id).isEqualTo(firstMiddle.id);
-        assertThat(firstMiddle.upstreamEventId).isEqualTo(firstInput.id);
-        assertThat(replayMiddle.upstreamEventId).isEqualTo(replayInput.id);
-        assertThat(firstMiddle.upstreamEventId).isNotEqualTo(replayMiddle.upstreamEventId);
-        assertThat(firstMiddle.upstreamActionName).isEqualTo("action1");
-        assertThat(replayMiddle.upstreamActionName).isEqualTo("action1");
-
-        assertThat(replayOutput.id).isEqualTo(firstOutput.id);
-        assertThat(firstOutput.upstreamEventId).isEqualTo(firstMiddle.id);
-        assertThat(replayOutput.upstreamEventId).isEqualTo(replayMiddle.id);
-        assertThat(firstOutput.upstreamActionName).isEqualTo("action2");
-        assertThat(replayOutput.upstreamActionName).isEqualTo("action2");
     }
 
     @Test
@@ -4066,6 +4026,16 @@ public class ActionExecutionOperatorTest {
                 ExceptionUtils.rethrow(e);
             }
             context.sendEvent(new MiddleEvent(inputData + 1));
+        }
+
+        /** Emits one child input, whose invocation produces an output and stops the chain. */
+        public static void emitChildInputOnce(Event event, RunnerContext context) {
+            Long input = (Long) InputEvent.fromEvent(event).getInput();
+            if (input == 1L) {
+                context.sendEvent(new InputEvent(2L));
+            } else {
+                context.sendEvent(new OutputEvent(input));
+            }
         }
 
         public static void sendEventAttachment(Event event, RunnerContext context) {

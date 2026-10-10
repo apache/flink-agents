@@ -17,7 +17,7 @@
  */
 package org.apache.flink.agents.api.trace;
 
-/** Shared field names for Tool execution entity metadata. */
+/** Shared field names for metadata reported with a Tool or Subagent call. */
 public final class ToolExecutionMetadataKeys {
 
     public static final String TOOL_REQUEST_EVENT_ID = "toolRequestEventId";

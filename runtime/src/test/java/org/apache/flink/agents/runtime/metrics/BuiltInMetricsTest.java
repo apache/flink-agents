@@ -18,9 +18,10 @@
  */
 package org.apache.flink.agents.runtime.metrics;
 
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
-import org.apache.flink.agents.api.trace.ExecutionTraceContext;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.api.trace.TraceRecords;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
@@ -33,20 +34,49 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BuiltInMetricsTest {
 
     @Test
+    void eventRecordWithExecutionLikeAttributesDoesNotCountAsExecution() {
+        FlinkAgentsMetricGroupImpl metricGroup =
+                new FlinkAgentsMetricGroupImpl(
+                        UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup());
+        BuiltInMetrics metrics =
+                new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()), ignored -> true);
+        TraceContext event =
+                TraceContext.forEvent(
+                        TraceContext.forInputRun("key", "agent"), "search", "event-id", null, null);
+
+        metrics.markExecutionRecord(
+                "action",
+                TraceRecord.create(
+                        event,
+                        null,
+                        null,
+                        Map.of("status", TraceRecord.Statuses.SUCCESS, "entityType", "tool")));
+
+        assertThat(
+                        metricGroup
+                                .getSubGroup("action", "action")
+                                .getSubGroup("tool", "search")
+                                .getCounter(ToolExecutionMetricRecorder.NUM_TOOL_CALLS_SUCCEEDED)
+                                .getCount())
+                .isZero();
+    }
+
+    @Test
     void restoredActionMissingFromCurrentPlanKeepsItsMetricLifecycle() {
         MetricGroup parentMetricGroup =
                 UnregisteredMetricGroups.createUnregisteredOperatorMetricGroup();
         FlinkAgentsMetricGroupImpl metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
         BuiltInMetrics metrics =
                 new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()), ignored -> false);
-        ExecutionTraceContext restoredAction =
-                ExecutionTraceContext.forAction(
-                        ExecutionTraceContext.forInputRun("key", "agent"), "restored_action");
+        TraceContext restoredAction =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("key", "agent"),
+                        "restored_action",
+                        "trigger-event");
 
         metrics.restoreActionTask(restoredAction, true);
         metrics.markActionTaskDequeued(restoredAction, true);
-        metrics.markExecutionEvent(
-                "restored_action", ExecutionLifecycleEvents.executionReused(), restoredAction);
+        metrics.markExecutionRecord("restored_action", TraceRecords.reused(restoredAction));
         metrics.markActionExecuted("restored_action");
 
         FlinkAgentsMetricGroupImpl actionMetricGroup =
@@ -71,29 +101,24 @@ class BuiltInMetricsTest {
         FlinkAgentsMetricGroupImpl metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
         BuiltInMetrics metrics =
                 new BuiltInMetrics(metricGroup, new AgentPlan(Map.of()), ignored -> false);
-        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
-        ExecutionTraceContext completedAction =
-                ExecutionTraceContext.forAction(inputRun, "restored_action");
-        ExecutionTraceContext activeAction =
-                ExecutionTraceContext.forAction(inputRun, "restored_action");
-        ExecutionTraceContext completedActionLlm =
-                completedAction.childExecution(ExecutionReporter.EntityTypes.LLM, "primary_model");
-        ExecutionTraceContext activeActionLlm =
-                activeAction.childExecution(ExecutionReporter.EntityTypes.LLM, "secondary_model");
+        TraceContext inputRun = TraceContext.forInputRun("key", "agent");
+        TraceContext completedAction =
+                TraceContext.forAction(inputRun, "restored_action", "trigger-event");
+        TraceContext activeAction =
+                TraceContext.forAction(inputRun, "restored_action", "trigger-event");
+        TraceContext completedActionLlm =
+                completedAction.childExecution(
+                        ExecutionReporter.EntityTypes.LLM, "primary_model", Map.of());
+        TraceContext activeActionLlm =
+                activeAction.childExecution(
+                        ExecutionReporter.EntityTypes.LLM, "secondary_model", Map.of());
         metrics.restoreActionTask(completedAction, false);
 
-        metrics.markExecutionEvent(
-                "restored_action", ExecutionLifecycleEvents.executionStarted(), completedActionLlm);
-        metrics.markExecutionEvent(
-                "restored_action", ExecutionLifecycleEvents.executionStarted(), activeActionLlm);
-        metrics.markExecutionEvent(
-                "restored_action", ExecutionLifecycleEvents.executionFinished(), completedAction);
-        metrics.markExecutionEvent(
-                "restored_action",
-                ExecutionLifecycleEvents.executionFinished(),
-                completedActionLlm);
-        metrics.markExecutionEvent(
-                "restored_action", ExecutionLifecycleEvents.executionFinished(), activeActionLlm);
+        metrics.markExecutionRecord("restored_action", TraceRecords.started(completedActionLlm));
+        metrics.markExecutionRecord("restored_action", TraceRecords.started(activeActionLlm));
+        metrics.markExecutionRecord("restored_action", TraceRecords.succeeded(completedAction));
+        metrics.markExecutionRecord("restored_action", TraceRecords.succeeded(completedActionLlm));
+        metrics.markExecutionRecord("restored_action", TraceRecords.succeeded(activeActionLlm));
 
         assertThat(
                         metricGroup

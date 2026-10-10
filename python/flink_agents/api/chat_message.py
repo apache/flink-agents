@@ -115,7 +115,7 @@ class MediaBlock(BaseModel):
     the payload location is a typed ``source``.
 
     Media blocks are immutable. The optional ``name``/``size_bytes``/``sha256``
-    metadata also serves the Event Log, which records media metadata instead of
+    metadata also serves the Trace Log, which records media metadata instead of
     payload bytes.
     """
 
