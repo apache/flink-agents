@@ -23,8 +23,14 @@ from pyflink.datastream import StreamExecutionEnvironment
 from typing_extensions import override
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+)
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
@@ -32,7 +38,6 @@ from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.tools.tool import ToolType
 
 
 class SlowMockChatModel(BaseChatModelSetup):
@@ -46,20 +51,38 @@ class SlowMockChatModel(BaseChatModelSetup):
         return {}
 
     @override
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         time.sleep(5)  # Simulate network delay
         if "sum" in messages[-1].text:
             input = messages[-1].text
-            function = {"name": "add", "arguments": {"a": 1, "b": 2}}
-            tool_call = {
-                "id": uuid.uuid4(),
-                "type": ToolType.FUNCTION,
-                "function": function,
-            }
-            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call])
+
+            tool_call = ToolCallBlock(
+                call_id=str(uuid.uuid4()), name="add", input={"a": 1, "b": 2}
+            )
+            return ChatResult(
+                message=ChatMessage.assistant(
+                    [
+                        TextBlock(text=input),
+                        tool_call,
+                    ]
+                )
+            )
         else:
-            content = "\n".join([message.text for message in messages])
-            return ChatMessage.of(MessageRole.ASSISTANT, content)
+            content = "\n".join(
+                [
+                    (
+                        "".join(
+                            b.text
+                            for b in message.blocks[0].blocks
+                            if isinstance(b, TextBlock)
+                        )
+                        if message.role == MessageRole.TOOL
+                        else message.text
+                    )
+                    for message in messages
+                ]
+            )
+            return ChatResult(message=ChatMessage.assistant(content))
 
 
 class AsyncTestAgent(Agent):

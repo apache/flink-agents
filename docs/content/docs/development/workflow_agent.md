@@ -426,7 +426,7 @@ access these framework variables:
   `attributes.score > 80` refer to the same field.
 - Nested values are not flattened. For `{input: {status: "ok"}}`, use `input.status` or
   `attributes.input.status`; bare `status` does not refer to the nested value. Other event payloads
-  keep their top-level envelope, for example `response.blocks`.
+  keep their top-level envelope, for example `response.message.blocks`.
 - Framework variables take precedence over attributes with the same names. Use `attributes["type"]`
   or `attributes["id"]` to access a colliding attribute.
 - For a top-level key containing dots, use a literal index such as `attributes["a.b.c"]`. Test its
@@ -952,7 +952,7 @@ private static Map<String, Object> normalizeAttributes(Map<String, Object> attri
     }
     Object rawResponse = attributes.get("response");
     if (rawResponse instanceof Map) {
-        attributes.put("response", MAPPER.convertValue(rawResponse, ChatMessage.class));
+        attributes.put("response", MAPPER.convertValue(rawResponse, ChatResult.class));
     }
     return attributes;
 }

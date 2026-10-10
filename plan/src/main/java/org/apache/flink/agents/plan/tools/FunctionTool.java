@@ -40,6 +40,7 @@ import org.apache.flink.agents.plan.resource.python.PythonToolResultConverter;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
+import org.apache.flink.agents.plan.utils.ToolResultUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -144,7 +145,7 @@ public class FunctionTool extends Tool {
                 return PythonToolResultConverter.fromBridgeResult(result);
             }
             Object result = function.call(schema.bind(arguments));
-            return ToolResponse.success(result);
+            return ToolResultUtils.toToolResponse(result);
         } catch (Exception error) {
             if (CancellationUtils.isCancellation(error)) {
                 if (CancellationUtils.isInterruption(error)) {

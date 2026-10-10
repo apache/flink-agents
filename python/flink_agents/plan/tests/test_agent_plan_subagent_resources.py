@@ -16,6 +16,7 @@
 # limitations under the License.
 ################################################################################
 """Tests for compiling AGENT resources (SubagentSetup) into the agent plan."""
+
 import pytest
 
 from flink_agents.api.agents.agent import Agent

@@ -57,8 +57,17 @@ A `ChatRequestEvent` can name a model router instead of a chat model to pick the
 
 Use `ChatMessage.blocks` to combine text and media in a single message, in the
 order you want them presented. Supported block types are `TextBlock`, `ImageBlock`,
-`AudioBlock`, `VideoBlock`, and `DocumentBlock`. For example, a message can contain
-a question followed by an image:
+`AudioBlock`, `VideoBlock`, and `DocumentBlock`. Assistant messages can also contain
+`ReasoningBlock` and `ToolCallBlock`; a tool message contains one `ToolResultBlock`
+whose `call_id` matches the corresponding tool call and whose blocks hold the result.
+
+To read the complete content of a message or `ChatResult`, use `getBlocks()` (Java)
+or `blocks` (Python). Use `getText()` (Java) or `text` (Python) when you only need
+text: these accessors concatenate the message's text blocks and omit media,
+reasoning, tool calls, and text inside tool results.
+
+For tools that return text or media, see
+[Tool response content and metadata]({{< ref "docs/development/tool_use#tool-response-content-and-metadata" >}}).
 
 **Provider support:** The OpenAI Chat Completions integration, and the Azure OpenAI
 and vLLM integrations built on it, send media blocks to the model; see
@@ -67,6 +76,8 @@ Base64 images; see its section. The Anthropic, Gemini, Amazon Bedrock, IBM
 watsonx.ai, DashScope and OpenAI Responses integrations do not send media yet: a
 message with a media block raises `UnsupportedContentBlockException` (Java) or
 `UnsupportedContentBlockError` (Python).
+
+For example, a message can contain a question followed by an image:
 
 {{< tabs "Message content blocks" >}}
 
@@ -1665,12 +1676,12 @@ class MyChatModelConnection(BaseChatModelConnection):
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         # Core method: send messages to LLM and return response
         # - messages: Input message sequence
         # - tools: Optional list of tools available to the model
         # - kwargs: Additional parameters from model_kwargs
-        # - Returns: ChatMessage with the model's response
+        # - Returns: ChatResult with the assistant message and available usage information
         pass
 ```
 {{< /tab >}}
@@ -1695,13 +1706,13 @@ public class MyChatModelConnection extends BaseChatModelConnection {
     
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> arguments) {
         // Core method: send messages to LLM and return response
         // - messages: Input message sequence
         // - tools: Optional list of tools available to the model
         // - arguments: Additional parameters from ChatModelSetup
-        // - Returns: ChatMessage with the model's response
+        // - Returns: ChatResult with the assistant message and available usage information
     }
 }
 ```
@@ -1751,9 +1762,21 @@ public class MyChatModelSetup extends BaseChatModelSetup {
 
 ## Built-in Events and Actions
 
-`ChatResponseEvent` represents a terminal `SUCCESS` or `FAILED` result. A success carries a `ChatMessage` in `response`; a failure carries an `error` string containing the exception type and message. The two payloads are mutually exclusive. Error text is diagnostic information, not a stable error code; exception objects and stack traces are not stored in the event.
+`ChatResponseEvent` reports whether a chat request succeeded or failed:
 
-Check `event.is_failed` (Python) or `event.isFailed()` (Java) to handle a failed request. Reading `event.response` or `event.getResponse()` on a failed event raises `ChatResponseError` or `ChatResponseEvent.ChatResponseException`, respectively, with the original request ID and error text. Reading `error` on a successful event also raises. Serialization and event logging do not invoke these accessors. The built-in ReAct agent reads the response directly, so an unhandled failed response propagates from its consumer Action; applications that want to recover should handle the failed event explicitly.
+- On success, `event.getResponse()` (Java) or `event.response` (Python) returns a
+  `ChatResult`. It contains the assistant message and, when available, the model
+  name, response ID, token usage, and finish reason. Use `getText()` / `text` to
+  read the answer as text, or `getBlocks()` / `blocks` to include all content.
+- On failure, `event.getError()` (Java) or `event.error` (Python) provides an error
+  description. Check `event.isFailed()` / `event.is_failed` before reading the
+  response: accessing the response of a failed event raises an exception.
+
+If you requested structured output, read the parsed result from
+`event.getStructuredOutput()` (Java) or `event.structured_output` (Python).
+
+Applications that need to recover from a failed chat request should handle the
+failed event explicitly. The built-in ReAct agent propagates the failure.
 
 Ordinary provider, resource-resolution, response-validation and structured-output errors produce a failed response after configured retries and routing fallbacks are exhausted. `max-retries` controls the number of additional attempts (default: 0), and `retry-wait-interval` controls exponential backoff. These settings also apply to routing judge calls. A judge call failure fails the request rather than selecting the default model; a normal abstaining verdict still selects the default. Intermediate attempts and Tool rounds do not emit terminal responses, and the final response always refers to the initial request ID.
 

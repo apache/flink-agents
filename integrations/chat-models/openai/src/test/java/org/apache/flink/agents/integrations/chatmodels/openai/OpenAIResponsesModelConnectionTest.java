@@ -18,10 +18,18 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openai.core.ObjectMappers;
 import com.openai.errors.BadRequestException;
+import com.openai.models.responses.Response;
+import com.openai.models.responses.ResponseFunctionToolCall;
+import com.openai.models.responses.ResponseInputItem;
+import com.openai.models.responses.ResponseOutputItem;
+import com.openai.models.responses.ResponseReasoningItem;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
@@ -245,18 +253,16 @@ class OpenAIResponsesModelConnectionTest {
     @Test
     @DisplayName("A request-building failure reaches the caller as its own type, not a wrapper")
     void testRequestBuildingFailurePropagatesUnwrapped() {
-        List<ChatMessage> toolMessageWithoutExternalId =
-                List.of(new ChatMessage(MessageRole.TOOL, "result", Map.of()));
+        List<ChatMessage> unsupportedMessage =
+                List.of(
+                        ChatMessage.assistant(
+                                List.of(
+                                        ImageBlock.fromUrl(
+                                                "image/png", "https://example.com/image.png"))));
 
-        assertThatThrownBy(
-                        () ->
-                                connection()
-                                        .chat(
-                                                toolMessageWithoutExternalId,
-                                                List.of(),
-                                                params("gpt-4o")))
+        assertThatThrownBy(() -> connection().chat(unsupportedMessage, List.of(), params("gpt-4o")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("externalId");
+                .hasMessageContaining("image");
     }
 
     @Test
@@ -291,5 +297,37 @@ class OpenAIResponsesModelConnectionTest {
                 .hasMessage(
                         "OpenAI Responses cannot send an image block (image/png, base64 source): this"
                                 + " integration sends text only.");
+    }
+
+    @Test
+    void testReasoningAndToolCallRoundTripPreservesOrder() throws Exception {
+        ObjectMapper mapper = ObjectMappers.jsonMapper();
+        ResponseReasoningItem reasoning =
+                mapper.readValue(
+                        "{\"id\":\"rs_1\",\"type\":\"reasoning\",\"summary\":[{\"type\":\"summary_text\",\"text\":\"Think first\"}],\"encrypted_content\":\"opaque\"}",
+                        ResponseReasoningItem.class);
+        Response response = org.mockito.Mockito.mock(Response.class);
+        org.mockito.Mockito.when(response.output())
+                .thenReturn(
+                        List.of(
+                                ResponseOutputItem.ofReasoning(reasoning),
+                                ResponseOutputItem.ofFunctionCall(
+                                        ResponseFunctionToolCall.builder()
+                                                .id("fc_1")
+                                                .callId("call_1")
+                                                .name("lookup")
+                                                .arguments("{\"key\":\"value\"}")
+                                                .build())));
+        ChatMessage message = OpenAIResponsesUtils.convertResponse(response);
+        assertThat(message.getBlocks().get(0)).isInstanceOf(ReasoningBlock.class);
+        assertThat(message.getToolCalls().get(0).getCallId()).isEqualTo("call_1");
+        // Replay after framework JSON serialization, not just the SDK objects in memory.
+        message = ChatMessage.fromMap(message.toMap());
+        List<ResponseInputItem> items = OpenAIResponsesUtils.convertSingleMessage(message);
+        assertThat(items).hasSize(2);
+        assertThat(mapper.valueToTree(items.get(0).asReasoning()).toString())
+                .isEqualTo(mapper.valueToTree(reasoning).toString());
+        assertThat(items.get(1).asFunctionCall().callId()).isEqualTo("call_1");
+        assertThat(items.get(1).asFunctionCall().id()).hasValue("fc_1");
     }
 }

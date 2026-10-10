@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -35,7 +36,12 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class PythonChatModelSetupTest {
     @Mock private PythonResourceAdapter mockAdapter;
@@ -91,7 +97,7 @@ public class PythonChatModelSetupTest {
     @Test
     void testChat() throws Exception {
         ChatMessage inputMessage = mock(ChatMessage.class);
-        ChatMessage outputMessage = mock(ChatMessage.class);
+        ChatResult outputMessage = mock(ChatResult.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
         Map<String, Object> promptArgs = new HashMap<>();
         promptArgs.put("input", "value");
@@ -105,9 +111,9 @@ public class PythonChatModelSetupTest {
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
         when(mockAdapter.callMethod(eq(mockChatModelSetup), eq("chat"), any(Map.class)))
                 .thenReturn(pythonOutputMessage);
-        when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
+        when(mockAdapter.fromPythonChatResult(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
+        ChatResult result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
 
         assertThat(result).isEqualTo(outputMessage);
 
@@ -130,7 +136,7 @@ public class PythonChatModelSetupTest {
                                     assertThat(pythonMessages.get(0)).isEqualTo(pythonInputMessage);
                                     return true;
                                 }));
-        verify(mockAdapter).fromPythonChatMessage(pythonOutputMessage);
+        verify(mockAdapter).fromPythonChatResult(pythonOutputMessage);
         verify(pythonInputMessage).close();
         verify(pythonOutputMessage).close();
     }

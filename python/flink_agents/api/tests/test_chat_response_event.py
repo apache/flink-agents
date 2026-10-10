@@ -22,7 +22,8 @@ from uuid import uuid4
 
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, TextBlock
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.chat_event import ChatResponseError, ChatResponseEvent
 from flink_agents.api.events.event import Event
 
@@ -45,7 +46,7 @@ def test_failed_event_round_trip_and_response_access() -> None:
 
 def test_success_response_and_error_access() -> None:
     event = ChatResponseEvent.success(
-        uuid4(), ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
+        uuid4(), ChatResult(message=ChatMessage.assistant([TextBlock(text="ok")]))
     )
     restored = ChatResponseEvent.from_event(
         Event.model_validate_json(event.model_dump_json())
@@ -59,9 +60,17 @@ def test_success_response_and_error_access() -> None:
 @pytest.mark.parametrize(
     ("status", "response", "error"),
     [
-        ("FAILED", ChatMessage.of(role=MessageRole.ASSISTANT, content="ok"), "bad"),
+        (
+            "FAILED",
+            ChatResult(message=ChatMessage.assistant([TextBlock(text="ok")])),
+            "bad",
+        ),
         ("SUCCESS", None, None),
-        ("SUCCESS", ChatMessage.of(role=MessageRole.ASSISTANT, content="ok"), "bad"),
+        (
+            "SUCCESS",
+            ChatResult(message=ChatMessage.assistant([TextBlock(text="ok")])),
+            "bad",
+        ),
         ("FAILED", None, ""),
         ("UNKNOWN", None, None),
     ],
@@ -76,7 +85,9 @@ def test_old_event_without_status_rejected() -> None:
         type=ChatResponseEvent.EVENT_TYPE,
         attributes={
             "request_id": uuid4(),
-            "response": ChatMessage.of(role=MessageRole.ASSISTANT, content="ok"),
+            "response": ChatResult(
+                message=ChatMessage.assistant([TextBlock(text="ok")])
+            ),
         },
     )
     # The boundary schema check rejects the missing "status" with ValueError,
@@ -91,3 +102,16 @@ def test_react_consumer_propagates_unhandled_failure() -> None:
     event = ChatResponseEvent.failed(uuid4(), "provider failed")
     with pytest.raises(ChatResponseError, match="provider failed"):
         ReActAgent.stop_action(event, None)
+
+
+def test_restored_response_retains_structured_output_and_routing() -> None:
+    event = ChatResponseEvent.success(
+        uuid4(), ChatResult(message=ChatMessage.assistant("ok"))
+    )
+    event.attributes["structured_output"] = {"answer": 42}
+    event.attributes["model_routing"] = {"final_model": "selected"}
+    restored = Event.from_json(event.model_dump_json())
+    assert isinstance(restored, ChatResponseEvent)
+    assert restored.response.text == "ok"
+    assert restored.structured_output == {"answer": 42}
+    assert restored.attributes["model_routing"] == {"final_model": "selected"}

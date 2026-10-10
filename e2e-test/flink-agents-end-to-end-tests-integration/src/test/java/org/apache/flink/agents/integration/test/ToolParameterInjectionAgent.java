@@ -28,7 +28,10 @@ import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -62,13 +65,15 @@ public class ToolParameterInjectionAgent extends Agent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages,
                 List<org.apache.flink.agents.api.tools.Tool> tools,
                 Map<String, Object> modelParams) {
             ChatMessage lastMessage = messages.get(messages.size() - 1);
             if (lastMessage.getRole() == MessageRole.TOOL) {
-                return new ChatMessage(MessageRole.ASSISTANT, lastMessage.getText());
+                return new ChatResult(
+                        ChatMessage.assistant(
+                                ((ToolResultBlock) lastMessage.getBlocks().get(0)).getBlocks()));
             }
 
             for (org.apache.flink.agents.api.tools.Tool tool : tools) {
@@ -79,20 +84,12 @@ public class ToolParameterInjectionAgent extends Agent {
                 }
             }
             String orderId = lastMessage.getText();
-            return new ChatMessage(
-                    MessageRole.ASSISTANT,
-                    "",
-                    List.of(
-                            Map.of(
-                                    "id",
-                                    "call-" + orderId,
-                                    "type",
-                                    "function",
-                                    "function",
-                                    Map.of(
-                                            "name",
+            return new ChatResult(
+                    ChatMessage.assistant(
+                            List.of(
+                                    new ToolCallBlock(
+                                            "call-" + orderId,
                                             "queryOrder",
-                                            "arguments",
                                             Map.of("order_id", orderId)))));
         }
     }

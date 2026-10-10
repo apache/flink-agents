@@ -73,7 +73,7 @@ def test_tool_use_response_without_leading_text() -> None:
     )
     assert response.text == ""
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0]["function"]["name"] == "add"
+    assert response.tool_calls[0].name == "add"
 
 
 def test_tool_use_response_keeps_leading_text() -> None:
@@ -130,9 +130,9 @@ def test_plain_text_response_keeps_token_usage() -> None:
         [ChatMessage.of(MessageRole.USER, "hi")],
         model="claude-sonnet-4-5",
     )
-    assert response.extra_args["model_name"] == "claude-sonnet-4-5"
-    assert response.extra_args["promptTokens"] == 7
-    assert response.extra_args["completionTokens"] == 3
+    assert response.model == "claude-sonnet-4-5"
+    assert response.usage.prompt_tokens == 7
+    assert response.usage.completion_tokens == 3
 
 
 @pytest.mark.parametrize(
@@ -155,7 +155,7 @@ def test_response_records_finish_reason(stop_reason: str, finish_reason: str) ->
         [ChatMessage.of(role=MessageRole.USER, content="hi")]
     )
 
-    assert response.extra_args["finish_reason"] == finish_reason
+    assert response.finish_reason == finish_reason
 
 
 def test_response_omits_finish_reason_when_absent() -> None:
@@ -174,7 +174,7 @@ def test_response_omits_finish_reason_when_absent() -> None:
         [ChatMessage.of(role=MessageRole.USER, content="hi")]
     )
 
-    assert "finish_reason" not in response.extra_args
+    assert response.finish_reason is None
 
 
 def test_tool_use_response_keeps_token_usage() -> None:
@@ -194,8 +194,8 @@ def test_tool_use_response_keeps_token_usage() -> None:
         [ChatMessage.of(MessageRole.USER, "add 1 and 2")],
         model="claude-sonnet-4-5",
     )
-    assert response.extra_args["promptTokens"] == 7
-    assert response.extra_args["completionTokens"] == 3
+    assert response.usage.prompt_tokens == 7
+    assert response.usage.completion_tokens == 3
 
 
 # ---------------------------------------------------------------------------------
@@ -994,3 +994,34 @@ def test_feasibility_is_asked_with_the_unstripped_kwargs() -> None:
     assert asked[0] is not None
     assert asked[0]["model"] == _CAPABLE_MODEL
     assert asked[0]["json_prefill"] is True
+
+
+def test_reasoning_and_tool_use_round_trip() -> None:
+    """History replay retains native signatures, redacted data and block order."""
+    from anthropic.types import RedactedThinkingBlock, ThinkingBlock
+
+    from flink_agents.integrations.chat_models.anthropic.anthropic_chat_model import (
+        convert_to_anthropic_message,
+    )
+
+    native = [
+        ThinkingBlock(type="thinking", thinking="Check the inputs", signature="signed"),
+        RedactedThinkingBlock(type="redacted_thinking", data="opaque"),
+        ToolUseBlock(type="tool_use", id="call-1", name="add", input={"a": 1, "b": 2}),
+    ]
+    response = Message(
+        id="m",
+        model="claude",
+        role="assistant",
+        type="message",
+        stop_reason="tool_use",
+        content=native,
+        usage=_usage(),
+    )
+    result = _connection_returning(response).chat([ChatMessage.user("add")])
+    restored = ChatMessage.model_validate_json(result.message.model_dump_json())
+    replay = convert_to_anthropic_message(restored)
+    assert result.text == ""
+    assert replay["content"] == [
+        block.model_dump(exclude_none=True) for block in native
+    ]

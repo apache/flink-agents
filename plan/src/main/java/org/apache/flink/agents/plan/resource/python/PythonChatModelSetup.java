@@ -18,6 +18,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -62,7 +63,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Map<String, Object> modelParams) {
@@ -83,7 +84,7 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
 
             Object pythonMessageResponse =
                     scope.own(adapter.callMethod(chatModelSetup, "chat", kwargs));
-            return adapter.fromPythonChatMessage(pythonMessageResponse);
+            return adapter.fromPythonChatResult(pythonMessageResponse);
         }
     }
 

@@ -1,23 +1,28 @@
 {
-  "id" : "00000000-0000-0000-0000-000000000001",
-  "attributes" : {
-    "request_id" : "00000000-0000-0000-0000-000000000002",
-    "responses" : {
-      "call_aaaa" : {
-        "result" : "pong",
-        "success" : true,
-        "error" : null,
-        "execution_time_ms" : 0,
-        "tool_name" : null
+  "id": "00000000-0000-0000-0000-000000000001",
+  "attributes": {
+    "responses": {
+      "call_aaaa": {
+        "success": true,
+        "error": null,
+        "execution_time_ms": 0,
+        "tool_name": null,
+        "blocks": [
+          {
+            "type": "text",
+            "text": "pong"
+          }
+        ],
+        "metadata": {}
       }
     },
-    "success" : {
-      "call_aaaa" : true
+    "error": {},
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "success": {
+      "call_aaaa": true
     },
-    "error" : { },
-    "external_ids" : { },
-    "timestamp" : 1700000000000
+    "timestamp": 1700000000000
   },
-  "attachments" : { },
-  "type" : "_tool_response_event"
+  "attachments": {},
+  "type": "_tool_response_event"
 }

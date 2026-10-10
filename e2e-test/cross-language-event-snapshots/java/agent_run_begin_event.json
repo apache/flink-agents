@@ -1,11 +1,11 @@
 {
   "id" : "00000000-0000-0000-0000-000000000001",
   "attributes" : {
-    "key" : "user-42",
     "value" : {
       "user.tier" : "gold",
       "user.address.city" : "SF"
-    }
+    },
+    "key" : "user-42"
   },
   "attachments" : { },
   "type" : "_agent_run_begin_event"

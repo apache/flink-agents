@@ -347,16 +347,8 @@ class JavaFunction(Function):
 def _decode_java_tool_result(value: Any) -> Any:
     if not isinstance(value, dict) or value.get(_TOOL_RESULT_MARKER) != "response":
         return value
-    if value.get("success") is True:
-        return ToolResponse.success(
-            value.get("result"),
-            execution_time_ms=value.get("execution_time_ms", 0),
-            tool_name=value.get("tool_name"),
-        )
-    return ToolResponse.error(
-        value.get("error"),
-        execution_time_ms=value.get("execution_time_ms", 0),
-        tool_name=value.get("tool_name"),
+    return ToolResponse.model_validate(
+        {k: v for k, v in value.items() if k != _TOOL_RESULT_MARKER}
     )
 
 

@@ -59,7 +59,11 @@ public class UnsupportedContentBlockException extends IllegalArgumentException {
      */
     public static void rejectMedia(String provider, List<ChatMessage> messages) {
         for (ChatMessage message : messages) {
-            for (ContentBlock block : message.getBlocks()) {
+            List<? extends ContentBlock> blocks =
+                    message.getRole() == MessageRole.TOOL
+                            ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
+                            : message.getBlocks();
+            for (ContentBlock block : blocks) {
                 if (block instanceof MediaBlock) {
                     throw forBlock(provider, block, "this integration sends text only");
                 }

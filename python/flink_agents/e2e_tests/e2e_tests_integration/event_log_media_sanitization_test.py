@@ -20,7 +20,7 @@
 A Python action emits a multimodal ``ChatRequestEvent`` through the documented
 public API (``ctx.send_event``). The event crosses the Python -> Java bridge as
 wire JSON, where ``Event.fromJson`` restores it to its concrete built-in type so
-its messages become typed ``ChatMessage`` objects. Only a typed message engages
+its messages become typed ``ChatMessage`` objects. Only typed content blocks engage
 the Event Log's media sanitizer, so this test regresses the built-in-type
 restoration at the JSON boundary: had the event stayed generic, its messages
 would be logged verbatim and the inline Base64 payload and the pre-signed URL
@@ -46,10 +46,10 @@ from flink_agents.api.chat_message import (
     ChatMessage,
     DocumentBlock,
     ImageBlock,
-    MessageRole,
     TextBlock,
 )
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import action, chat_model_setup
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
@@ -87,9 +87,11 @@ class MediaSanitizationChatModel(BaseChatModelSetup):
         return {}
 
     @override
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Return a deterministic text reply, projecting away any media blocks."""
-        return ChatMessage.of(MessageRole.ASSISTANT, f"answered: {messages[-1].text}")
+        return ChatResult(
+            message=ChatMessage.assistant(f"answered: {messages[-1].text}")
+        )
 
 
 class MediaSanitizationAgent(Agent):

@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+from datetime import date
+
 import pytest
 from pydantic import BaseModel
 
@@ -138,3 +140,55 @@ def test_chat_message_content_renders_scalars_and_containers() -> None:
     assert to_chat_message_content(True) == "true"
     assert to_chat_message_content({"a": 1, "b": [2]}) == '{"a":1,"b":[2]}'
     assert to_chat_message_content([1, 2]) == "[1,2]"
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        ("hello", "hello"),
+        ({"answer": 42}, '{"answer": 42}'),
+        ([1, True], "[1, true]"),
+        (None, "null"),
+        (False, "false"),
+        (date(2026, 1, 1), "2026-01-01"),
+        (b"\xff", "b'\\xff'"),
+    ],
+)
+def test_tool_return_values_become_text_blocks(value, text) -> None:
+    from flink_agents.plan.actions.tool_result_utils import to_tool_response
+
+    response = to_tool_response(value)
+    assert response.get_text() == text
+    assert response.metadata == {}
+
+
+def test_explicit_tool_response_is_not_serialized_during_normalization() -> None:
+    from flink_agents.api.tools import ToolResponse
+    from flink_agents.plan.actions.tool_result_utils import to_tool_response
+
+    response = ToolResponse(metadata={"binary": b"\xff"})
+    assert to_tool_response(response) is response
+
+
+def test_tool_return_uses_custom_string_when_json_serialization_fails() -> None:
+    from flink_agents.plan.actions.tool_result_utils import to_tool_response
+
+    class Result:
+        def __str__(self) -> str:
+            return "custom result"
+
+    assert to_tool_response(Result()).get_text() == "custom result"
+
+
+def test_tool_return_propagates_string_conversion_failure() -> None:
+    from flink_agents.plan.actions.tool_result_utils import to_tool_response
+
+    failure = RuntimeError("Cannot render tool result")
+
+    class Result:
+        def __str__(self) -> str:
+            raise failure
+
+    with pytest.raises(RuntimeError) as exc_info:
+        to_tool_response(Result())
+    assert exc_info.value is failure

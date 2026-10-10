@@ -18,49 +18,33 @@
 
 package org.apache.flink.agents.integrations.chatmodels.bedrock;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.RetryExecutor;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider;
-import software.amazon.awssdk.core.SdkNumber;
-import software.amazon.awssdk.core.document.Document;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.bedrockruntime.BedrockRuntimeClient;
-import software.amazon.awssdk.services.bedrockruntime.model.ContentBlock;
-import software.amazon.awssdk.services.bedrockruntime.model.ConversationRole;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseRequest;
 import software.amazon.awssdk.services.bedrockruntime.model.ConverseResponse;
 import software.amazon.awssdk.services.bedrockruntime.model.InferenceConfiguration;
 import software.amazon.awssdk.services.bedrockruntime.model.JsonSchemaDefinition;
-import software.amazon.awssdk.services.bedrockruntime.model.Message;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputConfig;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormat;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatStructure;
 import software.amazon.awssdk.services.bedrockruntime.model.OutputFormatType;
 import software.amazon.awssdk.services.bedrockruntime.model.SystemContentBlock;
 import software.amazon.awssdk.services.bedrockruntime.model.ToolConfiguration;
-import software.amazon.awssdk.services.bedrockruntime.model.ToolInputSchema;
-import software.amazon.awssdk.services.bedrockruntime.model.ToolResultBlock;
-import software.amazon.awssdk.services.bedrockruntime.model.ToolResultContentBlock;
-import software.amazon.awssdk.services.bedrockruntime.model.ToolSpecification;
-import software.amazon.awssdk.services.bedrockruntime.model.ToolUseBlock;
 
-import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -75,8 +59,8 @@ import java.util.stream.Collectors;
  * tool calling support. Authentication is handled via SigV4 using the default AWS credentials
  * chain.
  *
- * <p>Future work: support reasoning content blocks (Claude extended thinking), citation blocks, and
- * image/document content blocks.
+ * <p>Reasoning content preserves signed text and redacted data for history replay. Citation and
+ * image/document content blocks are not yet supported.
  *
  * <p>Supported connection parameters:
  *
@@ -98,8 +82,6 @@ import java.util.stream.Collectors;
  * }</pre>
  */
 public class BedrockChatModelConnection extends BaseChatModelConnection {
-
-    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     // Models AWS documents structured-output support for on the bedrock-runtime endpoint. There is
     // no single list page: the feature page delegates the per-model answer to the individual model
@@ -284,7 +266,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return chat(messages, tools, modelParams, null);
     }
@@ -296,7 +278,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
      * leave the request unconstrained, so that the caller keeps the prompt-engineering fallback.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -309,14 +291,21 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         ConverseResponse response =
                 retryExecutor.execute(() -> client.converse(request), "BedrockConverse");
 
-        ChatMessage result = convertResponse(response);
-        if (response.usage() != null) {
-            result.getExtraArgs().put("model_name", modelId);
-            result.getExtraArgs().put("promptTokens", response.usage().inputTokens().longValue());
-            result.getExtraArgs()
-                    .put("completionTokens", response.usage().outputTokens().longValue());
-        }
-        return result;
+        return new ChatResult(
+                BedrockChatUtils.convertResponse(response),
+                modelId,
+                null,
+                response.usage() == null
+                        ? null
+                        : new TokenUsage(
+                                response.usage().inputTokens().longValue(),
+                                response.usage().outputTokens().longValue()),
+                "max_tokens".equals(response.stopReasonAsString())
+                        ? "length"
+                        : ("guardrail_intervened".equals(response.stopReasonAsString())
+                                ? "content_filter"
+                                : response.stopReasonAsString()),
+                null);
     }
 
     /**
@@ -359,7 +348,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
         ConverseRequest.Builder requestBuilder =
                 ConverseRequest.builder()
                         .modelId(modelId)
-                        .messages(mergeMessages(conversationMsgs));
+                        .messages(BedrockChatUtils.mergeMessages(conversationMsgs));
 
         if (!systemMsgs.isEmpty()) {
             requestBuilder.system(
@@ -373,7 +362,7 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
                     ToolConfiguration.builder()
                             .tools(
                                     tools.stream()
-                                            .map(this::toBedrockTool)
+                                            .map(BedrockChatUtils::toBedrockTool)
                                             .collect(Collectors.toList()))
                             .build());
         }
@@ -472,217 +461,5 @@ public class BedrockChatModelConnection extends BaseChatModelConnection {
             throw new IllegalArgumentException("No model specified for Bedrock.");
         }
         return model;
-    }
-
-    /**
-     * Merge consecutive TOOL messages into a single USER message with multiple toolResult content
-     * blocks, as required by Bedrock Converse API.
-     */
-    private List<Message> mergeMessages(List<ChatMessage> msgs) {
-        List<Message> result = new ArrayList<>();
-        int i = 0;
-        while (i < msgs.size()) {
-            ChatMessage msg = msgs.get(i);
-            if (msg.getRole() == MessageRole.TOOL) {
-                List<ContentBlock> toolResultBlocks = new ArrayList<>();
-                while (i < msgs.size() && msgs.get(i).getRole() == MessageRole.TOOL) {
-                    ChatMessage toolMsg = msgs.get(i);
-                    String toolCallId = (String) toolMsg.getExtraArgs().get("externalId");
-                    toolResultBlocks.add(
-                            ContentBlock.fromToolResult(
-                                    ToolResultBlock.builder()
-                                            .toolUseId(toolCallId)
-                                            .content(
-                                                    ToolResultContentBlock.builder()
-                                                            .text(toolMsg.getText())
-                                                            .build())
-                                            .build()));
-                    i++;
-                }
-                result.add(
-                        Message.builder()
-                                .role(ConversationRole.USER)
-                                .content(toolResultBlocks)
-                                .build());
-            } else {
-                result.add(toBedrockMessage(msg));
-                i++;
-            }
-        }
-        return result;
-    }
-
-    private Message toBedrockMessage(ChatMessage msg) {
-        switch (msg.getRole()) {
-            case USER:
-                return Message.builder()
-                        .role(ConversationRole.USER)
-                        .content(ContentBlock.fromText(msg.getText()))
-                        .build();
-            case ASSISTANT:
-                List<ContentBlock> blocks = new ArrayList<>();
-                if (msg.getText() != null && !msg.getText().isEmpty()) {
-                    blocks.add(ContentBlock.fromText(msg.getText()));
-                }
-                if (msg.getToolCalls() != null && !msg.getToolCalls().isEmpty()) {
-                    for (Map<String, Object> call : msg.getToolCalls()) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> fn = (Map<String, Object>) call.get("function");
-                        String toolUseId = (String) call.get("id");
-                        String name = (String) fn.get("name");
-                        Object args = fn.get("arguments");
-                        blocks.add(
-                                ContentBlock.fromToolUse(
-                                        ToolUseBlock.builder()
-                                                .toolUseId(toolUseId)
-                                                .name(name)
-                                                .input(toDocument(args))
-                                                .build()));
-                    }
-                }
-                return Message.builder().role(ConversationRole.ASSISTANT).content(blocks).build();
-            case TOOL:
-                String toolCallId = (String) msg.getExtraArgs().get("externalId");
-                return Message.builder()
-                        .role(ConversationRole.USER)
-                        .content(
-                                ContentBlock.fromToolResult(
-                                        ToolResultBlock.builder()
-                                                .toolUseId(toolCallId)
-                                                .content(
-                                                        ToolResultContentBlock.builder()
-                                                                .text(msg.getText())
-                                                                .build())
-                                                .build()))
-                        .build();
-            default:
-                throw new IllegalArgumentException(
-                        "Unsupported role for Bedrock: " + msg.getRole());
-        }
-    }
-
-    private software.amazon.awssdk.services.bedrockruntime.model.Tool toBedrockTool(Tool tool) {
-        ToolMetadata meta = tool.getMetadata();
-        ToolSpecification.Builder specBuilder =
-                ToolSpecification.builder().name(meta.getName()).description(meta.getDescription());
-
-        String schema = meta.getInputSchema();
-        if (schema != null && !schema.isBlank()) {
-            try {
-                Map<String, Object> schemaMap =
-                        MAPPER.readValue(schema, new TypeReference<Map<String, Object>>() {});
-                specBuilder.inputSchema(ToolInputSchema.fromJson(toDocument(schemaMap)));
-            } catch (JsonProcessingException e) {
-                throw new RuntimeException("Failed to parse tool schema.", e);
-            }
-        }
-
-        return software.amazon.awssdk.services.bedrockruntime.model.Tool.builder()
-                .toolSpec(specBuilder.build())
-                .build();
-    }
-
-    private ChatMessage convertResponse(ConverseResponse response) {
-        List<ContentBlock> outputBlocks = response.output().message().content();
-        StringBuilder textContent = new StringBuilder();
-        List<Map<String, Object>> toolCalls = new ArrayList<>();
-
-        for (ContentBlock block : outputBlocks) {
-            if (block.text() != null) {
-                textContent.append(block.text());
-            }
-            if (block.toolUse() != null) {
-                ToolUseBlock toolUse = block.toolUse();
-                Map<String, Object> callMap = new LinkedHashMap<>();
-                callMap.put("id", toolUse.toolUseId());
-                callMap.put("type", "function");
-                Map<String, Object> fnMap = new LinkedHashMap<>();
-                fnMap.put("name", toolUse.name());
-                fnMap.put("arguments", documentToMap(toolUse.input()));
-                callMap.put("function", fnMap);
-                callMap.put("original_id", toolUse.toolUseId());
-                toolCalls.add(callMap);
-            }
-        }
-
-        ChatMessage result = ChatMessage.assistant(textContent.toString());
-        if (!toolCalls.isEmpty()) {
-            result.setToolCalls(toolCalls);
-        } else {
-            // Only strip markdown fences for non-tool-call responses.
-            result = ChatMessage.assistant(stripMarkdownFences(textContent.toString()));
-        }
-        return result;
-    }
-
-    /**
-     * Strip markdown code fences from text responses. Some Bedrock models wrap JSON output in
-     * markdown fences like {@code ```json ... ```}.
-     *
-     * <p>Only strips code fences; does not extract JSON from arbitrary text, as that could corrupt
-     * normal prose responses containing braces.
-     */
-    static String stripMarkdownFences(String text) {
-        if (text == null) return null;
-        String trimmed = text.trim();
-        if (trimmed.startsWith("```")) {
-            int firstNewline = trimmed.indexOf('\n');
-            if (firstNewline >= 0) {
-                trimmed = trimmed.substring(firstNewline + 1);
-            }
-            if (trimmed.endsWith("```")) {
-                trimmed = trimmed.substring(0, trimmed.length() - 3).trim();
-            }
-            return trimmed;
-        }
-        return trimmed;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Document toDocument(Object obj) {
-        if (obj == null) {
-            return Document.fromNull();
-        }
-        if (obj instanceof Map) {
-            Map<String, Document> docMap = new LinkedHashMap<>();
-            ((Map<String, Object>) obj).forEach((k, v) -> docMap.put(k, toDocument(v)));
-            return Document.fromMap(docMap);
-        }
-        if (obj instanceof List) {
-            return Document.fromList(
-                    ((List<Object>) obj)
-                            .stream().map(this::toDocument).collect(Collectors.toList()));
-        }
-        if (obj instanceof String) {
-            return Document.fromString((String) obj);
-        }
-        if (obj instanceof Number) {
-            return Document.fromNumber(SdkNumber.fromBigDecimal(new BigDecimal(obj.toString())));
-        }
-        if (obj instanceof Boolean) {
-            return Document.fromBoolean((Boolean) obj);
-        }
-        return Document.fromString(obj.toString());
-    }
-
-    private Map<String, Object> documentToMap(Document doc) {
-        if (doc == null || !doc.isMap()) {
-            return Collections.emptyMap();
-        }
-        Map<String, Object> result = new LinkedHashMap<>();
-        doc.asMap().forEach((k, v) -> result.put(k, documentToObject(v)));
-        return result;
-    }
-
-    private Object documentToObject(Document doc) {
-        if (doc == null || doc.isNull()) return null;
-        if (doc.isString()) return doc.asString();
-        if (doc.isNumber()) return doc.asNumber().bigDecimalValue();
-        if (doc.isBoolean()) return doc.asBoolean();
-        if (doc.isList()) {
-            return doc.asList().stream().map(this::documentToObject).collect(Collectors.toList());
-        }
-        if (doc.isMap()) return documentToMap(doc);
-        return doc.toString();
     }
 }

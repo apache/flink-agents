@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.Objects;
 
 /** A plain-text, immutable part of a {@link ChatMessage}. */
-public final class TextBlock extends ContentBlock {
+public final class TextBlock extends DataContentBlock {
 
     private final String text;
 

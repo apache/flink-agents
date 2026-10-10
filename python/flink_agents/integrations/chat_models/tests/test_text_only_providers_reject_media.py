@@ -29,6 +29,7 @@ from flink_agents.api.chat_message import (
     ChatMessage,
     ImageBlock,
     TextBlock,
+    ToolResultBlock,
     UnsupportedContentBlockError,
 )
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
@@ -54,7 +55,8 @@ CONNECTIONS: Dict[str, Callable[[], BaseChatModelConnection]] = {
 
 
 @pytest.mark.parametrize("provider", list(CONNECTIONS))
-def test_media_blocks_fail_explicitly(provider: str) -> None:
+@pytest.mark.parametrize("tool_result", [False, True])
+def test_media_blocks_fail_explicitly(provider: str, tool_result: bool) -> None:
     """A media block raises instead of being dropped from the request."""
     message = ChatMessage.user(
         [
@@ -62,6 +64,11 @@ def test_media_blocks_fail_explicitly(provider: str) -> None:
             ImageBlock.from_base64("image/png", "aGVsbG8="),
         ]
     )
+
+    if tool_result:
+        message = ChatMessage.tool(
+            ToolResultBlock(call_id="call", blocks=message.blocks)
+        )
 
     with pytest.raises(UnsupportedContentBlockError) as error:
         CONNECTIONS[provider]().chat([message], model="m")

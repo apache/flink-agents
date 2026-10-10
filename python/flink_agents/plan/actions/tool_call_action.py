@@ -48,6 +48,7 @@ from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.tool_result_utils import (
     normalize_agent_result,
     to_chat_message_content,
+    to_tool_response,
 )
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
@@ -58,7 +59,6 @@ _logger = logging.getLogger(__name__)
 def _tool_entity_metadata(
     tool_request_event_id: object,
     tool_call_id: object,
-    external_id: object,
     tool_name: str,
     tool: object | None,
     kwargs: dict[str, Any],
@@ -67,8 +67,6 @@ def _tool_entity_metadata(
         ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID: str(tool_request_event_id),
         ToolExecutionMetadataKeys.TOOL_CALL_ID: str(tool_call_id),
     }
-    if external_id is not None:
-        metadata[ToolExecutionMetadataKeys.EXTERNAL_ID] = str(external_id)
     tool_type = tool.tool_type() if tool is not None else None
     if tool_type is not None:
         metadata[ToolExecutionMetadataKeys.TOOL_TYPE] = getattr(
@@ -132,7 +130,9 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     # boundary), so the dispatched ToolRequestEvent is used directly.
     event = cast("ToolRequestEvent", event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
-    tool_call_parallelism = ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM)
+    tool_call_parallelism = ctx.config.get(
+        AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
+    )
 
     if tool_call_async:
         # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.
@@ -141,14 +141,12 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     responses = {}
     success = {}
     error = {}
-    external_ids = {}
     executions = _build_tool_call_executions(
         event,
         ctx,
         responses,
         success,
         error,
-        external_ids,
     )
 
     if tool_call_async and tool_call_parallelism > 1 and len(executions) > 1:
@@ -167,7 +165,6 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
         ToolResponseEvent(
             request_id=event.id,
             responses=responses,
-            external_ids=external_ids,
             success=success,
             error=error,
         )
@@ -180,21 +177,19 @@ def _build_tool_call_executions(
     responses: dict,
     success: dict,
     error: dict,
-    external_ids: dict,
 ) -> list[_ToolCallExecution]:
     executions = []
     for tool_call in event.tool_calls:
-        call_id = tool_call["id"]
-        name = tool_call["function"]["name"]
-        kwargs = tool_call["function"]["arguments"]
-        external_id = tool_call.get("original_id")
-        external_ids[call_id] = external_id
+        call_id = tool_call.call_id
+        name = tool_call.name
+        kwargs = tool_call.model_dump(mode="json")["input"]
         call_kwargs = dict(kwargs) if isinstance(kwargs, dict) else {}
 
         tool = None
         agent = None
         preparation_error = (
-            None if isinstance(kwargs, dict)
+            None
+            if isinstance(kwargs, dict)
             else ValueError("INVALID_ARGUMENT /: type (expected object)")
         )
         # The reserved subagent_ prefix separates the two namespaces: tool registration
@@ -216,7 +211,7 @@ def _build_tool_call_executions(
                 preparation_error = e
 
         entity_metadata = _tool_entity_metadata(
-            event.id, call_id, external_id, name, tool, call_kwargs
+            event.id, call_id, name, tool, call_kwargs
         )
         # A resolved delegation is reported under the sub-agent scope keyed by the
         # registered agent name, so the runtime attributes its outcome and latency to
@@ -317,15 +312,21 @@ async def _execute_parallel(
     try:
         futures = [
             ctx.durable_execute_async(
-                execution.func, *execution.args, **execution.kwargs,
+                execution.func,
+                *execution.args,
+                **execution.kwargs,
                 durable_id="tool-call:" + execution.id,
             )
             for execution in tool_executions
         ]
         outcomes = await ctx.gather(*futures)
         result_observed_at = datetime.now(timezone.utc)
-        for execution, outcome in zip(tool_executions, outcomes, strict=True):
-            _record_outcome(execution, outcome, responses, success, error)
+        for index, (execution, outcome) in enumerate(
+            zip(tool_executions, outcomes, strict=True)
+        ):
+            outcomes[index] = _record_outcome(
+                execution, outcome, responses, success, error
+            )
     except Exception as e:
         if result_observed_at is None:
             result_observed_at = datetime.now(timezone.utc)
@@ -389,11 +390,18 @@ def _record_outcome(
     responses: dict,
     success: dict,
     error: dict,
-) -> None:
+) -> Outcome:
     if outcome.is_failure():
         _record_execution_exception(execution, outcome.error, responses, success, error)
     else:
-        _record_tool_response(execution, outcome.value, responses, success, error)
+        try:
+            _record_tool_response(execution, outcome.value, responses, success, error)
+        except Exception as conversion_error:
+            _record_execution_exception(
+                execution, conversion_error, responses, success, error
+            )
+            return Outcome.failure(conversion_error)
+    return outcome
 
 
 def _record_tool_response(
@@ -403,15 +411,15 @@ def _record_tool_response(
     success: dict,
     error: dict,
 ) -> None:
-    response = value if isinstance(value, ToolResponse) else ToolResponse.success(value)
+    response = to_tool_response(value)
     if response.is_error():
         message = response.error_message
-        responses[execution.id] = message
+        responses[execution.id] = response
         success[execution.id] = False
         error[execution.id] = message
         return
 
-    responses[execution.id] = response.result
+    responses[execution.id] = response
     success[execution.id] = True
 
 

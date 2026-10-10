@@ -18,9 +18,12 @@
 
 package org.apache.flink.agents.plan.resource.python;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.plan.utils.ToolResultUtils;
 import org.apache.flink.annotation.Internal;
 
+import java.util.HashMap;
 import java.util.Map;
 
 /** Converts the internal Python bridge representation into a Java {@link ToolResponse}. */
@@ -29,34 +32,31 @@ public final class PythonToolResultConverter {
 
     private static final String RESULT_MARKER = "__flink_agents_tool_result__";
 
+    @SuppressWarnings("unchecked")
     public static ToolResponse fromBridgeResult(Object result) {
         if (!(result instanceof Map)) {
-            return ToolResponse.success(result);
+            return ToolResultUtils.toToolResponse(result);
         }
 
         Map<?, ?> response = (Map<?, ?>) result;
         Object resultKind = response.get(RESULT_MARKER);
         if ("raw".equals(resultKind)) {
-            return ToolResponse.success(response.get("result"));
+            return ToolResultUtils.toToolResponse(response.get("result"));
         }
         if (!"response".equals(resultKind)) {
-            return ToolResponse.success(result);
+            return ToolResultUtils.toToolResponse(result);
         }
 
-        long executionTimeMs = numberValue(response.get("execution_time_ms"));
-        String toolName = stringValue(response.get("tool_name"));
-        if (Boolean.TRUE.equals(response.get("success"))) {
-            return ToolResponse.success(response.get("result"), executionTimeMs, toolName);
-        }
-        return ToolResponse.error(stringValue(response.get("error")), executionTimeMs, toolName);
-    }
-
-    private static long numberValue(Object value) {
-        return value instanceof Number ? ((Number) value).longValue() : 0L;
-    }
-
-    private static String stringValue(Object value) {
-        return value == null ? null : String.valueOf(value);
+        Map<String, Object> fields = new HashMap<>();
+        response.forEach(
+                (key, value) -> {
+                    if (!RESULT_MARKER.equals(key) && !"metadata".equals(key)) {
+                        fields.put((String) key, value);
+                    }
+                });
+        return new ObjectMapper()
+                .convertValue(fields, ToolResponse.class)
+                .withMetadata((Map<String, Object>) response.get("metadata"));
     }
 
     private PythonToolResultConverter() {}

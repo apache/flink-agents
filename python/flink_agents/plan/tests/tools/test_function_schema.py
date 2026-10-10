@@ -111,7 +111,7 @@ def test_function_contract(case: dict, bridge: bool) -> None:
                 contract_tool.__module__,
                 "contract_tool",
                 arguments,
-            )["result"]
+            )["blocks"][0]["text"]
         return tool.call(**arguments)
 
     if "error" in case:

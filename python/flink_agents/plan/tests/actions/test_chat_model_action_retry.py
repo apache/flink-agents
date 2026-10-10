@@ -28,7 +28,13 @@ from pydantic import BaseModel
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, ImageBlock, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    ToolCallBlock,
+)
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -108,6 +114,28 @@ class _MockMemoryObject:
 
     def set(self, path: str, value: Any) -> None:
         self._store[path] = value
+
+
+def _response_fixture(role, content, extra_args=None, tool_calls=None) -> ChatResult:
+    fields = extra_args or {}
+    blocks = list(ChatMessage.assistant(content).blocks)
+    blocks.extend(
+        ToolCallBlock(
+            call_id=c["id"],
+            name=c["function"]["name"],
+            input=c["function"]["arguments"],
+        )
+        for c in tool_calls or []
+    )
+    return ChatResult(
+        message=ChatMessage.assistant(blocks),
+        model=fields.get("model_name"),
+        usage=TokenUsage(
+            prompt_tokens=fields.get("promptTokens"),
+            completion_tokens=fields.get("completionTokens"),
+        ),
+        finish_reason=fields.get("finish_reason"),
+    )
 
 
 class _StructuredResult(BaseModel):
@@ -206,7 +234,9 @@ class TestChatModelActionRetry:
     @pytest.mark.parametrize("provider_fails", [False, True])
     def test_terminal_delivery_failure_propagates(self, provider_fails: bool) -> None:
         model = MagicMock()
-        model.chat.return_value = ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
+        model.chat.return_value = _response_fixture(
+            role=MessageRole.ASSISTANT, content="ok"
+        )
         if provider_fails:
             model.chat.side_effect = ValueError("provider failure")
         ctx, events, _, _ = _create_mock_runner_context(model, max_retries=0)
@@ -240,7 +270,7 @@ class TestChatModelActionRetry:
         """No retry needed: retry_count=0, total_retry_wait_sec=0, no metrics."""
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(MessageRole.ASSISTANT, "hello")
+            return_value=_response_fixture(MessageRole.ASSISTANT, "hello")
         )
 
         ctx, sent_events, metric_group, _ = _create_mock_runner_context(chat_model)
@@ -281,13 +311,13 @@ class TestChatModelActionRetry:
         """Fail once then succeed: 1s interval, 1 retry -> wait 1s (1 * 2^0)."""
         call_count = 0
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             nonlocal call_count
             call_count += 1
             if call_count <= 1:
                 err_msg = "transient error"
                 raise RuntimeError(err_msg)
-            return ChatMessage.of(MessageRole.ASSISTANT, "success")
+            return _response_fixture(MessageRole.ASSISTANT, "success")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -380,8 +410,8 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             side_effect=[
-                ChatMessage.of(MessageRole.ASSISTANT, "not-json"),
-                ChatMessage.of(MessageRole.ASSISTANT, '{"result": 42}'),
+                _response_fixture(MessageRole.ASSISTANT, "not-json"),
+                _response_fixture(MessageRole.ASSISTANT, '{"result": 42}'),
             ]
         )
 
@@ -402,8 +432,8 @@ class TestChatModelActionRetry:
 
         assert chat_model.chat.call_count == 2
         assert len(sent_events) == 1
-        response = sent_events[0].response
-        assert response.extra_args[STRUCTURED_OUTPUT].result == 42
+        sent_events[0].response
+        assert sent_events[0].structured_output.result == 42
 
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
@@ -443,7 +473,7 @@ class TestChatModelActionFinishReason:
     def test_truncated_text_response_rejected(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -465,7 +495,7 @@ class TestChatModelActionFinishReason:
         # one and cannot tell them apart.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="",
                 extra_args={"finish_reason": "content_filter"},
@@ -484,13 +514,13 @@ class TestChatModelActionFinishReason:
     def test_truncated_tool_call_response_rejected_before_tool_dispatch(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="",
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "function": {"name": "f", "arguments": ""},
+                        "function": {"name": "f", "arguments": {}},
                     }
                 ],
                 extra_args={"finish_reason": "length"},
@@ -523,7 +553,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="hello",
                 extra_args=extra_args,
@@ -538,21 +568,29 @@ class TestChatModelActionFinishReason:
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)
         assert sent_events[0].response.text == "hello"
+        assert sent_events[0].response.finish_reason == extra_args.get("finish_reason")
 
     def test_accepted_finish_reason_dispatches_tool_request_event(self) -> None:
         # A response carrying tool calls passes the same finish-reason gate as a
         # text response, so an accepted reason must reach tool dispatch.
         tool_calls = [{"id": "call-1", "function": {"name": "f", "arguments": {}}}]
         chat_model = MagicMock()
-        chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
-                role=MessageRole.ASSISTANT,
-                content="",
-                tool_calls=tool_calls,
-                extra_args={"finish_reason": "tool_calls"},
-            )
+        response = _response_fixture(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=tool_calls,
+            extra_args={"finish_reason": "tool_calls"},
         )
-        ctx, sent_events, _, _ = _create_mock_runner_context(
+        response.message.metadata["message_key"] = "value"
+        response = ChatResult(
+            message=response.message,
+            model="provider-model",
+            response_id="response-id",
+            finish_reason="tool_calls",
+            metadata={"provider_only": "opaque"},
+        )
+        chat_model.chat = MagicMock(return_value=response)
+        ctx, sent_events, _, memory = _create_mock_runner_context(
             chat_model, max_retries=0, retry_wait_interval_sec=0
         )
 
@@ -560,13 +598,20 @@ class TestChatModelActionFinishReason:
 
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ToolRequestEvent)
-        assert sent_events[0].tool_calls == tool_calls
+        assert sent_events[0].tool_calls[0].call_id == "call-1"
+        assert sent_events[0].tool_calls[0].name == "f"
+        history = next(iter(memory.get("_TOOL_CALL_CONTEXT").values()))
+        assistant = ChatMessage.model_validate(history[-1])
+        assert assistant.role == MessageRole.ASSISTANT
+        assert assistant.blocks == response.message.blocks
+        assert assistant.metadata == {"message_key": "value"}
+        assert set(history[-1]) == {"role", "blocks", "metadata"}
 
     def test_default_retry_budget_returns_failed_response(self) -> None:
         # The default retry budget makes one attempt and rejects truncated content.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -591,7 +636,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content='{"result": 42}',
                 extra_args={
@@ -633,7 +678,7 @@ class TestChatResponseEventRetryFields:
         """Default construction has retry_count=0, total_retry_wait_sec=0."""
         event = ChatResponseEvent.success(
             request_id=uuid4(),
-            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
+            response=_response_fixture(MessageRole.ASSISTANT, "test"),
         )
         assert event.retry_count == 0
         assert event.total_retry_wait_sec == 0
@@ -642,7 +687,7 @@ class TestChatResponseEventRetryFields:
         """Full construction carries retry info."""
         event = ChatResponseEvent.success(
             request_id=uuid4(),
-            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
+            response=_response_fixture(MessageRole.ASSISTANT, "test"),
             retry_count=5,
             total_retry_wait_sec=31,
         )
@@ -672,9 +717,9 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         captured_prompt_args: list[dict] = []
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             captured_prompt_args.append(kwargs.get("prompt_args"))
-            return ChatMessage.of(MessageRole.ASSISTANT, "done")
+            return _response_fixture(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -711,7 +756,6 @@ class TestProcessToolResponsePromptArgsForwarding:
         tool_response_event = ToolResponseEvent(
             request_id=tool_request_event_id,
             responses={tool_call_id: "42"},
-            external_ids={},
         )
 
         asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))
@@ -728,9 +772,9 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         captured_messages: list[Sequence[ChatMessage]] = []
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             captured_messages.append(messages)
-            return ChatMessage.of(MessageRole.ASSISTANT, "done")
+            return _response_fixture(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -761,7 +805,6 @@ class TestProcessToolResponsePromptArgsForwarding:
         tool_response_event = ToolResponseEvent(
             request_id=tool_request_event_id,
             responses={tool_call_id: "Tool `query_order` execute failed."},
-            external_ids={},
             success={tool_call_id: False},
             error={
                 tool_call_id: "Missing config for injected tool parameter: tenant_id"
@@ -773,4 +816,4 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert captured_messages
         tool_message = captured_messages[0][-1]
         assert tool_message.role == MessageRole.TOOL
-        assert tool_message.text == "Tool `query_order` execute failed."
+        assert tool_message.blocks[0].text == "Tool `query_order` execute failed."

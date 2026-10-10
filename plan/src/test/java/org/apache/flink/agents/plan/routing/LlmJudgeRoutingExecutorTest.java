@@ -17,8 +17,17 @@
  */
 package org.apache.flink.agents.plan.routing;
 
+import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.chat.model.routing.RoutingCandidate;
 import org.apache.flink.agents.api.chat.model.routing.RoutingContext;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
@@ -231,5 +240,149 @@ class LlmJudgeRoutingExecutorTest {
         assertTrue(userMessage.contains("Review this SQL for performance: SELECT 1"));
         assertTrue(userMessage.contains("current question"));
         assertFalse(userMessage.contains(oldTurn));
+    }
+
+    @Test
+    void judgePreservesInterleavedTextAndAllMediaTypes() {
+        List<ContentBlock> content =
+                List.of(
+                        new TextBlock("before"),
+                        ImageBlock.fromBase64("image/png", "aGk="),
+                        new TextBlock("between"),
+                        AudioBlock.fromUrl("audio/wav", "https://example.com/audio.wav"),
+                        VideoBlock.fromBase64("video/mp4", "aGk="),
+                        DocumentBlock.fromUrl("application/pdf", "https://example.com/doc.pdf"),
+                        new TextBlock("after"));
+        ChatMessage message = ChatMessage.user(content);
+        ChatMessage input =
+                judgeMessages(Strategies.llm("judge"), ctx(List.of(message), Map.of())).get(1);
+        assertEquals(new TextBlock("USER: "), input.getBlocks().get(0));
+        assertEquals(content, input.getBlocks().subList(1, input.getBlocks().size()));
+        assertEquals(content, message.getBlocks());
+    }
+
+    @Test
+    void judgeExpandsToolResultsAndDescribesCallsWithoutReasoningOrProviderMetadata() {
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        ToolCallBlock call =
+                new ToolCallBlock(
+                        "call-1",
+                        "lookup",
+                        Map.of("query", "weather"),
+                        Map.of("signature", "opaque-call-signature"));
+        ToolResultBlock result =
+                new ToolResultBlock(
+                        "call-1",
+                        List.of(new TextBlock("before"), image, new TextBlock("after")),
+                        true,
+                        Map.of("opaque", "internal-result-metadata"));
+        RoutingContext context =
+                ctx(
+                        List.of(
+                                ChatMessage.user("check the result"),
+                                ChatMessage.assistant(
+                                        List.of(
+                                                new ReasoningBlock(
+                                                        "private-reasoning",
+                                                        Map.of(
+                                                                "signature",
+                                                                "opaque-reasoning-signature")),
+                                                call)),
+                                ChatMessage.tool(result)),
+                        Map.of());
+        ChatMessage input = judgeMessages(Strategies.llm("judge"), context).get(1);
+        String text = input.getText();
+        assertTrue(text.contains("ASSISTANT: "));
+        assertTrue(text.contains("Tool call "));
+        assertTrue(text.contains("\"name\":\"lookup\""));
+        assertTrue(text.contains("\"input\":{\"query\":\"weather\"}"));
+        assertTrue(text.contains("TOOL: Tool result "));
+        assertTrue(text.contains("\"call_id\":\"call-1\""));
+        assertTrue(text.contains("\"is_error\":true"));
+        assertFalse(text.contains("private-reasoning"));
+        assertFalse(text.contains("opaque-"));
+        assertFalse(text.contains("internal-result-metadata"));
+        int imageIndex = input.getBlocks().indexOf(image);
+        assertEquals(new TextBlock("before"), input.getBlocks().get(imageIndex - 1));
+        assertEquals(new TextBlock("after"), input.getBlocks().get(imageIndex + 1));
+        assertTrue(input.getToolCalls().isEmpty());
+        assertTrue(
+                input.getBlocks().stream()
+                        .allMatch(b -> b instanceof TextBlock || b instanceof ImageBlock));
+    }
+
+    @Test
+    void toolResultTextConsumesBudgetAndMediaIsDroppedWithItsMessage() {
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        RoutingContext context =
+                ctx(
+                        List.of(
+                                new ChatMessage(MessageRole.SYSTEM, "framing"),
+                                ChatMessage.tool(
+                                        new ToolResultBlock(
+                                                "old",
+                                                List.of(new TextBlock("x".repeat(500)), image),
+                                                false)),
+                                ChatMessage.user("current question")),
+                        Map.of());
+        boolean[] truncated = new boolean[1];
+        ChatMessage input =
+                LlmJudgeRoutingExecutor.buildJudgeMessages(
+                                Strategies.llm("judge").withMaxContextChars(80),
+                                context,
+                                context.getMessages(),
+                                java.util.Set.of(),
+                                truncated)
+                        .get(1);
+        assertTrue(truncated[0]);
+        assertEquals("SYSTEM: framing\nUSER: current question", input.getText());
+        assertFalse(input.getBlocks().contains(image));
+    }
+
+    @Test
+    void newestToolResultKeepsTextAndMediaEvenWhenItExceedsBudget() {
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        String text = "x".repeat(500);
+        RoutingContext context =
+                ctx(
+                        List.of(
+                                ChatMessage.user("old request"),
+                                ChatMessage.tool(
+                                        new ToolResultBlock(
+                                                "latest",
+                                                List.of(new TextBlock(text), image),
+                                                false))),
+                        Map.of());
+        boolean[] truncated = new boolean[1];
+        ChatMessage input =
+                LlmJudgeRoutingExecutor.buildJudgeMessages(
+                                Strategies.llm("judge").withMaxContextChars(20),
+                                context,
+                                context.getMessages(),
+                                java.util.Set.of(),
+                                truncated)
+                        .get(1);
+        assertTrue(truncated[0]);
+        assertTrue(input.getText().contains(text));
+        assertFalse(input.getText().contains("old request"));
+        assertTrue(input.getBlocks().contains(image));
+    }
+
+    @Test
+    void mediaOnlyRequestDoesNotFallBackToPromptArgsOrChargePayloadBytes() {
+        ImageBlock image = ImageBlock.fromBase64("image/png", "a".repeat(1000));
+        RoutingContext context =
+                ctx(List.of(ChatMessage.user(List.of(image))), Map.of("input", "unused-args"));
+        boolean[] truncated = new boolean[1];
+        ChatMessage input =
+                LlmJudgeRoutingExecutor.buildJudgeMessages(
+                                Strategies.llm("judge").withMaxContextChars(1),
+                                context,
+                                context.getMessages(),
+                                java.util.Set.of(),
+                                truncated)
+                        .get(1);
+        assertEquals(List.of(new TextBlock("USER: "), image), input.getBlocks());
+        assertFalse(truncated[0]);
     }
 }

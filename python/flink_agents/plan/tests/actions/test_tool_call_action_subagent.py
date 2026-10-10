@@ -22,6 +22,7 @@ from typing import Any
 from pydantic import BaseModel, PrivateAttr
 from typing_extensions import override
 
+from flink_agents.api.chat_message import ToolCallBlock
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.resource import ResourceType
@@ -41,6 +42,20 @@ from flink_agents.plan.tools.function_tool import FunctionTool
 
 def query_order(order_id: str) -> str:
     return f"queried {order_id}"
+
+
+def _request(model, tool_calls) -> ToolRequestEvent:
+    return ToolRequestEvent(
+        model,
+        [
+            ToolCallBlock(
+                call_id=c["id"],
+                name=c["function"]["name"],
+                input=c["function"]["arguments"],
+            )
+            for c in tool_calls
+        ],
+    )
 
 
 class _ResolvedSubagentFuture(SubagentFuture):
@@ -290,7 +305,7 @@ def _parse_timestamp(timestamp: str) -> datetime:
 
 
 def tool_request(callable_name: str) -> ToolRequestEvent:
-    return ToolRequestEvent(
+    return _request(
         model="model",
         tool_calls=[
             {
@@ -309,7 +324,7 @@ def two_subagent_request(first: str, second: str) -> ToolRequestEvent:
     """One request carrying two sub-agent calls, so the batched path has more
     than one to run.
     """
-    return ToolRequestEvent(
+    return _request(
         model="model",
         tool_calls=[
             {
@@ -346,7 +361,10 @@ def test_delegates_to_the_subagent_and_reports_its_normalized_result() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
-    assert response.responses["call-1"] == '{"verdict":"approved","findings":["style"]}'
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == '{"verdict":"approved","findings":["style"]}'
+    )
     assert "call-1" not in response.error
 
 
@@ -370,7 +388,7 @@ def test_reports_a_failed_subagent_result_with_the_detail_exposed() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
-    assert response.responses["call-1"] == (
+    assert response.responses["call-1"].to_result_block("call").text == (
         "Sub-agent `_subagent_reviewer` execute failed: upstream refused"
     )
     assert response.error["call-1"] == "upstream refused"
@@ -386,7 +404,7 @@ def test_reports_a_failure_raised_while_submitting() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
-    assert response.responses["call-1"] == (
+    assert response.responses["call-1"].to_result_block("call").text == (
         "Sub-agent `_subagent_reviewer` execute failed: mailbox is full"
     )
     assert response.error["call-1"] == "mailbox is full"
@@ -400,10 +418,12 @@ def test_rejects_a_result_json_cannot_express() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
-    assert response.responses["call-1"].startswith(
-        "Sub-agent `_subagent_reviewer` execute failed"
+    assert (
+        response.responses["call-1"]
+        .to_result_block("call")
+        .text.startswith("Sub-agent `_subagent_reviewer` execute failed")
     )
-    assert "result.handle" in response.responses["call-1"]
+    assert "result.handle" in response.responses["call-1"].to_result_block("call").text
     assert "result.handle" in response.error["call-1"]
 
 
@@ -420,7 +440,10 @@ def test_reads_a_result_through_the_type_the_subagent_declares() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
-    assert response.responses["call-1"] == '{"approved":true,"note":"clean"}'
+    assert (
+        response.responses["call-1"].to_result_block("call").text
+        == '{"approved":true,"note":"clean"}'
+    )
 
 
 def test_routes_a_tool_and_a_subagent_sharing_a_name_to_their_own_namespace() -> None:
@@ -436,12 +459,12 @@ def test_routes_a_tool_and_a_subagent_sharing_a_name_to_their_own_namespace() ->
     asyncio.run(process_tool_request(tool_request("_subagent_reviewer"), ctx))
     delegated = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert delegated.success["call-1"] is True
-    assert delegated.responses["call-1"] == "done"
+    assert delegated.responses["call-1"].to_result_block("call").text == "done"
     # A sub-agent call resolves through the setup, which owns its own durable
     # execution.
     assert ctx.durable_executions == 0
 
-    tool_event = ToolRequestEvent(
+    tool_event = _request(
         model="model",
         tool_calls=[
             {
@@ -454,7 +477,7 @@ def test_routes_a_tool_and_a_subagent_sharing_a_name_to_their_own_namespace() ->
     asyncio.run(process_tool_request(tool_event, ctx))
     direct = ToolResponseEvent.from_event(ctx.sent_events[1])
     assert direct.success["call-1"] is True
-    assert direct.responses["call-1"] == "queried order-1"
+    assert direct.responses["call-1"].to_result_block("call").text == "queried order-1"
     assert ctx.durable_executions == 1
 
 
@@ -465,7 +488,7 @@ def test_refuses_an_agent_resource_that_carries_no_callable_setup() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is False
-    assert response.responses["call-1"] == (
+    assert response.responses["call-1"].to_result_block("call").text == (
         "Sub-agent `_subagent_reviewer` execute failed: Sub-agent reviewer must"
         " resolve to a SubagentSetup, but was FunctionTool."
     )
@@ -480,7 +503,7 @@ def test_still_dispatches_a_tool_when_both_kinds_are_registered() -> None:
         .with_agent("reviewer", _RecordingSubagentSetup.of(SubagentResult.ok("done")))
         .with_tool("query_order", order_tool())
     )
-    event = ToolRequestEvent(
+    event = _request(
         model="model",
         tool_calls=[
             {
@@ -498,7 +521,9 @@ def test_still_dispatches_a_tool_when_both_kinds_are_registered() -> None:
 
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
-    assert response.responses["call-1"] == "queried order-1"
+    assert (
+        response.responses["call-1"].to_result_block("call").text == "queried order-1"
+    )
     assert ctx.durable_executions == 1
 
 
@@ -522,8 +547,8 @@ def test_submits_every_subagent_call_before_awaiting_any_in_parallel() -> None:
     response = ToolResponseEvent.from_event(ctx.sent_events[0])
     assert response.success["call-1"] is True
     assert response.success["call-2"] is True
-    assert response.responses["call-1"] == "a done"
-    assert response.responses["call-2"] == "b done"
+    assert response.responses["call-1"].to_result_block("call").text == "a done"
+    assert response.responses["call-2"].to_result_block("call").text == "b done"
 
 
 def test_reports_a_resolved_subagent_delegation_under_the_subagent_scope() -> None:

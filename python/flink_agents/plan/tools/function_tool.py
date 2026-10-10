@@ -88,7 +88,9 @@ class FunctionTool(Tool):
         if not isinstance(self.func, JavaFunction):
             return
         self.func.set_java_resource_adapter(adapter)
-        metadata, annotated_args = _java_metadata(adapter, self.func, list(self.injected_args))
+        metadata, annotated_args = _java_metadata(
+            adapter, self.func, list(self.injected_args)
+        )
         self.injected_args = merge_injected_args(
             annotated_args,
             self.injected_args,

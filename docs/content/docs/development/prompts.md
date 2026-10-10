@@ -183,6 +183,13 @@ Prompt reviewAnalysisPrompt =
 - Define multiple messages with different roles (SYSTEM, USER)
 - Each message can have its own template variables
 
+Template variables are replaced in message text, including text in tool results.
+For example, `weather: {city}` becomes `weather: Paris` when `city="Paris"`.
+Media and other non-text content stay unchanged. Use `formatMessages()` (Java)
+or `format_messages()` (Python) to keep media; `formatString()` / `format_string()`
+returns text only. Conversation history added to the prompt is used as-is, so
+braces in an actual tool result are not treated as template variables.
+
 ### Using Prompts in Agents
 
 Register a prompt as an agent resource using the `@prompt` decorator in python (or `@Prompt` annotation in java):

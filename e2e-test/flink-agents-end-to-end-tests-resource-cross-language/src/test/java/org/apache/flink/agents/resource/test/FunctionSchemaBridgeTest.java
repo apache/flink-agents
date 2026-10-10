@@ -126,7 +126,7 @@ public class FunctionSchemaBridgeTest {
                             .isZero();
                 } else {
                     assertThat(pythonResult.isSuccess()).as(pythonResult.getError()).isTrue();
-                    assertThat(pythonResult.getResult()).isEqualTo(test.get("result").asText());
+                    assertThat(pythonResult.getText()).isEqualTo(test.get("result").asText());
                     assertThat(javaResult.get("success").asBoolean())
                             .as(javaResult.toString())
                             .isTrue();

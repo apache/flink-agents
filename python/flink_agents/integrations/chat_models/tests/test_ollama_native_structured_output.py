@@ -51,6 +51,8 @@ def _connection() -> OllamaChatModelConnection:
     """A connection whose Ollama client is a mock, so no server is contacted."""
     conn = OllamaChatModelConnection()
     response = MagicMock()
+    response.done_reason = "stop"
+    response.message.thinking = None
     response.message.role = "assistant"
     response.message.content = "ok"
     response.message.tool_calls = None
@@ -236,6 +238,8 @@ def test_feasibility_is_asked_with_the_unstripped_kwargs() -> None:
 
     conn = _CapturingConnection()
     response = MagicMock()
+    response.done_reason = "stop"
+    response.message.thinking = None
     response.message.role = "assistant"
     response.message.content = "ok"
     response.message.tool_calls = None

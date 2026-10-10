@@ -60,9 +60,7 @@ def test_import_core_options_does_not_call_get_gateway() -> None:
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setitem(sys.modules, "pyflink", fake_pyflink_module)
-        monkeypatch.setitem(
-            sys.modules, "pyflink.java_gateway", fake_gateway_module
-        )
+        monkeypatch.setitem(sys.modules, "pyflink.java_gateway", fake_gateway_module)
 
         importlib.import_module("flink_agents.api.core_options")
 

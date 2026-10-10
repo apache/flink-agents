@@ -16,12 +16,14 @@
 # limitations under the License.
 #################################################################################
 import asyncio
+import json
 import multiprocessing
 import runpy
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
+from unittest.mock import patch
 from urllib.parse import parse_qs, urlparse
 
 import anyio
@@ -29,7 +31,14 @@ import pytest
 from mcp.client.auth import OAuthClientProvider, TokenStorage
 from mcp.client.session import ClientSession
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
-from mcp.types import CallToolResult, TextContent
+from mcp.types import (
+    BlobResourceContents,
+    CallToolResult,
+    EmbeddedResource,
+    ResourceLink,
+    TextContent,
+    TextResourceContents,
+)
 from pydantic import AnyUrl
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
@@ -37,6 +46,7 @@ from flink_agents.api.tools import ToolResponse
 from flink_agents.api.tools.tool import ToolMetadata
 from flink_agents.api.trace import ToolExecutionMetadataKeys
 from flink_agents.integrations.mcp.mcp import MCPServer, MCPTool
+from flink_agents.plan.actions.tool_result_utils import to_tool_response
 
 
 def run_server() -> None:
@@ -237,3 +247,53 @@ def test_mcp_tool_success_preserves_raw_result() -> None:
     )
 
     assert tool.call(query="flink") == ["result"]
+
+
+@pytest.mark.parametrize(
+    "content_item",
+    [
+        EmbeddedResource(
+            type="resource",
+            resource=TextResourceContents(uri="file:///report.txt", text="report"),
+        ),
+        EmbeddedResource(
+            type="resource",
+            resource=BlobResourceContents(uri="file:///report.bin", blob="/wA="),
+        ),
+        ResourceLink(type="resource_link", uri="file:///report.txt", name="report"),
+    ],
+    ids=["text-resource", "blob-resource", "resource-link"],
+)
+def test_mcp_resource_result_converts_to_tool_response(
+    content_item: EmbeddedResource | ResourceLink,
+) -> None:
+    class ResourceSession:
+        async def call_tool(self, *args: object, **kwargs: object) -> CallToolResult:
+            return CallToolResult(content=[content_item], isError=False)
+
+    @asynccontextmanager
+    async def get_session(server: MCPServer) -> AsyncIterator[ResourceSession]:
+        yield ResourceSession()
+
+    tool = MCPTool(
+        metadata=ToolMetadata(
+            name="lookup",
+            description="Return a resource.",
+            args_schema={"type": "object", "properties": {}},
+        ),
+        mcp_server=MCPServer(endpoint="http://localhost/mcp"),
+    )
+    with patch.object(MCPServer, "_get_session", get_session):
+        response = to_tool_response(tool.call())
+
+    assert not response.is_error()
+    result = json.loads(response.get_text())
+    if isinstance(content_item, EmbeddedResource):
+        expected = {"type": "resource", "uri": str(content_item.resource.uri)}
+        if isinstance(content_item.resource, TextResourceContents):
+            expected["text"] = content_item.resource.text
+        else:
+            expected["blob"] = content_item.resource.blob
+    else:
+        expected = content_item.model_dump(mode="json")
+    assert result == [expected]

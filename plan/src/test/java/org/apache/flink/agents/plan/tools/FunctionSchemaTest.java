@@ -100,7 +100,7 @@ public class FunctionSchemaTest {
                 assertThat(calls).isZero();
             } else {
                 assertThat(result.isSuccess()).as(result.getError()).isTrue();
-                assertThat(result.getResult()).isEqualTo(test.get("result").asText());
+                assertThat(result.getText()).isEqualTo(test.get("result").asText());
                 assertThat(calls).isEqualTo(1);
             }
         }

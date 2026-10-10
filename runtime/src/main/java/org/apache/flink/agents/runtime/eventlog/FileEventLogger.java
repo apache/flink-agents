@@ -91,7 +91,7 @@ public class FileEventLogger implements EventLogger {
     // Event-Log-only mapper: chat messages are logged through their sanitized projection
     // (media metadata instead of payload bytes) at every log level.
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(ChatMessageEventLogSerializer.module());
+            new ObjectMapper().registerModule(ContentBlockEventLogSerializer.module());
 
     private final EventLoggerConfig config;
     private boolean prettyPrint;

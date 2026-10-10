@@ -19,6 +19,7 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
@@ -70,6 +71,8 @@ public interface PythonResourceAdapter {
      * @return the Java ChatMessage representation
      */
     ChatMessage fromPythonChatMessage(Object pythonChatMessage);
+
+    ChatResult fromPythonChatResult(Object pythonResponse);
 
     /**
      * Converts a list of java document object to its Python equivalent.

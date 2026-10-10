@@ -34,11 +34,9 @@ class JavaResourceAdapterImpl:
         """Resolve a resource from the Java resource context."""
         return self._bridge.getResource(name, resource_type)
 
-    def fromPythonChatMessage(
-        self, role: str, blocks: list[dict], tool_calls: list, extra_args: dict
-    ) -> Any:
+    def fromPythonChatMessage(self, message: dict) -> Any:
         """Convert message fields through the Java bridge."""
-        return self._bridge.fromPythonChatMessage(role, blocks, tool_calls, extra_args)
+        return self._bridge.fromPythonChatMessage(message)
 
     def fromPythonDocument(
         self, content: str, metadata: dict, document_id: str, embedding: Any, score: Any

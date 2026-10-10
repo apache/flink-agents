@@ -188,12 +188,12 @@ public ModelRoutingAgent() {
 
 {{< /tabs >}}
 
-- **Input**: The judge receives a system message listing the candidates with their descriptions and the verdict format, and a user message with the request rendered as one `ROLE: content` line per message. When the default candidate binds a prompt template, the judge sees the request rendered through it.
+- **Input**: The judge uses the conversation's text and media, including tool calls and results, to choose among the candidate models and their descriptions. Reasoning content is excluded. Choose a judge model and integration that support the media types in your requests; unsupported media causes the request to fail. If the default candidate uses a prompt template, that template also applies to the judge's view of the request.
 - **Verdict**: The reply is accepted when it contains `"model": "<candidate name>"`, or when the whole trimmed reply is exactly a candidate name. Matching is case-sensitive. Names that are not candidates are ignored, so instructions hidden in the user's request cannot steer routing outside the declared candidates.
 - **Abstain**: A reply that names no candidate, or several different candidates, abstains to the default.
 - **Failure**: A failed judge call is retried according to `max-retries` and `retry-wait-interval`; exhausting the retry budget produces a failed `ChatResponseEvent`, not an abstention.
 - **Custom prompt**: `Strategies.llm(judgeModel, promptTemplate)` replaces the system message. Include `{candidates}` in the template; it is replaced with one `- name: description` line per candidate. The template also owns the verdict instructions.
-- **Context budget**: `withMaxContextChars(int)` on an LLM judge declaration limits the conversation history the judge sees, in characters. System messages, rendered prompt messages, and the newest message are always kept; older messages fill the remaining budget newest-first, and dropped messages are flagged in the decision metadata. Because rendered prompt messages are retained, this is not a hard limit on the judge's total input.
+- **Context budget**: `withMaxContextChars(int)` limits the conversation text shown to the judge, including tool calls and results. Media does not count toward this character limit and is kept or dropped with its message. System messages, prompt template messages, and the newest message are always kept; older messages are included newest-first as space allows. These required messages can exceed the limit, so it is not a hard cap on the judge's total input. The routing details report whether any history was dropped.
 
 ### Custom Executor
 
@@ -265,7 +265,7 @@ Every accepted routing decision emits a `ModelRoutingEvent`, event type `_model_
 | `reason`, `score`, `metadata` | Set by the strategy. Rules record `matched rule: <pattern>`; the judge records `judge_model`, the judge's token counts when reported, and `judge_context_truncated` when history was dropped. When the router normalizes a non-candidate decision to its default, `metadata` adds `rejected_model` and, if the strategy gave one, `rejected_reason`; the strategy's score is dropped. |
 | `decision_ms` | Decision latency. For the judge it includes the judge call and its retries. |
 
-The final response message carries a `model_routing` map in its extra arguments with the routing details and the fallback result: `final_model`, the model that answered, `fallback_attempted`, and `fallback_models_tried`.
+The final `ChatResponseEvent` carries a `model_routing` map in its attributes with the routing details and the fallback result: `final_model`, the model that answered, `fallback_attempted`, and `fallback_models_tried`. Read it with `event.getAttr("model_routing")`.
 
 {{< tabs "Reading Routing Results" >}}
 
@@ -273,7 +273,7 @@ The final response message carries a `model_routing` map in its extra arguments 
 ```java
 @Action(EventType.ChatResponseEvent)
 public static void onChatResponse(ChatResponseEvent event, RunnerContext ctx) {
-    Object routing = event.getResponse().getExtraArgs().get("model_routing");
+    Object routing = event.getAttr("model_routing");
     if (routing instanceof Map) {
         Object finalModel = ((Map<?, ?>) routing).get("final_model");
         LOG.info("answered by {}", finalModel);

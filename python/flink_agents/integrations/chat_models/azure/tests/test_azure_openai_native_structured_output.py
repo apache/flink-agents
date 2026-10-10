@@ -113,10 +113,12 @@ def _connection(
     mock_message.role = "assistant"
     mock_message.content = "ok"
     mock_message.tool_calls = None
+    mock_message.refusal = None
     mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
+        MagicMock(message=mock_message, finish_reason="stop")
     ]
     mock_client.chat.completions.create.return_value.usage = None
+    mock_client.chat.completions.create.return_value.id = "response-id"
     conn._client = mock_client
     return conn
 
@@ -552,10 +554,12 @@ def _judging_connection() -> tuple[AzureOpenAIChatModelConnection, list[str | No
     mock_message.role = "assistant"
     mock_message.content = "ok"
     mock_message.tool_calls = None
+    mock_message.refusal = None
     mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
+        MagicMock(message=mock_message, finish_reason="stop")
     ]
     mock_client.chat.completions.create.return_value.usage = None
+    mock_client.chat.completions.create.return_value.id = "response-id"
     conn._client = mock_client
     return conn, judged
 
@@ -742,10 +746,13 @@ def test_feasibility_is_asked_with_the_unstripped_kwargs() -> None:
     mock_message.role = "assistant"
     mock_message.content = "ok"
     mock_message.tool_calls = None
+    mock_message.refusal = None
     mock_client.chat.completions.create.return_value.choices = [
-        MagicMock(message=mock_message)
+        MagicMock(message=mock_message, finish_reason="stop")
     ]
     mock_client.chat.completions.create.return_value.usage = None
+    mock_client.chat.completions.create.return_value.model = "gpt-4o-mini"
+    mock_client.chat.completions.create.return_value.id = "test-response"
     conn._client = mock_client
 
     conn.chat(

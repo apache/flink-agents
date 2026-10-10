@@ -21,6 +21,7 @@ package org.apache.flink.agents.plan.utils;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.tools.ToolResponse;
 
 import javax.annotation.Nullable;
 
@@ -32,7 +33,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Turns a sub-agent result into something a chat model can be told.
+ * Converts ordinary tool returns to text responses and normalizes sub-agent results.
  *
  * <p>A sub-agent result reaches the caller as an opaque object, but from here on it is carried in a
  * tool message and re-bound after a failover, so it must hold nothing that JSON cannot express.
@@ -45,6 +46,24 @@ import java.util.Set;
 public final class ToolResultUtils {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * Convert an ordinary tool return into text; explicit responses are preserved. Strings are used
+     * directly, and other values are serialized as JSON, falling back to their string
+     * representation if serialization fails.
+     */
+    public static ToolResponse toToolResponse(Object value) {
+        if (value instanceof ToolResponse) {
+            return (ToolResponse) value;
+        }
+        String text;
+        try {
+            text = value instanceof String ? (String) value : MAPPER.writeValueAsString(value);
+        } catch (Exception error) {
+            text = String.valueOf(value);
+        }
+        return ToolResponse.text(text);
+    }
 
     /**
      * Reads a result as the type its sub-agent declares. A property the type does not declare is

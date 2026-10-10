@@ -22,13 +22,19 @@ from pydantic import BaseModel, Field, ValidationError
 from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
 
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolResultBlock,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
     NativeStructuredOutputSupport,
     StructuredOutputStrategy,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.tools.tool import Tool, ToolType
 
@@ -75,11 +81,11 @@ class _RecordingConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         self.captured_messages = list(messages)
         self.captured_kwargs = dict(kwargs)
         self.captured_output_schema = output_schema
-        return ChatMessage.of(MessageRole.ASSISTANT, "ok")
+        return ChatResult(message=ChatMessage.assistant("ok"))
 
 
 class _RecordingChatModelSetup(BaseChatModelSetup):
@@ -122,14 +128,12 @@ def test_chat_fills_template_from_prompt_args_parameter() -> None:
     assert connection.captured_messages[0].text == "Task: value"
 
 
-def test_chat_does_not_read_template_vars_from_extra_args() -> None:
-    """chat() must not read template variables from ChatMessage.extra_args."""
+def test_chat_does_not_read_template_vars_from_metadata() -> None:
+    """chat() must not read template variables from ChatMessage.metadata."""
     prompt = Prompt.from_text(text="Task: {key}")
     setup, connection = _build_setup(prompt)
 
-    user_message = ChatMessage.of(
-        MessageRole.USER, "hello", extra_args={"key": "value"}
-    )
+    user_message = ChatMessage.of(MessageRole.USER, "hello", metadata={"key": "value"})
     setup.chat([user_message], prompt_args={})
 
     assert len(connection.captured_messages) == 2
@@ -146,11 +150,13 @@ def test_chat_refills_template_on_subsequent_invocations() -> None:
     assert len(connection.captured_messages) == 1
     assert connection.captured_messages[0].text == "Task: v1"
 
-    tool_response = ChatMessage.of(MessageRole.TOOL, "tool result")
+    tool_response = ChatMessage.tool(
+        ToolResultBlock(call_id="call-1", blocks=[TextBlock(text="tool result {key}")])
+    )
     setup.chat([tool_response], prompt_args={"key": "v1"})
     assert len(connection.captured_messages) == 2
     assert connection.captured_messages[0].text == "Task: v1"
-    assert connection.captured_messages[1].text == "tool result"
+    assert connection.captured_messages[1] == tool_response
 
 
 def test_output_schema_guard_rejects_a_schema() -> None:

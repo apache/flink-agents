@@ -58,7 +58,7 @@ public class MCPCrossLanguageAgent extends Agent {
             Assertions.assertTrue(add.getDescription().contains("Get the detailed information"));
 
             ToolResponse response = add.call(new ToolParameters(Map.of("a", 1, "b", 2)));
-            Assertions.assertTrue(response.getResult().toString().contains("3"));
+            Assertions.assertTrue(response.getText().toString().contains("3"));
 
             Tool failingTool = (Tool) ctx.getResource("fail_with_recovery_hint", ResourceType.TOOL);
             ToolResponse failedResponse =

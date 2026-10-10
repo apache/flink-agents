@@ -87,7 +87,9 @@ def test_concurrent_java_setup_with_python_connection(tmp_path: Path) -> None:
         if file.is_dir():
             for child in file.iterdir():
                 with child.open() as result_file:
-                    responses.extend(line.strip() for line in result_file if line.strip())
+                    responses.extend(
+                        line.strip() for line in result_file if line.strip()
+                    )
         elif file.is_file():
             with file.open() as result_file:
                 responses.extend(line.strip() for line in result_file if line.strip())

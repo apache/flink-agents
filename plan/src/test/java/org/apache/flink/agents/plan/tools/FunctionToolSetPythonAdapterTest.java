@@ -27,6 +27,7 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -148,17 +149,22 @@ class FunctionToolSetPythonAdapterTest {
         when(adapter.invokePythonTool(eq("pkg.mod"), eq("notify"), eq(Map.of("id", "1"))))
                 .thenReturn(
                         Map.of(
-                                "__flink_agents_tool_result__", "response",
-                                "result", "sent",
-                                "success", true,
-                                "execution_time_ms", 5L,
-                                "tool_name", "notify"));
+                                "__flink_agents_tool_result__",
+                                "response",
+                                "blocks",
+                                List.of(Map.of("type", "text", "text", "sent")),
+                                "success",
+                                true,
+                                "execution_time_ms",
+                                5L,
+                                "tool_name",
+                                "notify"));
         tool.setPythonResourceAdapter(adapter);
 
         ToolResponse response = tool.call(new ToolParameters(Map.of("id", "1")));
 
         assertThat(response.isSuccess()).isTrue();
-        assertThat(response.getResult()).isEqualTo("sent");
+        assertThat(response.getText()).isEqualTo("sent");
         assertThat(response.getExecutionTimeMs()).isEqualTo(5L);
         assertThat(response.getToolName()).isEqualTo("notify");
     }
@@ -177,7 +183,8 @@ class FunctionToolSetPythonAdapterTest {
         ToolResponse response = tool.call(new ToolParameters(Map.of("id", "1")));
 
         assertThat(response.isSuccess()).isTrue();
-        assertThat(response.getResult()).isEqualTo(rawResult);
+        assertThat(response.getText())
+                .contains("\"value\":\"raw\"", "__flink_agents_tool_result__");
     }
 
     private static PythonResourceAdapter pythonAdapter() {

@@ -1,16 +1,15 @@
 {
   "id" : "00000000-0000-0000-0000-000000000001",
   "attributes" : {
-    "model" : "test-model",
     "messages" : [ {
       "role" : "user",
       "blocks" : [ {
         "type" : "text",
         "text" : "hello world"
       } ],
-      "tool_calls" : [ ],
-      "extra_args" : { }
-    } ]
+      "metadata" : { }
+    } ],
+    "model" : "test-model"
   },
   "attachments" : { },
   "type" : "_chat_request_event"

@@ -24,6 +24,7 @@ import com.openai.errors.BadRequestException;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -154,19 +155,25 @@ class OpenAICompletionsConnectionTest {
     @Test
     @DisplayName("A request-building failure reaches the caller as its own type, not a wrapper")
     void testRequestBuildingFailurePropagatesUnwrapped() {
-        List<ChatMessage> toolMessageWithoutExternalId =
-                List.of(new ChatMessage(MessageRole.TOOL, "result", Map.of()));
+        List<ChatMessage> unsupportedMessage =
+                List.of(
+                        ChatMessage.assistant(
+                                List.of(
+                                        org.apache.flink.agents.api.chat.messages.ImageBlock
+                                                .fromUrl(
+                                                        "image/png",
+                                                        "https://example.com/image.png"))));
 
         assertThatThrownBy(
                         () ->
                                 connection()
                                         .chat(
-                                                toolMessageWithoutExternalId,
+                                                unsupportedMessage,
                                                 List.of(),
                                                 params("gpt-4o"),
                                                 null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("externalId");
+                .hasMessageContaining("image");
     }
 
     @Test
@@ -192,11 +199,11 @@ class OpenAICompletionsConnectionTest {
     void testResponseCarriesFinishReason() throws IOException {
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("length")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+            assertThat(response.getFinishReason()).isEqualTo("length");
         }
     }
 
@@ -205,12 +212,11 @@ class OpenAICompletionsConnectionTest {
     void testResponseCarriesUnknownFinishReasonVerbatim() throws IOException {
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("some_vendor_reason")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs())
-                    .containsEntry("finish_reason", "some_vendor_reason");
+            assertThat(response.getFinishReason()).isEqualTo("some_vendor_reason");
         }
     }
 
@@ -220,11 +226,11 @@ class OpenAICompletionsConnectionTest {
         // The choice carries a value, so it is recorded; emptiness is not treated as absence.
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+            assertThat(response.getFinishReason()).isEqualTo("");
         }
     }
 
@@ -235,13 +241,12 @@ class OpenAICompletionsConnectionTest {
         // promptTokens proves that branch did not run and could not have written the reason.
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReasonWithoutUsage("tool_calls")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs())
-                    .containsEntry("finish_reason", "tool_calls")
-                    .doesNotContainKey("promptTokens");
+            assertThat(response.getFinishReason()).isEqualTo("tool_calls");
+            assertThat(response.getUsage()).isNull();
         }
     }
 
@@ -267,7 +272,7 @@ class OpenAICompletionsConnectionTest {
         // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException for both of these
         // response shapes, so reading the value has to go through the raw field.
         OpenAICompletionsConnection connection = connection(endpoint.baseUrl());
-        AtomicReference<ChatMessage> response = new AtomicReference<>();
+        AtomicReference<ChatResult> response = new AtomicReference<>();
 
         assertThatCode(
                         () ->
@@ -276,7 +281,7 @@ class OpenAICompletionsConnectionTest {
                                                 userMessage(), List.of(), params("gpt-4o"), null)))
                 .doesNotThrowAnyException();
 
-        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(response.get().getFinishReason()).isNull();
     }
 
     @Test
@@ -565,7 +570,7 @@ class OpenAICompletionsConnectionTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(null);
+            return ToolResponse.success(List.of());
         }
     }
 }

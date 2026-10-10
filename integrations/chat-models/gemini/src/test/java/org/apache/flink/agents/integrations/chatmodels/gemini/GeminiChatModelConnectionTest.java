@@ -32,8 +32,9 @@ import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -316,7 +317,7 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertToContent maps USER role to a Gemini user turn")
     void testConvertUserMessage() {
         Content content =
-                connection().convertToContent(ChatMessage.user("hello"), Collections.emptyMap());
+                GeminiChatUtils.convertToContent(ChatMessage.user("hello"), Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hello");
     }
@@ -325,20 +326,22 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertToContent maps ASSISTANT role to a Gemini model turn")
     void testConvertAssistantMessage() {
         Content content =
-                connection()
-                        .convertToContent(
-                                ChatMessage.assistant("hi there"), Collections.emptyMap());
+                GeminiChatUtils.convertToContent(
+                        ChatMessage.assistant("hi there"), Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hi there");
     }
 
     @Test
-    @DisplayName("convertToContent uses explicit `name` in extraArgs when supplied")
+    @DisplayName("convertToContent uses explicit `name` in metadata when supplied")
     void testConvertToolMessageWithExplicitName() {
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("name", "get_weather");
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_abc", List.of(new TextBlock("sunny, 22C")), false));
+        tool.getMetadata().put("name", "get_weather");
 
-        Content content = connection().convertToContent(tool, Collections.emptyMap());
+        Content content = GeminiChatUtils.convertToContent(tool, Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -347,18 +350,18 @@ class GeminiChatModelConnectionTest {
 
     @Test
     @DisplayName(
-            "convertToContent resolves the function name from `externalId` when the runtime omits "
+            "convertToContent resolves the function name from `callId` when the runtime omits "
                     + "`name` (matches ChatModelAction's emission shape)")
     void testRuntimeShapeToolMessageResolvesNameFromExternalId() {
-        // Runtime contract: ChatModelAction emits TOOL messages with only `externalId` in
-        // extraArgs, matching how Anthropic/OpenAI siblings work. The name must be recovered from
-        // the prior ASSISTANT turn's tool-call map.
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("externalId", "call_abc");
+        // The tool result refers to the assistant tool call by its call ID.
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_abc", List.of(new TextBlock("sunny, 22C")), false));
 
         Map<String, String> idToName = Map.of("call_abc", "get_weather");
 
-        Content content = connection().convertToContent(tool, idToName);
+        Content content = GeminiChatUtils.convertToContent(tool, idToName);
         assertThat(content.role()).hasValue("user");
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -368,14 +371,16 @@ class GeminiChatModelConnectionTest {
     @Test
     @DisplayName(
             "convertToContent throws only when the function name truly cannot be resolved (no "
-                    + "`name`, no matching `externalId`)")
+                    + "`name`, no matching `callId`)")
     void testConvertToolMessageThrowsWhenUnresolvable() {
-        ChatMessage tool = ChatMessage.tool("result");
-        tool.getExtraArgs().put("externalId", "call_unknown");
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_unknown", List.of(new TextBlock("result")), false));
 
-        assertThatThrownBy(() -> connection().convertToContent(tool, Collections.emptyMap()))
+        assertThatThrownBy(() -> GeminiChatUtils.convertToContent(tool, Collections.emptyMap()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("function name");
+                .hasMessageContaining("tool call name");
     }
 
     @Test
@@ -389,15 +394,12 @@ class GeminiChatModelConnectionTest {
                         .build();
         byte[] signature = new byte[] {1, 2, 3, 4};
 
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, signature);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, signature);
 
-        assertThat(toolCall).containsEntry("id", "call_1").containsEntry("original_id", "call_1");
-        assertThat(toolCall).containsEntry("type", "function");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-        assertThat(function).containsEntry("name", "get_weather");
-        assertThat(function.get("arguments")).isEqualTo(Map.of("city", "Tokyo"));
-        assertThat(toolCall.get("thought_signature"))
+        assertThat(toolCall.getCallId()).isEqualTo("call_1");
+        assertThat(toolCall.getName()).isEqualTo("get_weather");
+        assertThat(toolCall.getInput()).isEqualTo(Map.of("city", "Tokyo"));
+        assertThat(toolCall.getMetadata().get("thought_signature"))
                 .isEqualTo(Base64.getEncoder().encodeToString(signature));
     }
 
@@ -405,8 +407,8 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertFunctionCall omits thought_signature when absent")
     void testConvertFunctionCallNoSignature() {
         FunctionCall fc = FunctionCall.builder().name("noop").args(Map.of()).build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        assertThat(toolCall).doesNotContainKey("thought_signature");
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        assertThat(toolCall.getMetadata()).doesNotContainKey("thought_signature");
     }
 
     @Test
@@ -418,16 +420,14 @@ class GeminiChatModelConnectionTest {
         FunctionCall first = FunctionCall.builder().name("get_weather").args(Map.of()).build();
         FunctionCall second = FunctionCall.builder().name("get_time").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> firstCall = conn.convertFunctionCall(first, null);
-        Map<String, Object> secondCall = conn.convertFunctionCall(second, null);
+        ToolCallBlock firstCall = GeminiChatUtils.convertFunctionCall(first, null);
+        ToolCallBlock secondCall = GeminiChatUtils.convertFunctionCall(second, null);
 
-        assertThat(firstCall.get("id")).isNotNull();
-        assertThat(firstCall.get("original_id")).isEqualTo(firstCall.get("id"));
-        assertThat(firstCall).containsEntry("synthetic_id", Boolean.TRUE);
+        assertThat(firstCall.getCallId()).isNotNull();
+        assertThat(firstCall.getMetadata()).containsEntry("synthetic_id", Boolean.TRUE);
         // ToolCallAction keys success/responses/error on `id`; distinct ids are what prevent two
         // parallel id-less calls from overwriting each other.
-        assertThat(firstCall.get("id")).isNotEqualTo(secondCall.get("id"));
+        assertThat(firstCall.getCallId()).isNotEqualTo(secondCall.getCallId());
     }
 
     @Test
@@ -435,9 +435,8 @@ class GeminiChatModelConnectionTest {
     void testSyntheticIdNotEchoedToGemini() {
         FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
-        Part part = conn.convertToolCallToPart(toolCall);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        Part part = GeminiChatUtils.convertToolCallToPart(toolCall);
 
         FunctionCall replayed = part.functionCall().orElseThrow();
         assertThat(replayed.id()).isEmpty();
@@ -451,23 +450,21 @@ class GeminiChatModelConnectionTest {
     void testSyntheticIdResolvesFunctionNameOnSecondTurn() {
         FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
-        String syntheticId = (String) toolCall.get("original_id");
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        String syntheticId = toolCall.getCallId();
 
         // Assistant turn carrying the id-less tool call, exactly as convertResponse builds it.
-        ChatMessage assistant = ChatMessage.assistant("");
-        assistant.setToolCalls(List.of(toolCall));
+        ChatMessage assistant = ChatMessage.assistant(List.of(toolCall));
 
-        // Runtime contract: ToolCallAction copies `original_id` into the TOOL message's
-        // `externalId`. Before the fix, no id existed, externalId was never set, and this
-        // second-turn conversion threw "Tool message must carry the function name".
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("externalId", syntheticId);
+        // The tool result refers to the assistant tool call by its call ID.
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                syntheticId, List.of(new TextBlock("sunny, 22C")), false));
 
         Map<String, String> idToName =
-                GeminiChatModelConnection.buildToolCallIdToNameMap(List.of(assistant, tool));
-        Content content = conn.convertToContent(tool, idToName);
+                GeminiChatUtils.buildToolCallIdToNameMap(List.of(assistant, tool));
+        Content content = GeminiChatUtils.convertToContent(tool, idToName);
 
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -485,9 +482,8 @@ class GeminiChatModelConnectionTest {
                         .args(Map.of("city", "Osaka"))
                         .build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, signature);
-        Part part = conn.convertToolCallToPart(toolCall);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, signature);
+        Part part = GeminiChatUtils.convertToolCallToPart(toolCall);
 
         assertThat(part.functionCall()).isPresent();
         FunctionCall rebuilt = part.functionCall().orElseThrow();
@@ -506,10 +502,10 @@ class GeminiChatModelConnectionTest {
                         .name("get_weather")
                         .args(Map.of("city", "Kyoto"))
                         .build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        ChatMessage assistant = ChatMessage.assistant("", List.of(toolCall));
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        ChatMessage assistant = ChatMessage.assistant(List.of(toolCall));
 
-        Content content = connection().convertToContent(assistant, Collections.emptyMap());
+        Content content = GeminiChatUtils.convertToContent(assistant, Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow())
                 .anySatisfy(p -> assertThat(p.functionCall()).isPresent());
@@ -518,7 +514,7 @@ class GeminiChatModelConnectionTest {
     @Test
     @DisplayName(
             "buildToolCallIdToNameMap mirrors what ChatModelAction emits: ASSISTANT turn carries "
-                    + "tool-call map, follow-up TOOL turn carries only externalId")
+                    + "tool-call block, follow-up TOOL turn carries only callId")
     void testRuntimeShapeMultiTurn() {
         // Step 1: simulate the assistant's tool-call turn produced by convertFunctionCall.
         FunctionCall fc =
@@ -527,23 +523,23 @@ class GeminiChatModelConnectionTest {
                         .name("get_weather")
                         .args(Map.of("city", "Tokyo"))
                         .build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        ChatMessage assistantTurn = ChatMessage.assistant("", List.of(toolCall));
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        ChatMessage assistantTurn = ChatMessage.assistant(List.of(toolCall));
 
-        // Step 2: the runtime emits a TOOL message with only externalId (no name).
-        Map<String, Object> toolExtras = new HashMap<>();
-        toolExtras.put("externalId", "call_xyz");
-        ChatMessage toolTurn = new ChatMessage(MessageRole.TOOL, "sunny, 22C", toolExtras);
+        // Step 2: the runtime emits a TOOL message with only callId (no name).
+        ChatMessage toolTurn =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_xyz", List.of(new TextBlock("sunny, 22C")), false));
 
         List<ChatMessage> conversation =
                 List.of(ChatMessage.user("weather in Tokyo?"), assistantTurn, toolTurn);
 
-        Map<String, String> idToName =
-                GeminiChatModelConnection.buildToolCallIdToNameMap(conversation);
+        Map<String, String> idToName = GeminiChatUtils.buildToolCallIdToNameMap(conversation);
         assertThat(idToName).containsEntry("call_xyz", "get_weather");
 
         // Round-trip: TOOL message converts to a functionResponse with the recovered name.
-        Content content = connection().convertToContent(toolTurn, idToName);
+        Content content = GeminiChatUtils.convertToContent(toolTurn, idToName);
         assertThat(content.parts().orElseThrow().get(0).functionResponse().orElseThrow().name())
                 .hasValue("get_weather");
     }

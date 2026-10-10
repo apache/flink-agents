@@ -29,9 +29,11 @@ from flink_agents.api.chat_message import (
     MessageRole,
     TextBlock,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
     _TOOL_CALL_CONTEXT,
@@ -79,10 +81,12 @@ def test_structured_output_preserves_original_blocks():
     )
     original_blocks = message.blocks
     parsed = _generate_structured_output_with_report(
-        MagicMock(spec=ExecutionReporter), message, OutputSchema(output_schema=_Result)
+        MagicMock(spec=ExecutionReporter),
+        ChatResult(message=ChatMessage.assistant(message.blocks)),
+        OutputSchema(output_schema=_Result),
     )
-    assert parsed.blocks == original_blocks
-    assert parsed.extra_args["structured_output"] == _Result(result=42)
+    assert message.blocks == original_blocks
+    assert parsed == _Result(result=42)
 
 
 def test_clean_llm_response_with_json_block():
@@ -197,7 +201,7 @@ def test_tool_call_context_key_match_after_normalization():
     request_id = uuid4()
     initial = [ChatMessage.of(MessageRole.USER, "hi")]
     _update_tool_call_context(mem, request_id, initial, [])
-    extra = ChatMessage.of(MessageRole.TOOL, "result")
+    extra = ChatMessage.tool(ToolResponse.text("result").to_result_block("call"))
     result = _update_tool_call_context(mem, request_id, None, [extra])
     assert len(result) == 2
     assert len(mem.get(_TOOL_CALL_CONTEXT)[str(request_id)]) == 2
@@ -233,11 +237,9 @@ def test_save_get_preserves_model_and_prompt_args():
 _PARSEABLE_CONTENT = '{"result": 42}'
 
 
-def _response(extra_args) -> ChatMessage:
-    return ChatMessage.of(
-        role=MessageRole.ASSISTANT,
-        content=_PARSEABLE_CONTENT,
-        extra_args=extra_args,
+def _response(extra_args) -> ChatResult:
+    return ChatResult(
+        message=ChatMessage.assistant([TextBlock(text=_PARSEABLE_CONTENT)])
     )
 
 

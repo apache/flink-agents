@@ -31,8 +31,11 @@ from flink_agents.api.chat_message import (
     DocumentBlock,
     ImageBlock,
     MessageRole,
+    TextBlock,
+    ToolCallBlock,
     VideoBlock,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
@@ -44,6 +47,7 @@ from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
+from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.api.vector_stores.vector_store import Document
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -257,7 +261,9 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
 def _build_chat_response_event() -> ChatResponseEvent:
     event = ChatResponseEvent.success(
         request_id=_FIXED_REQUEST_ID,
-        response=ChatMessage.of(MessageRole.ASSISTANT, "hi there"),
+        response=ChatResult(
+            message=ChatMessage.assistant([TextBlock(text="hi there")])
+        ),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -318,9 +324,7 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
     )
     assert actual_request_id == expected_request_id, "request_id mismatch."
     assert typed.response is not None, "response is None."
-    assert typed.response.role == MessageRole.ASSISTANT, (
-        f"Response role mismatch: got {typed.response.role!r}"
-    )
+    assert typed.response.message.blocks == (TextBlock(text="hi there"),)
     assert typed.response.text == "hi there"
 
 
@@ -328,11 +332,9 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
 
 
 def _build_tool_request_event() -> ToolRequestEvent:
-    tool_call = {
-        "id": _FIXED_TOOL_CALL_ID,
-        "name": "echo",
-        "arguments": {"value": "ping"},
-    }
+    tool_call = ToolCallBlock(
+        call_id=_FIXED_TOOL_CALL_ID, name="echo", input={"value": "ping"}
+    )
     event = ToolRequestEvent(model="test-model", tool_calls=[tool_call])
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -354,18 +356,15 @@ def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
     typed = ToolRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.tool_calls) == 1
-    assert typed.tool_calls[0]["id"] == _FIXED_TOOL_CALL_ID
+    assert typed.tool_calls[0].call_id == _FIXED_TOOL_CALL_ID
 
 
 # ── ToolResponseEvent ───────────────────────────────────────────────────
 
 
 def _build_tool_response_event() -> ToolResponseEvent:
-    # Mixed scalar value types pin the Python -> Java round-trip on the Java
-    # ToolResponseEvent.fromEvent fall-through that wraps non-ToolResponse/Map
-    # values via ToolResponse.success(v). The failed call is shaped the way
-    # ToolCallAction records a raised exception: the text shown to the model in
-    # `responses`, `success` False, and the diagnostic in `error`.
+    # Scalars become text blocks before serialization; Java restores the same
+    # typed responses and preserves failure status and diagnostic details.
     event = ToolResponseEvent(
         request_id=_FIXED_REQUEST_ID,
         responses={
@@ -373,12 +372,6 @@ def _build_tool_response_event() -> ToolResponseEvent:
             _FIXED_TOOL_CALL_ID_NUMERIC: 42,
             _FIXED_TOOL_CALL_ID_BOOL: True,
             _FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_FAILURE_TEXT,
-        },
-        external_ids={
-            _FIXED_TOOL_CALL_ID: None,
-            _FIXED_TOOL_CALL_ID_NUMERIC: None,
-            _FIXED_TOOL_CALL_ID_BOOL: None,
-            _FIXED_TOOL_CALL_ID_FAILED: None,
         },
         success={
             _FIXED_TOOL_CALL_ID: True,
@@ -412,8 +405,8 @@ def test_python_can_deserialize_java_tool_response_event_status_fields() -> None
     assert typed.error == {}
 
     response_value = typed.responses[_FIXED_TOOL_CALL_ID]
-    assert isinstance(response_value, dict)
-    assert "result" in response_value
+    assert isinstance(response_value, ToolResponse)
+    assert response_value.get_text() == "pong"
 
     assert "timestamp" not in typed.attributes
 

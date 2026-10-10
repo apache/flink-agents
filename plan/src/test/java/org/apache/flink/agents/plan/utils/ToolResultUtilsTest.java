@@ -20,8 +20,10 @@ package org.apache.flink.agents.plan.utils;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -279,5 +281,47 @@ class ToolResultUtilsTest {
         assertThat(ToolResultUtils.toChatMessageContent(new int[] {1, 2})).isEqualTo("[1,2]");
         assertThat(ToolResultUtils.toChatMessageContent(MAPPER.createObjectNode().put("a", 1)))
                 .isEqualTo("{\"a\":1}");
+    }
+
+    @Test
+    void normalizesOrdinaryToolReturnsWithoutSerializingExplicitResponses() {
+        ToolResponse response =
+                ToolResponse.text("visible")
+                        .withMetadata(Map.of("binary", new byte[] {(byte) 0xff}));
+        assertThat(ToolResultUtils.toToolResponse(response)).isSameAs(response);
+        assertThat(ToolResultUtils.toToolResponse(Map.of("answer", 42)).getText())
+                .isEqualTo("{\"answer\":42}");
+        assertThat(ToolResultUtils.toToolResponse("hello").getText()).isEqualTo("hello");
+        assertThat(ToolResultUtils.toToolResponse(null).getText()).isEqualTo("null");
+        assertThat(ToolResultUtils.toToolResponse(false).getText()).isEqualTo("false");
+        assertThat(ToolResultUtils.toToolResponse(new byte[] {(byte) 0xff}).getText())
+                .isEqualTo("\"/w==\"");
+    }
+
+    @Test
+    void fallsBackToStringWhenJsonSerializationFails() {
+        assertThat(ToolResultUtils.toToolResponse(LocalDate.of(2026, 1, 1)).getText())
+                .isEqualTo("2026-01-01");
+        Object result =
+                new Object() {
+                    @Override
+                    public String toString() {
+                        return "custom result";
+                    }
+                };
+        assertThat(ToolResultUtils.toToolResponse(result).getText()).isEqualTo("custom result");
+    }
+
+    @Test
+    void propagatesStringConversionFailure() {
+        RuntimeException failure = new IllegalStateException("Cannot render tool result");
+        Object result =
+                new Object() {
+                    @Override
+                    public String toString() {
+                        throw failure;
+                    }
+                };
+        assertThatThrownBy(() -> ToolResultUtils.toToolResponse(result)).isSameAs(failure);
     }
 }

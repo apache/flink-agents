@@ -48,13 +48,13 @@ def extract_mcp_content_item(content_item: Any) -> Dict[str, Any] | str:
         if isinstance(content_item.resource, types.TextResourceContents):
             return {
                 "type": "resource",
-                "uri": content_item.resource.uri,
+                "uri": str(content_item.resource.uri),
                 "text": content_item.resource.text,
             }
         elif isinstance(content_item.resource, types.BlobResourceContents):
             return {
                 "type": "resource",
-                "uri": content_item.resource.uri,
+                "uri": str(content_item.resource.uri),
                 "blob": content_item.resource.blob,
             }
         else:
@@ -63,7 +63,7 @@ def extract_mcp_content_item(content_item: Any) -> Dict[str, Any] | str:
     else:
         # Handle unknown content types as generic dict
         return (
-            content_item.model_dump()
+            content_item.model_dump(mode="json")
             if hasattr(content_item, "model_dump")
             else str(content_item)
         )

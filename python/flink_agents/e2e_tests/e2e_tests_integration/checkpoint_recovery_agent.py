@@ -44,13 +44,19 @@ from pydantic import BaseModel
 from pyflink.datastream import KeySelector
 
 import flink_agents.api.memory_object as memory_object_module
-from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import (
     action,
     chat_model_connection,
@@ -66,7 +72,6 @@ from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools import InjectedArg
 from flink_agents.api.tools.tool import Tool as BaseTool
-from flink_agents.api.tools.tool import ToolType
 
 # Config keys the submitting job must set; a missing one fails the run loudly.
 HANDSHAKE_DIR_CONFIG_KEY = "handshake_dir"
@@ -314,7 +319,7 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
         tools: List[BaseTool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Request the blocking tool, or join every message once the tool replied.
 
         A non-``None`` ``output_schema`` is rejected: this connection has no native
@@ -330,24 +335,37 @@ class RecoveryMockChatConnection(BaseChatModelConnection):
             # emitted content, which is where the assertion can reach it. It is
             # wrapped as a JSON object because the caller parses this round against
             # the output schema; the joined text survives verbatim inside the field.
-            content = "\n".join(message.text for message in messages)
-            return ChatMessage.of(
-                MessageRole.ASSISTANT,
-                json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content}),
+            content = "\n".join(
+                (
+                    "".join(
+                        b.text
+                        for b in message.blocks[0].blocks
+                        if isinstance(b, TextBlock)
+                    )
+                    if message.role == MessageRole.TOOL
+                    else message.text
+                )
+                for message in messages
+            )
+            return ChatResult(
+                message=ChatMessage.assistant(
+                    json.dumps({_STRUCTURED_TRANSCRIPT_FIELD: content})
+                )
             )
 
         # Validate the tool was bound before the model was invoked.
         assert tools[0].name == BLOCKING_TOOL_NAME
         _mark_tool_call_emitted()
-        tool_call = {
-            "id": str(uuid.uuid4()),
-            "type": ToolType.FUNCTION,
-            "function": {"name": BLOCKING_TOOL_NAME, "arguments": {}},
-        }
-        return ChatMessage.of(
-            MessageRole.ASSISTANT,
-            _ROUND_ONE_MARKER,
-            tool_calls=[tool_call],
+        tool_call = ToolCallBlock(
+            call_id=str(uuid.uuid4()), name=BLOCKING_TOOL_NAME, input={}
+        )
+        return ChatResult(
+            message=ChatMessage.assistant(
+                [
+                    TextBlock(text=_ROUND_ONE_MARKER),
+                    tool_call,
+                ]
+            )
         )
 
 
@@ -456,8 +474,8 @@ class CheckpointRecoveryAgent(Agent):
     @staticmethod
     def process_chat_response(event: Event, ctx: RunnerContext) -> None:
         """Check the restored payload, publish the verdict, then fail on mismatch."""
-        chat_response = ChatResponseEvent.from_event(event).response
-        raw_structured = chat_response.extra_args.get(STRUCTURED_OUTPUT)
+        chat_response = ChatResponseEvent.from_event(event)
+        raw_structured = chat_response.structured_output
         transcript = _structured_transcript(raw_structured)
         input_id = ctx.short_term_memory.get("input_id")
         raw = ctx.short_term_memory.get(_BLOB_MEMORY_KEY)
@@ -505,7 +523,7 @@ class CheckpointRecoveryAgent(Agent):
             "transcript": transcript,
             # The unparsed response alongside the unpacked transcript, so a payload
             # that failed to unpack is diagnosable from this file alone.
-            "response_content": chat_response.text,
+            "response_content": chat_response.response.text,
         }
         verdict = json.dumps(record, sort_keys=True)
         _atomic_write(

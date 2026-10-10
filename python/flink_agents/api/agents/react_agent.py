@@ -23,7 +23,7 @@ from pydantic import (
 from pyflink.common import Row
 from pyflink.common.typeinfo import RowTypeInfo
 
-from flink_agents.api.agents.agent import STRUCTURED_OUTPUT, Agent
+from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import (
     ChatMessage,
@@ -151,7 +151,9 @@ class ReActAgent(Agent):
             name="start_action",
             trigger_conditions=[InputEvent.EVENT_TYPE],
             func=self.start_action,
-            output_schema=OutputSchema(output_schema=output_schema) if output_schema else None,
+            output_schema=OutputSchema(output_schema=output_schema)
+            if output_schema
+            else None,
         )
 
     @staticmethod
@@ -219,11 +221,11 @@ class ReActAgent(Agent):
     @staticmethod
     def stop_action(event: Event, ctx: RunnerContext) -> None:
         """Stop action to output result."""
-        # See start_action: the dispatched ChatResponseEvent is already concrete.
-        response = cast("ChatResponseEvent", event).response
+        event = cast("ChatResponseEvent", event)
+        response = event.response
 
-        if STRUCTURED_OUTPUT in response.extra_args:
-            output = response.extra_args[STRUCTURED_OUTPUT]
+        if event.structured_output is not None:
+            output = event.structured_output
         else:
             output = response.text
 

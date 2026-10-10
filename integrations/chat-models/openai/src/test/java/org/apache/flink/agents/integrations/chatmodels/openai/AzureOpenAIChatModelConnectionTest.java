@@ -32,6 +32,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.completions.CompletionUsage;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -608,13 +609,12 @@ class AzureOpenAIChatModelConnectionTest {
     void testResponseCarriesBackingModelTokenMetrics() {
         // The deployment name is what the request targets, but usage has to be attributed to the
         // model behind it, which is the only name that identifies what actually ran.
-        ChatMessage response =
+        ChatResult response =
                 connection().toResponse(completionWithUsage(11L, 7L), params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs())
-                .containsEntry("model_name", "gpt-4o-mini")
-                .containsEntry("promptTokens", 11L)
-                .containsEntry("completionTokens", 7L);
+        assertThat(response.getModel()).isEqualTo("gpt-4o-mini");
+        assertThat(response.getUsage().getPromptTokens()).isEqualTo(11L);
+        assertThat(response.getUsage().getCompletionTokens()).isEqualTo(7L);
     }
 
     @Test
@@ -645,29 +645,29 @@ class AzureOpenAIChatModelConnectionTest {
             String label, ChatCompletion completion, Map<String, Object> modelParams) {
         // Leaving the backing model unset is the documented default, and a completion may arrive
         // without a usage report; both drop the metrics rather than costing the caller the reply.
-        ChatMessage response = connection().toResponse(completion, modelParams);
+        ChatResult response = connection().toResponse(completion, modelParams);
 
-        assertThat(response.getExtraArgs())
+        assertThat(response.getMetadata())
                 .doesNotContainKeys("model_name", "promptTokens", "completionTokens");
     }
 
     @Test
     @DisplayName("The finish reason reported by the provider reaches the response extra args")
     void testResponseCarriesFinishReason() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
                                         JsonField.of(ChatCompletion.Choice.FinishReason.LENGTH)),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+        assertThat(response.getFinishReason()).isEqualTo("length");
     }
 
     @Test
     @DisplayName("A finish reason outside the documented set is stored as received")
     void testResponseCarriesUnknownFinishReasonVerbatim() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
@@ -676,21 +676,21 @@ class AzureOpenAIChatModelConnectionTest {
                                                         "some_vendor_reason"))),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+        assertThat(response.getFinishReason()).isEqualTo("some_vendor_reason");
     }
 
     @Test
     @DisplayName("An empty finish reason is recorded rather than discarded")
     void testResponseCarriesEmptyFinishReason() {
         // The choice carries a value, so it is recorded; emptiness is not treated as absence.
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
                                         JsonField.of(ChatCompletion.Choice.FinishReason.of(""))),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+        assertThat(response.getFinishReason()).isEqualTo("");
     }
 
     @Test
@@ -698,7 +698,7 @@ class AzureOpenAIChatModelConnectionTest {
     void testResponseCarriesFinishReasonWithoutTokenMetrics() {
         // The metrics need both a backing model and a usage report, and neither is supplied here,
         // so the absent promptTokens proves that branch did not run and could not have written it.
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonWithoutUsage(
@@ -706,9 +706,8 @@ class AzureOpenAIChatModelConnectionTest {
                                                 ChatCompletion.Choice.FinishReason.TOOL_CALLS)),
                                 params(null));
 
-        assertThat(response.getExtraArgs())
-                .containsEntry("finish_reason", "tool_calls")
-                .doesNotContainKey("promptTokens");
+        assertThat(response.getFinishReason()).isEqualTo("tool_calls");
+        assertThat(response.getUsage()).isNull();
     }
 
     private static Stream<Arguments> finishReasonsWithoutAValue() {
@@ -726,12 +725,12 @@ class AzureOpenAIChatModelConnectionTest {
         // inputs, so reading the value has to go through the raw field.
         AzureOpenAIChatModelConnection connection = connection();
         ChatCompletion completion = completionWithFinishReasonAndUsage(finishReason);
-        AtomicReference<ChatMessage> response = new AtomicReference<>();
+        AtomicReference<ChatResult> response = new AtomicReference<>();
 
         assertThatCode(() -> response.set(connection.toResponse(completion, params("gpt-4o-mini"))))
                 .doesNotThrowAnyException();
 
-        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(response.get().getFinishReason()).isNull();
     }
 
     private static ChatCompletion completionWithFinishReasonAndUsage(
@@ -901,7 +900,7 @@ class AzureOpenAIChatModelConnectionTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(null);
+            return ToolResponse.success(List.of());
         }
     }
 }

@@ -98,7 +98,7 @@ public class BashTool extends Tool {
         if (cwd != null && !BashValidator.isUnderAllowedDirs(cwd, allowedScriptDirs, null)) {
             List<String> sorted = new ArrayList<>(allowedScriptDirs);
             Collections.sort(sorted);
-            return ToolResponse.success(
+            return ToolResponse.text(
                     "Command rejected: cwd '"
                             + cwd
                             + "' is not under any allowed script dir. Allowed script dirs: "
@@ -109,7 +109,7 @@ public class BashTool extends Tool {
         Optional<String> error =
                 BashValidator.validate(command, allowedCommands, allowedScriptDirs, cwd);
         if (error.isPresent()) {
-            return ToolResponse.success("Command rejected: " + error.get());
+            return ToolResponse.text("Command rejected: " + error.get());
         }
 
         Process process = null;
@@ -127,8 +127,7 @@ public class BashTool extends Tool {
             boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return ToolResponse.success(
-                        "Error: Command timed out after " + timeout + " seconds");
+                return ToolResponse.text("Error: Command timed out after " + timeout + " seconds");
             }
             tOut.join();
             tErr.join();
@@ -136,9 +135,9 @@ public class BashTool extends Tool {
             String stdoutStr = new String(stdout.toByteArray(), StandardCharsets.UTF_8).strip();
             String stderrStr = new String(stderr.toByteArray(), StandardCharsets.UTF_8).strip();
             if (exit == 0) {
-                return ToolResponse.success(stdoutStr.isEmpty() ? "Success" : stdoutStr);
+                return ToolResponse.text(stdoutStr.isEmpty() ? "Success" : stdoutStr);
             }
-            return ToolResponse.success("Error (exit code " + exit + "): " + stderrStr);
+            return ToolResponse.text("Error (exit code " + exit + "): " + stderrStr);
         } catch (IOException | InterruptedException e) {
             if (CancellationUtils.isCancellation(e)) {
                 if (process != null) {
@@ -152,7 +151,7 @@ public class BashTool extends Tool {
                 cancelled.initCause(e);
                 throw cancelled;
             }
-            return ToolResponse.success("Error: " + e.getMessage());
+            return ToolResponse.text("Error: " + e.getMessage());
         }
     }
 

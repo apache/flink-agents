@@ -52,8 +52,7 @@
             "type": "document"
           }
         ],
-        "tool_calls": [],
-        "extra_args": {}
+        "metadata": {}
       }
     ],
     "prompt_args": {},

@@ -365,6 +365,117 @@ the tool (for example an HTTP client read timeout) rather than relying on this b
 the thread.
 {{< /hint >}}
 
+## Tool response content and metadata
+
+For simple tools, return a value and the framework converts it to response text.
+Strings are used directly. Other values, such as maps and lists, are represented
+as JSON text when possible; otherwise, their string representation is used.
+For example, a Python tool can return a `date` directly and the model receives
+text such as `2026-01-01`.
+
+Return a `ToolResponse` when you want to choose the content sent to the model or
+attach additional data for your application:
+
+- `blocks` contains the response content in order. It accepts text and media
+  blocks; reasoning, tool calls, and nested tool results are not supported.
+- `metadata` holds application data, such as a record ID, that is not sent to the
+  model. Use JSON-serializable values when the response needs to be persisted.
+
+For example, this tool returns a weather description for the model and a station
+ID for application code:
+
+{{< tabs "tool-response" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_message import TextBlock
+from flink_agents.api.decorators import tool
+from flink_agents.api.tools import ToolResponse
+
+# Declare this method inside an Agent class.
+@tool
+@staticmethod
+def get_weather(city: str) -> ToolResponse:
+    """Look up the weather.
+
+    Args:
+        city: City to query.
+    """
+    return ToolResponse(
+        blocks=[TextBlock(text=f"The temperature in {city} is 25°C.")],
+        metadata={"station_id": "station-123"},
+    )
+
+# Convenience factories:
+# ToolResponse.text("Operation completed")
+# ToolResponse.error("The station could not be reached")
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.tools.ToolResponse;
+
+import java.util.Map;
+
+@Tool(description = "Look up the weather")
+public static ToolResponse getWeather(@ToolParam(name = "city") String city) {
+    return ToolResponse.text("The temperature in " + city + " is 25°C.")
+            .withMetadata(Map.of("station_id", "station-123"));
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Application code can read `metadata` without parsing the response text. Use
+`ToolResponse.error("reason")` to report an operation that could not be completed;
+the model receives the error description as the tool result.
+
+### Representing media returned by tools
+
+{{< hint warning >}}
+Current model integrations do not support sending media returned by tools to the
+model. A tool response containing media causes the chat request to fail, even if
+the model supports media in user messages. Use text-only tool responses in chat
+workflows for now.
+{{< /hint >}}
+
+Media must be provided explicitly as blocks. Returning bytes or a URL as an
+ordinary value does not identify it as an image or another media type. For
+example, given PNG bytes in `image_bytes` / `imageBytes`:
+
+{{< tabs "tool-response-media" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_message import ImageBlock, TextBlock
+from flink_agents.api.tools import ToolResponse
+
+response = ToolResponse(
+    blocks=[
+        TextBlock(text="Generated chart:"),
+        ImageBlock.from_bytes("image/png", image_bytes),
+    ],
+    metadata={"report_id": "report-123"},
+)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.tools.ToolResponse;
+
+import java.util.List;
+import java.util.Map;
+
+ToolResponse response = ToolResponse.success(
+        List.of(new TextBlock("Generated chart:"),
+                ImageBlock.fromBytes("image/png", imageBytes)))
+        .withMetadata(Map.of("report_id", "report-123"));
+```
+{{< /tab >}}
+{{< /tabs >}}
+
 ## MCP Tool
 
 See [MCP]({{< ref "docs/development/mcp" >}}) for details.
@@ -373,7 +484,7 @@ See [MCP]({{< ref "docs/development/mcp" >}}) for details.
 
 The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool call, it looks up the tool resource by function name, executes it through durable execution, and records whether it succeeded. After all tool calls in the batch have been processed, it sends a `ToolResponseEvent`.
 
-Python tools can continue returning raw values, which are treated as successful results. A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
+Ordinary tool return values are converted to successful text responses as described in [Tool response content and metadata](#tool-response-content-and-metadata). A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
 
 When the tool request comes from `chat_model_action`, the emitted `ToolResponseEvent` is automatically consumed by `chat_model_action` to continue the chat. See [Built-in Events and Actions in Chat Models]({{< ref "docs/development/chat_models#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
 

@@ -121,7 +121,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
                             .append('\n');
                 }
                 String filesSection = files.length() == 0 ? "" : files.toString().stripTrailing();
-                return ToolResponse.success(
+                return ToolResponse.text(
                         "<skill_content name=\""
                                 + name
                                 + "\">\n"
@@ -139,7 +139,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
                                 + "\n</skill_files>\n"
                                 + "</skill_content>");
             }
-            return ToolResponse.success(skill.getContent());
+            return ToolResponse.text(skill.getContent());
         }
 
         String content = skill.getResource(path);
@@ -152,7 +152,7 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
                             + "', Available resources: "
                             + skill.getResourcePaths());
         }
-        return ToolResponse.success(content);
+        return ToolResponse.text(content);
     }
 
     private SkillManager resolveSkillManager() throws Exception {

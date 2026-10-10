@@ -138,12 +138,12 @@ public class ResourceCacheTest {
         private TestSerializableChatModel chatModel =
                 new TestSerializableChatModel("defaultChatModel");
 
+        @Tool private TestTool anotherTool = new TestTool("anotherTool");
+
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
             return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
-
-        @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
@@ -166,6 +166,12 @@ public class ResourceCacheTest {
 
         @Override
         public Object toPythonChatMessage(ChatMessage message) {
+            return null;
+        }
+
+        @Override
+        public org.apache.flink.agents.api.chat.messages.ChatResult fromPythonChatResult(
+                Object response) {
             return null;
         }
 

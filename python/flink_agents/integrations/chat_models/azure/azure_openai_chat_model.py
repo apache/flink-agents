@@ -36,6 +36,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
     NativeStructuredOutputSupport,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 from flink_agents.integrations.chat_models.openai.openai_utils import (
@@ -345,7 +346,7 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Direct communication with model service for chat conversation.
 
         Parameters
@@ -368,9 +369,9 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message. When the response carries a finish reason,
-            it is available as ``extra_args["finish_reason"]``.
+            it is available as ``ChatResult.finish_reason``.
         """
         # Snapshotted before the pops below, so the feasibility check is asked with
         # the parameters as they arrived rather than with a mapping this path has
@@ -440,20 +441,19 @@ class AzureOpenAIChatModelConnection(BaseChatModelConnection):
             **additional_kwargs,
         )
 
-        extra_args = {}
-        # Record token metrics only if model_of_azure_deployment is provided
-        if model_of_azure_deployment and response.usage:
-            extra_args["model_name"] = model_of_azure_deployment
-            extra_args["promptTokens"] = response.usage.prompt_tokens
-            extra_args["completionTokens"] = response.usage.completion_tokens
-
         choice = response.choices[0]
-        if choice.finish_reason is not None:
-            extra_args["finish_reason"] = choice.finish_reason
-
-        message = choice.message
-
-        return convert_from_openai_message(message, extra_args)
+        return ChatResult(
+            message=convert_from_openai_message(choice.message),
+            model=model_of_azure_deployment,
+            response_id=response.id,
+            usage=TokenUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
+            if response.usage
+            else None,
+            finish_reason=choice.finish_reason,
+        )
 
 
 class AzureOpenAIChatModelSetup(BaseChatModelSetup):

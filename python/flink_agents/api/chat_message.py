@@ -24,6 +24,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictStr,
+    model_validator,
 )
 from typing_extensions import Annotated, Self
 
@@ -196,8 +197,59 @@ class DocumentBlock(MediaBlock):
     type: Literal["document"] = "document"
 
 
-ContentBlock = Annotated[
+DataContentBlock = Annotated[
     TextBlock | ImageBlock | AudioBlock | VideoBlock | DocumentBlock,
+    Field(discriminator="type"),
+]
+"""Text and media data allowed in both messages and tool results."""
+
+
+class ReasoningBlock(BaseModel):
+    """Provider reasoning, excluded from the ordinary text projection.
+
+    Metadata preserves provider-specific continuation data. Adapters must not
+    implicitly turn reasoning into assistant text or send it to another provider.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
+    type: Literal["reasoning"] = "reasoning"
+    text: str | None = None
+    metadata: Dict[str, Any] = Field(default_factory=dict, repr=False)
+
+
+class ToolCallBlock(BaseModel):
+    """One call, identified within its tool request (not globally)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
+    type: Literal["tool_call"] = "tool_call"
+    call_id: StrictStr = Field(min_length=1)
+    name: StrictStr = Field(min_length=1)
+    input: Dict[str, Any] = Field(default_factory=dict)
+    metadata: Dict[str, Any] = Field(default_factory=dict, repr=False)
+
+
+class ToolResultBlock(BaseModel):
+    """The model-facing result of a call, containing ordered text and media.
+
+    Reasoning, tool calls, and nested tool results are excluded from its content.
+    Execution data belongs to ToolResponse.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
+    type: Literal["tool_result"] = "tool_result"
+    call_id: StrictStr = Field(min_length=1)
+    blocks: tuple[DataContentBlock, ...] = ()
+    is_error: bool = False
+    metadata: Dict[str, Any] = Field(default_factory=dict, repr=False)
+
+    @property
+    def text(self) -> str:
+        """Concatenate result text without stringifying media."""
+        return "".join(b.text for b in self.blocks if isinstance(b, TextBlock))
+
+
+ContentBlock = Annotated[
+    DataContentBlock | ReasoningBlock | ToolCallBlock | ToolResultBlock,
     Field(discriminator="type"),
 ]
 
@@ -234,7 +286,12 @@ class UnsupportedContentBlockError(ValueError):
         rather than being dropped from the request.
         """
         for message in messages:
-            for block in message.blocks:
+            blocks = (
+                message.blocks[0].blocks
+                if message.role == MessageRole.TOOL
+                else message.blocks
+            )
+            for block in blocks:
                 if isinstance(block, MediaBlock):
                     raise cls.for_block(
                         provider, block, "this integration sends text only"
@@ -249,40 +306,77 @@ def _blocks_of(text: str) -> List[ContentBlock]:
 class ChatMessage(BaseModel):
     """Chat message.
 
-    ChatMessages are the inputs and outputs of ChatModels.
+    ChatMessages represent conversation history and are the inputs to ChatModels.
+    A model returns its assistant message as part of a ChatResult.
 
     Attributes:
     ----------
     role : MessageRole
-        The message productor or purpose.
-    blocks : List[ContentBlock]
-        The ordered, typed content of the message; a text-only message carries
-        a single TextBlock.
-    tool_calls: List[Dict[str, Any]]
-        The tools call information.
-    extra_args : dict[str, Any]
-        Additional information about the message.
+        The message source or purpose.
+    blocks : tuple[ContentBlock, ...]
+        The ordered, typed content of the message, including text, media,
+        reasoning, tool calls, or tool results as allowed by the role.
+        A TOOL message contains exactly one ToolResultBlock.
+    metadata : dict[str, Any]
+        Additional information about the message, such as provider-specific
+        attributes.
+    text : str
+        Read-only concatenation of the top-level text blocks, excluding
+        reasoning and text nested inside tool results.
+    tool_calls : tuple[ToolCallBlock, ...]
+        Read-only view of the tool calls in blocks, preserving their order.
     """
 
-    # Unknown keys fail loudly: the replaced `content` field would otherwise be
-    # silently ignored, producing an empty message instead of an error.
-    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
+    role: MessageRole
+    blocks: tuple[ContentBlock, ...]
+    metadata: Dict[str, Any] = Field(default_factory=dict, repr=False)
 
-    role: MessageRole = MessageRole.USER
-    blocks: List[ContentBlock] = Field(default_factory=list)
-    tool_calls: List[Dict[str, Any]] = Field(default_factory=list)
-    extra_args: Dict[str, Any] = Field(default_factory=dict)
+    @model_validator(mode="after")
+    def validate_content(self) -> Self:
+        """Validate roles and call IDs before dispatch, including after recovery."""
+        if self.role == MessageRole.TOOL:
+            if len(self.blocks) != 1 or not isinstance(self.blocks[0], ToolResultBlock):
+                msg = "A TOOL message requires exactly one ToolResultBlock"
+                raise ValueError(msg)
+        else:
+            for block in self.blocks:
+                if isinstance(block, ToolResultBlock):
+                    msg = "ToolResultBlock requires the TOOL role"
+                    raise ValueError(msg)  # noqa: TRY004 - Pydantic validation failure
+                if self.role == MessageRole.SYSTEM and not isinstance(block, TextBlock):
+                    msg = "SYSTEM messages accept only text"
+                    raise ValueError(msg)
+                if self.role == MessageRole.USER and not isinstance(
+                    block, TextBlock | MediaBlock
+                ):
+                    msg = "USER messages accept only text and media"
+                    raise ValueError(msg)
+        ids = [b.call_id for b in self.tool_calls]
+        if len(set(ids)) != len(ids):
+            msg = "Duplicate tool call ID in one message"
+            raise ValueError(msg)
+        return self
+
+    @property
+    def tool_calls(self) -> tuple[ToolCallBlock, ...]:
+        """Read-only projection; only blocks are serialized."""
+        return tuple(b for b in self.blocks if isinstance(b, ToolCallBlock))
+
+    def with_blocks(self, blocks: Sequence[ContentBlock]) -> "ChatMessage":
+        """Create a validated message with replacement content."""
+        return ChatMessage(role=self.role, blocks=blocks, metadata=self.metadata)
 
     @property
     def text(self) -> str:
-        """The text projection: the ordered concatenation of the TextBlocks."""
+        """Concatenate top-level text blocks in order.
+
+        Media, reasoning, tool calls, and nested tool result text are excluded.
+        Use ``blocks`` for the complete message content.
+        """
         return "".join(
             block.text for block in self.blocks if isinstance(block, TextBlock)
         )
-
-    def set_text(self, text: str) -> None:
-        """Replace the content with a single text block (empty text clears it)."""
-        self.blocks = _blocks_of(text)
 
     @classmethod
     def user(
@@ -306,11 +400,9 @@ class ChatMessage(BaseModel):
         return cls.of(MessageRole.ASSISTANT, content, **kwargs)
 
     @classmethod
-    def tool(
-        cls, content: str | Sequence[ContentBlock], **kwargs: Any
-    ) -> "ChatMessage":
-        """Create a TOOL message from text or content blocks."""
-        return cls.of(MessageRole.TOOL, content, **kwargs)
+    def tool(cls, result: ToolResultBlock, **kwargs: Any) -> "ChatMessage":
+        """Create a TOOL message for one completed call."""
+        return cls(role=MessageRole.TOOL, blocks=[result], **kwargs)
 
     @classmethod
     def of(

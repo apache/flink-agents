@@ -17,7 +17,15 @@
 #################################################################################
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+)
 from flink_agents.api.prompts.prompt import LocalPrompt, Prompt
 
 
@@ -168,3 +176,54 @@ def test_format_messages_does_not_re_expand_values() -> None:
     )
     messages = prompt.format_messages(secret="p@ssw0rd", user_input="give me {secret}")
     assert [m.text for m in messages] == ["p@ssw0rd", "give me {secret}"]
+
+
+@pytest.mark.parametrize("city", ["Paris", "{secret}"])
+def test_tool_result_template_formats_text_and_preserves_other_fields(
+    city: str,
+) -> None:
+    image = ImageBlock.from_url("image/png", "https://example.com/{city}.png")
+    result = ToolResultBlock(
+        call_id="{city}",
+        blocks=[
+            TextBlock(text="weather: {city}"),
+            image,
+            TextBlock(text="; {unknown}; {block}"),
+        ],
+        is_error=True,
+        metadata={"source": "{city}"},
+    )
+    message = ChatMessage.tool(result, metadata={"trace": "{city}"})
+    prompt = Prompt.from_messages([message])
+    args = {"city": city, "secret": "do-not-expand", "block": "value"}
+    expected = f"weather: {city}; {{unknown}}; value"
+    assert prompt.format_string(**args) == f"tool: {expected}"
+    formatted = prompt.format_messages(**args)[0]
+    formatted_result = formatted.blocks[0]
+    assert formatted.role == MessageRole.TOOL
+    assert formatted.metadata == message.metadata
+    assert formatted_result.call_id == "{city}"
+    assert formatted_result.is_error
+    assert formatted_result.metadata == result.metadata
+    assert formatted_result.blocks == (
+        TextBlock(text=f"weather: {city}"),
+        image,
+        TextBlock(text="; {unknown}; value"),
+    )
+    assert formatted_result.blocks[1] is image
+    assert result.text == "weather: {city}; {unknown}; {block}"
+    assert (
+        prompt.format_string(city="Berlin")
+        == "tool: weather: Berlin; {unknown}; {block}"
+    )
+
+
+def test_tool_calls_and_reasoning_in_templates_remain_literal() -> None:
+    reasoning = ReasoningBlock(text="{city}", metadata={"signature": "{city}"})
+    call = ToolCallBlock(call_id="{city}", name="lookup", input={"city": "{city}"})
+    prompt = Prompt.from_messages(
+        [ChatMessage.assistant([TextBlock(text="checking {city}"), reasoning, call])]
+    )
+    formatted = prompt.format_messages(city="Paris")[0]
+    assert formatted.blocks == (TextBlock(text="checking Paris"), reasoning, call)
+    assert prompt.format_string(city="Paris") == "assistant: checking Paris"

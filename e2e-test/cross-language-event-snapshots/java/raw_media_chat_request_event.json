@@ -32,8 +32,7 @@
           "data" : "/wCA+w=="
         }
       } ],
-      "tool_calls" : [ ],
-      "extra_args" : { }
+      "metadata" : { }
     } ],
     "model" : "test-model"
   },

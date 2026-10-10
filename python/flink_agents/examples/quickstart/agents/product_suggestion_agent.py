@@ -19,7 +19,7 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.decorators import (
     action,
     chat_model_setup,
@@ -88,7 +88,7 @@ class ProductSuggestionAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="generate_suggestion_model",
-                messages=[ChatMessage(role=MessageRole.USER)],
+                messages=[ChatMessage.user("")],
                 prompt_args={"input": content},
             )
         )

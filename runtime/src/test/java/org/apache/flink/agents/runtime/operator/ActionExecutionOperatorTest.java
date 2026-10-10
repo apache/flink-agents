@@ -4040,6 +4040,50 @@ public class ActionExecutionOperatorTest {
         public static volatile CountDownLatch SINGLE_ASYNC_STARTED;
         public static volatile CountDownLatch SINGLE_ASYNC_ALLOW;
 
+        public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicInteger RECONCILABLE_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicInteger
+                RECONCILABLE_RECONCILE_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static volatile ReconcileBehavior RECONCILABLE_RECOVERY_BEHAVIOR =
+                ReconcileBehavior.SUCCESS;
+
+        public static volatile long RECONCILABLE_RECOVERY_RESULT = 42L;
+
+        public static volatile String RECONCILABLE_EXCEPTION_MESSAGE = "reconcile unavailable";
+
+        public static final java.util.concurrent.atomic.AtomicInteger MIXED_LEGACY_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicInteger
+                MIXED_RECONCILABLE_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static final java.util.concurrent.atomic.AtomicInteger MIXED_RECONCILE_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
+        public static volatile ReconcileBehavior MIXED_RECONCILE_BEHAVIOR =
+                ReconcileBehavior.SUCCESS;
+
+        public static volatile long MIXED_RECONCILE_RESULT = 50L;
+
+        /**
+         * Counter to track how many times the uncaught exception supplier is executed. Used to
+         * verify that on recovery, the supplier is not re-executed.
+         */
+        public static final java.util.concurrent.atomic.AtomicInteger
+                UNCAUGHT_EXCEPTION_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        /**
+         * Counter to track how many times the async exception supplier is executed. Used to verify
+         * that on recovery, the supplier is not re-executed.
+         */
+        public static final java.util.concurrent.atomic.AtomicInteger ASYNC_EXCEPTION_CALL_COUNTER =
+                new java.util.concurrent.atomic.AtomicInteger(0);
+
         public static class MiddleEvent extends Event {
             public static final String EVENT_TYPE = "MiddleEvent";
 
@@ -4360,32 +4404,10 @@ public class ActionExecutionOperatorTest {
             }
         }
 
-        public static final java.util.concurrent.atomic.AtomicInteger EXCEPTION_CALL_COUNTER =
-                new java.util.concurrent.atomic.AtomicInteger(0);
-
         public enum ReconcileBehavior {
             SUCCESS,
             EXCEPTION
         }
-
-        public static final java.util.concurrent.atomic.AtomicInteger RECONCILABLE_CALL_COUNTER =
-                new java.util.concurrent.atomic.AtomicInteger(0);
-        public static final java.util.concurrent.atomic.AtomicInteger
-                RECONCILABLE_RECONCILE_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
-        public static volatile ReconcileBehavior RECONCILABLE_RECOVERY_BEHAVIOR =
-                ReconcileBehavior.SUCCESS;
-        public static volatile long RECONCILABLE_RECOVERY_RESULT = 42L;
-        public static volatile String RECONCILABLE_EXCEPTION_MESSAGE = "reconcile unavailable";
-
-        public static final java.util.concurrent.atomic.AtomicInteger MIXED_LEGACY_CALL_COUNTER =
-                new java.util.concurrent.atomic.AtomicInteger(0);
-        public static final java.util.concurrent.atomic.AtomicInteger
-                MIXED_RECONCILABLE_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
-        public static final java.util.concurrent.atomic.AtomicInteger MIXED_RECONCILE_COUNTER =
-                new java.util.concurrent.atomic.AtomicInteger(0);
-        public static volatile ReconcileBehavior MIXED_RECONCILE_BEHAVIOR =
-                ReconcileBehavior.SUCCESS;
-        public static volatile long MIXED_RECONCILE_RESULT = 50L;
 
         public static void durableExceptionAction(Event event, RunnerContext context) {
             try {
@@ -4870,7 +4892,12 @@ public class ActionExecutionOperatorTest {
             Map<String, Object> toolCall = new HashMap<>();
             toolCall.put("id", "call-1");
             toolCall.put("function", function);
-            context.sendEvent(new ToolRequestEvent("unused-model", List.of(toolCall)));
+            context.sendEvent(
+                    new ToolRequestEvent(
+                            "unused-model",
+                            List.of(
+                                    new org.apache.flink.agents.api.chat.messages.ToolCallBlock(
+                                            "call-1", "linkageErrorTool", Map.of()))));
         }
 
         public static String linkageErrorTool() {
@@ -4982,13 +5009,6 @@ public class ActionExecutionOperatorTest {
         // ==================== Actions for Exception Recovery Tests ====================
 
         /**
-         * Counter to track how many times the uncaught exception supplier is executed. Used to
-         * verify that on recovery, the supplier is not re-executed.
-         */
-        public static final java.util.concurrent.atomic.AtomicInteger
-                UNCAUGHT_EXCEPTION_CALL_COUNTER = new java.util.concurrent.atomic.AtomicInteger(0);
-
-        /**
          * Action that uses durableExecute and does NOT catch the exception. This simulates the
          * behavior of built-in actions like ChatModelAction.
          */
@@ -5008,13 +5028,6 @@ public class ActionExecutionOperatorTest {
                 ExceptionUtils.rethrow(e);
             }
         }
-
-        /**
-         * Counter to track how many times the async exception supplier is executed. Used to verify
-         * that on recovery, the supplier is not re-executed.
-         */
-        public static final java.util.concurrent.atomic.AtomicInteger ASYNC_EXCEPTION_CALL_COUNTER =
-                new java.util.concurrent.atomic.AtomicInteger(0);
 
         /**
          * Action that uses durableExecuteAsync and does NOT catch the exception. This simulates

@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 
 import java.util.List;
 import java.util.Map;
@@ -42,6 +42,8 @@ public class ChatResponseEvent extends Event {
     private static final String ERROR = "error";
     private static final String RETRY_COUNT = "retry_count";
     private static final String TOTAL_RETRY_WAIT_SEC = "total_retry_wait_sec";
+    private static final String STRUCTURED_OUTPUT = "structured_output";
+    private static final String MODEL_ROUTING = "model_routing";
 
     private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
             List.of(
@@ -50,16 +52,18 @@ public class ChatResponseEvent extends Event {
                     BuiltInAttribute.optionalUntyped(RESPONSE),
                     BuiltInAttribute.optionalUntyped(ERROR),
                     BuiltInAttribute.optional(RETRY_COUNT, Number.class),
-                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class));
+                    BuiltInAttribute.optional(TOTAL_RETRY_WAIT_SEC, Number.class),
+                    BuiltInAttribute.optionalUntyped(STRUCTURED_OUTPUT),
+                    BuiltInAttribute.optional(MODEL_ROUTING, Map.class));
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    public static ChatResponseEvent success(UUID requestId, ChatMessage response) {
+    public static ChatResponseEvent success(UUID requestId, ChatResult response) {
         return success(requestId, response, 0, 0);
     }
 
     public static ChatResponseEvent success(
-            UUID requestId, ChatMessage response, int retryCount, int totalRetryWaitSec) {
+            UUID requestId, ChatResult response, int retryCount, int totalRetryWaitSec) {
         return new ChatResponseEvent(
                 requestId, SUCCESS, response, null, retryCount, totalRetryWaitSec);
     }
@@ -72,7 +76,7 @@ public class ChatResponseEvent extends Event {
     private ChatResponseEvent(
             UUID requestId,
             String status,
-            ChatMessage response,
+            ChatResult response,
             String error,
             int retryCount,
             int totalRetryWaitSec) {
@@ -103,7 +107,7 @@ public class ChatResponseEvent extends Event {
         }
         Object rawResponse = attributes.get(RESPONSE);
         if (rawResponse instanceof Map) {
-            attributes.put(RESPONSE, MAPPER.convertValue(rawResponse, ChatMessage.class));
+            attributes.put(RESPONSE, MAPPER.convertValue(rawResponse, ChatResult.class));
         }
         if (!(attributes.get(REQUEST_ID) instanceof UUID)) {
             throw new IllegalArgumentException("request_id must be a UUID");
@@ -113,7 +117,7 @@ public class ChatResponseEvent extends Event {
     }
 
     private static void validate(Object status, Object response, Object error) {
-        if (SUCCESS.equals(status) && response instanceof ChatMessage && error == null) {
+        if (SUCCESS.equals(status) && response instanceof ChatResult && error == null) {
             return;
         }
         if (FAILED.equals(status)
@@ -124,6 +128,19 @@ public class ChatResponseEvent extends Event {
         }
         throw new IllegalArgumentException(
                 "Chat response requires SUCCESS with response or FAILED with error.");
+    }
+
+    public void setStructuredOutput(Object value) {
+        setAttr(STRUCTURED_OUTPUT, value);
+    }
+
+    @JsonIgnore
+    public Object getStructuredOutput() {
+        return getAttr(STRUCTURED_OUTPUT);
+    }
+
+    public void setRoutingMetadata(Map<String, Object> value) {
+        setAttr(MODEL_ROUTING, value);
     }
 
     @JsonIgnore
@@ -190,11 +207,11 @@ public class ChatResponseEvent extends Event {
     }
 
     @JsonIgnore
-    public ChatMessage getResponse() {
+    public ChatResult getResponse() {
         if (isFailed()) {
             throw new ChatResponseException(getRequestId(), getError());
         }
-        return (ChatMessage) getAttr(RESPONSE);
+        return (ChatResult) getAttr(RESPONSE);
     }
 
     @JsonIgnore

@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
@@ -86,9 +87,8 @@ public class ToolCallAction {
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
         Map<String, ToolResponse> responses = new HashMap<>();
-        Map<String, String> externalIds = new HashMap<>();
         List<ToolCallExecution> executions =
-                buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
+                buildToolCallExecutions(toolRequest, ctx, success, error, responses);
 
         // executeParallel/executeSequentially let cancellation propagate rather than
         // recording it as a tool error, so a cancellation here skips sendEvent below entirely:
@@ -100,33 +100,23 @@ public class ToolCallAction {
             executeSequentially(executions, toolCallAsync, ctx, success, error, responses);
         }
 
-        ctx.sendEvent(
-                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
+        ctx.sendEvent(new ToolResponseEvent(toolRequest.getId(), responses, success, error));
     }
 
     @SuppressWarnings("unchecked")
     private static List<ToolCallExecution> buildToolCallExecutions(
             ToolRequestEvent toolRequest,
             RunnerContext ctx,
-            Map<String, String> externalIds,
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
             throws Exception {
         List<ToolCallExecution> executions = new ArrayList<>();
-        for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
-            String id = String.valueOf(toolCall.get("id"));
-            Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-            String name = (String) function.get("name");
-            Object rawArguments = function.get("arguments");
-            Map<String, Object> arguments =
-                    rawArguments instanceof Map ? (Map<String, Object>) rawArguments : null;
-            Map<String, Object> mergedArguments =
-                    arguments == null ? new HashMap<>() : new HashMap<>(arguments);
-
-            if (toolCall.containsKey("original_id")) {
-                externalIds.put(id, (String) toolCall.get("original_id"));
-            }
+        for (ToolCallBlock toolCall : toolRequest.getToolCalls()) {
+            String id = toolCall.getCallId();
+            String name = toolCall.getName();
+            Map<String, Object> arguments = toolCall.getInput();
+            Map<String, Object> mergedArguments = new HashMap<>(arguments);
 
             Tool tool = null;
             SubagentSetup agent = null;
@@ -168,13 +158,7 @@ public class ToolCallAction {
 
             ToolParameters metadataParameters = new ToolParameters(mergedArguments);
             Map<String, Object> entityMetadata =
-                    toolEntityMetadata(
-                            toolRequest.getId(),
-                            id,
-                            externalIds.get(id),
-                            name,
-                            tool,
-                            metadataParameters);
+                    toolEntityMetadata(toolRequest.getId(), id, name, tool, metadataParameters);
             // A resolved delegation is reported under the sub-agent scope keyed by the registered
             // agent name, so the runtime attributes its outcome and latency to that sub-agent
             // instead of bucketing the reserved callable name as an unknown tool. An unresolved
@@ -602,7 +586,7 @@ public class ToolCallAction {
             success.put(execution.id, true);
             responses.put(
                     execution.id,
-                    ToolResponse.success(
+                    ToolResponse.text(
                             ToolResultUtils.toChatMessageContent(
                                     ToolResultUtils.normalizeAgentResult(
                                             result.getResult(), execution.agent.getResultType()))));
@@ -774,7 +758,6 @@ public class ToolCallAction {
     private static Map<String, Object> toolEntityMetadata(
             UUID toolRequestEventId,
             String toolCallId,
-            String externalId,
             String toolName,
             Tool tool,
             ToolParameters parameters) {
@@ -782,9 +765,6 @@ public class ToolCallAction {
         metadata.put(
                 ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID, toolRequestEventId.toString());
         metadata.put(ToolExecutionMetadataKeys.TOOL_CALL_ID, toolCallId);
-        if (externalId != null) {
-            metadata.put(ToolExecutionMetadataKeys.EXTERNAL_ID, externalId);
-        }
         ToolType toolType = tool == null ? null : tool.getToolType();
         if (toolType != null) {
             metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, toolType.getValue());

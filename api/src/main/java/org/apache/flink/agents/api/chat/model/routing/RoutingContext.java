@@ -37,13 +37,9 @@ import java.util.UUID;
  * CustomRoutingExecutor} cannot make a hidden synchronous model call; observable LLM-as-router is
  * provided by the framework-managed {@code Strategies.llm(...)} strategy instead.
  *
- * <p>The isolation boundary is deliberate and one level deep: the message list, each message's
- * tool-call maps and extra args, and the prompt-args map are defensive copies, but values
- * <em>nested inside</em> those maps are shared with the request that is actually sent. Content
- * blocks are shared too, which is safe because they are immutable value objects. Strategies must
- * treat the context as read-only; the copies exist to make accidental top-level mutation harmless,
- * not to sandbox a hostile strategy (arbitrary-depth copies on every routing decision would tax the
- * common case to guard a case the SPI already forbids).
+ * <p>Messages, their blocks, tool inputs and metadata are immutable snapshots and safe to share.
+ * The message list and prompt-args map are defensive copies. Values nested in prompt args remain
+ * shared; routing strategies must treat those values as read-only.
  */
 public final class RoutingContext {
 
@@ -72,14 +68,7 @@ public final class RoutingContext {
             String defaultModel) {
         this.requestId = requestId;
         this.router = router;
-        // Deep copy: ChatMessage is mutable and the caller passes the same instances that go to
-        // the model — a strategy calling setText(...) on a shallow copy would silently rewrite
-        // the prompt actually sent. Only the mutable message/list structure needs copying;
-        // ContentBlocks are immutable and safe to share.
-        this.messages =
-                messages == null
-                        ? Collections.emptyList()
-                        : Collections.unmodifiableList(deepCopy(messages));
+        this.messages = messages == null ? Collections.emptyList() : List.copyOf(messages);
         this.promptArgs =
                 promptArgs == null
                         ? Collections.emptyMap()
@@ -89,34 +78,6 @@ public final class RoutingContext {
                         ? Collections.emptyList()
                         : Collections.unmodifiableList(new ArrayList<>(candidates));
         this.defaultModel = defaultModel;
-    }
-
-    private static List<ChatMessage> deepCopy(List<ChatMessage> messages) {
-        List<ChatMessage> copy = new ArrayList<>(messages.size());
-        for (ChatMessage m : messages) {
-            if (m == null) {
-                continue;
-            }
-            // ChatMessage's constructor copies extraArgs but stores toolCalls by reference, so
-            // copy the list AND each tool-call map — otherwise a strategy could still mutate the
-            // tool calls of the message actually sent. getToolCalls() can be null despite the
-            // constructor's default: the Jackson setter stores null as-is, so a message
-            // deserialized from JSON with an explicit "tool_calls": null carries null here.
-            List<Map<String, Object>> source = m.getToolCalls();
-            List<Map<String, Object>> toolCalls;
-            if (source == null) {
-                toolCalls = null;
-            } else {
-                toolCalls = new ArrayList<>(source.size());
-                for (Map<String, Object> call : source) {
-                    toolCalls.add(call == null ? null : new HashMap<>(call));
-                }
-            }
-            // The full constructor snapshots the block list; block instances are shared, which
-            // is safe because ContentBlocks are immutable.
-            copy.add(new ChatMessage(m.getRole(), m.getBlocks(), toolCalls, m.getExtraArgs()));
-        }
-        return copy;
     }
 
     /**

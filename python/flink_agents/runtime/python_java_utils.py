@@ -34,16 +34,13 @@ from flink_agents.api.vector_stores.vector_store import (
     VectorStoreQueryMode,
 )
 from flink_agents.plan.resource.java.conversions import (
-    dump_blocks as dump_blocks,
-)
-from flink_agents.plan.resource.java.conversions import (
     from_java_chat_message as from_java_chat_message,
 )
 from flink_agents.plan.resource.java.conversions import (
-    from_java_document as from_java_document,
+    from_java_chat_result as from_java_chat_result,
 )
 from flink_agents.plan.resource.java.conversions import (
-    normalize_tool_call_id as normalize_tool_call_id,
+    from_java_document as from_java_document,
 )
 from flink_agents.plan.resource.java.java_resource_wrapper import (
     JavaPrompt,
@@ -226,9 +223,9 @@ def invoke_python_tool(
 
     Used by the Java-side ``PythonResourceAdapter.invokePythonTool`` so a Java host can
     dispatch a Python function tool from a Java chat model without the Python side
-    needing to know about Pemja's threading model. The return value is wrapped in
-    an internal envelope so Java can distinguish a raw result from an explicit
-    ``ToolResponse`` without inspecting user payloads.
+    needing to know about Pemja's threading model. The return value is normalized into a
+    ``ToolResponse`` and wrapped in an internal envelope. Application metadata
+    is passed through Pemja without JSON serialization.
     """
     result = _compiled_function_tool(module, qual_name, ()).call(**kwargs)
     return _encode_python_tool_result(result)
@@ -240,21 +237,18 @@ def invoke_python_tool_instance(tool: Tool, kwargs: Dict[str, Any]) -> Any:
 
 
 def _encode_python_tool_result(result: Any) -> Dict[str, Any]:
-    """Encode raw values and explicit ToolResponses without inspecting user payloads."""
-    from flink_agents.api.tools import ToolResponse
+    """Encode content blocks separately from application metadata."""
+    from flink_agents.plan.actions.tool_result_utils import to_tool_response
 
-    if not isinstance(result, ToolResponse):
-        return {
-            "__flink_agents_tool_result__": "raw",
-            "result": result,
-        }
+    response = to_tool_response(result)
     return {
         "__flink_agents_tool_result__": "response",
-        "result": result.result,
-        "success": result.is_success(),
-        "error": result.error_message,
-        "execution_time_ms": result.execution_time_ms,
-        "tool_name": result.tool_name,
+        "success": response.is_success(),
+        "error": response.error_message,
+        "execution_time_ms": response.execution_time_ms,
+        "tool_name": response.tool_name,
+        "blocks": [block.model_dump(mode="json") for block in response.blocks],
+        "metadata": response.metadata,
     }
 
 
@@ -323,37 +317,16 @@ def call_embedding_with_usage(
 
 
 def to_java_chat_message(chat_message: ChatMessage) -> Any:
-    """Convert a chat message to a java chat message."""
+    """Construct a Java message from its canonical map."""
     from pemja import findClass
 
-    j_ChatMessage = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
-    j_chat_message = j_ChatMessage()
-
-    j_MessageRole = findClass("org.apache.flink.agents.api.chat.messages.MessageRole")
-    j_chat_message.setRole(j_MessageRole.fromValue(chat_message.role.value))
-    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
-    j_chat_message.setExtraArgs(chat_message.extra_args)
-    if chat_message.tool_calls:
-        tool_calls = [
-            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
-        ]
-        j_chat_message.setToolCalls(tool_calls)
-
-    return j_chat_message
+    clazz = findClass("org.apache.flink.agents.api.chat.messages.ChatMessage")
+    return clazz.fromMap(chat_message.model_dump(mode="json"))
 
 
-# TODO: Replace this with `to_java_chat_message()` when the `find_class` bug is fixed.
-def update_java_chat_message(chat_message: ChatMessage, j_chat_message: Any) -> str:
-    """Update a Java chat message using Python chat message."""
-    j_chat_message.setBlocksFromMaps(dump_blocks(chat_message))
-    j_chat_message.setExtraArgs(chat_message.extra_args)
-    if chat_message.tool_calls:
-        tool_calls = [
-            normalize_tool_call_id(tool_call) for tool_call in chat_message.tool_calls
-        ]
-        j_chat_message.setToolCalls(tool_calls)
-
-    return chat_message.role.value
+def update_java_chat_message(value: Any) -> dict:
+    """Extract fields on the interpreter thread for Java-owned conversions."""
+    return value.model_dump(mode="json")
 
 
 def update_java_document(document: Document, j_document: Any) -> None:
