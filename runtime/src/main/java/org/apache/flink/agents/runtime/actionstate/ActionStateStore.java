@@ -22,6 +22,7 @@ import org.apache.flink.agents.plan.actions.Action;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.function.IntPredicate;
 
 /** Interface for storing and retrieving the state of actions performed by agents. */
@@ -117,17 +118,26 @@ public interface ActionStateStore extends AutoCloseable {
     default void setOwnershipFilter(IntPredicate ownershipFilter) {}
 
     /**
-     * Records the highest sequence number for {@code key} whose effects are already reflected in
-     * the current Flink checkpoint state.
-     */
-    default void markCheckpointedSequence(Object key, long seqNum) throws Exception {}
-
-    /**
      * Get a marker object representing the current recovery point in the state store.
      *
      * @return a marker object, or null if not supported
      */
     default Object getRecoveryMarker() {
         return null;
+    }
+
+    /**
+     * Get a marker object using the per-key sequence numbers reflected in the current Flink
+     * checkpoint.
+     *
+     * <p>Implementations that do not need the sequence numbers delegate to {@link
+     * #getRecoveryMarker()} by default.
+     *
+     * @param lastCompletedSequenceNumbers per-key sequence numbers reflected in the current Flink
+     *     checkpoint
+     * @return a marker object, or null if not supported
+     */
+    default Object getRecoveryMarker(Map<?, Long> lastCompletedSequenceNumbers) {
+        return getRecoveryMarker();
     }
 }

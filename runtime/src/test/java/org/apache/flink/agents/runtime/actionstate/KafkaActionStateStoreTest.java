@@ -311,24 +311,6 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
-    void testPruneDropsCheckpointedBoundaryWhenNoLiveStateRemains() throws Exception {
-        String businessKeyIdentity =
-                ActionStateUtil.generateBusinessKeyIdentity(TEST_KEY, KEY_SERIALIZER);
-        actionStates.put(
-                generateKey(TEST_KEY, 6L, testAction, testEvent, MAX_PARALLELISM), testActionState);
-        actionStateStore.markCheckpointedSequence(TEST_KEY, 5L);
-        actionStateStore.pruneState(TEST_KEY, 5L);
-
-        // A later-sequence live state keeps the checkpointed boundary load-bearing.
-        assertThat(actionStateStore.getLatestKeySeqNum()).containsEntry(businessKeyIdentity, 5L);
-
-        // Once the identity has no live state left, prune the boundary too, otherwise the map
-        // grows one entry per key for the whole job lifetime.
-        actionStateStore.pruneState(TEST_KEY, 6L);
-        assertThat(actionStateStore.getLatestKeySeqNum()).isEmpty();
-    }
-
-    @Test
     void testGetCleansFutureStateForKeyContainingUnderscore() throws Exception {
         String flinkKey = "user_123";
         String stateKey = generateKey(flinkKey, 3L, testAction, testEvent, MAX_PARALLELISM);
@@ -438,15 +420,13 @@ public class KafkaActionStateStoreTest {
     }
 
     @Test
-    void testRecoveryMarkerSkipsCheckpointedSequenceAndKeepsLaterPendingSequence()
-            throws Exception {
+    void testRecoveryMarkerUsesSnapshotCompletedSequencesWithoutRetainingThem() throws Exception {
         ActionState completedState = new ActionState(testEvent);
         completedState.markCompleted();
         ActionState pendingState = new ActionState(new InputEvent("pending"));
 
         actionStateStore.put(TEST_KEY, 1L, testAction, testEvent, completedState);
         actionStateStore.put(TEST_KEY, 2L, testAction, testEvent, pendingState);
-        actionStateStore.markCheckpointedSequence(TEST_KEY, 1L);
 
         mockConsumer.updatePartitions(
                 TEST_TOPIC,
@@ -460,11 +440,17 @@ public class KafkaActionStateStoreTest {
                         new TopicPartition(TEST_TOPIC, 1),
                         2L));
 
-        Object recoveryMarkerObj = actionStateStore.getRecoveryMarker();
+        Object recoveryMarkerObj =
+                actionStateStore.getRecoveryMarker(Collections.singletonMap(TEST_KEY, 1L));
         KafkaActionStateRecoveryMarker recoveryMarker =
                 (KafkaActionStateRecoveryMarker) recoveryMarkerObj;
 
         assertThat(recoveryMarker.getOffsets().values()).contains(1L).doesNotContain(0L);
+
+        KafkaActionStateRecoveryMarker markerWithoutCompletedSequences =
+                (KafkaActionStateRecoveryMarker)
+                        actionStateStore.getRecoveryMarker(Collections.emptyMap());
+        assertThat(markerWithoutCompletedSequences.getOffsets().values()).contains(0L);
     }
 
     @Test

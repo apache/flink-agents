@@ -675,7 +675,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
 
         lastCommitted.actionTask.getRunnerContext().clearSensoryMemory();
-        durableExecManager.updateLastCompletedSequenceNumber(key, lastCommitted.sequenceNumber);
+        durableExecManager.updateLastCompletedSequenceNumber(lastCommitted.sequenceNumber);
         // Mirror the serial path: notify record finished. Noop rounds stay silent.
         if (!isInternalNoopInputAction(lastCommitted.actionTask.action)) {
             notifyRecordFinished(key);
@@ -878,7 +878,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             notifyRecordFinished(key);
             // Clean up sensory memory when a single run finished.
             actionTask.getRunnerContext().clearSensoryMemory();
-            durableExecManager.updateLastCompletedSequenceNumber(key, sequenceNumber);
+            durableExecManager.updateLastCompletedSequenceNumber(sequenceNumber);
 
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
@@ -1078,9 +1078,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void snapshotStateInternal(StateSnapshotContext context) throws Exception {
-        durableExecManager.snapshotRecoveryMarker();
-        durableExecManager.snapshotLastCompletedSequenceNumbers(
-                getKeyedStateBackend(), context.getCheckpointId());
+        Map<Object, Long> lastCompletedSequenceNumbers =
+                durableExecManager.snapshotLastCompletedSequenceNumbers(
+                        getKeyedStateBackend(), context.getCheckpointId());
+        durableExecManager.snapshotRecoveryMarker(lastCompletedSequenceNumbers);
 
         super.snapshotState(context);
     }

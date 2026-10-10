@@ -25,6 +25,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateKeyEncoder;
+import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -106,7 +107,19 @@ class DurableExecutionManagerTest {
         assertThat(dem.maybeGetActionState("k", 0L, action, event)).isNull();
         dem.maybeInitActionState("k", 0L, action, event);
         dem.notifyCheckpointComplete(1L);
-        dem.snapshotRecoveryMarker();
+        dem.snapshotRecoveryMarker(Map.of());
+        dem.close();
+    }
+
+    @Test
+    void snapshotRecoveryMarkerPassesCompletedSequencesToStore() throws Exception {
+        ActionStateStore store = mock(ActionStateStore.class);
+        DurableExecutionManager dem = new DurableExecutionManager(store);
+        Map<Object, Long> lastCompletedSequenceNumbers = Map.of("key", 3L);
+
+        dem.snapshotRecoveryMarker(lastCompletedSequenceNumbers);
+
+        verify(store).getRecoveryMarker(lastCompletedSequenceNumbers);
         dem.close();
     }
 
@@ -221,17 +234,15 @@ class DurableExecutionManagerTest {
                 .when(backend)
                 .applyToAllKeys(any(), any(), any(), any());
 
-        dem.snapshotLastCompletedSequenceNumbers(backend, 1000L);
+        Map<Object, Long> lastCompletedSequenceNumbers =
+                dem.snapshotLastCompletedSequenceNumbers(backend, 1000L);
 
-        assertThat(dem.getCheckpointIdToSeqNums())
-                .containsOnlyKeys(1000L)
-                .extractingByKey(1000L)
-                .asInstanceOf(
-                        org.assertj.core.api.InstanceOfAssertFactories.map(
-                                Object.class, Long.class))
+        assertThat(lastCompletedSequenceNumbers)
                 .containsEntry("k1", 10L)
                 .containsEntry("k2", 20L)
                 .hasSize(2);
+        assertThat(dem.getCheckpointIdToSeqNums())
+                .containsEntry(1000L, lastCompletedSequenceNumbers);
 
         dem.close();
     }

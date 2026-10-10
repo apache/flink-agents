@@ -94,9 +94,6 @@ public class KafkaActionStateStore implements ActionStateStore {
     // In memory action state for quick state retrieval
     private final Map<String, ActionState> actionStates;
 
-    // Records the latest checkpointed sequence number for each business key identity.
-    private final Map<String, Long> latestKeySeqNum;
-
     private final Map<String, StateRecordOffset> latestStateOffsets;
 
     // Kafka producer
@@ -149,7 +146,6 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.topic = topic;
         this.topicMetadataLoader = () -> testTopicMetadata(consumer, topic);
         this.topicMetadata = testTopicMetadata(consumer, topic);
-        this.latestKeySeqNum = new HashMap<>();
         this.latestStateOffsets = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
@@ -170,7 +166,6 @@ public class KafkaActionStateStore implements ActionStateStore {
             AgentConfiguration agentConfiguration, ActionStateKeyEncoder keyEncoder) {
         this.keyEncoder = Preconditions.checkNotNull(keyEncoder, "keyEncoder cannot be null");
         this.actionStates = new HashMap<>();
-        this.latestKeySeqNum = new HashMap<>();
         this.latestStateOffsets = new HashMap<>();
         this.agentConfiguration = agentConfiguration;
         this.tombstoneEnabled = agentConfiguration.get(KAFKA_ACTION_STATE_TOMBSTONE_ENABLED);
@@ -535,16 +530,6 @@ public class KafkaActionStateStore implements ActionStateStore {
         this.ownershipFilter = ownershipFilter;
     }
 
-    @VisibleForTesting
-    Map<String, Long> getLatestKeySeqNum() {
-        return latestKeySeqNum;
-    }
-
-    @Override
-    public void markCheckpointedSequence(Object key, long seqNum) {
-        latestKeySeqNum.merge(keyEncoder.generateBusinessKeyIdentity(key), seqNum, Math::max);
-    }
-
     @Override
     public void pruneState(Object key, long seqNum) {
         LOG.debug("Pruning state for key: {} up to sequence number: {}", key, seqNum);
@@ -596,18 +581,6 @@ public class KafkaActionStateStore implements ActionStateStore {
         actionStates.keySet().removeAll(keysToPrune);
         latestStateOffsets.keySet().removeAll(keysToPrune);
 
-        // Drop the checkpointed boundary once the identity has no live state left, otherwise a task
-        // over unbounded key cardinality accumulates one entry per key for the whole job lifetime.
-        // Losing it is harmless: any record that shows up for the identity afterwards is newer than
-        // the last completed sequence and has to be replayed either way.
-        if (actionStates.keySet().stream()
-                .noneMatch(
-                        cachedKey ->
-                                ActionStateUtil.matchesBusinessKeyIdentity(
-                                        cachedKey, businessKeyIdentity))) {
-            latestKeySeqNum.remove(businessKeyIdentity);
-        }
-
         LOG.debug("Pruned state for key: {} up to sequence number: {}", key, seqNum);
     }
 
@@ -619,7 +592,19 @@ public class KafkaActionStateStore implements ActionStateStore {
      */
     @Override
     public Object getRecoveryMarker() {
+        return getRecoveryMarker(Map.of());
+    }
+
+    @Override
+    public Object getRecoveryMarker(Map<?, Long> lastCompletedSequenceNumbers) {
         try {
+            Map<String, Long> lastCompletedSequenceNumbersByIdentity = new HashMap<>();
+            lastCompletedSequenceNumbers.forEach(
+                    (key, sequenceNumber) ->
+                            lastCompletedSequenceNumbersByIdentity.merge(
+                                    keyEncoder.generateBusinessKeyIdentity(key),
+                                    sequenceNumber,
+                                    Math::max));
             KafkaTopicMetadata currentTopicMetadata = loadVerifiedTopicMetadata();
             List<TopicPartition> partitions = new ArrayList<>();
             for (Integer partition : currentTopicMetadata.getPartitions()) {
@@ -632,7 +617,7 @@ public class KafkaActionStateStore implements ActionStateStore {
             }
             latestStateOffsets.forEach(
                     (stateKey, offset) -> {
-                        if (needsReplay(stateKey)) {
+                        if (needsReplay(stateKey, lastCompletedSequenceNumbersByIdentity)) {
                             recoveryOffsets.merge(offset.partition, offset.offset, Math::min);
                         }
                     });
@@ -831,13 +816,14 @@ public class KafkaActionStateStore implements ActionStateStore {
         KafkaTopicMetadata load() throws Exception;
     }
 
-    private boolean needsReplay(String stateKey) {
+    private boolean needsReplay(
+            String stateKey, Map<String, Long> lastCompletedSequenceNumbersByIdentity) {
         String businessKeyIdentity = ActionStateUtil.businessKeyIdentityOf(stateKey);
         if (businessKeyIdentity == null) {
             return true;
         }
 
-        Long checkpointedSeqNum = latestKeySeqNum.get(businessKeyIdentity);
+        Long checkpointedSeqNum = lastCompletedSequenceNumbersByIdentity.get(businessKeyIdentity);
         return checkpointedSeqNum == null
                 || !ActionStateUtil.matchesBusinessKeyIdentityWithSeqNum(
                         stateKey, businessKeyIdentity, seqNum -> seqNum <= checkpointedSeqNum);

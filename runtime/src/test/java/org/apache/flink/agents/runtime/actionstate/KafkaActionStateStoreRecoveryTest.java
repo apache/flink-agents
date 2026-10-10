@@ -17,8 +17,10 @@
  */
 package org.apache.flink.agents.runtime.actionstate;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -33,7 +35,6 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.runtime.checkpoint.OperatorSubtaskState;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
-import org.apache.flink.util.ExceptionUtils;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.MockConsumer;
 import org.apache.kafka.clients.producer.MockProducer;
@@ -49,87 +50,66 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowable;
 
-/**
- * End-to-end recovery test for a pending durable call result with a Kafka-backed store.
- *
- * <p>An action records a durable call, takes a real Flink checkpoint while the action is still
- * unfinished, then fails. Recovery must rebuild the pending result from the checkpoint's recovery
- * marker instead of skipping it, otherwise the durable supplier runs a second time. See
- * https://github.com/apache/flink-agents/issues/1158.
- */
+/** End-to-end recovery test for a queued action with a persisted durable call result. */
 public class KafkaActionStateStoreRecoveryTest {
 
     private static final String TOPIC = "test-action-state-recovery";
     private static final int MAX_PARALLELISM = 128;
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private static final AtomicInteger EXTERNAL_CALLS = new AtomicInteger();
-    private static final AtomicReference<KeyedOneInputStreamOperatorTestHarness<Long, Long, Object>>
-            HARNESS = new AtomicReference<>();
-    private static final AtomicReference<OperatorSubtaskState> CHECKPOINT = new AtomicReference<>();
 
-    /**
-     * Runs a real durable call, takes a real checkpoint while the action is still in flight, then
-     * fails without completing.
-     */
-    public static void durableCallThenCheckpointThenFail(Event event, RunnerContext context)
-            throws Exception {
+    public static void durableCall(Event event, RunnerContext context) throws Exception {
         Long input = (Long) InputEvent.fromEvent(event).getInput();
-        context.durableExecute(
-                new DurableCallable<Long>() {
-                    @Override
-                    public String getId() {
-                        return "multiply";
-                    }
+        Long result =
+                context.durableExecute(
+                        new DurableCallable<Long>() {
+                            @Override
+                            public String getId() {
+                                return "multiply";
+                            }
 
-                    @Override
-                    public Class<Long> getResultClass() {
-                        return Long.class;
-                    }
+                            @Override
+                            public Class<Long> getResultClass() {
+                                return Long.class;
+                            }
 
-                    @Override
-                    public Long call() {
-                        EXTERNAL_CALLS.incrementAndGet();
-                        return input * 10;
-                    }
-                });
-        if (CHECKPOINT.get() == null) {
-            CHECKPOINT.set(HARNESS.get().snapshot(1L, 1L));
-        }
-        throw new IllegalStateException("action fails while its durable result is pending");
+                            @Override
+                            public Long call() {
+                                return callExternal(input);
+                            }
+                        });
+        context.sendEvent(new OutputEvent(result));
     }
 
-    private static AgentPlan plan() {
-        try {
-            Action action =
-                    new Action(
-                            "durableCallThenCheckpointThenFail",
-                            new JavaFunction(
-                                    KafkaActionStateStoreRecoveryTest.class,
-                                    "durableCallThenCheckpointThenFail",
-                                    new Class<?>[] {Event.class, RunnerContext.class}),
-                            Collections.singletonList(InputEvent.EVENT_TYPE));
-            Map<String, Action> actions = new HashMap<>();
-            actions.put(action.getName(), action);
-            // The parallel engine drains in-flight actions before checkpointing. This test covers
-            // the continuation engine's pending-action checkpoint path through its serial fallback.
-            AgentConfiguration config = new AgentConfiguration();
-            config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
-            return new AgentPlan(actions, new HashMap<>(), config);
-        } catch (Exception e) {
-            ExceptionUtils.rethrow(e);
-        }
-        return null;
+    private static Long callExternal(Long input) {
+        EXTERNAL_CALLS.incrementAndGet();
+        return input * 10;
+    }
+
+    private static AgentPlan plan() throws Exception {
+        Action action =
+                new Action(
+                        "durableCall",
+                        new JavaFunction(
+                                KafkaActionStateStoreRecoveryTest.class,
+                                "durableCall",
+                                new Class<?>[] {Event.class, RunnerContext.class}),
+                        Collections.singletonList(InputEvent.EVENT_TYPE));
+        Map<String, Action> actions = new HashMap<>();
+        actions.put(action.getName(), action);
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        return new AgentPlan(actions, new HashMap<>(), config);
     }
 
     @Test
-    void pendingDurableResultSurvivesRecoveryFromCheckpointTakenMidAction() throws Exception {
+    void queuedActionUsesRecoveredDurableResultAfterRestore() throws Exception {
         MockProducer<String, ActionState> producer =
                 new MockProducer<>(
                         true,
@@ -146,41 +126,44 @@ public class KafkaActionStateStoreRecoveryTest {
                         createKeyEncoder(MAX_PARALLELISM));
 
         EXTERNAL_CALLS.set(0);
+        AgentPlan agentPlan = plan();
+        Action action = agentPlan.getActions().values().iterator().next();
         OperatorSubtaskState checkpoint;
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
-                        new ActionExecutionOperatorFactory<>(plan(), true, store),
-                        (KeySelector<Long, Long>) value -> value,
+                        new ActionExecutionOperatorFactory<>(agentPlan, true, store),
+                        (KeySelector<Long, Long>) value -> 1L,
                         TypeInformation.of(Long.class),
                         MAX_PARALLELISM,
                         1,
                         0)) {
             harness.open();
-            HARNESS.set(harness);
             ActionExecutionOperator<Long, Object> operator =
                     (ActionExecutionOperator<Long, Object>) harness.getOperator();
 
-            Throwable failure =
-                    catchThrowable(
-                            () -> {
-                                harness.processElement(new StreamRecord<>(7L));
-                                operator.waitInFlightEventsFinished();
-                            });
-            assertThat(failure).isNotNull();
-            checkpoint = CHECKPOINT.get();
-            assertThat(checkpoint)
-                    .as(
-                            "Action failed before checkpoint: %s",
-                            ExceptionUtils.stringifyException(failure))
-                    .isNotNull();
-            assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
+            harness.processElement(new StreamRecord<>(3L));
+            operator.waitInFlightEventsFinished();
+            assertThat(harness.getOutput())
+                    .singleElement()
+                    .isInstanceOfSatisfying(
+                            StreamRecord.class,
+                            record -> assertThat(record.getValue()).isEqualTo(30L));
+            harness.getOutput().clear();
+
+            InputEvent inputEvent = new InputEvent(7L);
+            ActionState pendingState = new ActionState(inputEvent);
+            pendingState.addCallResult(
+                    new CallResult("multiply", OBJECT_MAPPER.writeValueAsBytes(callExternal(7L))));
+            store.put(1L, 1L, action, inputEvent, pendingState);
+
+            harness.processElement(new StreamRecord<>(7L));
+            assertThat(harness.getOutput()).isEmpty();
+            checkpoint = harness.snapshot(1L, 1L);
+            assertThat(EXTERNAL_CALLS.get()).isEqualTo(2);
         }
 
-        // Recovery: a restarted task reads the checkpoint's recovery marker into a fresh store and
-        // must find the pending durable result that was recorded before the checkpoint.
         MockConsumer<String, ActionState> recoveryConsumer = recoveryConsumer(producer.history());
-        Action action = plan().getActions().values().iterator().next();
         try (KafkaActionStateStore recoveredStore =
                         new KafkaActionStateStore(
                                 new HashMap<>(),
@@ -191,26 +174,25 @@ public class KafkaActionStateStoreRecoveryTest {
                                 createKeyEncoder(MAX_PARALLELISM));
                 KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> restored =
                         new KeyedOneInputStreamOperatorTestHarness<>(
-                                new ActionExecutionOperatorFactory<>(plan(), true, recoveredStore),
-                                (KeySelector<Long, Long>) value -> value,
+                                new ActionExecutionOperatorFactory<>(
+                                        agentPlan, true, recoveredStore),
+                                (KeySelector<Long, Long>) value -> 1L,
                                 TypeInformation.of(Long.class),
                                 MAX_PARALLELISM,
                                 1,
                                 0)) {
             restored.initializeState(checkpoint);
             restored.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) restored.getOperator();
+            operator.waitInFlightEventsFinished();
 
-            ActionState recovered = recoveredStore.get(7L, 0L, action, new InputEvent(7L));
-            assertThat(recovered)
-                    .as("Recovery must replay the durable result recorded before the checkpoint")
-                    .isNotNull();
-            assertThat(recovered.isCompleted()).isFalse();
-            assertThat(recovered.getCallResults()).hasSize(1);
-            CallResult result = recovered.getCallResults().get(0);
-            assertThat(result.matches("multiply")).isTrue();
-            assertThat(result.isPending()).isFalse();
-            assertThat(result.isSuccess()).isTrue();
-            assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
+            assertThat(restored.getOutput())
+                    .singleElement()
+                    .isInstanceOfSatisfying(
+                            StreamRecord.class,
+                            record -> assertThat(record.getValue()).isEqualTo(70L));
+            assertThat(EXTERNAL_CALLS.get()).isEqualTo(2);
         }
     }
 
