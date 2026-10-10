@@ -224,13 +224,16 @@ public class KafkaActionStateStore implements ActionStateStore {
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
-            producer.send(kafkaRecord);
-            actionStates.put(stateKey, state);
+            producer.send(kafkaRecord).get();
             producer.flush();
+            actionStates.put(stateKey, state);
             LOG.debug(
                     "Stored action state to Kafka: key={}, isCompleted={}",
                     stateKey,
                     state.isCompleted());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to send action state to Kafka", e);
         }
