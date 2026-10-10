@@ -46,6 +46,7 @@ from flink_agents.api.runner_context import (
     RunnerContext,
 )
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
     durable_exception_message,
@@ -66,11 +67,7 @@ from flink_agents.runtime.memory.internal_base_long_term_memory import (
 from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
-from flink_agents.runtime.resource_cache import (
-    ResourceCache,
-    _failure_of,
-    _first_or_logged,
-)
+from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.task_lifecycle_listener import TaskLifecycleListener
 
 logger = logging.getLogger(__name__)
@@ -1720,12 +1717,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         ltm = self.__ltm
         self.__ltm = None
 
-        first_failure = _failure_of(ltm.close) if ltm is not None else None
+        first_failure = failure_of(ltm.close) if ltm is not None else None
 
         resource_cache = self.__resource_cache
         self.__resource_cache = None
-        first_failure = _first_or_logged(
-            _failure_of(resource_cache.close) if resource_cache is not None else None,
+        first_failure = first_or_logged(
+            failure_of(resource_cache.close) if resource_cache is not None else None,
             first_failure,
             "runner context resource cache",
         )
@@ -1737,8 +1734,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         scoped_caches = self.__scoped_resource_caches
         self.__scoped_resource_caches = {}
         for scoped in scoped_caches.values():
-            first_failure = _first_or_logged(
-                _failure_of(scoped[1].close),
+            first_failure = first_or_logged(
+                failure_of(scoped[1].close),
                 first_failure,
                 "sub-agent scope resource cache",
             )
