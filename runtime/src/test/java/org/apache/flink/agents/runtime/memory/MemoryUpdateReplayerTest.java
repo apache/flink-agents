@@ -134,6 +134,31 @@ public class MemoryUpdateReplayerTest {
     }
 
     @Test
+    void testReplayOfActionThatCaughtRejectedNewObjectUnderValue() throws Exception {
+        // The action writes a value, then fails to create an object below it, catches the
+        // exception and completes. The rejected newObject must not be recorded, otherwise replay
+        // re-applies it and fails recovery.
+        List<MemoryUpdate> updates =
+                recordUpdates(
+                        memory -> {
+                            memory.set("a", 1);
+                            try {
+                                memory.newObject("a.b");
+                            } catch (IllegalArgumentException | UnsupportedOperationException e) {
+                                // swallowed by the action
+                            }
+                        });
+
+        assertThat(updates).containsExactly(new MemoryUpdate("a", 1));
+
+        MemoryObject restored = freshMemory(new LinkedList<>());
+        assertThatCode(() -> MemoryUpdateReplayer.replay(restored, updates))
+                .doesNotThrowAnyException();
+        assertThat(restored.get("a").getValue()).isEqualTo(1);
+        assertThat(restored.isExist("a.b")).isFalse();
+    }
+
+    @Test
     void testReplayPreservesUserNullValueWrite() throws Exception {
         // A user's set(path, null) is a value write, not an object creation; replay must keep it
         // a value leaf.
