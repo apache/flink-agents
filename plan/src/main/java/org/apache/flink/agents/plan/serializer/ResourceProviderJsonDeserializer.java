@@ -128,9 +128,13 @@ public class ResourceProviderJsonDeserializer extends StdDeserializer<ResourcePr
 
     private InternalSubagentProvider deserializeInternalSubagentProvider(JsonNode node) {
         String name = node.get("name").asText();
+        String description =
+                node.hasNonNull("description") ? node.get("description").asText() : null;
+        String inputSchema =
+                node.hasNonNull("inputSchema") ? node.get("inputSchema").asText() : null;
         try {
             AgentPlan childPlan = mapper.treeToValue(node.get("childPlan"), AgentPlan.class);
-            return new InternalSubagentProvider(name, childPlan);
+            return new InternalSubagentProvider(name, childPlan, description, inputSchema);
         } catch (JsonProcessingException e) {
             throw new RuntimeException(e);
         }

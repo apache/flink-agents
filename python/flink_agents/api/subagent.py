@@ -201,6 +201,26 @@ class SubagentFutures(ABC):
         """
 
 
+class SubagentMetadataProvider(ABC):
+    """Optional capability for an Agent to declare its sub-agent metadata.
+
+    An Agent registered directly as an AGENT resource implements this
+    interface to state the caller-facing description and input schema the
+    compiled plan carries into :class:`SubagentSetup`; both may be None to
+    take the defaults. Without this capability the sub-agent is still
+    callable from actions, but carries no metadata a chat model could route
+    or call it by.
+    """
+
+    @abstractmethod
+    def get_subagent_description(self) -> str | None:
+        """Return the caller-facing description, or None for the empty default."""
+
+    @abstractmethod
+    def get_subagent_input_schema(self) -> str | None:
+        """Return the JSON Schema for call arguments, or None to declare none."""
+
+
 class SubagentSetup(SerializableResource):
     """Caller-facing definition of a sub-agent, registered as an AGENT resource.
 

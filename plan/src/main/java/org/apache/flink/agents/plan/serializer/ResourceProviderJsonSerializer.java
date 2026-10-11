@@ -128,6 +128,12 @@ public class ResourceProviderJsonSerializer extends StdSerializer<ResourceProvid
         gen.writeStringField("name", provider.getName());
         gen.writeStringField("type", provider.getType().getValue());
         gen.writeStringField("scope", provider.getScope());
+        if (provider.getDescription() != null) {
+            gen.writeStringField("description", provider.getDescription());
+        }
+        if (provider.getInputSchema() != null) {
+            gen.writeStringField("inputSchema", provider.getInputSchema());
+        }
         gen.writeObjectField("childPlan", provider.getChildPlan());
         gen.writeStringField(
                 "__resource_provider_type__", InternalSubagentProvider.class.getSimpleName());

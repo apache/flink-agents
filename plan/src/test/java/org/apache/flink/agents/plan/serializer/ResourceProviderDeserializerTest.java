@@ -19,11 +19,15 @@
 package org.apache.flink.agents.plan.serializer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadataProvider;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -32,6 +36,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 
 /** Test for {@link ResourceProviderJsonDeserializer}. */
 public class ResourceProviderDeserializerTest {
@@ -119,5 +124,69 @@ public class ResourceProviderDeserializerTest {
                 pythonSerializableResourceProvider.getModule());
         assertEquals("FunctionTool", pythonSerializableResourceProvider.getClazz());
         assertEquals(serialized, pythonSerializableResourceProvider.getSerialized());
+    }
+
+    @Test
+    public void testInternalSubagentProviderRoundTrip() throws Exception {
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, new Agent());
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider)
+                        new AgentPlan(root)
+                                .getResourceProviders()
+                                .get(ResourceType.AGENT)
+                                .get("reviewer");
+
+        String json = new ObjectMapper().writeValueAsString(provider);
+        ResourceProvider parsed = new ObjectMapper().readValue(json, ResourceProvider.class);
+
+        assertInstanceOf(InternalSubagentProvider.class, parsed);
+        InternalSubagentProvider internal = (InternalSubagentProvider) parsed;
+        assertEquals("reviewer", internal.getName());
+        assertEquals("reviewer", internal.getScope());
+        // AgentPlan does not implement equals, so compare the plan's serialized facets.
+        assertEquals(
+                provider.getChildPlan().getAgentName(), internal.getChildPlan().getAgentName());
+        assertEquals(
+                provider.getChildPlan().getActions().keySet(),
+                internal.getChildPlan().getActions().keySet());
+        assertEquals(
+                provider.getChildPlan().getConfigData(), internal.getChildPlan().getConfigData());
+        assertNull(internal.getDescription());
+        assertNull(internal.getInputSchema());
+    }
+
+    @Test
+    public void testInternalSubagentProviderRoundTripKeepsMetadata() throws Exception {
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, new MetadataAgent());
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider)
+                        new AgentPlan(root)
+                                .getResourceProviders()
+                                .get(ResourceType.AGENT)
+                                .get("reviewer");
+
+        String json = new ObjectMapper().writeValueAsString(provider);
+        ResourceProvider parsed = new ObjectMapper().readValue(json, ResourceProvider.class);
+
+        InternalSubagentProvider internal = (InternalSubagentProvider) parsed;
+        assertEquals("Reviews pull requests and reports findings", internal.getDescription());
+        assertEquals(
+                "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}",
+                internal.getInputSchema());
+    }
+
+    private static class MetadataAgent extends Agent implements SubagentMetadataProvider {
+
+        @Override
+        public String getSubagentDescription() {
+            return "Reviews pull requests and reports findings";
+        }
+
+        @Override
+        public String getSubagentInputSchema() {
+            return "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}";
+        }
     }
 }

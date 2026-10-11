@@ -20,9 +20,11 @@ package org.apache.flink.agents.plan;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.SubagentMetadataProvider;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.subagent.TestSubagentSetup;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
@@ -103,6 +105,40 @@ public class AgentPlanSubagentResourceTest {
         InternalSubagentProvider provider = (InternalSubagentProvider) agentProviders.get("child");
         assertThat(provider.getScope()).isEqualTo("child");
         assertThat(provider.getChildPlan()).isNotNull();
+        assertThat(provider.getDescription()).isNull();
+        assertThat(provider.getInputSchema()).isNull();
+    }
+
+    /** A child agent implementing the metadata capability compiles its declaration through. */
+    private static class MetadataChildAgent extends Agent implements SubagentMetadataProvider {
+
+        @Override
+        public String getSubagentDescription() {
+            return "Reviews pull requests and reports findings";
+        }
+
+        @Override
+        public String getSubagentInputSchema() {
+            return "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}";
+        }
+    }
+
+    @Test
+    void metadataChildAgentCompilesIntoProviderCarryingMetadata() throws Exception {
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, new MetadataChildAgent());
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider) agentProviders.get("reviewer");
+        assertThat(provider.getScope()).isEqualTo("reviewer");
+        assertThat(provider.getDescription())
+                .isEqualTo("Reviews pull requests and reports findings");
+        assertThat(provider.getInputSchema())
+                .isEqualTo("{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}");
     }
 
     /**
@@ -131,6 +167,56 @@ public class AgentPlanSubagentResourceTest {
         assertThat(roundTripped.getChildPlan()).isNotNull();
         assertThat(roundTripped.getChildPlan().getAgentName())
                 .isEqualTo(original.getChildPlan().getAgentName());
+    }
+
+    @Test
+    void reactAgentCompilesIntoProviderWithDefaultMetadata() throws Exception {
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, bareReactAgent());
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider) agentProviders.get("reviewer");
+        assertThat(provider.getScope()).isEqualTo("reviewer");
+        // The defaults must survive compilation, or registering a bare ReActAgent would
+        // compile into an internal sub-agent that fails the parent chat model's open() check.
+        assertThat(provider.getDescription()).contains("general-purpose");
+        assertThat(provider.getInputSchema()).contains("\"input\"");
+    }
+
+    @Test
+    void reactAgentCompilesIntoProviderWithDeclaredMetadata() throws Exception {
+        Agent root = new Agent();
+        root.addResource(
+                "reviewer",
+                ResourceType.AGENT,
+                new ReActAgent(
+                        chatModelDescriptor(),
+                        null,
+                        null,
+                        "Reviews pull requests",
+                        "{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}"));
+
+        AgentPlan plan = new AgentPlan(root);
+
+        Map<String, ResourceProvider> agentProviders =
+                plan.getResourceProviders().get(ResourceType.AGENT);
+        InternalSubagentProvider provider =
+                (InternalSubagentProvider) agentProviders.get("reviewer");
+        assertThat(provider.getDescription()).isEqualTo("Reviews pull requests");
+        assertThat(provider.getInputSchema())
+                .isEqualTo("{\"type\":\"object\",\"properties\":{\"diff\":{\"type\":\"string\"}}}");
+    }
+
+    private static ReActAgent bareReactAgent() {
+        return new ReActAgent(chatModelDescriptor(), null, null);
+    }
+
+    private static ResourceDescriptor chatModelDescriptor() {
+        return ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build();
     }
 
     @Test

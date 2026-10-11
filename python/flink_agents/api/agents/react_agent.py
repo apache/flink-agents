@@ -37,6 +37,7 @@ from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.subagent import SubagentMetadataProvider
 
 if TYPE_CHECKING:
     from flink_agents.api.events.chat_event import ChatResponseEvent
@@ -45,9 +46,15 @@ _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
 _DEFAULT_USER_PROMPT = "_default_user_prompt"
 _OUTPUT_SCHEMA = "_output_schema"
+_DEFAULT_SUBAGENT_DESCRIPTION = (
+    "A general-purpose agent that completes a delegated task using its tools."
+)
+_DEFAULT_SUBAGENT_INPUT_SCHEMA = (
+    '{"type":"object","properties":{"input":{"type":"string"}},"required":["input"]}'
+)
 
 
-class ReActAgent(Agent):
+class ReActAgent(Agent, SubagentMetadataProvider):
     """Built-in implementation of ReAct agent which is based on the function
     call ability of llm.
 
@@ -105,6 +112,8 @@ class ReActAgent(Agent):
         chat_model: ResourceDescriptor,
         prompt: Prompt | None = None,
         output_schema: type[BaseModel] | RowTypeInfo | None = None,
+        subagent_description: str | None = None,
+        subagent_input_schema: str | None = None,
     ) -> None:
         """Init method of ReActAgent.
 
@@ -119,6 +128,13 @@ class ReActAgent(Agent):
             The schema should be RowTypeInfo or subclass of BaseModel. When user
             provide output schema, ReAct agent will add system prompt to instruct
             response format of llm, and add output parser according to the schema.
+        subagent_description : Optional[str] = None
+            Caller-facing description presented when this agent runs as a sub-agent.
+            Falls back to a general-purpose default when not declared.
+        subagent_input_schema : Optional[str] = None
+            Caller-facing JSON schema presented when this agent runs as a sub-agent.
+            Falls back to a single "input" string field, the shape the prompt-free
+            map path of start_action passes through as the user message.
 
         Raises:
         ------
@@ -127,6 +143,8 @@ class ReActAgent(Agent):
             BaseModel schema cannot be rendered as a JSON Schema.
         """
         super().__init__()
+        self._subagent_description = subagent_description
+        self._subagent_input_schema = subagent_input_schema
         self.add_resource(_DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL, chat_model)
 
         if output_schema:
@@ -154,6 +172,22 @@ class ReActAgent(Agent):
             output_schema=OutputSchema(output_schema=output_schema) if output_schema else None,
         )
 
+    def get_subagent_description(self) -> str | None:
+        """Caller-facing description when running as a sub-agent."""
+        return (
+            self._subagent_description
+            if self._subagent_description is not None
+            else _DEFAULT_SUBAGENT_DESCRIPTION
+        )
+
+    def get_subagent_input_schema(self) -> str | None:
+        """Caller-facing input schema when running as a sub-agent."""
+        return (
+            self._subagent_input_schema
+            if self._subagent_input_schema is not None
+            else _DEFAULT_SUBAGENT_INPUT_SCHEMA
+        )
+
     @staticmethod
     def start_action(event: Event, ctx: RunnerContext) -> None:
         """Start action to format user input and send chat request event."""
@@ -178,20 +212,31 @@ class ReActAgent(Agent):
                 usr_msgs = [ChatMessage.user(usr_input)]
         else:
             if not prompt:
-                err_msg = (
-                    f"Input type is {usr_input.__class__}, which is not primitive types. "
-                    f"User should provide prompt to help convert it to ChatMessage."
+                if isinstance(usr_input, dict) and set(usr_input.keys()) == {"input"}:
+                    # The one structured shape that works without a user-supplied
+                    # prompt: a single "input" entry, the shape the default sub-agent
+                    # input schema declares. The value becomes the user message
+                    # directly, mirroring the prompt-less primitive branch, so a
+                    # model-driven delegation call works out of the box.
+                    usr_msgs = [ChatMessage.user(str(usr_input["input"]))]
+                else:
+                    err_msg = (
+                        f"Input type is {usr_input.__class__}, which is not primitive types. "
+                        f"User should provide prompt to help convert it to ChatMessage."
+                    )
+                    raise RuntimeError(err_msg)
+            else:
+                if isinstance(usr_input, Row):
+                    usr_input = usr_input.as_dict(recursive=True)
+                elif isinstance(usr_input, dict):
+                    pass
+                else:  # regard as pojo
+                    usr_input = usr_input.__dict__
+                # Convert Any values to str to match format_messages signature
+                str_usr_input = {k: str(v) for k, v in usr_input.items()}
+                usr_msgs = prompt.format_messages(
+                    role=MessageRole.USER, **str_usr_input
                 )
-                raise RuntimeError(err_msg)
-            if isinstance(usr_input, Row):
-                usr_input = usr_input.as_dict(recursive=True)
-            elif isinstance(usr_input, dict):
-                pass
-            else:  # regard as pojo
-                usr_input = usr_input.__dict__
-            # Convert Any values to str to match format_messages signature
-            str_usr_input = {k: str(v) for k, v in usr_input.items()}
-            usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
 
         try:
             schema_prompt = cast(
