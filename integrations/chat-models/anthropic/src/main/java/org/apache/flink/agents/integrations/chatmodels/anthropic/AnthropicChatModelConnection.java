@@ -21,25 +21,37 @@ import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonSchemaLocalValidation;
 import com.anthropic.core.JsonValue;
+import com.anthropic.models.messages.Base64ImageSource;
+import com.anthropic.models.messages.Base64PdfSource;
 import com.anthropic.models.messages.ContentBlock;
 import com.anthropic.models.messages.ContentBlockParam;
+import com.anthropic.models.messages.DocumentBlockParam;
+import com.anthropic.models.messages.ImageBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
+import com.anthropic.models.messages.PlainTextSource;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
 import com.anthropic.models.messages.ToolResultBlockParam;
 import com.anthropic.models.messages.ToolUseBlockParam;
+import com.anthropic.models.messages.UrlImageSource;
+import com.anthropic.models.messages.UrlPdfSource;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -48,11 +60,14 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -90,6 +105,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private static final Logger LOG = LoggerFactory.getLogger(AnthropicChatModelConnection.class);
 
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
+
+    /** The image media types the Anthropic Messages API accepts. */
+    private static final Set<String> IMAGE_MEDIA_TYPES =
+            Set.of("image/jpeg", "image/png", "image/gif", "image/webp");
 
     private final ObjectMapper mapper = new ObjectMapper();
     private final AnthropicClient client;
@@ -475,8 +494,6 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
-        // Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockException.rejectMedia("Anthropic", messages);
         try {
             BuiltRequest built = buildRequest(messages, tools, modelParams, outputSchema);
             Message response = client.messages().create(built.params);
@@ -497,6 +514,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             }
 
             return result;
+        } catch (UnsupportedContentBlockException e) {
+            // Unchanged, so callers can catch it by type; other build failures stay wrapped.
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to call Anthropic messages API.", e);
         }
@@ -643,17 +663,39 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private List<TextBlockParam> extractSystemMessages(List<ChatMessage> messages) {
         return messages.stream()
                 .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                .map(m -> TextBlockParam.builder().text(m.getText()).build())
+                .map(
+                        m -> {
+                            requireTextOnly(m);
+                            return TextBlockParam.builder().text(m.getText()).build();
+                        })
                 .collect(Collectors.toList());
     }
 
     private MessageParam convertToAnthropicMessage(ChatMessage message) {
         MessageRole role = message.getRole();
         String content = Optional.ofNullable(message.getText()).orElse("");
+        if (role != MessageRole.USER) {
+            requireTextOnly(message);
+        }
 
         switch (role) {
             case USER:
-                return MessageParam.builder().role(MessageParam.Role.USER).content(content).build();
+                if (message.getBlocks().stream().noneMatch(b -> b instanceof MediaBlock)) {
+                    return MessageParam.builder()
+                            .role(MessageParam.Role.USER)
+                            .content(content)
+                            .build();
+                }
+                // A user message with media is sent as content blocks, in block order.
+                List<ContentBlockParam> blocks = new ArrayList<>();
+                for (org.apache.flink.agents.api.chat.messages.ContentBlock block :
+                        message.getBlocks()) {
+                    blocks.add(toContentBlockParam(block));
+                }
+                return MessageParam.builder()
+                        .role(MessageParam.Role.USER)
+                        .contentOfBlockParams(blocks)
+                        .build();
 
             case ASSISTANT:
                 List<Map<String, Object>> toolCalls = message.getToolCalls();
@@ -695,6 +737,103 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
         }
+    }
+
+    private static ContentBlockParam toContentBlockParam(
+            org.apache.flink.agents.api.chat.messages.ContentBlock block) {
+        if (block instanceof org.apache.flink.agents.api.chat.messages.TextBlock) {
+            return ContentBlockParam.ofText(
+                    TextBlockParam.builder()
+                            .text(
+                                    ((org.apache.flink.agents.api.chat.messages.TextBlock) block)
+                                            .getText())
+                            .build());
+        }
+        if (block instanceof ImageBlock) {
+            ImageBlock image = (ImageBlock) block;
+            if (!IMAGE_MEDIA_TYPES.contains(essence(image.getMediaType()))) {
+                throw unsupported(block, "images must be JPEG, PNG, GIF or WebP");
+            }
+            ImageBlockParam.Builder param = ImageBlockParam.builder();
+            if (image.getSource() instanceof UrlSource) {
+                param.source(
+                        UrlImageSource.builder()
+                                .url(((UrlSource) image.getSource()).getUrl())
+                                .build());
+            } else {
+                param.source(
+                        Base64ImageSource.builder()
+                                .data(((Base64Source) image.getSource()).getData())
+                                .mediaType(
+                                        Base64ImageSource.MediaType.of(
+                                                essence(image.getMediaType())))
+                                .build());
+            }
+            return ContentBlockParam.ofImage(param.build());
+        }
+        if (block instanceof DocumentBlock) {
+            return ContentBlockParam.ofDocument(toDocumentBlockParam((DocumentBlock) block));
+        }
+        throw unsupported(block, "Anthropic accepts images and PDF or plain-text documents only");
+    }
+
+    private static DocumentBlockParam toDocumentBlockParam(DocumentBlock document) {
+        String mediaType = essence(document.getMediaType());
+        DocumentBlockParam.Builder param = DocumentBlockParam.builder();
+        if (document.getName() != null) {
+            param.title(document.getName());
+        }
+        if ("application/pdf".equals(mediaType)) {
+            if (document.getSource() instanceof UrlSource) {
+                param.source(
+                        UrlPdfSource.builder()
+                                .url(((UrlSource) document.getSource()).getUrl())
+                                .build());
+            } else {
+                param.source(
+                        Base64PdfSource.builder()
+                                .data(((Base64Source) document.getSource()).getData())
+                                .build());
+            }
+            return param.build();
+        }
+        if ("text/plain".equals(mediaType) && document.getSource() instanceof Base64Source) {
+            byte[] text;
+            try {
+                text = Base64.getDecoder().decode(((Base64Source) document.getSource()).getData());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(
+                        "A document block's base64 data could not be decoded.", e);
+            }
+            return param.source(
+                            PlainTextSource.builder()
+                                    .data(new String(text, StandardCharsets.UTF_8))
+                                    .build())
+                    .build();
+        }
+        throw unsupported(document, "documents must be PDF, or Base64 plain text, for Anthropic");
+    }
+
+    private static void requireTextOnly(ChatMessage message) {
+        for (org.apache.flink.agents.api.chat.messages.ContentBlock block : message.getBlocks()) {
+            if (block instanceof MediaBlock) {
+                throw unsupported(
+                        block,
+                        "only user messages can carry media, not "
+                                + message.getRole().getValue()
+                                + " messages");
+            }
+        }
+    }
+
+    /** The media type without parameters, lower-cased. */
+    private static String essence(String mediaType) {
+        return mediaType.split(";", 2)[0].trim().toLowerCase(Locale.ROOT);
+    }
+
+    private static UnsupportedContentBlockException unsupported(
+            org.apache.flink.agents.api.chat.messages.ContentBlock block, String reason) {
+        return UnsupportedContentBlockException.forBlock("Anthropic", block, reason);
     }
 
     private List<ContentBlockParam> convertToolCallsToToolUse(List<Map<String, Object>> toolCalls) {

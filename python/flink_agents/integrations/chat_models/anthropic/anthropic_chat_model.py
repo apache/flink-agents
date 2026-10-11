@@ -15,21 +15,36 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import base64
+import binascii
 import logging
 import uuid
 from typing import Any, Dict, List, Mapping, Sequence
 
 from anthropic import Anthropic, transform_schema
 from anthropic._types import NOT_GIVEN
-from anthropic.types import MessageParam, TextBlockParam, ToolParam
+from anthropic.types import (
+    ContentBlockParam,
+    DocumentBlockParam,
+    MessageParam,
+    TextBlockParam,
+    ToolParam,
+)
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import (
+    Base64Source,
     ChatMessage,
+    ContentBlock,
+    DocumentBlock,
+    ImageBlock,
+    MediaBlock,
     MessageRole,
+    TextBlock,
     UnsupportedContentBlockError,
+    UrlSource,
 )
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
@@ -58,8 +73,99 @@ def to_anthropic_tool(
     }
 
 
+_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
+
+
+def _unsupported(block: ContentBlock, reason: str) -> UnsupportedContentBlockError:
+    return UnsupportedContentBlockError.for_block("Anthropic", block, reason)
+
+
+def _essence(media_type: str) -> str:
+    """The media type without parameters, lower-cased."""
+    return media_type.split(";", 1)[0].strip().lower()
+
+
+def _require_text_only(message: ChatMessage) -> None:
+    for block in message.blocks:
+        if isinstance(block, MediaBlock):
+            reason = (
+                f"only user messages can carry media, not {message.role.value} messages"
+            )
+            raise _unsupported(block, reason)
+
+
+def _to_document_block(block: DocumentBlock) -> DocumentBlockParam:
+    media_type = _essence(block.media_type)
+    if media_type == "application/pdf":
+        if isinstance(block.source, UrlSource):
+            source = {"type": "url", "url": block.source.url}
+        else:
+            source = {
+                "type": "base64",
+                "media_type": "application/pdf",
+                "data": block.source.data,
+            }
+    elif media_type == "text/plain" and isinstance(block.source, Base64Source):
+        try:
+            data = base64.b64decode(block.source.data, validate=True)
+        except binascii.Error as e:
+            msg = "A document block's base64 data could not be decoded."
+            raise ValueError(msg) from e
+        source = {
+            "type": "text",
+            "media_type": "text/plain",
+            "data": data.decode("utf-8", errors="replace"),
+        }
+    else:
+        raise _unsupported(
+            block, "documents must be PDF, or Base64 plain text, for Anthropic"
+        )
+    document: DocumentBlockParam = {"type": "document", "source": source}
+    if block.name is not None:
+        document["title"] = block.name
+    return document
+
+
+def _to_content_block(block: ContentBlock) -> ContentBlockParam:
+    if isinstance(block, TextBlock):
+        return {"type": "text", "text": block.text}
+    if isinstance(block, ImageBlock):
+        media_type = _essence(block.media_type)
+        if media_type not in _IMAGE_MEDIA_TYPES:
+            raise _unsupported(block, "images must be JPEG, PNG, GIF or WebP")
+        if isinstance(block.source, UrlSource):
+            source = {"type": "url", "url": block.source.url}
+        else:
+            source = {
+                "type": "base64",
+                "media_type": media_type,
+                "data": block.source.data,
+            }
+        return {"type": "image", "source": source}
+    if isinstance(block, DocumentBlock):
+        return _to_document_block(block)
+    raise _unsupported(
+        block, "Anthropic accepts images and PDF or plain-text documents only"
+    )
+
+
+def _user_content(message: ChatMessage) -> str | List[ContentBlockParam]:
+    """Keep plain string content for text-only messages; media switches to blocks."""
+    if not any(isinstance(block, MediaBlock) for block in message.blocks):
+        return message.text
+    return [_to_content_block(block) for block in message.blocks]
+
+
 def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
-    """Convert ChatMessage to Anthropic MessageParam format."""
+    """Convert ChatMessage to Anthropic MessageParam format.
+
+    Only user messages can carry media: images (JPEG, PNG, GIF or WebP) and PDF
+    documents by Base64 data or URL, and plain-text documents by Base64 data.
+    Any other media, or media in another role, raises
+    UnsupportedContentBlockError.
+    """
+    if message.role != MessageRole.USER:
+        _require_text_only(message)
     if message.role == MessageRole.TOOL:
         return {
             "role": MessageRole.USER.value,
@@ -86,7 +192,7 @@ def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
     else:
         return {
             "role": message.role.value,
-            "content": message.text,
+            "content": _user_content(message),
         }
 
 
@@ -114,6 +220,8 @@ def convert_to_anthropic_system_prompts(
     system_messages = [
         message for message in messages if message.role == MessageRole.SYSTEM
     ]
+    for message in system_messages:
+        _require_text_only(message)
     return [
         TextBlockParam(type="text", text=message.text) for message in system_messages
     ]
@@ -481,8 +589,6 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         ChatMessage
             Model response message
         """
-        # Media blocks are not sent yet; fail rather than drop them (#1059).
-        UnsupportedContentBlockError.reject_media("Anthropic", messages)
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [
