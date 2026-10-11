@@ -55,6 +55,7 @@ import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -109,9 +110,21 @@ public class ReActAgentTest {
     @Test
     @DisplayName("An agent built on a renderable schema prompts with its rendered JSON Schema")
     public void testAgentAcceptsRenderableSchema() {
-        assertThat(schemaPromptOf(agentWithSchema(WithCount.class)))
-                .contains(
-                        "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}}");
+        assertThat(schemaPromptOf(agentWithSchema(WithCount.class))).contains(WITH_COUNT_SCHEMA);
+    }
+
+    @Test
+    @DisplayName("An agent built on a class schema registers the native prompt with its schema")
+    public void testAgentRegistersNativeSchemaPromptWithRenderedSchema() {
+        assertThat(nativeSchemaPromptOf(agentWithSchema(WithCount.class)))
+                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA);
+    }
+
+    @Test
+    @DisplayName("An agent built on a RowTypeInfo schema registers the native prompt with its text")
+    public void testRowTypeSchemaRegistersNativeSchemaPrompt() {
+        assertThat(nativeSchemaPromptOf(agentWithSchema(rowTypeInfo())))
+                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + rowTypeInfo());
     }
 
     @Test
@@ -132,20 +145,60 @@ public class ReActAgentTest {
         ChatRequestEvent request =
                 runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
 
-        assertThat(systemTexts(request)).anyMatch(text -> text.contains(SCHEMA_INSTRUCTION));
+        assertThat(systemTexts(request)).containsExactly(schemaPromptOf(agent));
     }
 
     @Test
-    @DisplayName("A schema the default chat model applies natively omits the schema instruction")
-    public void testNativelyAppliedSchemaOmitsInstruction() throws Exception {
+    @DisplayName("A schema the default chat model applies natively lists its fields without JSON")
+    public void testNativelyAppliedSchemaListsFieldsWithoutJson() throws Exception {
         ReActAgent agent = agentWithSchema(WithCount.class);
 
         ChatRequestEvent request =
                 runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
 
-        assertThat(systemTexts(request)).noneMatch(text -> text.contains(SCHEMA_INSTRUCTION));
+        assertThat(request.getMessages())
+                .extracting(ChatMessage::getRole)
+                .containsExactly(MessageRole.SYSTEM, MessageRole.USER);
+        assertThat(systemTexts(request))
+                .containsExactly(NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA);
         assertThat(request.getOutputSchema()).isEqualTo(WithCount.class);
-        assertThat(schemaPromptOf(agent)).startsWith(SCHEMA_INSTRUCTION);
+    }
+
+    @Test
+    @DisplayName("The schema instruction follows the user prompt's first system message")
+    public void testSchemaInstructionFollowsTheFirstSystemMessage() throws Exception {
+        Prompt prompt =
+                Prompt.fromMessages(
+                        List.of(
+                                new ChatMessage(MessageRole.SYSTEM, "You are a counter."),
+                                new ChatMessage(MessageRole.USER, "{input}")));
+        ReActAgent agent = agentWithSchema(WithCount.class, prompt);
+
+        ChatRequestEvent request =
+                runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+
+        assertThat(request.getMessages())
+                .extracting(ChatMessage::getRole, ChatMessage::getText)
+                .containsExactly(
+                        tuple(MessageRole.SYSTEM, "You are a counter."),
+                        tuple(MessageRole.SYSTEM, NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA),
+                        tuple(MessageRole.USER, "42"));
+    }
+
+    @Test
+    @DisplayName("A native answer on a plan without the native prompt adds no instruction")
+    public void testNativeGateWithoutNativePromptAddsNoInstruction() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+        RunnerContext ctx =
+                contextFor(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+        when(ctx.getResource("_default_native_schema_prompt", ResourceType.PROMPT))
+                .thenThrow(new IllegalArgumentException("Resource not found"));
+
+        ReActAgent.startAction(new InputEvent(42), ctx);
+
+        ChatRequestEvent request = sentRequest(ctx);
+        assertThat(systemTexts(request)).isEmpty();
+        assertThat(request.getOutputSchema()).isEqualTo(WithCount.class);
     }
 
     @Test
@@ -156,7 +209,7 @@ public class ReActAgentTest {
         ChatRequestEvent request =
                 runStart(agent, setup(StructuredOutputStrategy.NATIVE, CLASS_SCHEMAS_ONLY));
 
-        assertThat(systemTexts(request)).anyMatch(text -> text.contains(SCHEMA_INSTRUCTION));
+        assertThat(systemTexts(request)).containsExactly(schemaPromptOf(agent));
         assertThat(request.getOutputSchema()).isInstanceOf(OutputSchema.class);
     }
 
@@ -217,6 +270,14 @@ public class ReActAgentTest {
 
     private static final String SCHEMA_INSTRUCTION = "The final response should be json format";
 
+    /** Pinned as a literal, identical to the Python test's, so the two languages cannot drift. */
+    private static final String NATIVE_SCHEMA_INSTRUCTION =
+            "The final response must include the information for every required field of the"
+                    + " following schema. It does not need to be in JSON format. Schema: ";
+
+    private static final String WITH_COUNT_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}}";
+
     /** Translates a POJO class schema, as the providers do, and no RowTypeInfo schema. */
     private static final NativeStructuredOutputSupport[] CLASS_SCHEMAS_ONLY = {
         NativeStructuredOutputSupport.NATIVE_RECOMMENDED, NativeStructuredOutputSupport.INFEASIBLE
@@ -241,6 +302,10 @@ public class ReActAgentTest {
         when(ctx.getResource("_default_chat_model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
         when(ctx.getResource("_default_schema_prompt", ResourceType.PROMPT))
                 .thenReturn((Resource) prompts.get("_default_schema_prompt"));
+        when(ctx.getResource("_default_native_schema_prompt", ResourceType.PROMPT))
+                .thenReturn((Resource) prompts.get("_default_native_schema_prompt"));
+        when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT))
+                .thenReturn((Resource) prompts.get("_default_user_prompt"));
         when(ctx.getActionConfigValue("output_schema")).thenReturn(config.get("output_schema"));
         return ctx;
     }
@@ -309,17 +374,27 @@ public class ReActAgentTest {
     }
 
     private static ReActAgent agentWithSchema(Object outputSchema) {
+        return agentWithSchema(outputSchema, null);
+    }
+
+    private static ReActAgent agentWithSchema(Object outputSchema, @Nullable Prompt prompt) {
         return new ReActAgent(
                 ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build(),
-                null,
+                prompt,
                 outputSchema);
     }
 
     private static String schemaPromptOf(ReActAgent agent) {
-        Prompt schemaPrompt =
-                (Prompt)
-                        agent.getResources().get(ResourceType.PROMPT).get("_default_schema_prompt");
-        return schemaPrompt.formatString(Map.of());
+        return promptTextOf(agent, "_default_schema_prompt");
+    }
+
+    private static String nativeSchemaPromptOf(ReActAgent agent) {
+        return promptTextOf(agent, "_default_native_schema_prompt");
+    }
+
+    private static String promptTextOf(ReActAgent agent, String name) {
+        Prompt prompt = (Prompt) agent.getResources().get(ResourceType.PROMPT).get(name);
+        return prompt.formatString(Map.of());
     }
 
     /** A class with no members at all, which Jackson refuses to render rather than rendering. */

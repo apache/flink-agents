@@ -18,10 +18,11 @@
 from typing import Any, Callable
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.react_agent import (
+    _DEFAULT_NATIVE_SCHEMA_PROMPT,
     _DEFAULT_SCHEMA_PROMPT,
     ReActAgent,
 )
@@ -31,6 +32,12 @@ from flink_agents.api.resource import ResourceDescriptor, ResourceType
 # a descriptor records the class and resolves it only when the resource is created.
 _CHAT_MODEL_CLASS = (
     "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
+)
+
+# Pinned as a literal, identical to the Java test's, so the two languages cannot drift.
+_NATIVE_SCHEMA_INSTRUCTION = (
+    "The final response must include the information for every required field of"
+    " the following schema. It does not need to be in JSON format. Schema: "
 )
 
 
@@ -51,6 +58,13 @@ class FieldLess(BaseModel):
     """A schema declaring no fields."""
 
 
+class Described(BaseModel):
+    """A schema with a described required field and an optional one."""
+
+    name: str = Field(description="Full legal name of the person")
+    nickname: str | None = None
+
+
 def _agent(output_schema: Any) -> ReActAgent:
     return ReActAgent(
         chat_model=ResourceDescriptor(
@@ -63,6 +77,11 @@ def _agent(output_schema: Any) -> ReActAgent:
 def _schema_prompt(agent: ReActAgent) -> str:
     """The prompt text the agent derived from the output schema."""
     return agent._resources[ResourceType.PROMPT][_DEFAULT_SCHEMA_PROMPT].template
+
+
+def _native_schema_prompt(agent: ReActAgent) -> str:
+    """The prompt text the agent uses when the schema is applied natively."""
+    return agent._resources[ResourceType.PROMPT][_DEFAULT_NATIVE_SCHEMA_PROMPT].template
 
 
 def _expected_prompt(rendered: Any) -> str:
@@ -93,6 +112,31 @@ def test_row_type_info_output_schema_keeps_the_prompt_fallback() -> None:
     """A RowTypeInfo has no JSON Schema render and keeps its own prompt text."""
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
     assert _schema_prompt(_agent(row_type)) == _expected_prompt(row_type)
+
+
+def test_renderable_output_schema_registers_the_native_schema_prompt() -> None:
+    """The native prompt carries the same rendered schema as the JSON prompt."""
+    assert (
+        _native_schema_prompt(_agent(Person))
+        == f"{_NATIVE_SCHEMA_INSTRUCTION}{Person.model_json_schema()}"
+    )
+
+
+def test_native_schema_prompt_shows_field_descriptions_and_required_fields() -> None:
+    """The native prompt keeps each field's description and the required list."""
+    prompt = _native_schema_prompt(_agent(Described))
+
+    assert "'description': 'Full legal name of the person'" in prompt
+    assert "'required': ['name']" in prompt
+
+
+def test_row_type_info_output_schema_registers_the_native_schema_prompt() -> None:
+    """A RowTypeInfo reaches the native prompt as its own text."""
+    row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
+    assert (
+        _native_schema_prompt(_agent(row_type))
+        == f"{_NATIVE_SCHEMA_INSTRUCTION}{row_type}"
+    )
 
 
 def test_unsupported_output_schema_type_reports_the_type() -> None:

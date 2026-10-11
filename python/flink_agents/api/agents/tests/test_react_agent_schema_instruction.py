@@ -27,6 +27,7 @@ from pyflink.common.typeinfo import RowTypeInfo, Types
 
 from flink_agents.api.agents.react_agent import (
     _DEFAULT_CHAT_MODEL,
+    _DEFAULT_NATIVE_SCHEMA_PROMPT,
     _DEFAULT_SCHEMA_PROMPT,
     ReActAgent,
 )
@@ -39,11 +40,18 @@ from flink_agents.api.chat_models.chat_model import (
 )
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event, InputEvent
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.tools.tool import Tool
 
 _CHAT_MODEL_CLASS = (
     "flink_agents.integrations.chat_models.ollama_chat_model.OllamaChatModelSetup"
+)
+
+# Pinned as a literal, identical to the Java test's, so the two languages cannot drift.
+_NATIVE_SCHEMA_INSTRUCTION = (
+    "The final response must include the information for every required field of"
+    " the following schema. It does not need to be in JSON format. Schema: "
 )
 
 
@@ -124,11 +132,12 @@ class _Context:
         self.events.append(event)
 
 
-def _agent(output_schema: Any) -> ReActAgent:
+def _agent(output_schema: Any, prompt: Prompt | None = None) -> ReActAgent:
     return ReActAgent(
         chat_model=ResourceDescriptor(
             clazz=_CHAT_MODEL_CLASS, connection="c", model="m"
         ),
+        prompt=prompt,
         output_schema=output_schema,
     )
 
@@ -157,19 +166,53 @@ def test_row_type_info_schema_keeps_instruction_on_capable_connection() -> None:
     assert _texts(request) == [_instruction(agent), "hi"]
 
 
-def test_natively_applied_schema_omits_instruction() -> None:
-    """A schema the provider enforces is not also described in the prompt."""
+def test_natively_applied_schema_lists_fields_without_json() -> None:
+    """A schema the provider enforces is described by its fields, not as JSON."""
     agent = _agent(_Person)
     gate = _gate(return_value=True)
 
     request, _ = _start(agent, gate)
 
-    assert _texts(request) == ["hi"]
-    assert request.messages[0].role == MessageRole.USER
+    assert _texts(request) == [
+        f"{_NATIVE_SCHEMA_INSTRUCTION}{_Person.model_json_schema()}",
+        "hi",
+    ]
+    assert request.messages[0].role == MessageRole.SYSTEM
     assert request.output_schema == OutputSchema(output_schema=_Person)
     gate.will_apply_native_structured_output.assert_called_once_with(
         OutputSchema(output_schema=_Person)
     )
+
+
+def test_schema_instruction_follows_first_system_message() -> None:
+    """The instruction goes right after the user prompt's first system message."""
+    prompt = Prompt.from_messages(
+        [ChatMessage.system("You are a namer."), ChatMessage.user("{input}")]
+    )
+    agent = _agent(_Person, prompt)
+
+    request, _ = _start(agent, _gate(return_value=True))
+
+    assert [(m.role, m.text) for m in request.messages] == [
+        (MessageRole.SYSTEM, "You are a namer."),
+        (
+            MessageRole.SYSTEM,
+            f"{_NATIVE_SCHEMA_INSTRUCTION}{_Person.model_json_schema()}",
+        ),
+        (MessageRole.USER, "hi"),
+    ]
+
+
+def test_native_gate_without_native_prompt_adds_no_instruction() -> None:
+    """A plan built without the native prompt adds nothing on the native path."""
+    agent = _agent(_Person)
+    del agent._resources[ResourceType.PROMPT][_DEFAULT_NATIVE_SCHEMA_PROMPT]
+
+    request, _ = _start(agent, _gate(return_value=True))
+
+    assert _texts(request) == ["hi"]
+    assert request.messages[0].role == MessageRole.USER
+    assert request.output_schema == OutputSchema(output_schema=_Person)
 
 
 def test_schema_not_applied_natively_keeps_instruction() -> None:
