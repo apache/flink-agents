@@ -56,6 +56,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntPredicate;
 
@@ -224,9 +225,10 @@ public class KafkaActionStateStore implements ActionStateStore {
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
-            RecordMetadata metadata = producer.send(kafkaRecord).get();
-            actionStates.put(stateKey, state);
+            Future<RecordMetadata> sendResult = producer.send(kafkaRecord);
             producer.flush();
+            RecordMetadata metadata = sendResult.get();
+            actionStates.put(stateKey, state);
             latestStateOffsets.put(
                     stateKey, new StateRecordOffset(metadata.partition(), metadata.offset()));
             LOG.debug(

@@ -43,17 +43,26 @@ import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.DockerClientFactory;
+import org.testcontainers.kafka.KafkaContainer;
+import org.testcontainers.utility.DockerImageName;
 
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS;
+import static org.apache.flink.agents.api.configuration.AgentConfigOptions.KAFKA_BOOTSTRAP_SERVERS;
 import static org.apache.flink.agents.runtime.actionstate.ActionStateTestUtils.createKeyEncoder;
 import static org.apache.kafka.clients.consumer.internals.AutoOffsetResetStrategy.EARLIEST;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /** End-to-end recovery test for a queued action with a persisted durable call result. */
 public class KafkaActionStateStoreRecoveryTest {
@@ -63,6 +72,7 @@ public class KafkaActionStateStoreRecoveryTest {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private static final AtomicInteger EXTERNAL_CALLS = new AtomicInteger();
+    private static final AtomicBoolean FAIL_AFTER_DURABLE_CALL = new AtomicBoolean();
 
     public static void durableCall(Event event, RunnerContext context) throws Exception {
         Long input = (Long) InputEvent.fromEvent(event).getInput();
@@ -84,6 +94,9 @@ public class KafkaActionStateStoreRecoveryTest {
                                 return callExternal(input);
                             }
                         });
+        if (FAIL_AFTER_DURABLE_CALL.get()) {
+            throw new IllegalStateException("action failed after persisting its durable result");
+        }
         context.sendEvent(new OutputEvent(result));
     }
 
@@ -168,7 +181,11 @@ public class KafkaActionStateStoreRecoveryTest {
                         new KafkaActionStateStore(
                                 new HashMap<>(),
                                 new AgentConfiguration(),
-                                null,
+                                new MockProducer<>(
+                                        true,
+                                        new ActionStateKeyPartitioner(),
+                                        new StringSerializer(),
+                                        new ActionStateKafkaSeder()),
                                 recoveryConsumer,
                                 TOPIC,
                                 createKeyEncoder(MAX_PARALLELISM));
@@ -194,6 +211,90 @@ public class KafkaActionStateStoreRecoveryTest {
                             record -> assertThat(record.getValue()).isEqualTo(70L));
             assertThat(EXTERNAL_CALLS.get()).isEqualTo(2);
         }
+    }
+
+    @Test
+    void queuedActionReusesResultFromPreviousAttemptWithKafka() throws Exception {
+        assumeTrue(
+                DockerClientFactory.instance().isDockerAvailable(),
+                "Docker is required for the Kafka recovery integration test");
+
+        EXTERNAL_CALLS.set(0);
+        try (KafkaContainer kafka =
+                new KafkaContainer(DockerImageName.parse("apache/kafka-native:3.8.0"))) {
+            kafka.start();
+            AgentConfiguration configuration = new AgentConfiguration();
+            configuration.set(KAFKA_BOOTSTRAP_SERVERS, kafka.getBootstrapServers());
+            configuration.set(KAFKA_ACTION_STATE_TOPIC, TOPIC);
+            configuration.set(KAFKA_ACTION_STATE_TOPIC_NUM_PARTITIONS, 1);
+            AgentPlan agentPlan = plan();
+            OperatorSubtaskState queuedCheckpoint;
+            OperatorSubtaskState pendingResultCheckpoint;
+
+            // The first attempt saves its result after the checkpoint, then fails mid-action.
+            try (KafkaActionStateStore store =
+                            new KafkaActionStateStore(
+                                    configuration, createKeyEncoder(MAX_PARALLELISM));
+                    KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                            kafkaHarness(agentPlan, store)) {
+                harness.open();
+                harness.processElement(new StreamRecord<>(7L));
+                queuedCheckpoint = harness.snapshot(1L, 1L);
+                ActionExecutionOperator<Long, Object> operator =
+                        (ActionExecutionOperator<Long, Object>) harness.getOperator();
+                FAIL_AFTER_DURABLE_CALL.set(true);
+                assertThatThrownBy(operator::waitInFlightEventsFinished)
+                        .hasRootCauseMessage("action failed after persisting its durable result");
+                assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
+                assertThat(harness.getOutput()).isEmpty();
+            } finally {
+                FAIL_AFTER_DURABLE_CALL.set(false);
+            }
+
+            // Restore the queued action and take another checkpoint before dispatching it.
+            // Its durable result now precedes the Kafka end offset captured by this checkpoint.
+            try (KafkaActionStateStore store =
+                            new KafkaActionStateStore(
+                                    configuration, createKeyEncoder(MAX_PARALLELISM));
+                    KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                            kafkaHarness(agentPlan, store)) {
+                harness.initializeState(queuedCheckpoint);
+                harness.open();
+                pendingResultCheckpoint = harness.snapshot(2L, 2L);
+                assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
+                assertThat(harness.getOutput()).isEmpty();
+            }
+
+            try (KafkaActionStateStore store =
+                            new KafkaActionStateStore(
+                                    configuration, createKeyEncoder(MAX_PARALLELISM));
+                    KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness =
+                            kafkaHarness(agentPlan, store)) {
+                harness.initializeState(pendingResultCheckpoint);
+                harness.open();
+                ActionExecutionOperator<Long, Object> operator =
+                        (ActionExecutionOperator<Long, Object>) harness.getOperator();
+                operator.waitInFlightEventsFinished();
+
+                assertThat(harness.getOutput())
+                        .singleElement()
+                        .isInstanceOfSatisfying(
+                                StreamRecord.class,
+                                record -> assertThat(record.getValue()).isEqualTo(70L));
+                assertThat(EXTERNAL_CALLS.get()).isEqualTo(1);
+            }
+        }
+    }
+
+    private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> kafkaHarness(
+            AgentPlan agentPlan, KafkaActionStateStore store) throws Exception {
+        return new KeyedOneInputStreamOperatorTestHarness<>(
+                new ActionExecutionOperatorFactory<>(agentPlan, true, store),
+                (KeySelector<Long, Long>) value -> 1L,
+                TypeInformation.of(Long.class),
+                MAX_PARALLELISM,
+                1,
+                0);
     }
 
     /**
