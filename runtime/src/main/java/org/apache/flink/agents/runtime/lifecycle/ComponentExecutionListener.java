@@ -34,7 +34,10 @@ import java.util.Map;
  * <p>Invariants a listener may rely on, and must not break:
  *
  * <ul>
- *   <li>The callback runs on the mailbox thread, so a listener needs no synchronization of its own.
+ *   <li>The callback runs on the thread that drives the execution being reported: the mailbox
+ *       thread on the default engine, but possibly an action worker thread when parallel action
+ *       execution is enabled. A listener must not rely on thread affinity and must synchronize its
+ *       own state when more than one thread can reach it.
  *   <li>An exception thrown by a listener is logged and swallowed, so reporting never fails the
  *       reporting component and never starves the remaining listeners.
  *   <li>The event carries the lifecycle status only; the reporting component is identified by the

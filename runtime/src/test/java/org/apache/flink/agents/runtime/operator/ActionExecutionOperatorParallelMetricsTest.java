@@ -18,7 +18,9 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -44,6 +46,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 /** Component-level tests for metrics bookkeeping on the JDK&lt;21 parallel execution path. */
@@ -230,6 +233,38 @@ class ActionExecutionOperatorParallelMetricsTest {
                                 Collections.singletonList(InputEvent.EVENT_TYPE)));
             }
             return new AgentPlan(actions, new LinkedHashMap<>(), parallelConfig());
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void failedParallelActionMarksInputRunFailed() throws Exception {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                newHarness(new AgentPlan(new FailingAgent(), parallelConfig()))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator = operator(testHarness);
+
+            assertThatThrownBy(
+                            () -> {
+                                testHarness.processElement(new StreamRecord<>(0L));
+                                operator.waitInFlightEventsFinished();
+                            })
+                    .hasStackTraceContaining("parallel action boom");
+
+            assertThat(metricGroup(operator).getCounter("numOfInputRunsFailed").getCount())
+                    .as("a failure propagated through commit() must close the input run")
+                    .isEqualTo(1L);
+        }
+    }
+
+    /** Agent whose only action always fails, exercising the parallel failure path. */
+    public static class FailingAgent extends Agent {
+
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handleInput(Event event, RunnerContext context) {
+            throw new IllegalStateException("parallel action boom");
         }
     }
 }

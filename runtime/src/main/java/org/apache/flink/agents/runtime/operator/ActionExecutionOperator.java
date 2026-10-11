@@ -1584,6 +1584,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        // Keys with at least one lifecycle-visible restored task, meaning a task other than the
+        // synthetic noop input action. The parallel restore path emits the matching record start
+        // for them, because completion emits one record finished per key.
+        Set<Object> keysWithVisibleTask = new LinkedHashSet<>();
         stateManager.forEachActionTaskKey(
                 getKeyedStateBackend(),
                 (key, state) -> {
@@ -1601,10 +1605,21 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     // its root caller still awaits it (the caller resumes only after the child
                     // quiesces), so the root is always retained here to drive the replay.
                     state.update(rootTasks);
+                    boolean lifecycleVisible = false;
                     for (ActionTask actionTask : rootTasks) {
+                        // The synthetic noop input action stays out of action metrics, as it does
+                        // on the dequeue path: counting it here would leave the pending-task gauge
+                        // nonzero once the restored task completes.
+                        if (isInternalNoopInputAction(actionTask.action)) {
+                            continue;
+                        }
                         builtInMetrics.restoreActionTask(
                                 actionTask.getTraceContext(),
                                 actionTask.hasExecutionStartedEventEmitted());
+                        lifecycleVisible = true;
+                    }
+                    if (lifecycleVisible) {
+                        keysWithVisibleTask.add(key);
                     }
                 });
 
@@ -1635,6 +1650,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     int queued = stateManager.countActionTasks();
                     for (int i = 0; i < queued; i++) {
                         executionCoordinator.addTask(key);
+                    }
+                    // Mirror the fresh-record path, which emits one record start per key: the
+                    // worker-completion path emits one record finished per key, so the resumed
+                    // round needs the matching start. A key whose restored tasks are all synthetic
+                    // noop stays silent, because its completion is silent too.
+                    if (keysWithVisibleTask.contains(key)) {
+                        notifyRecordStart(key);
                     }
                 } else {
                     // The normal engine has no workers; the kick mail drives
@@ -1848,6 +1870,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         @Override
         public void commit() throws Exception {
             if (failure != null) {
+                // This engine propagates an action failure through commit() rather than through
+                // processActionTaskForKey(), so the input run is closed here: the failure counter,
+                // the active-run gauge and the terminal latency samples all depend on it.
+                builtInMetrics.markInputRunFailed(actionTask.getTraceContext().getInputRunId());
                 throw new ActionTaskExecutionException("Failed to execute action task", failure);
             }
             checkState(result != null, "Action task completion result must not be null.");
