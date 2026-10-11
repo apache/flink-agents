@@ -114,7 +114,7 @@ public class Agent {
             Map<String, Object> existing = this.resources.get(type);
             // Rebuild to establish env-before-agent iteration order.
             Map<String, Object> merged = new LinkedHashMap<>(envTyped);
-            existing.forEach(merged::putIfAbsent);
+            merged.putAll(existing);
             this.resources.put(type, merged);
         }
     }

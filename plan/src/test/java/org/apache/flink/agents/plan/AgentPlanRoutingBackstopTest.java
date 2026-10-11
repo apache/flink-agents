@@ -57,7 +57,7 @@ class AgentPlanRoutingBackstopTest {
     void planBackstopRejectsClashArrivingFromDifferentRegistries() {
         Agent agent = new Agent();
         agent.addResource("shared", ResourceType.MODEL_ROUTER, descriptor("some.Router"));
-        // Environment-level resources merge in via putIfAbsent, bypassing the per-call
+        // Environment-level resources merge in via addResourcesIfAbsent, bypassing the per-call
         // checks: neither addResource call ever saw both registrations.
         agent.addResourcesIfAbsent(
                 Map.of(

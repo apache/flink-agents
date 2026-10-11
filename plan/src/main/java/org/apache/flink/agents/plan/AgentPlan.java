@@ -488,8 +488,7 @@ public class AgentPlan implements Serializable {
         Class<?> agentClass = agent.getClass();
 
         // Collect @Skills methods into a sorted staging map (getDeclaredMethods() order is
-        // non-deterministic across JDKs / class layouts). These seed the merge map built after
-        // the scan, which Agent.addResource(SKILLS, ...) entries are appended to.
+        // non-deterministic across JDKs / class layouts).
         Map<String, Skills> annotationSkills = new java.util.TreeMap<>();
 
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
@@ -612,7 +611,7 @@ public class AgentPlan implements Serializable {
         // Seed the merge with the sorted @Skills methods: the LinkedHashMap copy constructor
         // inserts them in annotationSkills' (method-name) order. Environment and agent resources
         // are appended afterwards, in that order; later sources win on duplicate skill names
-        // (see addSkills).
+        // (see {@link #addSkills(Map)}).
         Map<String, Skills> skillsObjects = new LinkedHashMap<>(annotationSkills);
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {

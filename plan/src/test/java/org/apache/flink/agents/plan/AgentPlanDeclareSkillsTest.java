@@ -234,6 +234,24 @@ class AgentPlanDeclareSkillsTest {
                 merged.getSources());
     }
 
+    @Test
+    void agentLevelSkillsWinOnSameNameCollision() throws Exception {
+        // addResourcesIfAbsent merges environment resources without overwriting an agent-level
+        // entry registered under the same name, so the agent's sources survive the merge.
+        Agent agent = new NoSkillsAgent();
+        agent.addResource("skills", ResourceType.SKILLS, Skills.fromLocalDir("/tmp/agent-skill"));
+        Map<ResourceType, Map<String, Object>> envResources = new HashMap<>();
+        Map<String, Object> envSkills = new LinkedHashMap<>();
+        envSkills.put("skills", Skills.fromLocalDir("/tmp/env-skill"));
+        envResources.put(ResourceType.SKILLS, envSkills);
+        agent.addResourcesIfAbsent(envResources);
+
+        Skills merged = mergedSkillsOf(agent);
+        assertEquals(
+                List.of(new SkillSourceSpec("local", Map.of("path", "/tmp/agent-skill"))),
+                merged.getSources());
+    }
+
     public static class AnnotationOrderAgent extends Agent {
         @org.apache.flink.agents.api.annotation.Skills
         public static Skills zSkills() {
