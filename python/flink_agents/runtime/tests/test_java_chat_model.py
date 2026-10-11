@@ -175,14 +175,21 @@ def test_java_chat_model_setup_native_strategy_without_a_schema_is_false() -> No
     assert setup.will_apply_native_structured_output(None) is False
 
 
-def test_java_chat_model_setup_refuses_chat_explicit() -> None:
-    """An explicit call is refused before anything crosses to Java, even without a
-    schema: the bridge cannot send messages without the Java setup's bound prompt
-    and tools.
+@pytest.mark.parametrize(
+    "call_kwargs",
+    [{"tools": []}, {"output_schema": OutputSchema(output_schema=_Answer)}],
+    ids=["tools", "output_schema"],
+)
+def test_java_chat_model_setup_refuses_tools_or_output_schema(
+    call_kwargs: dict[str, Any],
+) -> None:
+    """Tools or a schema are refused before anything crosses to Java: the bridge
+    cannot send messages without the Java setup's bound prompt and tools, nor carry
+    a schema.
     """
     setup, j_resource, adapter = _java_chat_model_setup()
 
-    with pytest.raises(NotImplementedError):
-        setup.chat_explicit([ChatMessage.of(MessageRole.USER, "hi")], [])
+    with pytest.raises(NotImplementedError, match="Java chat model setup"):
+        setup.chat([ChatMessage.of(MessageRole.USER, "hi")], **call_kwargs)
     assert j_resource.mock_calls == []
     assert adapter.mock_calls == []

@@ -119,7 +119,7 @@ def _invoke_finalization(
     # avoids provider rules on turn order and on empty assistant content.
     try:
         request = [ChatMessage.of(MessageRole.USER, _FINALIZE_DIRECTIVE + answer_text)]
-        return chat_model.chat_explicit(request, [], output_schema), None
+        return chat_model.chat(request, tools=[], output_schema=output_schema), None
     except (CancelledError, InterruptedError):
         raise
     except Exception as error:

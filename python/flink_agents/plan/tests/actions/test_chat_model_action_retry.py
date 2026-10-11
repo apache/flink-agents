@@ -807,14 +807,24 @@ def _assistant(content: str, **extra_args: Any) -> ChatMessage:
 def _native_chat_model(
     loop_responses: Any = None, final_responses: Any = None
 ) -> MagicMock:
-    """A chat model whose loop answer is prose and whose finalization is JSON."""
+    """A chat model whose loop answer is prose and whose finalization is JSON.
+
+    Both calls go through ``chat``. The finalization is the one given ``tools``, and
+    each kind of call draws from its own response queue.
+    """
     chat_model = MagicMock()
-    chat_model.chat = MagicMock(
+    chat_model.loop_chat = MagicMock(
         side_effect=loop_responses or [_assistant("the answer is 42")]
     )
-    chat_model.chat_explicit = MagicMock(
+    chat_model.final_chat = MagicMock(
         side_effect=final_responses or [_assistant('{"result": 42}')]
     )
+
+    def dispatch(*args: Any, **kwargs: Any) -> Any:
+        target = chat_model.final_chat if "tools" in kwargs else chat_model.loop_chat
+        return target(*args, **kwargs)
+
+    chat_model.chat = MagicMock(side_effect=dispatch)
     return chat_model
 
 
@@ -854,18 +864,18 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, schema)
 
-        chat_model.chat_explicit.assert_called_once()
-        sent_args = chat_model.chat_explicit.call_args
-        assert sent_args.kwargs == {}
-        sent_messages, sent_tools, sent_schema = sent_args.args
+        loop_call, final_call = chat_model.chat.call_args_list
+        assert "tools" not in loop_call.kwargs
+        assert "output_schema" not in loop_call.kwargs
+        assert set(final_call.kwargs) == {"tools", "output_schema"}
+        assert final_call.kwargs["tools"] == []
+        assert final_call.kwargs["output_schema"] is schema
+        (sent_messages,) = final_call.args
         # Only the directive and the answer's text: no part of the loop's request
         # is resent.
         assert [(m.role, m.text) for m in sent_messages] == [
             (MessageRole.USER, _FINALIZE_DIRECTIVE_TEXT + "the answer is 42"),
         ]
-        assert sent_tools == []
-        assert sent_schema is schema
-        assert chat_model.chat.call_count == 1
 
     def test_structured_output_is_parsed_from_the_finalization_response(
         self,
@@ -892,7 +902,7 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, schema)
 
         chat_model.will_apply_native_structured_output.assert_called_once_with(schema)
-        chat_model.chat_explicit.assert_not_called()
+        chat_model.final_chat.assert_not_called()
         assert ctx.report_execution_started.call_args_list.count(_LLM_SPAN) == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 7
 
@@ -906,7 +916,7 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, None)
 
         chat_model.will_apply_native_structured_output.assert_not_called()
-        chat_model.chat_explicit.assert_not_called()
+        chat_model.final_chat.assert_not_called()
         assert sent_events[0].response.text == "the answer is 42"
 
     def test_tool_call_response_issues_no_finalization_call(self) -> None:
@@ -920,7 +930,7 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
 
-        chat_model.chat_explicit.assert_not_called()
+        chat_model.final_chat.assert_not_called()
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ToolRequestEvent)
 
@@ -959,8 +969,8 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
 
         # The retry repeats the whole attempt, loop call included.
-        assert chat_model.chat.call_count == 2
-        assert chat_model.chat_explicit.call_count == 2
+        assert chat_model.loop_chat.call_count == 2
+        assert chat_model.final_chat.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
 
@@ -973,7 +983,7 @@ class TestNativeStructuredOutputFinalization:
 
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
 
-        assert chat_model.chat_explicit.call_count == 2
+        assert chat_model.final_chat.call_count == 2
         assert sent_events[0].retry_count == 1
         assert sent_events[0].response.extra_args[STRUCTURED_OUTPUT].result == 42
         ctx.report_execution_failed.assert_called_once()
@@ -1061,7 +1071,6 @@ class TestNativeStructuredOutputFinalization:
         _run_chat(ctx, OutputSchema(output_schema=_StructuredResult), request_id)
 
         chat_model.chat.assert_not_called()
-        chat_model.chat_explicit.assert_not_called()
         ctx.report_execution_started.assert_not_called()
         assert len(sent_events) == 1
         assert sent_events[0].request_id == request_id
@@ -1119,7 +1128,7 @@ class TestNativeStructuredOutputFinalization:
         # request-failure path alike.
         assert not sent_events
         assert len(calls) == 2
-        chat_model.chat_explicit.assert_not_called()
+        chat_model.final_chat.assert_not_called()
 
     def test_finalization_runs_on_the_async_durable_seam(self) -> None:
         chat_model = _native_chat_model()

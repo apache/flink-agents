@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from typing import Any, Dict, List, Mapping, Sequence
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field, ValidationError
@@ -599,19 +600,20 @@ def test_will_apply_native_structured_output_none_schema_without_connection(
     assert setup.will_apply_native_structured_output(None) is False
 
 
-def test_chat_explicit_requires_open() -> None:
-    """chat_explicit() requires a resolved connection."""
+def test_chat_with_tools_requires_open() -> None:
+    """chat() given tools requires a resolved connection."""
     setup = _RecordingChatModelSetup(connection="c", model="m")
 
     with pytest.raises(TypeError, match=r"open\(\)"):
-        setup.chat_explicit(
+        setup.chat(
             [ChatMessage.of(MessageRole.USER, "hi")],
-            [],
-            OutputSchema(output_schema=_Answer),
+            tools=[],
+            output_schema=OutputSchema(output_schema=_Answer),
         )
 
 
-def test_chat_explicit_sends_messages_and_tools_as_given() -> None:
+@pytest.mark.parametrize("tool_count", [0, 1], ids=["no-tools", "one-tool"])
+def test_chat_with_tools_sends_messages_and_tools_as_given(tool_count: int) -> None:
     """Messages and tools go out as given, without the bound prompt, skill discovery
     or the bound tools.
     """
@@ -619,30 +621,67 @@ def test_chat_explicit_sends_messages_and_tools_as_given() -> None:
     setup.prompt = Prompt.from_text(text="Bound prompt")
     setup.skill_discovery_prompt = "Available skills"
     setup.tools = [_StubTool()]
-    given = _StubTool()
+    given = [_StubTool() for _ in range(tool_count)]
     messages = [ChatMessage.of(MessageRole.USER, "hi")]
     schema = OutputSchema(output_schema=_Answer)
 
-    setup.chat_explicit(messages, [given], schema)
+    setup.chat(messages, tools=given, output_schema=schema)
 
     assert connection.captured_messages == messages
     assert connection.captured_tools is not None
-    assert len(connection.captured_tools) == 1
-    assert connection.captured_tools[0] is given
+    assert len(connection.captured_tools) == tool_count
+    assert all(
+        sent is expected
+        for sent, expected in zip(connection.captured_tools, given, strict=True)
+    )
     assert connection.captured_output_schema is schema
 
 
-def test_chat_explicit_merges_kwargs_over_model_kwargs() -> None:
-    """Per-call parameters override the setup's parameters, as in chat()."""
+def test_chat_with_tools_merges_kwargs_over_model_kwargs() -> None:
+    """Per-call parameters override the setup's parameters, as without tools."""
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     messages = [ChatMessage.of(MessageRole.USER, "hi")]
     schema = OutputSchema(output_schema=_Answer)
 
-    setup.chat_explicit(messages, [], schema, temperature=0.9)
+    setup.chat(messages, tools=[], output_schema=schema, temperature=0.9)
     assert connection.captured_kwargs == {"model": "setup-model", "temperature": 0.9}
 
-    setup.chat_explicit(messages, [], schema)
+    setup.chat(messages, tools=[], output_schema=schema)
     assert connection.captured_kwargs == _SETUP_PARAMS
+
+
+@pytest.mark.parametrize("prompt_args", [{}, {"k": "v"}], ids=["empty", "filled"])
+def test_chat_rejects_prompt_args_with_tools(prompt_args: Dict[str, Any]) -> None:
+    """Prompt arguments only fill the bound prompt of a prepared request, so a call
+    given tools refuses them instead of silently ignoring them, before looking up
+    the connection.
+    """
+    setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
+    unopened = _RecordingChatModelSetup(connection="c", model="m")
+
+    for target in (setup, unopened):
+        with pytest.raises(
+            ValueError, match="prompt_args cannot be combined with tools"
+        ):
+            target.chat([ChatMessage.of(MessageRole.USER, "hi")], prompt_args, tools=[])
+
+    assert connection.captured_messages == []
+    assert connection.captured_tools is None
+
+
+@pytest.mark.parametrize("call_kwargs", [{}, {"tools": []}], ids=["prepared", "given"])
+def test_chat_without_output_schema_passes_no_output_schema_kwarg(
+    call_kwargs: Dict[str, Any],
+) -> None:
+    """A call without a schema leaves ``output_schema`` out of the connection call."""
+    setup = _RecordingChatModelSetup(connection="c", model="m")
+    connection = MagicMock()
+    setup._resolved_connection = connection
+    message = ChatMessage.of(MessageRole.USER, "hi")
+
+    setup.chat([message], **call_kwargs)
+
+    connection.chat.assert_called_once_with([message], tools=[])
 
 
 def _params_with_tool_choice() -> Dict[str, Any]:
@@ -663,17 +702,21 @@ def _params_with_tool_choice() -> Dict[str, Any]:
 _STRIPPED_PARAMS = {"model": "setup-model", "additional_kwargs": {"top_p": 0.5}}
 
 
-def test_chat_explicit_with_schema_and_no_tools_omits_tool_only_params() -> None:
+@pytest.mark.parametrize("call_kwargs", [{"tools": []}, {}], ids=["given", "prepared"])
+def test_chat_with_schema_and_no_tools_omits_tool_only_params(
+    call_kwargs: Dict[str, Any],
+) -> None:
     """A schema-carrying request without tools omits the tool-only parameters, top
-    level and nested, and leaves the setup's parameters untouched.
+    level and nested, and leaves the setup's parameters untouched, whether the
+    empty tool list is given or comes from a setup that binds none.
     """
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     setup.setup_params = _params_with_tool_choice()
 
-    setup.chat_explicit(
+    setup.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
-        [],
-        OutputSchema(output_schema=_Answer),
+        output_schema=OutputSchema(output_schema=_Answer),
+        **call_kwargs,
     )
 
     assert connection.captured_kwargs == _STRIPPED_PARAMS
@@ -690,15 +733,25 @@ def test_plain_chat_keeps_tool_only_params() -> None:
     assert connection.captured_kwargs == _params_with_tool_choice()
 
 
-def test_chat_explicit_with_schema_and_tools_keeps_tool_only_params() -> None:
-    """A schema-carrying request that binds tools sends the tool-only parameters."""
+@pytest.mark.parametrize(
+    ("bound_tools", "call_kwargs"),
+    [([], {"tools": [_StubTool()]}), ([_StubTool()], {})],
+    ids=["given", "bound"],
+)
+def test_chat_with_schema_and_tools_keeps_tool_only_params(
+    bound_tools: List[Tool], call_kwargs: Dict[str, Any]
+) -> None:
+    """A schema-carrying request that binds tools, given or bound, sends the
+    tool-only parameters.
+    """
     setup, connection = _build_structured_setup(StructuredOutputStrategy.AUTO)
     setup.setup_params = _params_with_tool_choice()
+    setup.tools = bound_tools
 
-    setup.chat_explicit(
+    setup.chat(
         [ChatMessage.of(MessageRole.USER, "hi")],
-        [_StubTool()],
-        OutputSchema(output_schema=_Answer),
+        output_schema=OutputSchema(output_schema=_Answer),
+        **call_kwargs,
     )
 
     assert connection.captured_kwargs == _params_with_tool_choice()
@@ -714,27 +767,16 @@ def test_will_apply_native_structured_output_queries_without_tool_only_params() 
     assert connection.queried_model_kwargs == _STRIPPED_PARAMS
 
 
-class _ExplicitCallRecordingSetup(_RecordingChatModelSetup):
-    """Records what chat() hands to chat_explicit() instead of calling a model."""
-
-    explicit_calls: List[tuple] = Field(default_factory=list)
-
-    def chat_explicit(
-        self,
-        messages: Sequence[ChatMessage],
-        tools: List[Tool],
-        output_schema: OutputSchema | None = None,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        self.explicit_calls.append((list(messages), tools, output_schema, kwargs))
-        return ChatMessage.of(MessageRole.ASSISTANT, "ok")
-
-
-def test_chat_sends_the_prepared_request_and_bound_tools_through_chat_explicit() -> (
-    None
-):
-    """chat() renders the bound prompt, injects skill discovery and binds the setup's
-    tools, then sends that request through chat_explicit() without a schema.
+@pytest.mark.parametrize(
+    "output_schema",
+    [None, OutputSchema(output_schema=_Answer)],
+    ids=["no-schema", "schema"],
+)
+def test_chat_without_tools_sends_the_prepared_request_and_bound_tools(
+    output_schema: OutputSchema | None,
+) -> None:
+    """chat() without tools renders the bound prompt, injects skill discovery and
+    binds the setup's tools, with or without a schema.
     """
     prompt = Prompt.from_messages(
         messages=[
@@ -743,21 +785,29 @@ def test_chat_sends_the_prepared_request_and_bound_tools_through_chat_explicit()
         ]
     )
     bound = _StubTool()
-    setup = _ExplicitCallRecordingSetup(
+    setup = _RecordingChatModelSetup(
         connection="c", model="m", prompt=prompt, tools=[bound]
     )
     setup.skill_discovery_prompt = "Available skills"
+    connection = _StructuredRecordingConnection(
+        support=NativeStructuredOutputSupport.INFEASIBLE
+    )
+    setup._resolved_connection = connection
 
-    setup.chat([ChatMessage(role=MessageRole.USER)], prompt_args={"task": 7}, top_p=1)
+    setup.chat(
+        [ChatMessage(role=MessageRole.USER)],
+        prompt_args={"task": 7},
+        output_schema=output_schema,
+        top_p=1,
+    )
 
-    assert len(setup.explicit_calls) == 1
-    messages, tools, output_schema, kwargs = setup.explicit_calls[0]
-    assert [(m.role, m.text) for m in messages] == [
+    assert [(m.role, m.text) for m in connection.captured_messages] == [
         (MessageRole.SYSTEM, "You are terse."),
         (MessageRole.SYSTEM, "Available skills"),
         (MessageRole.USER, "Task: 7"),
     ]
-    assert len(tools) == 1
-    assert tools[0] is bound
-    assert output_schema is None
-    assert kwargs == {"top_p": 1}
+    assert connection.captured_tools is not None
+    assert len(connection.captured_tools) == 1
+    assert connection.captured_tools[0] is bound
+    assert connection.captured_output_schema is output_schema
+    assert connection.captured_kwargs == {"top_p": 1}

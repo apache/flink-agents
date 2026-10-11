@@ -567,86 +567,79 @@ class BaseChatModelSetup(Resource):
         self,
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        """Execute chat conversation.
-
-        1. Apply prompt template (if any), filled from ``prompt_args``
-        2. Bind tools (if any)
-        3. Call ChatModelConnection to perform actual communication
-        4. Process response
-
-        Parameters
-        ----------
-        messages : Sequence[ChatMessage]
-            Input message sequence
-        prompt_args : Mapping[str, Any] | None
-            Variables used to fill the prompt template, if a prompt resource is
-            configured. Values are stringified via ``str()`` to match the
-            ``Prompt.format_messages`` contract.
-        **kwargs : Any
-            Additional parameters passed to the model service
-
-        Returns:
-        -------
-        ChatMessage
-            Model response message
-        """
-        # Apply prompt template
-        if self.prompt is not None:
-            str_prompt_args: Dict[str, str] = (
-                {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
-            )
-            prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
-
-            # append meaningful messages
-            # any block counts, so image-only messages survive
-            for msg in messages:
-                if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
-                    prompt_messages.append(msg)
-            messages = prompt_messages
-
-        if self.skill_discovery_prompt:
-            # Right after the first system message, or at the head when there is none.
-            index = find_first_system_message(messages) + 1
-            injected = [ChatMessage.system(self.skill_discovery_prompt)]
-            messages = list(messages[:index]) + injected + list(messages[index:])
-
-        return self.chat_explicit(messages, self._get_tools(), **kwargs)
-
-    def chat_explicit(
-        self,
-        messages: Sequence[ChatMessage],
-        tools: List[Tool],
+        *,
+        tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
-        """Send the messages and tools exactly as given.
+        """Send a chat request to the connection.
 
-        The bound prompt, the skill-discovery message and the bound tools are not
-        added. ``chat`` prepares the request and sends it through this method.
+        Without ``tools``, the request is prepared from the setup: the bound prompt
+        is filled from ``prompt_args`` and put before the meaningful ``messages``,
+        the skill-discovery message is inserted, and the bound tools are attached.
 
-        When ``output_schema`` is set and ``tools`` is empty, the parameters sent to
-        the connection omit ``tool_choice``, ``tool_choice_option`` and
-        ``parallel_tool_calls``, at the top level and inside a nested
-        ``additional_kwargs`` dict.
+        With ``tools``, even an empty list, ``messages`` and ``tools`` are sent
+        exactly as given, without the bound prompt, the skill-discovery message or
+        the bound tools.
+
+        Either way, when the call carries ``output_schema`` and binds no tools, the
+        parameters sent to the connection omit ``tool_choice``,
+        ``tool_choice_option`` and ``parallel_tool_calls``, at the top level and
+        inside a nested ``additional_kwargs`` dict.
 
         Args:
-            messages: The messages to send.
-            tools: The tools to bind to the request.
-            output_schema: The schema the provider applies natively, or ``None`` for
-                an unconstrained request.
+            messages: The caller's messages.
+            prompt_args: Variables that fill the bound prompt template. Values are
+                stringified with ``str()``. Only used without ``tools``.
+            tools: The tools to bind, sent as given. ``None`` prepares the request
+                from the setup.
+            output_schema: The schema the provider applies natively, or ``None``
+                for an unconstrained request.
             **kwargs: Model parameters for this call, merged over ``model_kwargs``.
 
         Returns:
             The connection's response.
 
         Raises:
+            ValueError: If ``prompt_args`` is given together with ``tools``.
             TypeError: If ``open()`` has not resolved the connection yet.
         """
-        connection = self._get_connection()
+        if tools is not None and prompt_args is not None:
+            msg = (
+                "prompt_args cannot be combined with tools: prompt arguments fill "
+                "the bound prompt of a prepared request, while a call given tools "
+                "sends its messages as given."
+            )
+            raise ValueError(msg)
+
+        if tools is None:
+            # Apply prompt template
+            if self.prompt is not None:
+                str_prompt_args: Dict[str, str] = (
+                    {k: str(v) for k, v in prompt_args.items()} if prompt_args else {}
+                )
+                prompt_messages = self._get_prompt().format_messages(**str_prompt_args)
+
+                # append meaningful messages
+                # any block counts, so image-only messages survive
+                for msg in messages:
+                    if len(msg.blocks) > 0 or msg.role == MessageRole.ASSISTANT:
+                        prompt_messages.append(msg)
+                messages = prompt_messages
+
+            if self.skill_discovery_prompt:
+                # Right after the first system message, or at the head when there
+                # is none.
+                index = find_first_system_message(messages) + 1
+                injected = [ChatMessage.system(self.skill_discovery_prompt)]
+                messages = list(messages[:index]) + injected + list(messages[index:])
+
+        # Call chat model connection to execute chat
         merged_kwargs = self.model_kwargs.copy()
         merged_kwargs.update(kwargs)
+        connection = self._get_connection()
+        if tools is None:
+            tools = self._get_tools()
         if output_schema is None:
             return connection.chat(messages, tools=tools, **merged_kwargs)
         if not tools:
@@ -659,8 +652,8 @@ class BaseChatModelSetup(Resource):
         self, output_schema: OutputSchema | None
     ) -> bool:
         """Whether ``output_schema`` should travel through the provider's native
-        structured output on a call issued through ``chat_explicit`` with no tools,
-        rather than be described to the model in the prompt.
+        structured output on a ``chat`` call given ``tools=[]``, rather than be
+        described to the model in the prompt.
 
         Framework-facing. A user configures the outcome through
         ``structured_output_strategy`` instead of calling this.
@@ -668,8 +661,8 @@ class BaseChatModelSetup(Resource):
         The connection is asked about a request carrying this schema, no tools, and
         the parameters ``model_kwargs`` returns, without the tool-only parameters that
         a schema-carrying request with no tools omits. Per-call keyword arguments
-        passed to ``chat_explicit`` are not seen here, so a caller that adds
-        parameters affecting feasibility must not rely on this answer.
+        passed to ``chat`` are not seen here, so a caller that adds parameters
+        affecting feasibility must not rely on this answer.
 
         A ``True`` answer is not a promise that the call succeeds: a connection may
         still raise once its native branch applies the schema, for example on a

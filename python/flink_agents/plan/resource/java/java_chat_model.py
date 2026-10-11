@@ -177,6 +177,9 @@ class JavaChatModelSetup(BaseChatModelSetup):
         self,
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
+        *,
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatMessage:
         """Execute chat conversation by delegating to Java implementation.
@@ -185,20 +188,31 @@ class JavaChatModelSetup(BaseChatModelSetup):
         2. Call Java chat method with prompt-template arguments
         3. Convert Java response back to Python format
 
-        Parameters
-        ----------
-        messages : Sequence[ChatMessage]
-            Input message sequence
-        prompt_args : Mapping[str, Any] | None
-            Prompt-template variables forwarded to the Java setup.
-        **kwargs : Any
-            Additional parameters passed to the model service
+        Args:
+            messages: Input message sequence.
+            prompt_args: Prompt-template variables forwarded to the Java setup.
+            tools: Not supported. Must be ``None``.
+            output_schema: Not supported. Must be ``None``.
+            **kwargs: Additional parameters passed to the model service.
 
         Returns:
-        -------
-        ChatMessage
-            Model response message
+            Model response message.
+
+        Raises:
+            NotImplementedError: If ``tools`` or ``output_schema`` is given. They
+                are refused rather than dropped, or sent with the Java setup's bound
+                prompt and tools, since the bridge reaches only the Java setup's
+                three-argument ``chat``, which prepares the request itself.
         """
+        if tools is not None or output_schema is not None:
+            msg = (
+                "A Java chat model setup cannot be sent explicit tools or an output "
+                "schema from Python: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's three-argument "
+                "chat, which adds its own bound prompt and tools. Bind tools and "
+                "apply the schema on the Java side instead."
+            )
+            raise NotImplementedError(msg)
         # Convert Python messages to Java format
         java_messages = [
             _to_java_chat_message(self._j_resource_adapter, message)
@@ -238,26 +252,3 @@ class JavaChatModelSetup(BaseChatModelSetup):
             )
             raise ValueError(msg)
         return False
-
-    @override
-    def chat_explicit(
-        self,
-        messages: Sequence[ChatMessage],
-        tools: List[Tool],
-        output_schema: OutputSchema | None = None,
-        **kwargs: Any,
-    ) -> ChatMessage:
-        """Always refuses rather than dropping the tools or the schema, or adding the
-        Java setup's bound prompt and tools: the bridge reaches only the Java setup's
-        ``chat``, which prepares the request itself.
-
-        Raises:
-            NotImplementedError: Always.
-        """
-        msg = (
-            "A Java chat model setup cannot be sent explicit messages, tools or an "
-            "output schema from Python: the bridge carries only messages, prompt "
-            "arguments and keyword arguments to the Java setup's chat, which adds its "
-            "own bound prompt and tools. Apply the schema on the Java side instead."
-        )
-        raise NotImplementedError(msg)
