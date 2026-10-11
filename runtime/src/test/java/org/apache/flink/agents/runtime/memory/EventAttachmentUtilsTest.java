@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.memory;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -290,13 +291,17 @@ class EventAttachmentUtilsTest {
         }
 
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             throw new UnsupportedOperationException();
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             throw new UnsupportedOperationException();
         }
 

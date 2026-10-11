@@ -115,7 +115,11 @@ class LoadSkillTool(Tool, ToolExecutionMetadataProvider):
         resource_path = _normalize_skill_resource_path(parsed_args.path)
         logger.debug(f"Loading skill resource {resource_path} for {skill_name}.")
 
-        manager = self._get_skill_manager()
+        try:
+            manager = self._get_skill_manager()
+        except Exception as e:
+            logger.warning("Failed to initialize skill manager", exc_info=True)
+            return ToolResponse.error(f"Failed to initialize skill manager: {e}")
         if manager is None:
             return ToolResponse.error(
                 "Skill manager not available. No skills have been registered."

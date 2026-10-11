@@ -113,7 +113,8 @@ public class Agent {
      *
      * @param name The name indicate the resource.
      * @param type The type of the resource.
-     * @param instance The serializable resource object, or the resource descriptor.
+     * @param instance The serializable resource object, the resource descriptor, or — for an {@code
+     *     AGENT} resource — an {@link Agent} to compile into an internal sub-agent.
      */
     public Agent addResource(String name, ResourceType type, Object instance) {
         if (resources.get(type).containsKey(name)) {
@@ -124,6 +125,8 @@ public class Agent {
         if (instance instanceof SerializableResource) {
             resources.get(type).put(name, instance);
         } else if (instance instanceof ResourceDescriptor) {
+            resources.get(type).put(name, instance);
+        } else if (instance instanceof Agent) {
             resources.get(type).put(name, instance);
         } else {
             throw new IllegalArgumentException(

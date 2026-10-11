@@ -44,6 +44,7 @@ import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.utils.ToolResultUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -74,13 +75,13 @@ public class ToolCallAction {
                 List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
-    public static void processToolRequest(Event event, RunnerContext ctx)
-            throws InterruptedException {
+    public static void processToolRequest(Event event, RunnerContext ctx) throws Exception {
         // Built-in events reach an action as their concrete subclass (restored at the JSON
         // boundary), so the dispatched ToolRequestEvent is cast directly.
         ToolRequestEvent toolRequest = (ToolRequestEvent) event;
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
-        int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
+        int toolCallParallelism =
+                ctx.getConfig().get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM);
 
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
@@ -89,7 +90,7 @@ public class ToolCallAction {
         List<ToolCallExecution> executions =
                 buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
 
-        // executeParallel/executeSequentially let InterruptedException propagate rather than
+        // executeParallel/executeSequentially let cancellation propagate rather than
         // recording it as a tool error, so a cancellation here skips sendEvent below entirely:
         // no ToolResponseEvent goes out, no further chat call gets driven off a cancelled tool
         // call, and the action is never persisted as completed on the back of it.
@@ -110,7 +111,8 @@ public class ToolCallAction {
             Map<String, String> externalIds,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws Exception {
         List<ToolCallExecution> executions = new ArrayList<>();
         for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
             String id = String.valueOf(toolCall.get("id"));
@@ -149,6 +151,7 @@ public class ToolCallAction {
                     tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
                 }
             } catch (Exception e) {
+                rethrowCancellation(e);
                 preparationError = e;
             }
 
@@ -158,6 +161,7 @@ public class ToolCallAction {
                 try {
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
                 } catch (Exception e) {
+                    rethrowCancellation(e);
                     preparationError = e;
                 }
             }
@@ -251,7 +255,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         // Sub-agent calls run through durable execution inside the setup, so they cannot join the
         // tool batch below; they are dispatched concurrently on their own (submit every call, then
         // await each) so that, like the batched tool calls, they overlap instead of running one by
@@ -280,13 +284,8 @@ public class ToolCallAction {
             for (int i = 0; i < outcomes.size(); i++) {
                 recordOutcome(toolExecutions.get(i), outcomes.get(i), success, error, responses);
             }
-        } catch (InterruptedException e) {
-            // A cancellation signal, not a batch failure: propagate immediately instead of
-            // recording every execution as a tool error and letting the caller send a
-            // ToolResponseEvent that drives the action loop onward.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            rethrowCancellation(e);
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
             }
@@ -322,7 +321,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         for (ToolCallExecution execution : executions) {
             if (execution.agent != null) {
                 dispatchAgentExecution(execution, ctx, success, error, responses);
@@ -339,13 +338,8 @@ public class ToolCallAction {
                 resultObservedAt = Instant.now();
                 outcome = Outcome.success(response);
                 recordToolResponse(execution.id, response, success, error, responses);
-            } catch (InterruptedException e) {
-                // A cancellation signal, not a tool failure: propagate immediately instead of
-                // recording it as a tool error and letting the loop move on to (or past) the
-                // remaining executions and the caller send a ToolResponseEvent for it.
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                rethrowCancellation(e);
                 if (resultObservedAt == null) {
                     resultObservedAt = Instant.now();
                 }
@@ -363,13 +357,24 @@ public class ToolCallAction {
         }
     }
 
+    private static void rethrowCancellation(Exception failure) throws Exception {
+        if (CancellationUtils.isCancellation(failure)) {
+            if (CancellationUtils.isInterruption(failure)) {
+                Thread.currentThread().interrupt();
+            }
+            throw failure;
+        }
+    }
+
     private static void recordOutcome(
             ToolCallExecution execution,
             Outcome<ToolResponse> outcome,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws Exception {
         if (outcome.isFailure()) {
+            rethrowCancellation(outcome.getError());
             recordExecutionException(execution, outcome.getError(), success, error, responses);
         } else {
             recordToolResponse(execution.id, outcome.getValue(), success, error, responses);
@@ -451,7 +456,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         try {
             // The start occurrence is reported once here, before the hand-off, so a failure while
             // normalizing the result -- which re-enters recordAgentFailure below -- still yields a
@@ -462,13 +467,8 @@ public class ToolCallAction {
             // wrapping the call again here would nest durable cursors.
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
             recordAgentResult(execution, result, ctx, success, error, responses);
-        } catch (InterruptedException e) {
-            // A cancellation, not a sub-agent failure: propagate it exactly like the tool paths do
-            // (#1111) so the caller skips sendEvent instead of folding the cancellation into a
-            // tool-error response and driving a further chat call off it.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            rethrowCancellation(e);
             recordAgentFailure(execution, e, ctx, success, error, responses);
         } catch (StackOverflowError e) {
             // Normalizing a result nested deeper than the stack allows overflows it; the cycle
@@ -496,10 +496,10 @@ public class ToolCallAction {
      * durable keys stay stable. The per-call try/catch keeps the isolation the serial path had: one
      * sub-agent failing, at submit or at await, is recorded and reported without stopping the rest.
      *
-     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111), an
-     * {@link InterruptedException} propagates so the caller skips sendEvent, and every handle
-     * submitted but no longer going to be awaited is cancelled first, so the concurrent dispatch
-     * leaves no in-flight remote run dangling on the way out.
+     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111),
+     * cancellation propagates so the caller skips sendEvent, and every handle submitted but no
+     * longer going to be awaited is cancelled first, so the concurrent dispatch leaves no in-flight
+     * remote run dangling on the way out.
      */
     private static void dispatchAgentExecutions(
             List<ToolCallExecution> agentExecutions,
@@ -507,7 +507,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         // submit() runs through durable execution inside the setup, so it is not wrapped here.
         List<ToolCallExecution> submitted = new ArrayList<>(agentExecutions.size());
         List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
@@ -519,13 +519,14 @@ public class ToolCallAction {
                 reportSubagentStarted(execution, ctx);
                 futures.add(execution.agent.submit(ctx, execution.agentArguments));
                 submitted.add(execution);
-            } catch (InterruptedException e) {
-                // Cancelled mid-submit: everything submitted so far is now never going to be
-                // awaited, so cancel it before propagating like the tool paths (#1111).
-                cancelFrom(futures, 0);
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)) {
+                    cancelFrom(futures, 0);
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw e;
+                }
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             }
         }
@@ -534,13 +535,14 @@ public class ToolCallAction {
             try {
                 SubagentResult result = futures.get(i).await();
                 recordAgentResult(execution, result, ctx, success, error, responses);
-            } catch (InterruptedException e) {
-                // Cancelled mid-await: this handle and every later one were submitted but will not
-                // be awaited, so cancel them before propagating like the tool paths (#1111).
-                cancelFrom(futures, i);
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)) {
+                    cancelFrom(futures, i);
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw e;
+                }
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             } catch (StackOverflowError e) {
                 // As in the serial path: an overflow while normalizing one result is an Error that

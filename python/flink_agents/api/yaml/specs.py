@@ -174,15 +174,13 @@ class SkillsSpec(BaseModel):
     - ``urls`` — ``url`` scheme: HTTPS URLs pointing to ``.zip`` archives
     - ``url_sources`` — ``url`` scheme: archive configurations with optional
       digest and transport policy
-    - ``classpath`` — ``classpath`` scheme (Java-only at runtime): resource
+    - ``classpath`` — ``classpath`` scheme: resource
       paths on the Java classpath
-    - ``package`` — ``package`` scheme (Python-only at runtime): resources
+    - ``package`` — ``package`` scheme: resources
       inside installed Python packages, given as ``{package, resource}`` pairs
 
-    At least one source list must be non-empty. ``classpath`` is exposed on
-    Python for YAML schema parity with Java — it deserializes successfully
-    but ``SkillManager`` on Python will fail at load time because Python does
-    not register a ``classpath`` handler.
+    At least one source list must be non-empty. Cross-language sources require
+    the corresponding Java or Python runtime bridge at execution time.
     """
 
     model_config = ConfigDict(extra="forbid")

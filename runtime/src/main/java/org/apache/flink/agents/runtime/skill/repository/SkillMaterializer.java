@@ -105,6 +105,26 @@ public final class SkillMaterializer {
         }
     }
 
+    /** Allocate a directory whose lifetime belongs to the consuming repository. */
+    public static Materialized createTempDirectory() throws IOException {
+        Path dir = Files.createTempDirectory(TEMP_DIR_PREFIX);
+        return new Materialized(dir, registerCleanup(dir));
+    }
+
+    /** Copy a materialized tree without transferring ownership of its source. */
+    public static void copyDirectory(Path source, Path target) throws IOException {
+        try (Stream<Path> paths = Files.walk(source)) {
+            for (Path path : (Iterable<Path>) paths::iterator) {
+                Path destination = target.resolve(source.relativize(path));
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
+
     /**
      * Register a JVM shutdown hook that removes {@code path} recursively, and return the hook
      * thread so the caller can deregister it. Failures during deletion are silently ignored
@@ -130,6 +150,7 @@ public final class SkillMaterializer {
         // Register cleanup before validation so the empty tempdir is always reclaimed,
         // even if validation raises.
         Thread hook = registerCleanup(extractDir);
+        Materialized materialized = new Materialized(extractDir, hook);
         try (ZipFile zf = new ZipFile(zipPath.toFile())) {
             Enumeration<? extends ZipEntry> entries = zf.entries();
             while (entries.hasMoreElements()) {
@@ -147,8 +168,11 @@ public final class SkillMaterializer {
                     }
                 }
             }
+        } catch (IOException | RuntimeException | Error e) {
+            materialized.close();
+            throw e;
         }
-        return new Materialized(extractDir, hook);
+        return materialized;
     }
 
     /**
@@ -182,10 +206,16 @@ public final class SkillMaterializer {
         Path extractDir = Files.createTempDirectory(TEMP_DIR_PREFIX);
         Thread hook = registerCleanup(extractDir);
         String prefix = resourcePrefix.endsWith("/") ? resourcePrefix : resourcePrefix + "/";
-        for (URL jarUrl : jarUrls) {
-            copyJarEntries(jarUrl, prefix, extractDir);
+        Materialized materialized = new Materialized(extractDir, hook);
+        try {
+            for (URL jarUrl : jarUrls) {
+                copyJarEntries(jarUrl, prefix, extractDir);
+            }
+            return materialized;
+        } catch (IOException | RuntimeException | Error e) {
+            materialized.close();
+            throw e;
         }
-        return new Materialized(extractDir, hook);
     }
 
     /**

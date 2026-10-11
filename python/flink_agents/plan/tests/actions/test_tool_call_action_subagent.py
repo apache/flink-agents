@@ -192,7 +192,7 @@ class _Context(ExecutionReporter):
     def with_parallel_tool_calls(self) -> "_Context":
         """Turn on the batched path: async calls with room for more than one."""
         self.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-        self.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2)
+        self.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2)
         return self
 
     def get_resource(self, name: str, type: ResourceType) -> Any:

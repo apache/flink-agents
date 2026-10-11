@@ -18,30 +18,27 @@
 import contextlib
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List
+from typing import TYPE_CHECKING, Dict, List, Mapping
 
-from flink_agents.api.skills import Skills, SkillSourceSpec
-from flink_agents.runtime.skill import skill_source_registry
+from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
+from flink_agents.runtime.skill.repository.classpath_repository import (
+    ClasspathSkillRepository,
+)
+from flink_agents.runtime.skill.repository.filesystem_repository import (
+    FileSystemSkillRepository,
+)
+from flink_agents.runtime.skill.repository.package_repository import (
+    PackageSkillRepository,
+)
+from flink_agents.runtime.skill.repository.url_repository import URLSkillRepository
 from flink_agents.runtime.skill.skill_prompt_provider import SkillPromptProvider
+from flink_agents.runtime.skill.skill_source_handler import SkillSourceHandler
 
 if TYPE_CHECKING:
     from flink_agents.runtime.skill.skill_repository import SkillRepository
 
 logger = logging.getLogger(__name__)
-
-
-def _origin_of(spec: SkillSourceSpec) -> SkillOrigin:
-    """Build a SkillOrigin from a spec for diagnostics.
-
-    Delegates location description to the handler so a new scheme is one
-    ``register()`` call, not a parallel switch here.
-    """
-    handler = skill_source_registry.get(spec.scheme)
-    return SkillOrigin(
-        scheme=spec.scheme,
-        location=handler.describe_location(spec.params),
-    )
 
 
 class SkillManager:
@@ -56,7 +53,7 @@ class SkillManager:
     - Execution: Load resources/scripts only when needed
     """
 
-    def __init__(self, skills_config: Skills) -> None:
+    def __init__(self, skills_config: Skills, java_bridge: object = None) -> None:
         """Initialize the SkillManager from a Skills configuration."""
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
@@ -65,7 +62,54 @@ class SkillManager:
         # reference, so close() iterates this list (id-deduped) instead.
         self._opened_repos: List[SkillRepository] = []
         self._config = skills_config
+        self._handlers = self._create_handlers(java_bridge)
         self._load_skills()
+
+    def _create_handlers(self, java_bridge: object) -> Dict[str, SkillSourceHandler]:
+        """Create instance factories bound to the operator's Java bridge."""
+        return {
+            "local": SkillSourceHandler(
+                lambda p: FileSystemSkillRepository(_require(p, "local", "path")),
+                lambda p: p.get("path", ""),
+            ),
+            "url": SkillSourceHandler(
+                lambda p: URLSkillRepository(
+                    _require(p, "url", "url"),
+                    sha256=p.get("sha256"),
+                    allow_insecure_http=p.get("allow_insecure_http", "false").lower()
+                    == "true",
+                ),
+                lambda p: redact_skill_url(p.get("url", "")),
+            ),
+            "package": SkillSourceHandler(
+                lambda p: PackageSkillRepository(
+                    _require(p, "package", "package"), _require(p, "package", "resource")
+                ),
+                lambda p: f"{p.get('package', '')}/{p.get('resource', '')}",
+            ),
+            "classpath": SkillSourceHandler(
+                lambda p: ClasspathSkillRepository(
+                    _require(p, "classpath", "resource"), java_bridge
+                ),
+                lambda p: p.get("resource", ""),
+            ),
+        }
+
+    def _get_handler(self, scheme: str) -> SkillSourceHandler:
+        handler = self._handlers.get(scheme.lower())
+        if handler is None:
+            msg = (
+                f"Unknown skill source scheme: {scheme}. "
+                f"Registered schemes: {sorted(self._handlers)}"
+            )
+            raise ValueError(msg)
+        return handler
+
+    def _origin_of(self, spec: SkillSourceSpec) -> SkillOrigin:
+        handler = self._get_handler(spec.scheme)
+        return SkillOrigin(
+            scheme=spec.scheme, location=handler.describe_location(spec.params)
+        )
 
     @property
     def size(self) -> int:
@@ -142,8 +186,8 @@ class SkillManager:
             for spec in self._config.sources:
                 origin = None
                 try:
-                    origin = _origin_of(spec)
-                    handler = skill_source_registry.get(spec.scheme)
+                    origin = self._origin_of(spec)
+                    handler = self._get_handler(spec.scheme)
                     repo = handler.open(spec.params)
                     self._opened_repos.append(repo)
                 except (OSError, ValueError) as e:
@@ -201,3 +245,11 @@ class SkillManager:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+
+def _require(params: Mapping[str, str], scheme: str, key: str) -> str:
+    value = params.get(key)
+    if value is None:
+        msg = f"Missing required param '{key}' for skill source scheme '{scheme}'"
+        raise ValueError(msg)
+    return value

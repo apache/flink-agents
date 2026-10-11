@@ -25,6 +25,7 @@ Use one of the factory methods to construct a :class:`Skills` resource:
 * :meth:`Skills.from_local_dir` for local directories or local ``.zip`` files
 * :meth:`Skills.from_url` for HTTPS URLs pointing to a ``.zip``
 * :meth:`Skills.from_package` for resources inside installed packages
+* :meth:`Skills.from_classpath` for resources in the Flink user-code classpath
 
 Example::
 
@@ -45,10 +46,8 @@ Example::
     def packaged_skills() -> Skills:
         return Skills.from_package(("my_skills_pkg", "skills"))
 
-The ``"classpath"`` scheme is Java-only; a plan written by Java with
-``scheme=classpath`` deserializes successfully on Python but
-:class:`SkillManager` will fail fast at load time with the registered-scheme
-list.
+The ``"classpath"`` scheme uses the Flink Java runtime bridge at execution
+time. Add the containing JARs to the job before executing the agent.
 
 Declare more than one ``@skills`` function on the same agent to combine
 sources; the runtime merges them and de-duplicates identical
@@ -294,6 +293,20 @@ class Skills(SerializableResource):
         if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
             msg = "sha256 must contain exactly 64 hexadecimal characters"
             raise ValueError(msg)
+
+    @classmethod
+    def from_classpath(cls, *resources: str) -> Skills:
+        """Load directories or zip resources from the Flink user-code classpath.
+
+        Requires the Java bridge at execution time. Add the containing JARs to
+        the Flink job; declaration itself does not access the JVM.
+        """
+        return cls(
+            sources=[
+                SkillSourceSpec(scheme="classpath", params={"resource": resource})
+                for resource in resources
+            ]
+        )
 
     @classmethod
     def from_package(cls, *pairs: Tuple[str, str]) -> Skills:

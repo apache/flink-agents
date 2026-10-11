@@ -63,12 +63,19 @@ import org.apache.flink.agents.runtime.actionstate.ActionStateUtil;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.KafkaActionStateStore;
+import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.eventlog.FileEventLogger;
 import org.apache.flink.agents.runtime.eventlog.Slf4jEventLogger;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionTask;
+import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.api.common.serialization.SerializerConfigImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.base.LongSerializer;
@@ -84,6 +91,7 @@ import org.apache.flink.streaming.runtime.tasks.mailbox.TaskMailbox;
 import org.apache.flink.streaming.util.AbstractStreamOperatorTestHarness;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.function.ThrowingRunnable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -91,10 +99,12 @@ import org.junit.jupiter.api.Timeout;
 import org.mockito.InOrder;
 import org.mockito.MockedConstruction;
 import org.mockito.MockedStatic;
+import pemja.core.PythonInterpreter;
 
 import java.io.IOException;
 import java.io.Serializable;
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -102,13 +112,16 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
@@ -117,6 +130,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
@@ -1249,6 +1263,7 @@ public class ActionExecutionOperatorTest {
 
     @Test
     void testMemoryAccessProhibitedOutsideMailboxThread() throws Exception {
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
                 new KeyedOneInputStreamOperatorTestHarness<>(
                         new ActionExecutionOperatorFactory(TestAgent.getAgentPlan(true), true),
@@ -1531,8 +1546,163 @@ public class ActionExecutionOperatorTest {
         return testHarness;
     }
 
-    /** The operator's five closeable components, stubbed so each close is observable. */
+    @Test
+    void closeInterruptsTimedOutPythonBatchBeforeJoiningActionWorkers() throws Exception {
+        assumeFalse(ContinuationActionExecutor.isContinuationSupported());
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness = openCloseTestHarness();
+        ActionExecutionOperator<?, ?> operator =
+                (ActionExecutionOperator<?, ?>) harness.getOperator();
+        CloseComponents components = new CloseComponents();
+        components.installInto(operator);
+        StreamOperatorStateHandler originalHandler =
+                replaceStateHandler(operator, mock(StreamOperatorStateHandler.class));
+        CountDownLatch releaseCallback = new CountDownLatch(1);
+        CountDownLatch callbackStarted = new CountDownLatch(1);
+        CountDownLatch callbackExited = new CountDownLatch(1);
+        AtomicBoolean callbackInterrupted = new AtomicBoolean();
+        AtomicInteger closedWorkerInterpreters = new AtomicInteger();
+        AtomicReference<Throwable> actionFailure = new AtomicReference<>();
+        BlockingQueue<ThrowingRunnable<? extends Exception>> mailbox = new LinkedBlockingQueue<>();
+        ExecutorService closingThread = Executors.newSingleThreadExecutor();
+        PythonInterpreterManager interpreters =
+                new PythonInterpreterManager(
+                        mock(PythonInterpreter.class),
+                        () -> {
+                            PythonInterpreter interpreter = mock(PythonInterpreter.class);
+                            doAnswer(
+                                            invocation -> {
+                                                closedWorkerInterpreters.incrementAndGet();
+                                                return null;
+                                            })
+                                    .when(interpreter)
+                                    .close();
+                            return interpreter;
+                        },
+                        1);
+        ParallelExecutionLock lock = new ParallelExecutionLock();
+        ContinuationActionExecutor batch =
+                new ContinuationActionExecutor(
+                        1, interpreters::releaseCurrentThreadInterpreter, lock, (key, task) -> {});
+        Callable<String> pythonCall =
+                () ->
+                        interpreters.withInterpreter(
+                                interpreter -> {
+                                    callbackStarted.countDown();
+                                    try {
+                                        releaseCallback.await();
+                                    } catch (InterruptedException e) {
+                                        callbackInterrupted.set(true);
+                                    } finally {
+                                        callbackExited.countDown();
+                                    }
+                                    return "late";
+                                });
+        ParallelExecutionTask work =
+                new ParallelExecutionTask() {
+                    @Override
+                    public void setup(Object key, long recordIndex, long taskIndex) {}
+
+                    @Override
+                    public void restoreContext() {}
+
+                    @Override
+                    public void execute() {
+                        try {
+                            // The timed-out batch retains the lifecycle read lock; Action-worker
+                            // exit cleanup needs its write lock.
+                            interpreters.withInterpreter(interpreter -> null);
+                            BatchExecutionResult<String> result =
+                                    batch.executeAllAsync(
+                                            new ContinuationContext(),
+                                            List.of(pythonCall),
+                                            Duration.ofSeconds(1),
+                                            1);
+                            assertThat(result.getOutcomes().get(0).getError())
+                                    .isInstanceOf(java.util.concurrent.TimeoutException.class);
+                        } catch (Throwable t) {
+                            actionFailure.set(t);
+                        }
+                    }
+
+                    @Override
+                    public boolean isDone() {
+                        return true;
+                    }
+
+                    @Override
+                    public void commit() {}
+
+                    @Override
+                    public void finishGroup(ParallelExecutionTask lastCommitted) {}
+                };
+        ParallelExecutionCoordinator coordinator =
+                new ParallelExecutionCoordinator(
+                        lock,
+                        (mail, description) -> mailbox.add(mail),
+                        () -> work,
+                        interpreters::releaseCurrentThreadInterpreter,
+                        1,
+                        60000);
+        ActionTaskContextManager contexts =
+                new ActionTaskContextManager(operator, components.durableExecManager, 1);
+        Field executorField =
+                ActionTaskContextManager.class.getDeclaredField("continuationActionExecutor");
+        executorField.setAccessible(true);
+        executorField.set(contexts, batch);
+        RunnerContextImpl runner = mock(RunnerContextImpl.class);
+        Field runnerField = ActionTaskContextManager.class.getDeclaredField("runnerContext");
+        runnerField.setAccessible(true);
+        runnerField.set(contexts, runner);
+        doAnswer(
+                        invocation -> {
+                            assertThat(callbackExited.getCount()).isZero();
+                            assertThat(closedWorkerInterpreters.get()).isEqualTo(2);
+                            return null;
+                        })
+                .when(runner)
+                .close();
+        replaceOperatorField(operator, "executionCoordinator", coordinator);
+        replaceOperatorField(operator, "contextManager", contexts);
+        try {
+            lock.acquireByMain();
+            coordinator.addTask("key");
+            lock.release();
+            assertThat(callbackStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            ThrowingRunnable<? extends Exception> completed = mailbox.poll(5, TimeUnit.SECONDS);
+            assertThat(completed).isNotNull();
+            completed.run();
+            assertThat(actionFailure.get()).isNull();
+            assertThat(callbackExited.getCount()).isEqualTo(1);
+            Future<?> closing =
+                    closingThread.submit(
+                            () -> {
+                                operator.close();
+                                return null;
+                            });
+            // With sequential shutdown this hangs joining Action-worker cleanup, so the batch
+            // worker never receives the interrupt that would release its lifecycle read lock.
+            closing.get(5, TimeUnit.SECONDS);
+            assertThat(callbackInterrupted).isTrue();
+            assertThat(closedWorkerInterpreters.get()).isEqualTo(2);
+        } finally {
+            // Also release a broken implementation so a failed regression cannot leak threads.
+            releaseCallback.countDown();
+            closingThread.shutdown();
+            assertThat(closingThread.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+            coordinator.close();
+            batch.close();
+            interpreters.close();
+            replaceOperatorField(operator, "executionCoordinator", null);
+            components.detachFrom(operator);
+            replaceStateHandler(operator, originalHandler);
+            harness.close();
+        }
+    }
+
+    /** The operator's components, stubbed so shutdown and close are observable. */
     private static final class CloseComponents {
+        private final ParallelExecutionCoordinator coordinator =
+                mock(ParallelExecutionCoordinator.class);
         private final ResourceCache resourceCache = mock(ResourceCache.class);
         private final ActionTaskContextManager contextManager =
                 mock(ActionTaskContextManager.class);
@@ -1542,6 +1712,7 @@ public class ActionExecutionOperatorTest {
                 mock(DurableExecutionManager.class);
 
         private void installInto(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "executionCoordinator", coordinator);
             replaceOperatorField(operator, "resourceCache", resourceCache);
             replaceOperatorField(operator, "contextManager", contextManager);
             replaceOperatorField(operator, "pythonBridge", pythonBridge);
@@ -1551,6 +1722,7 @@ public class ActionExecutionOperatorTest {
 
         /** Detaches the mocks so the harness teardown does not re-trigger the failure. */
         private void detachFrom(ActionExecutionOperator<?, ?> operator) throws Exception {
+            replaceOperatorField(operator, "executionCoordinator", null);
             replaceOperatorField(operator, "resourceCache", null);
             replaceOperatorField(operator, "contextManager", null);
             replaceOperatorField(operator, "pythonBridge", null);
@@ -1569,14 +1741,18 @@ public class ActionExecutionOperatorTest {
         private void verifyClosedInOrder(StreamOperatorStateHandler stateHandler) throws Exception {
             InOrder inOrder =
                     inOrder(
+                            coordinator,
                             resourceCache,
                             contextManager,
                             pythonBridge,
                             eventLogWriter,
                             durableExecManager,
                             stateHandler);
-            inOrder.verify(resourceCache).close();
+            inOrder.verify(coordinator).shutdown();
+            inOrder.verify(contextManager).shutdownAsyncExecutor();
+            inOrder.verify(coordinator).close();
             inOrder.verify(contextManager).close();
+            inOrder.verify(resourceCache).close();
             inOrder.verify(pythonBridge).close();
             inOrder.verify(eventLogWriter).close();
             inOrder.verify(durableExecManager).close();
@@ -1584,10 +1760,41 @@ public class ActionExecutionOperatorTest {
         }
     }
 
+    @Test
+    void shutdownFailureDoesNotSkipTheOtherPoolOrResourceCleanup() throws Exception {
+        KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness = openCloseTestHarness();
+        ActionExecutionOperator<?, ?> operator =
+                (ActionExecutionOperator<?, ?>) harness.getOperator();
+        CloseComponents components = new CloseComponents();
+        components.installInto(operator);
+        StreamOperatorStateHandler stateHandler = mock(StreamOperatorStateHandler.class);
+        StreamOperatorStateHandler originalHandler = replaceStateHandler(operator, stateHandler);
+        doThrow(new IllegalStateException("action shutdown failed"))
+                .when(components.coordinator)
+                .shutdown();
+        doThrow(new IllegalStateException("batch shutdown failed"))
+                .when(components.contextManager)
+                .shutdownAsyncExecutor();
+        try {
+            assertThatThrownBy(operator::close)
+                    .hasMessage("action shutdown failed")
+                    .satisfies(
+                            failure ->
+                                    assertThat(failure.getSuppressed())
+                                            .extracting(Throwable::getMessage)
+                                            .containsExactly("batch shutdown failed"));
+            components.verifyClosedInOrder(stateHandler);
+        } finally {
+            components.detachFrom(operator);
+            replaceStateHandler(operator, originalHandler);
+            harness.close();
+        }
+    }
+
     /**
      * A failing component must not strand the ones behind it. This matters most for {@code
-     * resourceCache}, which closes first and aggregates its own failures, and for {@code
-     * pythonBridge}, which releases the embedded Python interpreter.
+     * resourceCache}, which aggregates its own failures, and for {@code pythonBridge}, which
+     * releases the embedded Python interpreter.
      *
      * <p>Also pins that {@code super.close()} still runs. {@link AbstractStreamOperator#close()}
      * disposes the state handler, so skipping it strands the state backends.

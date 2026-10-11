@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -290,6 +291,11 @@ public class ChatModelActionRoutingTest {
 
         @SuppressWarnings("unchecked")
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableCallIds.add(callable.getId());
             durableAsyncCallIds.add(callable.getId());
@@ -304,13 +310,12 @@ public class ChatModelActionRoutingTest {
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new TestDurableFuture<>(
                     "gather",
                     () -> {
                         List<Outcome<T>> outcomes = new ArrayList<>();
-                        for (DurableFuture<T> future : futures) {
+                        for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {

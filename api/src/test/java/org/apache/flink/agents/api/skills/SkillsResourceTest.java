@@ -35,6 +35,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SkillsResourceTest {
 
     @Test
+    void pythonPackageDeclarationRoundTripsWithoutPython() throws Exception {
+        Skills skills = Skills.fromPackage("my_package", "skills");
+        ObjectMapper mapper = new ObjectMapper();
+        Skills restored = mapper.readValue(mapper.writeValueAsString(skills), Skills.class);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec(
+                                "package", Map.of("package", "my_package", "resource", "skills"))),
+                restored.getSources());
+    }
+
+    @Test
     void fromLocalDirEmitsLocalScheme() {
         Skills skills = Skills.fromLocalDir("/tmp/a", "/tmp/b");
         assertEquals(

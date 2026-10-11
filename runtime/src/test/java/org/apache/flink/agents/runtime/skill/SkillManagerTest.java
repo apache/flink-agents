@@ -430,8 +430,9 @@ class SkillManagerTest {
         // constructor must release the first repo before propagating the failure, so the caller
         // (which never receives a SkillManager reference) doesn't leak its temp dir / hook.
         FakeRepo first = new FakeRepo("alpha");
-        SkillSourceRegistry.register("test-leak-ok", (params, cl) -> first);
-        SkillSourceRegistry.register(
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-leak-ok", (params, cl) -> first);
+        handlers.put(
                 "test-leak-fail",
                 (params, cl) -> {
                     throw new IOException("boom");
@@ -444,7 +445,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-leak-fail", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
         assertTrue(ex.getMessage().contains("test-leak-fail"));
         assertTrue(first.closed.get(), "Repo registered before the failure must be closed");
     }
@@ -456,8 +457,9 @@ class SkillManagerTest {
         // suppressed so neither is lost.
         RuntimeException cleanupBoom = new RuntimeException("cleanup-boom");
         FakeRepo bad = new FakeRepo("alpha", cleanupBoom);
-        SkillSourceRegistry.register("test-leak-ok-then-cleanup-fail", (params, cl) -> bad);
-        SkillSourceRegistry.register(
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-leak-ok-then-cleanup-fail", (params, cl) -> bad);
+        handlers.put(
                 "test-leak-fail-after-bad",
                 (params, cl) -> {
                     throw new IOException("primary-boom");
@@ -470,7 +472,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-leak-fail-after-bad", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
         assertEquals("primary-boom", ex.getCause().getMessage());
         assertEquals(1, ex.getSuppressed().length);
         assertSame(cleanupBoom, ex.getSuppressed()[0]);
@@ -488,8 +490,9 @@ class SkillManagerTest {
         RuntimeException cleanupBoom = new RuntimeException("cleanup-boom");
         FakeRepo first = new FakeRepo("alpha", cleanupBoom);
         FakeRepo failing = new FakeRepo("beta", null, registrationBoom);
-        SkillSourceRegistry.register("test-register-boom-ok", (params, cl) -> first);
-        SkillSourceRegistry.register("test-register-boom-fail", (params, cl) -> failing);
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-register-boom-ok", (params, cl) -> first);
+        handlers.put("test-register-boom-fail", (params, cl) -> failing);
 
         Skills config =
                 new Skills(
@@ -498,7 +501,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-register-boom-fail", Map.of())));
 
         IllegalStateException ex =
-                assertThrows(IllegalStateException.class, () -> new SkillManager(config));
+                assertThrows(IllegalStateException.class, () -> new SkillManager(config, handlers));
         // Identity, not just type: IllegalStateException is also what the wrapping catch builds.
         assertSame(registrationBoom, ex);
         assertTrue(first.closed.get(), "repo opened before the failure must be closed");
@@ -520,11 +523,12 @@ class SkillManagerTest {
         Error registrationBoom = new Error("registration-error");
         Error closeBoom = new Error("close-error");
         FakeRepo repo = new FakeRepo("alpha", closeBoom, registrationBoom);
-        SkillSourceRegistry.register("test-error-fail", (params, cl) -> repo);
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-error-fail", (params, cl) -> repo);
 
         Skills config = new Skills(List.of(new SkillSourceSpec("test-error-fail", Map.of())));
 
-        Error ex = assertThrows(Error.class, () -> new SkillManager(config));
+        Error ex = assertThrows(Error.class, () -> new SkillManager(config, handlers));
         assertSame(registrationBoom, ex);
         assertTrue(repo.closed.get(), "the repo owned when registration failed must be closed");
         assertEquals(1, ex.getSuppressed().length);
@@ -544,8 +548,8 @@ class SkillManagerTest {
 
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(good1, bad, good2);
-        SkillSourceRegistry.register(
-                "test-close-rethrow", (params, cl) -> ordered.get(seq.getAndIncrement()));
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-close-rethrow", (params, cl) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(
@@ -554,7 +558,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-close-rethrow", Map.of()),
                                 new SkillSourceSpec("test-close-rethrow", Map.of())));
 
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager = new SkillManager(config, handlers);
         Exception thrown = assertThrows(Exception.class, manager::close);
 
         assertTrue(good1.closed.get(), "good1 must be closed");
@@ -587,8 +591,8 @@ class SkillManagerTest {
 
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(first, second);
-        SkillSourceRegistry.register(
-                "test-close-error", (params, cl) -> ordered.get(seq.getAndIncrement()));
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-close-error", (params, cl) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(
@@ -596,7 +600,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-close-error", Map.of()),
                                 new SkillSourceSpec("test-close-error", Map.of())));
 
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager = new SkillManager(config, handlers);
         // The Error reaches the caller unwrapped rather than boxed in an Exception.
         Error thrown = assertThrows(Error.class, manager::close);
 
@@ -620,8 +624,8 @@ class SkillManagerTest {
         FakeRepo second = new FakeRepo("dup");
         AtomicInteger seq = new AtomicInteger();
         List<FakeRepo> ordered = List.of(first, second);
-        SkillSourceRegistry.register(
-                "test-dup-close", (params, cl) -> ordered.get(seq.getAndIncrement()));
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-dup-close", (params, cl) -> ordered.get(seq.getAndIncrement()));
 
         Skills config =
                 new Skills(
@@ -629,7 +633,7 @@ class SkillManagerTest {
                                 new SkillSourceSpec("test-dup-close", Map.of()),
                                 new SkillSourceSpec("test-dup-close", Map.of())));
 
-        SkillManager manager = new SkillManager(config);
+        SkillManager manager = new SkillManager(config, handlers);
         manager.close();
 
         assertTrue(first.closed.get(), "displaced repo must still be closed");

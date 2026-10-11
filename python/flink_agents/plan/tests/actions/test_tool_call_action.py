@@ -209,7 +209,7 @@ class _WrongConfig:
     def get(self, option: Any) -> bool:
         assert option in (
             AgentExecutionOptions.TOOL_CALL_ASYNC,
-            AgentExecutionOptions.TOOL_CALL_PARALLELISM,
+            AgentExecutionOptions.ASYNC_BATCH_PARALLELISM,
         )
         return False
 
@@ -414,7 +414,7 @@ def test_tool_call_action_uses_sync_execution_in_test_context() -> None:
 def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
@@ -439,7 +439,7 @@ def test_tool_call_action_uses_parallel_batch_for_multiple_tools() -> None:
 def test_parallel_tool_calls_report_independent_occurrences() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     tool = MagicMock()
     tool.tool_type.return_value = ToolType.FUNCTION
 
@@ -535,7 +535,7 @@ def test_parallel_tool_calls_report_their_own_completion_timestamps() -> None:
     ctx, _ = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2)
 
     async def execute_all(callables: list[Any]) -> list[Outcome]:
         clock[0] = base
@@ -580,7 +580,7 @@ def test_response_processing_failure_does_not_repeat_occurrences() -> None:
     ctx, sent_events = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3)
 
     async def execute_all(callables: list[Any]) -> list[Outcome]:
         return [
@@ -613,7 +613,7 @@ def test_durable_failure_is_reported_as_tool_failure(mode: str) -> None:
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, mode != "sync")
     ctx.config.set(
-        AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3 if mode == "parallel" else 1
+        AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3 if mode == "parallel" else 1
     )
 
     def execute(func: Any, **kwargs: Any) -> Any:
@@ -661,7 +661,7 @@ def test_parallel_batch_failure_before_invocation_retains_created_executions() -
     ctx, _ = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3)
     failure_message = "batch failed before invocation"
 
     async def execute_all(callables: list[Any]) -> list[Outcome]:
@@ -698,7 +698,7 @@ def test_timeout_reports_failure_without_repeating_on_late_completion() -> None:
     ctx, sent_events = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 1)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1)
     worker = ThreadPoolExecutor(max_workers=1)
     pending = []
     reporting_started_at = []
@@ -758,7 +758,7 @@ def test_parallel_timeout_timestamp_precedes_response_processing_and_reporting(
     ctx, sent_events = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3)
     pending = []
     record_outcome = tool_call_action._record_outcome
 
@@ -836,7 +836,7 @@ def test_parallel_timeout_omits_starts_after_result_observation(
     ctx, sent_events = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3)
 
     async def execute_all(callables: list[Any]) -> list[Outcome]:
         first = callables[0]
@@ -883,7 +883,7 @@ def test_partial_cache_replay_only_reports_start_for_invoked_tool() -> None:
     ctx, sent_events = trace_context(tool)
     ctx.config = AgentConfiguration({})
     ctx.config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    ctx.config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3)
+    ctx.config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3)
 
     async def execute_all(callables: list[Any]) -> list[Outcome]:
         call = callables[1]
@@ -941,7 +941,7 @@ def assert_occurrence_reports(
 def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 1)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 1)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))
@@ -953,7 +953,7 @@ def test_tool_call_action_uses_serial_async_when_parallelism_is_one() -> None:
 def test_tool_call_action_does_not_batch_single_tool() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1"), ctx))
@@ -965,7 +965,7 @@ def test_tool_call_action_does_not_batch_single_tool() -> None:
 def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _Context(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "missing"), ctx))
@@ -980,7 +980,7 @@ def test_tool_call_action_excludes_missing_tool_from_parallel_batch() -> None:
 def test_tool_call_action_records_parallel_outcome_failure() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _Context(config=config)
     ctx.gather_outcomes = [
         Outcome.success("ok"),
@@ -1000,7 +1000,7 @@ def test_tool_call_action_records_parallel_outcome_failure() -> None:
 def test_tool_call_action_records_parallel_tool_response_failure() -> None:
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _Context(config=config)
     ctx.gather_outcomes = [
         Outcome.success("ok"),
@@ -1057,7 +1057,7 @@ def test_tool_call_action_records_infrastructure_failure_for_all_parallel_tools(
 
     config = AgentConfiguration({"tenant_id": "tenant-1"})
     config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, True)
-    config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 4)
+    config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 4)
     ctx = _FailingBatchContext(config=config)
 
     asyncio.run(process_tool_request(tool_request("call-1", "call-2"), ctx))

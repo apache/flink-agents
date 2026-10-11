@@ -17,9 +17,11 @@
  */
 package org.apache.flink.agents.runtime.context;
 
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.util.Preconditions;
 
 import java.util.ArrayList;
@@ -27,16 +29,17 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Callable;
 
-/** Runtime-owned implementation of a deferred durable call handle. */
-abstract class DurableFutureImpl<T> implements DurableFuture<T> {
+/** Runtime-owned implementation of a deferred asynchronous call handle. */
+abstract class AsyncFutureImpl<T> implements AsyncFuture<T> {
     private final RunnerContextImpl owner;
     private boolean resolving;
     private boolean done;
     private T value;
     private Exception error;
 
-    DurableFutureImpl(RunnerContextImpl owner) {
+    AsyncFutureImpl(RunnerContextImpl owner) {
         this.owner = owner;
     }
 
@@ -50,7 +53,7 @@ abstract class DurableFutureImpl<T> implements DurableFuture<T> {
 
     final Outcome<T> getCompletedOutcome() {
         if (!done) {
-            throw new IllegalStateException("Durable future has not been resolved");
+            throw new IllegalStateException("Async future has not been resolved");
         }
         return error == null ? Outcome.success(value) : Outcome.failure(error);
     }
@@ -61,7 +64,7 @@ abstract class DurableFutureImpl<T> implements DurableFuture<T> {
             return completedValue();
         }
         if (resolving) {
-            throw new IllegalStateException("A durable future cannot await itself recursively");
+            throw new IllegalStateException("An async future cannot await itself recursively");
         }
 
         resolving = true;
@@ -69,10 +72,13 @@ abstract class DurableFutureImpl<T> implements DurableFuture<T> {
             value = resolveValue();
             done = true;
             return value;
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            if (CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
             error = e;
             done = true;
             throw e;
@@ -83,7 +89,7 @@ abstract class DurableFutureImpl<T> implements DurableFuture<T> {
 
     final void complete(Outcome<T> outcome) {
         if (done) {
-            throw new IllegalStateException("Durable future has already been resolved");
+            throw new IllegalStateException("Async future has already been resolved");
         }
         value = outcome.getValue();
         error = outcome.getError();
@@ -100,52 +106,76 @@ abstract class DurableFutureImpl<T> implements DurableFuture<T> {
     abstract T resolveValue() throws Exception;
 }
 
-/** Deferred handle for one durable callable. */
-final class SingleDurableFuture<T> extends DurableFutureImpl<T> {
-    private final DurableCallable<T> callable;
+/** Deferred handle for one ordinary callable. */
+class SingleAsyncFuture<T> extends AsyncFutureImpl<T> {
+    private final Callable<T> callable;
 
-    SingleDurableFuture(RunnerContextImpl owner, DurableCallable<T> callable) {
+    SingleAsyncFuture(RunnerContextImpl owner, Callable<T> callable) {
         super(owner);
         this.callable = callable;
     }
 
-    DurableCallable<T> getCallable() {
+    Callable<T> getCallable() {
         return callable;
+    }
+
+    DurableCallable<T> getDurableCallable() {
+        return null;
     }
 
     @Override
     T resolveValue() throws Exception {
-        return getOwner().resolveDurableAsync(callable);
+        return getOwner().resolveAsync(callable);
     }
 }
 
-/** Deferred handle for a batch of durable call handles. */
-final class GatherDurableFuture<T> extends DurableFutureImpl<List<Outcome<T>>> {
-    private final List<SingleDurableFuture<T>> futures;
+/** Deferred handle with the additional durable execution contract. */
+final class SingleDurableFuture<T> extends SingleAsyncFuture<T> implements DurableFuture<T> {
+    private final DurableCallable<T> durableCallable;
 
-    GatherDurableFuture(RunnerContextImpl owner, List<? extends DurableFuture<T>> durableFutures) {
+    SingleDurableFuture(RunnerContextImpl owner, DurableCallable<T> callable) {
+        super(owner, callable::call);
+        this.durableCallable = callable;
+    }
+
+    @Override
+    DurableCallable<T> getDurableCallable() {
+        return durableCallable;
+    }
+
+    @Override
+    T resolveValue() throws Exception {
+        return getOwner().resolveDurableAsync(durableCallable);
+    }
+}
+
+/** Deferred handle for a batch of ordinary and/or durable call handles. */
+final class GatherAsyncFuture<T> extends AsyncFutureImpl<List<Outcome<T>>> {
+    private final List<SingleAsyncFuture<T>> futures;
+
+    GatherAsyncFuture(RunnerContextImpl owner, List<? extends AsyncFuture<T>> asyncFutures) {
         super(owner);
-        Preconditions.checkNotNull(durableFutures, "futures must not be null");
+        Preconditions.checkNotNull(asyncFutures, "futures must not be null");
 
-        List<SingleDurableFuture<T>> singleFutures = new ArrayList<>(durableFutures.size());
-        Set<DurableFuture<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (DurableFuture<T> future : durableFutures) {
+        List<SingleAsyncFuture<T>> singleFutures = new ArrayList<>(asyncFutures.size());
+        Set<AsyncFuture<T>> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (AsyncFuture<T> future : asyncFutures) {
             Preconditions.checkNotNull(future, "future must not be null");
-            if (!(future instanceof SingleDurableFuture)) {
+            if (!(future instanceof SingleAsyncFuture)) {
                 throw new IllegalArgumentException(
-                        "gather only accepts futures returned by durableExecuteAsync");
+                        "gather only accepts futures returned by executeAsync or durableExecuteAsync");
             }
-            SingleDurableFuture<?> internalFuture = (SingleDurableFuture<?>) future;
+            SingleAsyncFuture<?> internalFuture = (SingleAsyncFuture<?>) future;
             if (internalFuture.getOwner() != owner) {
                 throw new IllegalArgumentException(
-                        "All durable futures passed to gather must be created by this runner context");
+                        "All async futures passed to gather must be created by this runner context");
             }
             if (!seen.add(future)) {
                 throw new IllegalArgumentException(
-                        "The same durable future cannot appear more than once in gather");
+                        "The same async future cannot appear more than once in gather");
             }
             @SuppressWarnings("unchecked")
-            SingleDurableFuture<T> singleFuture = (SingleDurableFuture<T>) internalFuture;
+            SingleAsyncFuture<T> singleFuture = (SingleAsyncFuture<T>) internalFuture;
             singleFutures.add(singleFuture);
         }
         this.futures = List.copyOf(singleFutures);
@@ -154,23 +184,20 @@ final class GatherDurableFuture<T> extends DurableFutureImpl<List<Outcome<T>>> {
     @Override
     List<Outcome<T>> resolveValue() throws Exception {
         List<Outcome<T>> outcomes = new ArrayList<>(Collections.nCopies(futures.size(), null));
-        List<SingleDurableFuture<T>> unresolvedFutures = new ArrayList<>();
-        List<DurableCallable<T>> unresolvedCallables = new ArrayList<>();
+        List<SingleAsyncFuture<T>> unresolvedFutures = new ArrayList<>();
         List<Integer> unresolvedIndexes = new ArrayList<>();
         for (int i = 0; i < futures.size(); i++) {
-            SingleDurableFuture<T> future = futures.get(i);
+            SingleAsyncFuture<T> future = futures.get(i);
             if (future.isDone()) {
                 outcomes.set(i, future.getCompletedOutcome());
             } else {
                 unresolvedFutures.add(future);
-                unresolvedCallables.add(future.getCallable());
                 unresolvedIndexes.add(i);
             }
         }
 
-        if (!unresolvedCallables.isEmpty()) {
-            List<Outcome<T>> unresolvedOutcomes =
-                    getOwner().resolveDurableBatch(unresolvedCallables);
+        if (!unresolvedFutures.isEmpty()) {
+            List<Outcome<T>> unresolvedOutcomes = getOwner().resolveAsyncBatch(unresolvedFutures);
             for (int i = 0; i < unresolvedFutures.size(); i++) {
                 Outcome<T> outcome = unresolvedOutcomes.get(i);
                 unresolvedFutures.get(i).complete(outcome);

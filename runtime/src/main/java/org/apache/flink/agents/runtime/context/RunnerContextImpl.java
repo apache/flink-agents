@@ -23,7 +23,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -37,6 +39,7 @@ import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -45,11 +48,17 @@ import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
 import org.apache.flink.agents.runtime.memory.InteranlBaseLongTermMemory;
+import org.apache.flink.agents.runtime.memory.IsolatedCachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.MemoryEventBuilder;
 import org.apache.flink.agents.runtime.memory.MemoryEventSettings;
 import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
+import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
+import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,6 +67,8 @@ import javax.annotation.Nullable;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +130,16 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         public CachedMemoryStore getSensoryMemStore() {
             return sensoryMemStore;
         }
+
+        /**
+         * Builds the isolated memory context for one internal sub-agent call. The child does not
+         * share memory with its caller, so the stores start empty and are not seeded from any
+         * parent view.
+         */
+        public static MemoryContext createChildContext() {
+            return new MemoryContext(
+                    new IsolatedCachedMemoryStore(), new IsolatedCachedMemoryStore());
+        }
     }
 
     private static final Logger LOG = LoggerFactory.getLogger(RunnerContextImpl.class);
@@ -129,10 +150,27 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     protected final Runnable mailboxThreadChecker;
     protected final AgentPlan agentPlan;
     protected final ResourceCache resourceCache;
+    protected final BuiltInMetrics builtInMetrics;
 
     protected MemoryContext memoryContext;
     protected String actionName;
     protected InteranlBaseLongTermMemory ltm;
+
+    /**
+     * The sub-agent call this action runs inside, or {@code null} for a top-level action. Attached
+     * by {@link #setSubagentScope}: while set, the context answers resource/config queries from the
+     * child plan and routes events through the call (output accumulated into the call status, other
+     * events wrapped and forwarded) instead of emitting them top-level.
+     */
+    @Nullable private SubagentScope subagentScope;
+
+    /**
+     * Index of the internal sub-agent setups owning a bootstrapped call session, keyed by session
+     * id. Populated by {@link InternalSubagentSetup#bootstrap} so {@link #awaitSubagentCall} can
+     * resolve the owning setup off the mailbox thread without depending on the scope currently
+     * wired onto this shared context.
+     */
+    private final Map<String, InternalSubagentSetup> internalCallOwners = new HashMap<>();
 
     /** Textual key shared by long-term-memory isolation and framework observation events. */
     protected String contextKey;
@@ -168,6 +206,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         this.mailboxThreadChecker = mailboxThreadChecker;
         this.agentPlan = agentPlan;
         this.resourceCache = resourceCache;
+        this.builtInMetrics =
+                agentMetricGroup == null
+                        ? null
+                        : new BuiltInMetrics(
+                                agentMetricGroup,
+                                agentPlan,
+                                toolName -> resourceCache.hasResource(toolName, ResourceType.TOOL));
         this.memoryEventSettings = MemoryEventSettings.from(agentPlan.getConfigData());
         this.ltmObservationConfigured =
                 memoryEventSettings.generate(MemoryEventSettings.MemoryOp.LONG_TERM_UPDATE)
@@ -178,6 +223,79 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     public void setLongTermMemory(InteranlBaseLongTermMemory ltm) {
         this.ltm = ltm;
+    }
+
+    /** The metrics in effect: the child plan's while inside a sub-agent call, else the root's. */
+    public BuiltInMetrics getBuiltInMetrics() {
+        return subagentScope != null ? subagentScope.getBuiltInMetrics() : builtInMetrics;
+    }
+
+    /**
+     * Bootstraps an internal sub-agent call by scope name, without blocking.
+     *
+     * <p>Cross-language (Python) entry point invoked over pemja: the Python side cannot hold a Java
+     * setup instance, so it passes the resource scope and this method resolves the materialized
+     * {@link InternalSubagentSetup} from the cache in effect (a nested call resolves against the
+     * caller's child plan). Must run on the mailbox thread (it sends the bootstrap event); the
+     * caller subsequently offloads {@link #awaitSubagentCall} onto a Python async worker so the
+     * mailbox stays free to dispatch the child agent's actions.
+     */
+    public void bootstrapSubagentCallForScope(
+            String scope, String sessionId, String callId, Object prompt) throws Exception {
+        Resource resource = getResource(scope, ResourceType.AGENT);
+        Preconditions.checkState(
+                resource instanceof InternalSubagentSetup,
+                "AGENT resource '"
+                        + scope
+                        + "' is not an internal sub-agent setup, got "
+                        + resource.getClass().getName());
+        ((InternalSubagentSetup) resource).bootstrap(this, sessionId, callId, prompt);
+    }
+
+    /**
+     * Blocks until the internal sub-agent call identified by {@code (sessionId, callId)} completes
+     * and returns its accumulated output.
+     *
+     * <p>Cross-language (Python) entry point invoked over pemja off the mailbox thread; resolves
+     * the owning setup through the session index rather than the currently wired scope.
+     */
+    public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
+        InternalSubagentSetup owner = internalCallOwners.get(sessionId);
+        Preconditions.checkNotNull(
+                owner,
+                "No internal sub-agent call registered for sessionId=%s, callId=%s",
+                sessionId,
+                callId);
+        return owner.awaitSubagentCall(sessionId, callId);
+    }
+
+    /**
+     * Registers the setup owning a call session; invoked by {@link
+     * InternalSubagentSetup#bootstrap}.
+     */
+    public void registerInternalCallOwner(String sessionId, InternalSubagentSetup setup) {
+        internalCallOwners.put(sessionId, setup);
+    }
+
+    /** Drops the session index entry; invoked by the owning setup when its record finishes. */
+    public void unregisterInternalCallOwner(String sessionId) {
+        internalCallOwners.remove(sessionId);
+    }
+
+    /**
+     * Attaches (or clears, with {@code null}) the sub-agent call this action runs inside. Must be
+     * applied on every context switch: the shared context is reused across tasks, so a top-level
+     * action must not inherit the scope of whichever sub-agent action was wired on previously (its
+     * output would be folded into that call and it would run against the child plan).
+     */
+    public void setSubagentScope(@Nullable SubagentScope subagentScope) {
+        this.subagentScope = subagentScope;
+    }
+
+    /** The sub-agent call this action runs inside, or {@code null} for a top-level action. */
+    @Nullable
+    public SubagentScope getSubagentScope() {
+        return subagentScope;
     }
 
     public void switchActionContext(
@@ -219,6 +337,41 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
         checkNoPresetLineage(event);
+        if (subagentScope != null) {
+            sendEventInSubagentScope(event);
+            return;
+        }
+        addPendingEvent(event);
+    }
+
+    /**
+     * Routes an event emitted inside a sub-agent call. Output events are accumulated into the call
+     * status (they are the call's result, not top-level output); any other event is wrapped in an
+     * {@link InternalSubagentCallEvent} and forwarded for dispatch within the child scope.
+     */
+    private void sendEventInSubagentScope(Event event) {
+        if (EventUtil.isOutputEvent(event)) {
+            OutputEvent outputEvent =
+                    event instanceof OutputEvent
+                            ? (OutputEvent) event
+                            : OutputEvent.fromEvent(event);
+            subagentScope.accumulateOutput(outputEvent);
+            return;
+        }
+        InternalSubagentCallStatus callStatus = subagentScope.getCallStatus();
+        InternalSubagentCallEvent wrapped =
+                event instanceof InternalSubagentCallEvent
+                        ? (InternalSubagentCallEvent) event
+                        : InternalSubagentCallEvent.forward(
+                                event,
+                                callStatus.getScope(),
+                                callStatus.getCallId(),
+                                callStatus.getSessionId());
+        callStatus.emitEvent();
+        addPendingEvent(wrapped);
+    }
+
+    private void addPendingEvent(Event event) {
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -262,9 +415,31 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                         + " metadata in attributes.");
     }
 
-    public List<Event> drainEvents(Long timestamp) {
+    public List<Event> drainEventsAtActionYield(Long timestamp) {
         mailboxThreadChecker.run();
-        return drainPendingEvents(timestamp);
+        List<Event> events = new ArrayList<>();
+        Iterator<Event> iterator = pendingEvents.iterator();
+        while (iterator.hasNext()) {
+            Event event = iterator.next();
+            if (!(event instanceof InternalSubagentCallEvent)) {
+                continue;
+            }
+            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) event;
+            if (subagentScope != null) {
+                InternalSubagentCallStatus callStatus = subagentScope.getCallStatus();
+                if (callStatus.getSessionId().equals(envelope.getSessionId())
+                        && callStatus.getCallId().equals(envelope.getCallId())) {
+                    continue;
+                }
+            }
+            // Only call bootstraps must run before completion to unblock the awaiting action.
+            if (timestamp != null) {
+                event.setSourceTimestamp(timestamp);
+            }
+            events.add(event);
+            iterator.remove();
+        }
+        return events;
     }
 
     /** Converts this action's memory records into events and drains all action output events. */
@@ -272,6 +447,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         mailboxThreadChecker.run();
         flushMemoryObservation();
         return drainPendingEvents(timestamp);
+    }
+
+    public void discardPendingEvents() {
+        mailboxThreadChecker.run();
+        pendingEvents.clear();
     }
 
     /**
@@ -550,10 +730,11 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Override
     public Resource getResource(String name, ResourceType type) throws Exception {
         mailboxThreadChecker.run();
-        if (resourceCache == null) {
+        ResourceCache cache = currentResourceCache();
+        if (cache == null) {
             throw new IllegalStateException("ResourceCache is not available in this context");
         }
-        Resource resource = resourceCache.getResource(name, type);
+        Resource resource = cache.getResource(name, type);
         // Set current action's metric group to the resource
         resource.setMetricGroup(getActionMetricGroup());
         return resource;
@@ -561,22 +742,51 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public boolean hasResource(String name, ResourceType type) {
-        return resourceCache != null && resourceCache.hasResource(name, type);
+        ResourceCache cache = currentResourceCache();
+        return cache != null && cache.hasResource(name, type);
+    }
+
+    /** The plan in effect: the child plan while inside a sub-agent call, else the root plan. */
+    public AgentPlan currentPlan() {
+        return subagentScope != null ? subagentScope.getChildPlan() : agentPlan;
+    }
+
+    /** The resource cache in effect: the child cache while inside a sub-agent call, else root. */
+    public ResourceCache currentResourceCache() {
+        return subagentScope != null ? subagentScope.getChildResourceCache() : resourceCache;
+    }
+
+    /**
+     * JSON of the child plan in effect while inside a sub-agent call, or {@code null} for a
+     * top-level action. Cross-language (Python) entry point invoked over pemja: the Python side
+     * resolves resources against this plan so a child agent sees its own resources (including any
+     * nested sub-agents) rather than the root plan's.
+     *
+     * <p>Returns the setup's cached child plan JSON — the same string the operator handed the child
+     * resource cache for eager materialization — so the eager and lazy paths key one Python scope
+     * cache and a Python-owned resource of the scope is built exactly once.
+     */
+    @Nullable
+    public String getActiveScopePlanJson() {
+        if (subagentScope == null) {
+            return null;
+        }
+        return subagentScope.getCallStatus().getSetup().getChildPlanJson();
     }
 
     @Override
     public ReadableConfiguration getConfig() {
-        return agentPlan.getConfig();
+        return currentPlan().getConfig();
     }
 
     @Override
     public Map<String, Object> getActionConfig() {
-        return agentPlan.getActionConfig(actionName);
+        return currentPlan().getActionConfig(actionName);
     }
 
     @Override
     public Object getActionConfigValue(String key) {
-        return agentPlan.getActionConfigValue(actionName, key);
+        return currentPlan().getActionConfigValue(actionName, key);
     }
 
     @Override
@@ -591,13 +801,22 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     @Override
+    public <T> AsyncFuture<T> executeAsync(Callable<T> callable) {
+        return new SingleAsyncFuture<>(this, Preconditions.checkNotNull(callable));
+    }
+
+    protected <T> T resolveAsync(Callable<T> callable) throws Exception {
+        return callable.call();
+    }
+
+    @Override
     public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
         return new SingleDurableFuture<>(this, Preconditions.checkNotNull(callable));
     }
 
     @Override
-    public <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures) {
-        return new GatherDurableFuture<>(this, futures);
+    public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
+        return new GatherAsyncFuture<>(this, futures);
     }
 
     /**
@@ -610,20 +829,20 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return durableExecute(callable);
     }
 
-    /** Resolves a durable batch. Java contexts override this with Continuation support. */
-    protected <T> List<Outcome<T>> resolveDurableBatch(List<DurableCallable<T>> callables)
+    /** Resolves a mixed batch. Java contexts override this with Continuation support. */
+    protected <T> List<Outcome<T>> resolveAsyncBatch(List<SingleAsyncFuture<T>> futures)
             throws Exception {
-        List<Outcome<T>> outcomes = new ArrayList<>(callables.size());
-        for (DurableCallable<T> callable : callables) {
+        List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
+        for (SingleAsyncFuture<T> future : futures) {
             try {
-                outcomes.add(Outcome.success(durableExecute(callable)));
-            } catch (InterruptedException e) {
-                // A cancellation signal, not a genuine call failure: stop scheduling the
-                // remaining callables and propagate immediately, instead of recording it as a
-                // failed outcome and continuing on to the rest of the batch.
-                Thread.currentThread().interrupt();
-                throw e;
+                outcomes.add(Outcome.success(future.resolveValue()));
             } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)) {
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw e;
+                }
                 outcomes.add(Outcome.failure(e));
             }
         }
@@ -657,13 +876,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Exception exception = null;
         try {
             result = executionCallable.call();
-        } catch (InterruptedException e) {
-            // A cancellation signal, not a genuine call failure: leave the durable slot
-            // unfinished so recovery re-executes or reconciles the call instead of replaying a
-            // stale interruption as a completed success or failure.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            if (CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
             exception = e;
         }
 
@@ -1022,13 +1241,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Exception exception = null;
         try {
             result = callSupplier.call();
-        } catch (InterruptedException e) {
-            // A cancellation signal, not a genuine call failure: leave the pending call
-            // unfinalized so recovery re-executes or reconciles it instead of replaying a stale
-            // interruption as a completed success or failure.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            if (CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
             exception = e;
         }
 
@@ -1301,6 +1520,67 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
         private void persistActionState() {
             persister.persist(key, sequenceNumber, action, event, actionState);
+        }
+    }
+
+    /**
+     * The state of one internal sub-agent call, attached to the shared runner context while a child
+     * agent's action executes. Holds the child plan and resource cache the action resolves against,
+     * the per-call quiesce state, and the output events the child emits (accumulated here so they
+     * can be persisted into the child action state and replayed on recovery).
+     *
+     * <p>The call is a scope on the one shared context rather than a separate context object per
+     * call, so the language machinery (continuation / Python awaitable) does not have to be
+     * duplicated per scope.
+     */
+    public static final class SubagentScope {
+
+        private final AgentPlan childPlan;
+        private final ResourceCache childResourceCache;
+        private final InternalSubagentCallStatus callStatus;
+        private final BuiltInMetrics builtInMetrics;
+        private final List<Event> outputEvents = new ArrayList<>();
+
+        public SubagentScope(
+                FlinkAgentsMetricGroupImpl agentMetricGroup,
+                AgentPlan childPlan,
+                ResourceCache childResourceCache,
+                InternalSubagentCallStatus callStatus) {
+            this.childPlan = childPlan;
+            this.childResourceCache = childResourceCache;
+            this.callStatus = callStatus;
+            this.builtInMetrics =
+                    new BuiltInMetrics(
+                            agentMetricGroup,
+                            childPlan,
+                            toolName ->
+                                    childResourceCache.hasResource(toolName, ResourceType.TOOL));
+        }
+
+        public AgentPlan getChildPlan() {
+            return childPlan;
+        }
+
+        public ResourceCache getChildResourceCache() {
+            return childResourceCache;
+        }
+
+        public InternalSubagentCallStatus getCallStatus() {
+            return callStatus;
+        }
+
+        public BuiltInMetrics getBuiltInMetrics() {
+            return builtInMetrics;
+        }
+
+        /** Records an output event emitted by the child and folds its payload into the call. */
+        public void accumulateOutput(OutputEvent outputEvent) {
+            callStatus.accumulateOutput(outputEvent.getOutput());
+            outputEvents.add(outputEvent);
+        }
+
+        public List<Event> getOutputEvents() {
+            return List.copyOf(outputEvents);
         }
     }
 }

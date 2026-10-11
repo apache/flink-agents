@@ -24,15 +24,17 @@ a process-owned temp directory.
 
 from __future__ import annotations
 
-from importlib.resources import as_file, files
+import tempfile
 from pathlib import Path
 
 from flink_agents.runtime.skill.repository._materialize import (
-    copy_dir_to_temp,
-    extract_zip_safely,
+    Materialized,
 )
 from flink_agents.runtime.skill.repository.materialized_skill_repository import (
     MaterializedSkillRepository,
+)
+from flink_agents.runtime.skill.repository.package_materializer import (
+    materialize_package,
 )
 
 
@@ -41,9 +43,8 @@ class PackageSkillRepository(MaterializedSkillRepository):
 
     The resource (directory or ``.zip``) is copied / extracted into a
     process-owned temp directory at construction time. The
-    ``importlib.resources.as_file`` context is released immediately after
-    materialization, so close lifecycle reduces to releasing that single owned
-    temp directory.
+    Package resources are resolved only during construction. Close releases
+    the resulting owned directory without retaining package resource handles.
     """
 
     def __init__(self, package: str, resource: str) -> None:
@@ -57,31 +58,17 @@ class PackageSkillRepository(MaterializedSkillRepository):
             ValueError: If the resource is missing, or is neither a directory
                 nor a ``.zip`` file.
         """
-        traversable = files(package).joinpath(resource)
-        if not traversable.is_dir() and not traversable.is_file():
-            msg = f"Resource {resource!r} not found in package {package!r}"
-            raise ValueError(msg)
-
         self._package = package
         self._resource = resource
-
-        # Materialize inside the as_file context so the path is valid, then
-        # let the context release; the resulting Materialized owns its own
-        # temp dir and outlives the context.
-        with as_file(traversable) as path:
-            path = Path(path)
-            if path.is_dir():
-                materialization = copy_dir_to_temp(path)
-            elif path.is_file() and path.suffix.lower() == ".zip":
-                materialization = extract_zip_safely(path)
-            else:
-                msg = (
-                    f"Package resource must be a directory or a .zip: "
-                    f"{package}/{resource}"
-                )
-                raise ValueError(msg)
-
-        super().__init__(materialization)
+        materialization = Materialized(
+            Path(tempfile.mkdtemp(prefix="flink-agents-skills-"))
+        )
+        try:
+            materialize_package(package, resource, str(materialization.dir))
+            super().__init__(materialization)
+        except BaseException:
+            materialization.close()
+            raise
 
     @property
     def package(self) -> str:

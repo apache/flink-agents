@@ -327,18 +327,17 @@ Injected parameters are part of the tool execution contract, not the model contr
 ## Parallel tool-call batches
 
 When `tool-call.async` is enabled, the built-in `tool_call_action` runs all tool calls from one
-`ToolRequestEvent` as a single durable batch. Set `tool-call.parallelism` to control concurrency:
+`ToolRequestEvent` as a single durable batch. Set `async.batch.parallelism` to control concurrency:
 
 - `1` — serial execution (one tool at a time).
 - `> 1` — parallel batch with a sliding window of at most that many in-flight tool calls.
 
-On **Java**, concurrent in-batch execution uses a sliding window on **JDK 21+** (Continuation
-API); on JDK 11 the batch still completes but tool calls run serially. **Python** uses the shared
-async thread pool and runs batches concurrently regardless of JDK version.
+Java and Python support concurrent tool-call batches on all supported JDK versions.
 
-Chat, RAG, and tool batches share one `num-async-threads` pool **per operator subtask** (every
-key routed to that subtask). The default parallelism is the host CPU count, so multi-tool batches
-run in parallel on JDK 21+ / Python unless you change this setting.
+Tool batches share a `num-async-threads` pool **per operator subtask** (every key routed to
+that subtask). On JDK 21+ and in Python, chat and RAG calls also use this pool. On older JDKs,
+Java batches use a separate pool from the Action workers. The default batch parallelism is
+the host CPU count.
 
 Built-in actions for a **single key** run one at a time. In the usual chat → tool path, a chat
 async call finishes before `tool_call_action` starts, so they do not overlap on the same key.
@@ -346,13 +345,13 @@ Contention appears mainly **across keys** on the same subtask: one key's paralle
 delay another key's chat or RAG async work.
 
 {{< hint warning >}}
-**Cross-key impact:** with defaults (`num-async-threads = 2× cores`, `tool-call.parallelism =
+**Cross-key impact:** with defaults (`num-async-threads = 2× cores`, `async.batch.parallelism =
 cores`), one full tool batch can use up to half the subtask pool; several hot keys can saturate it.
 If your job mixes heavy tool batches with chat/RAG on the same subtask, lower
-`tool-call.parallelism` or increase `num-async-threads`.
+`async.batch.parallelism` or increase `num-async-threads`.
 {{< /hint >}}
 
-`tool-call.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
+`async.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
 outcome; slots that started but did not finish are recorded as failures; slots that never started
 executing (for example, queued in a saturated pool) stay pending, so they are re-executed after
 recovery instead of recording a false failure. Timeout cancellation is best-effort; side-effecting

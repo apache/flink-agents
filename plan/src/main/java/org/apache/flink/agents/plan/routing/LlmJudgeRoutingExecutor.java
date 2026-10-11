@@ -30,6 +30,7 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -146,11 +147,10 @@ final class LlmJudgeRoutingExecutor implements RoutingExecutor {
                     failure.model,
                     failure.retryCount,
                     failure.totalRetryWaitSec);
-            // Cancellation surfacing from inside the judge attempt (the invoker wraps every
-            // attempt exception): it must propagate, never persist as a routing outcome.
-            if (ModelRoutingResolver.isCancellation(failure)) {
+            // Restore a wrapped interruption without turning ordinary cancellation into a
+            // thread interrupt. The failure itself always propagates to routing resolution.
+            if (CancellationUtils.isInterruption(failure)) {
                 Thread.currentThread().interrupt();
-                throw failure;
             }
             throw failure;
         }

@@ -28,6 +28,7 @@ import org.apache.flink.agents.api.event.ModelRoutingEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.actions.ChatModelInvoker;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.util.HashMap;
 import java.util.List;
@@ -89,8 +90,8 @@ public final class ModelRoutingResolver {
     }
 
     private static RoutingFailure failure(Exception e) throws Exception {
-        if (isCancellation(e)) {
-            if (e instanceof InterruptedException) {
+        if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
+            if (CancellationUtils.isInterruption(e)) {
                 Thread.currentThread().interrupt();
             }
             throw e;
@@ -298,31 +299,6 @@ public final class ModelRoutingResolver {
         if (actionMetrics != null && decisionMs != null) {
             actionMetrics.getHistogram("routingDecisionLatencyMs").update(Math.round(decisionMs));
         }
-    }
-
-    /**
-     * Whether the failed attempt was caused by cancellation. Determined from the thread's interrupt
-     * state plus the explicit cancellation types; IO shapes like {@code InterruptedIOException} are
-     * deliberately NOT treated as cancellation — HTTP stacks (e.g. Okio) raise a bare {@code
-     * InterruptedIOException("timeout")} for ordinary network timeouts, which must keep following
-     * the normal failure policy.
-     */
-    public static boolean isCancellation(Throwable failure) {
-        if (Thread.currentThread().isInterrupted()) {
-            return true;
-        }
-        int depth = 0;
-        for (Throwable t = failure; t != null && depth < 64; t = t.getCause(), depth++) {
-            if (t instanceof InterruptedException
-                    || t instanceof java.nio.channels.ClosedByInterruptException
-                    || t instanceof java.util.concurrent.CancellationException) {
-                return true;
-            }
-            if (t.getCause() == t) {
-                break;
-            }
-        }
-        return false;
     }
 
     /** Shared tail: observability event + resolved route. */

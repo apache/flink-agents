@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -826,7 +827,7 @@ class ToolCallActionSubagentTest {
         /** Turns on the batched path: async tool calls with room to run more than one. */
         FakeRunnerContext withParallelToolCalls() {
             config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
-            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
+            config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
             return this;
         }
 
@@ -892,6 +893,11 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             // A deferred handle: the callable runs only when the future is awaited, directly
             // or as part of gather, so the count reflects executions, not handle creations.
@@ -904,13 +910,12 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new TestDurableFuture<>(
                     "gather",
                     () -> {
                         List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
-                        for (DurableFuture<T> future : futures) {
+                        for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {

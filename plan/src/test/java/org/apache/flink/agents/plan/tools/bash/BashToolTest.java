@@ -29,9 +29,11 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BashToolTest {
@@ -105,6 +107,21 @@ class BashToolTest {
     void successfulCommandWithEmptyOutput() {
         ToolResponse r = tool().call(args("true", List.of("true"), List.of()));
         assertEquals("Success", r.getResult());
+    }
+
+    @Test
+    void interruptionPropagatesInsteadOfReturningToolResult() {
+        Thread.currentThread().interrupt();
+        try {
+            CancellationException failure =
+                    assertThrows(
+                            CancellationException.class,
+                            () -> tool().call(args("sleep 1", List.of("sleep"), List.of())));
+            assertTrue(failure.getCause() instanceof InterruptedException);
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @Test

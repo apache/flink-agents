@@ -28,6 +28,8 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -41,6 +43,8 @@ import java.util.Map;
  * by {@code AgentPlan.addSkills} when an agent declares any {@code @Skills} method.
  */
 public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider {
+
+    private static final Logger LOG = LoggerFactory.getLogger(LoadSkillTool.class);
 
     private static final String DESCRIPTION =
             "Load a skill's content or a specific resource. Use this to access skill instructions and resources.";
@@ -87,8 +91,8 @@ public class LoadSkillTool extends Tool implements ToolExecutionMetadataProvider
         try {
             manager = resolveSkillManager();
         } catch (Exception e) {
-            return ToolResponse.error(
-                    "Skill manager not available. No skills have been registered.");
+            LOG.warn("Failed to initialize skill manager", e);
+            return ToolResponse.error("Failed to initialize skill manager: " + e.getMessage());
         }
         if (manager == null) {
             return ToolResponse.error(

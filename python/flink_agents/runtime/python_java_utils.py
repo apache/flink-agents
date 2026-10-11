@@ -468,3 +468,12 @@ def set_metric_group(obj: Resource, j_metric_group: Any) -> None:
         FlinkMetricGroup(j_metric_group) if j_metric_group is not None else None
     )
     obj.set_metric_group(metric_group)
+
+
+def materialize_package_skills(package: str, resource: str, target_dir: str) -> None:
+    """Extract a package source into a directory owned by the Java caller."""
+    from flink_agents.runtime.skill.repository.package_materializer import (
+        materialize_package,
+    )
+
+    materialize_package(package, resource, target_dir)

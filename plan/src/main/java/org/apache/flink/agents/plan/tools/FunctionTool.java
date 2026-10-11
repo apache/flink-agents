@@ -39,6 +39,7 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonToolResultConverter;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonDeserializer;
 import org.apache.flink.agents.plan.tools.serializer.FunctionToolJsonSerializer;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
@@ -144,12 +145,19 @@ public class FunctionTool extends Tool {
             }
             Object result = function.call(schema.bind(arguments));
             return ToolResponse.success(result);
-        } catch (InterruptedException error) {
-            Thread.currentThread().interrupt();
-            throw new java.util.concurrent.CancellationException("Function tool interrupted");
-        } catch (java.util.concurrent.CancellationException error) {
-            throw error;
         } catch (Exception error) {
+            if (CancellationUtils.isCancellation(error)) {
+                if (CancellationUtils.isInterruption(error)) {
+                    Thread.currentThread().interrupt();
+                }
+                if (error instanceof RuntimeException) {
+                    throw (RuntimeException) error;
+                }
+                java.util.concurrent.CancellationException cancelled =
+                        new java.util.concurrent.CancellationException("Function tool interrupted");
+                cancelled.initCause(error);
+                throw cancelled;
+            }
             return ToolResponse.error(error);
         }
     }

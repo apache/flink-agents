@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
 
 /**
  * A context object used during action execution. It is responsible for collecting output events
@@ -140,6 +141,22 @@ public interface RunnerContext {
     Object getActionConfigValue(String key);
 
     /**
+     * Creates a deferred asynchronous call without durable result persistence or replay.
+     *
+     * <p>Await the returned handle or compose it with {@link #gather}. Creating handles alone does
+     * not run work, and awaiting individual handles sequentially does not run them in parallel.
+     * Results and exceptions are cached only within this handle; recovery that re-executes the
+     * action may execute the callable again. No durable slot is consumed and arguments and results
+     * need not be serializable for this API.
+     *
+     * <p>The callable must not access this context's memory, events, metrics, resource lookup, or
+     * execution methods. Read configuration and obtain resources on the action thread before
+     * submission; use only resources safe for the intended concurrent access. Handles must not
+     * escape their creating action. There is no fire-and-forget execution.
+     */
+    <T> AsyncFuture<T> executeAsync(Callable<T> callable);
+
+    /**
      * Synchronously executes the provided callable with durable execution support.
      *
      * <p>The result will be stored and returned from cache during job recovery. The callable is
@@ -173,18 +190,21 @@ public interface RunnerContext {
     <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable);
 
     /**
-     * Composes deferred durable calls into one deferred batch.
+     * Composes deferred ordinary and/or durable calls into one deferred batch.
      *
      * <p>The input order defines result order. Resolving the returned future reuses locally
-     * completed outcomes, then reserves all required durable slots for unresolved calls before
-     * submitting them. Individual callable failures are represented as {@link
-     * Outcome#failure(Exception)} values.
+     * completed outcomes, then reserves slots for unresolved durable calls only before submitting
+     * them. Individual callable failures are represented as {@link Outcome#failure(Exception)}
+     * values.
      *
-     * <p>On JDK 21+, resolving the returned future executes eligible uncached calls concurrently,
-     * bounded by {@link AgentExecutionOptions#TOOL_CALL_PARALLELISM}. On JDK &lt; 21, batch
-     * execution falls back to serial execution regardless of that setting.
+     * <p>Only single-call handles created by this context are accepted; duplicates, foreign handles
+     * and nested batches are rejected before any work starts. A mixed batch persists only its
+     * durable children, in their relative input order.
+     *
+     * <p>Resolving the returned future executes eligible uncached calls concurrently, bounded by
+     * {@link AgentExecutionOptions#ASYNC_BATCH_PARALLELISM} and the shared async worker pool.
      */
-    <T> DurableFuture<List<Outcome<T>>> gather(List<? extends DurableFuture<T>> futures);
+    <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures);
 
     /** Clean up the resource. */
     void close() throws Exception;

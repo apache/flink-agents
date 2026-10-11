@@ -30,6 +30,7 @@ public class ActionState {
     private final List<MemoryUpdate> sensoryMemoryUpdates;
     private final List<MemoryUpdate> shortTermMemoryUpdates;
     private final List<Event> outputEvents;
+    private final List<Event> subagentResultEvents;
 
     /**
      * Records of completed durable_execute/durable_execute_async calls for fine-grained recovery.
@@ -45,6 +46,7 @@ public class ActionState {
         this.sensoryMemoryUpdates = new ArrayList<>();
         this.shortTermMemoryUpdates = new ArrayList<>();
         this.outputEvents = new ArrayList<>();
+        this.subagentResultEvents = new ArrayList<>();
         this.callResults = new ArrayList<>();
         this.completed = false;
     }
@@ -55,6 +57,7 @@ public class ActionState {
         this.sensoryMemoryUpdates = new ArrayList<>();
         this.shortTermMemoryUpdates = new ArrayList<>();
         this.outputEvents = new ArrayList<>();
+        this.subagentResultEvents = new ArrayList<>();
         this.callResults = new ArrayList<>();
         this.completed = false;
     }
@@ -67,12 +70,33 @@ public class ActionState {
             List<Event> outputEvents,
             List<CallResult> callResults,
             boolean completed) {
+        this(
+                taskEvent,
+                sensoryMemoryUpdates,
+                shortTermMemoryUpdates,
+                outputEvents,
+                null,
+                callResults,
+                completed);
+    }
+
+    /** Constructor for deserialization purposes. */
+    public ActionState(
+            Event taskEvent,
+            List<MemoryUpdate> sensoryMemoryUpdates,
+            List<MemoryUpdate> shortTermMemoryUpdates,
+            List<Event> outputEvents,
+            List<Event> subagentResultEvents,
+            List<CallResult> callResults,
+            boolean completed) {
         this.taskEvent = taskEvent;
         this.sensoryMemoryUpdates =
                 sensoryMemoryUpdates != null ? sensoryMemoryUpdates : new ArrayList<>();
         this.shortTermMemoryUpdates =
                 shortTermMemoryUpdates != null ? shortTermMemoryUpdates : new ArrayList<>();
         this.outputEvents = outputEvents != null ? outputEvents : new ArrayList<>();
+        this.subagentResultEvents =
+                subagentResultEvents != null ? subagentResultEvents : new ArrayList<>();
         this.callResults = callResults != null ? callResults : new ArrayList<>();
         this.completed = completed;
     }
@@ -94,6 +118,10 @@ public class ActionState {
         return outputEvents;
     }
 
+    public List<Event> getSubagentResultEvents() {
+        return subagentResultEvents;
+    }
+
     /** Setters for the fields */
     public void addSensoryMemoryUpdate(MemoryUpdate memoryUpdate) {
         sensoryMemoryUpdates.add(memoryUpdate);
@@ -106,6 +134,10 @@ public class ActionState {
 
     public void addEvent(Event event) {
         outputEvents.add(event);
+    }
+
+    public void addSubagentResultEvent(Event event) {
+        subagentResultEvents.add(event);
     }
 
     /** Gets the list of call results for fine-grained durable execution. */
@@ -201,6 +233,9 @@ public class ActionState {
                                 ? 0
                                 : shortTermMemoryUpdates.hashCode());
         result = 31 * result + (outputEvents.isEmpty() ? 0 : outputEvents.hashCode());
+        result =
+                31 * result
+                        + (subagentResultEvents.isEmpty() ? 0 : subagentResultEvents.hashCode());
         result = 31 * result + (callResults.isEmpty() ? 0 : callResults.hashCode());
         result = 31 * result + (completed ? 1 : 0);
         return result;
@@ -220,6 +255,7 @@ public class ActionState {
                 && java.util.Objects.equals(sensoryMemoryUpdates, that.sensoryMemoryUpdates)
                 && java.util.Objects.equals(shortTermMemoryUpdates, that.shortTermMemoryUpdates)
                 && java.util.Objects.equals(outputEvents, that.outputEvents)
+                && java.util.Objects.equals(subagentResultEvents, that.subagentResultEvents)
                 && java.util.Objects.equals(callResults, that.callResults);
     }
 
@@ -234,6 +270,8 @@ public class ActionState {
                 + shortTermMemoryUpdates
                 + ", outputEvents="
                 + outputEvents
+                + ", subagentResultEvents="
+                + subagentResultEvents
                 + ", callResults="
                 + callResults
                 + ", completed="

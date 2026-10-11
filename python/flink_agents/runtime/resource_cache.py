@@ -90,6 +90,10 @@ class ResourceCache:
         self._j_resource_adapter: Any = None
         self._resource_context = ResourceContextImpl(self)
 
+    def get_java_resource_adapter(self) -> Any:
+        """Return this operator's Java bridge, or None in a standalone Python runner."""
+        return self._j_resource_adapter
+
     def get_resource_context(self) -> ResourceContextImpl:
         """Return the long-lived ResourceContext owned by this cache."""
         return self._resource_context

@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -110,12 +112,13 @@ public class BashTool extends Tool {
             return ToolResponse.success("Command rejected: " + error.get());
         }
 
+        Process process = null;
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             if (cwd != null) {
                 pb.directory(new File(cwd));
             }
-            Process process = pb.start();
+            process = pb.start();
             ByteArrayOutputStream stdout = new ByteArrayOutputStream();
             ByteArrayOutputStream stderr = new ByteArrayOutputStream();
             // Drain output streams to avoid blocking on pipe buffer fill.
@@ -137,8 +140,17 @@ public class BashTool extends Tool {
             }
             return ToolResponse.success("Error (exit code " + exit + "): " + stderrStr);
         } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+            if (CancellationUtils.isCancellation(e)) {
+                if (process != null) {
+                    process.destroyForcibly();
+                }
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                CancellationException cancelled =
+                        new CancellationException("Bash tool interrupted");
+                cancelled.initCause(e);
+                throw cancelled;
             }
             return ToolResponse.success("Error: " + e.getMessage());
         }

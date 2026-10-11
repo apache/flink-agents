@@ -264,6 +264,13 @@ def is_python_owned(provider: ResourceProvider) -> bool:
     The runtime must ask that runtime to build such a resource instead of
     resolving it on the Java side. Mirrors Java ``ResourceProvider.isPythonOwned``.
     """
-    return isinstance(
-        provider, PythonResourceProvider | PythonSerializableResourceProvider
-    )
+    if isinstance(provider, PythonResourceProvider):
+        return True
+    if isinstance(provider, PythonSerializableResourceProvider):
+        # A Python-compiled internal sub-agent carries its child plan in the
+        # serialized payload and runs natively on the Java side, so it stays
+        # Java-owned; only external Python setups (no child plan) are Python-owned.
+        return not (
+            provider.type == ResourceType.AGENT and "child_plan" in provider.serialized
+        )
+    return False

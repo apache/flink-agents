@@ -71,8 +71,8 @@ class ResourceContextImpl(ResourceContext):
         NOT part of the public ResourceContext interface.
         """
         if not self._skill_manager_initialized:
-            self._skill_manager_initialized = True
             self._skill_manager = self._create_skill_manager()
+            self._skill_manager_initialized = True
         return self._skill_manager
 
     def close(self) -> None:
@@ -96,4 +96,6 @@ class ResourceContextImpl(ResourceContext):
             )
         except KeyError:
             return None
-        return SkillManager(skills_config)
+        return SkillManager(
+            skills_config, self._resource_cache.get_java_resource_adapter()
+        )

@@ -657,3 +657,56 @@ def test_long_message_of_unpicklable_exception_is_truncated_in_the_fallback() ->
     assert text.startswith(f"{_UNPICKLABLE_NAME}: " + "x" * 16 * 1024)
     assert text.endswith("... [truncated]")
     assert len(text) < 17 * 1024
+
+
+@pytest.mark.parametrize("mode", ["single", "ordinary_batch", "mixed_batch"])
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_ordinary_java_interruption_propagates_without_caching(
+    mode: str, wrapped: bool
+) -> None:
+    interruption = _java_error(_INTERRUPTED)
+    if wrapped:
+        cause = interruption
+        interruption = ConnectionError("resource call interrupted")
+        interruption.__cause__ = cause
+    calls = []
+
+    def call() -> str:
+        calls.append(1)
+        if len(calls) == 1:
+            raise interruption
+        return "retried"
+
+    store = _FakeJavaRunnerContext()
+    ctx = _create_runner_context(store)
+    try:
+        future = ctx.execute_async(call)
+        if mode == "single":
+            handle = future
+        else:
+            sibling = (
+                ctx.durable_execute_async(lambda: "durable")
+                if mode == "mixed_batch"
+                else ctx.execute_async(lambda: "ordinary")
+            )
+            handle = ctx.gather(sibling, future)
+        with pytest.raises(type(interruption)) as raised:
+            _run_async(handle)
+        assert raised.value is interruption
+        assert store.current_call_index == 0
+        assert [slot.status for slot in store.call_results] == (
+            ["PENDING"] if mode == "mixed_batch" else []
+        )
+
+        result = _run_async(handle)
+        assert (result if mode == "single" else result[1].value) == "retried"
+        assert _run_async(future) == "retried"
+        assert len(calls) == 2
+        if mode == "mixed_batch":
+            assert result[0].value == "durable"
+            assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
+            assert store.current_call_index == 1
+        else:
+            assert store.operations == []
+    finally:
+        _close_runner_context(ctx)

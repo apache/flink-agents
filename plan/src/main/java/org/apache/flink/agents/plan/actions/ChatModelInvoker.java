@@ -29,6 +29,7 @@ import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -174,8 +175,8 @@ public final class ChatModelInvoker {
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
         } catch (Exception e) {
-            if (ModelRoutingResolver.isCancellation(e)) {
-                if (e instanceof InterruptedException) {
+            if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
                     Thread.currentThread().interrupt();
                 }
                 throw e;
@@ -194,7 +195,10 @@ public final class ChatModelInvoker {
             nativeSchema =
                     outputSchema != null && chatModel.willApplyNativeStructuredOutput(outputSchema);
         } catch (Exception e) {
-            if (ModelRoutingResolver.isCancellation(e)) {
+            if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
                 throw e;
             }
             // A schema this candidate can never carry is the candidate failing, so the fallback
@@ -231,8 +235,9 @@ public final class ChatModelInvoker {
                             return new InvocationOutcome(
                                     chatModel.chat(messages, promptArgs, Map.of()), null);
                         } catch (Exception e) {
-                            if (ModelRoutingResolver.isCancellation(e)) {
-                                if (e instanceof InterruptedException) {
+                            if (Thread.currentThread().isInterrupted()
+                                    || CancellationUtils.isCancellation(e)) {
+                                if (CancellationUtils.isInterruption(e)) {
                                     Thread.currentThread().interrupt();
                                 }
                                 throw e;
@@ -315,7 +320,10 @@ public final class ChatModelInvoker {
                 if (Thread.currentThread().isInterrupted()) {
                     throw new InterruptedException("Chat execution interrupted");
                 }
-                if (ModelRoutingResolver.isCancellation(e)) {
+                if (CancellationUtils.isCancellation(e)) {
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
                     throw e;
                 }
                 if (attempt < numRetries) {
@@ -391,8 +399,9 @@ public final class ChatModelInvoker {
                                             finalizeMessages, List.of(), Map.of(), outputSchema),
                                     null);
                         } catch (Exception e) {
-                            if (ModelRoutingResolver.isCancellation(e)) {
-                                if (e instanceof InterruptedException) {
+                            if (Thread.currentThread().isInterrupted()
+                                    || CancellationUtils.isCancellation(e)) {
+                                if (CancellationUtils.isInterruption(e)) {
                                     Thread.currentThread().interrupt();
                                 }
                                 throw e;

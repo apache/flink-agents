@@ -26,6 +26,7 @@ from flink_agents.api.metric_group import MetricGroup
 from flink_agents.api.resource import Resource, ResourceType
 
 __all__ = [
+    "AsyncFuture",
     "DurableFuture",
     "Outcome",
     "RunnerContext",
@@ -39,7 +40,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Outcome:
-    """Result or failure for one durable batch slot."""
+    """Result or failure for one asynchronous batch entry."""
 
     value: Any = None
     error: BaseException | None = None
@@ -63,18 +64,20 @@ class Outcome:
         return self.error is not None
 
 
-class DurableFuture(ABC, Generic[T]):
-    """A deferred durable call owned and resolved by a runner context.
+class AsyncFuture(ABC, Generic[T]):
+    """A deferred call resolved by the runner's scheduler, without an asyncio loop.
 
-    Creating a durable future does not start its callable or reserve durable state.
-    Await the handle directly for a single call, or compose handles with
-    :meth:`RunnerContext.gather` so the runtime can reserve the whole batch before
-    starting any callable. Completion is driven only by awaiting; the handle
-    intentionally exposes no polling API.
+    Creation does not start work. Await directly or compose single-call handles
+    with :meth:`RunnerContext.gather`. Repeated awaits reuse the local result or
+    exception. Persistence across recovery is an additional DurableFuture contract.
+    Handles belong to their creating action execution and are not thread-safe;
+    do not await them in callbacks or pass them to another action. Unawaited
+    handles perform no work and can be discarded when the action finishes.
+    Polling, explicit cancellation, and standard asyncio composition are unsupported.
     """
 
     def __init__(self) -> None:
-        """Initialize an unresolved durable future."""
+        """Initialize an unresolved async future."""
         self._done = False
         self._value: T | None = None
         self._error: BaseException | None = None
@@ -84,9 +87,9 @@ class DurableFuture(ABC, Generic[T]):
         return self._done
 
     def _get_completed_outcome(self) -> Outcome:
-        """Return the locally cached outcome of a resolved durable future."""
+        """Return the locally cached outcome of a resolved async future."""
         if not self._done:
-            msg = "Durable future has not been resolved"
+            msg = "Async future has not been resolved"
             raise RuntimeError(msg)
         if self._error is not None:
             return Outcome.failure(self._error)
@@ -99,7 +102,7 @@ class DurableFuture(ABC, Generic[T]):
                 self._value = yield from self._resolve()
             except Exception as error:
                 # Control-flow BaseExceptions leave the handle unresolved so a later
-                # await or gather cannot mistake cancellation for a durable outcome.
+                # await or gather cannot mistake cancellation for a terminal outcome.
                 if self._is_cancellation(error):
                     raise
                 self._error = error
@@ -113,7 +116,7 @@ class DurableFuture(ABC, Generic[T]):
 
     def _complete(self, outcome: Outcome) -> None:
         if self._done:
-            msg = "Durable future has already been resolved"
+            msg = "Async future has already been resolved"
             raise RuntimeError(msg)
         self._value = outcome.value
         self._error = outcome.error
@@ -128,6 +131,15 @@ class DurableFuture(ABC, Generic[T]):
     @abstractmethod
     def _resolve(self) -> Any:
         """Resolve this future and return a generator consumed by ``__await__``."""
+
+
+class DurableFuture(AsyncFuture[T]):
+    """An AsyncFuture with durable result persistence and recovery replay.
+
+    Creating the handle reserves no state. When awaited as part of a batch,
+    all required durable slots are reserved before any batch callback starts.
+    The runner manages call identity, persistence and optional reconciliation.
+    """
 
 
 class RunnerContext(ABC):
@@ -253,6 +265,26 @@ class RunnerContext(ABC):
         MetricGroup | None
             The individual metric group specific to the current action.
             May return None when not running on Flink.
+        """
+
+    @abstractmethod
+    def execute_async(
+        self, func: Callable[..., T], *args: Any, **kwargs: Any
+    ) -> AsyncFuture[T]:
+        """Create a deferred call without durable persistence or recovery replay.
+
+        Await the handle directly, or await ``ctx.gather(...)`` to run calls
+        concurrently. Creating handles does not start work. Repeated awaits reuse
+        this handle's local result or exception, but recovery that re-executes the
+        action may call the function again. No durable slot is consumed and this
+        API does not require serializable arguments or results.
+
+        Pass a synchronous callable, not an ``async def`` function. The callback
+        must not access context memory, events, metrics, resource lookup, or
+        execution methods. Read configuration and obtain resources in the action
+        before submission; captured resources must support the intended concurrent
+        access. Handles must not escape their creating action. There is no
+        fire-and-forget execution or asyncio event loop.
         """
 
     @abstractmethod
@@ -386,13 +418,16 @@ class RunnerContext(ABC):
         """
 
     @abstractmethod
-    def gather(self, *futures: "DurableFuture[Any]") -> "DurableFuture[list[Outcome]]":
-        """Compose deferred durable calls into one deferred batch.
+    def gather(self, *futures: "AsyncFuture[Any]") -> "AsyncFuture[list[Outcome]]":
+        """Compose deferred ordinary and/or durable calls into one deferred batch.
 
-        The input order defines result order. When the returned future is awaited,
-        the runtime reuses locally completed outcomes and reserves all required slots
-        for unresolved calls before starting them. Individual callable failures are
-        returned as failure outcomes.
+        The input order defines result order. When the returned future is awaited, the
+        runtime reuses locally completed outcomes and reserves all required slots for
+        unresolved durable calls only before starting any callback. Individual
+        callable failures are returned as failure outcomes. Only single-call handles
+        created by this context are accepted; duplicates, foreign handles and nested
+        batches are rejected before work starts. Mixed batches persist only durable
+        children, in their relative input order.
         """
 
     @property

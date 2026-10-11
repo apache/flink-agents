@@ -26,11 +26,15 @@ import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationContext;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.util.function.ThrowingRunnable;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import pemja.core.PythonInterpreter;
 import pemja.core.object.PyObject;
 
@@ -60,9 +64,11 @@ class ParallelExecutionPythonResourceTest {
     private static final String CREATE_RESOURCE = "python_java_utils.create_resource";
     private static final String FROM_JAVA_RESOURCE = "python_java_utils.from_java_resource";
 
-    @Test
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
     @Timeout(15)
-    void pythonObjectsReturnedToJavaAreConsumedAndClosedOnTheirOwningWorker() throws Exception {
+    void pythonObjectsReturnedToJavaAreConsumedAndClosedOnTheirOwningWorker(boolean batch)
+            throws Exception {
         PythonInterpreter ownerInterpreter = mock(PythonInterpreter.class);
         PythonInterpreter actionInterpreter = mock(PythonInterpreter.class);
         PyObject vectorStoreHandle = mock(PyObject.class);
@@ -125,9 +131,48 @@ class ParallelExecutionPythonResourceTest {
                                     "test.module", "TestVectorStore", Map.of()),
                             mock(ResourceContext.class));
 
-            runOnParallelWorker(
-                    () -> vectorStore.get(null, null, null, null, Map.of()),
-                    interpreterManager::releaseCurrentThreadInterpreter);
+            if (batch) {
+                ContinuationActionExecutor executor =
+                        new ContinuationActionExecutor(
+                                1, interpreterManager::releaseCurrentThreadInterpreter, null, null);
+                ContinuationContext context = new ContinuationContext();
+                try {
+                    Runnable action =
+                            () -> {
+                                try {
+                                    assertThat(
+                                                    executor.executeAllAsync(
+                                                                    context,
+                                                                    List.of(
+                                                                            () ->
+                                                                                    vectorStore.get(
+                                                                                            null,
+                                                                                            null,
+                                                                                            null,
+                                                                                            null,
+                                                                                            Map
+                                                                                                    .of())),
+                                                                    null,
+                                                                    1)
+                                                            .getOutcomes()
+                                                            .get(0)
+                                                            .isSuccess())
+                                            .isTrue();
+                                } catch (Exception e) {
+                                    throw new AssertionError(e);
+                                }
+                            };
+                    while (!executor.executeAction(context, action)) {
+                        Thread.yield();
+                    }
+                } finally {
+                    executor.close();
+                }
+            } else {
+                runOnParallelWorker(
+                        () -> vectorStore.get(null, null, null, null, Map.of()),
+                        interpreterManager::releaseCurrentThreadInterpreter);
+            }
 
             assertThat(resultThread.get()).isNotNull();
             assertThat(accessThread.get())

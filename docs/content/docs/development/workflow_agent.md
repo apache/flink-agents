@@ -454,9 +454,62 @@ evaluated as doubles and may lose precision.
   start. This happens before event-time evaluation and is not controlled by the condition evaluation
   failure strategy. Dynamic access inside a selected top-level attribute remains supported.
 
+### Async Execution
+
+Use `execute_async` (Python) or `executeAsync` (Java) to run a function
+asynchronously, for example when querying an external service.
+
+These methods return an `AsyncFuture`. Work starts when you await the future,
+not when you create it. Await one call directly, or use `ctx.gather(...)` to combine
+multiple calls. Awaiting each call separately executes them sequentially.
+
+{{< tabs "Ordinary Async Execution" >}}
+{{< tab "Python" >}}
+Inside an `async def` action, pass synchronous functions to `execute_async`:
+
+```python
+profile = ctx.execute_async(query_profile, user_id)
+inventory = ctx.execute_async(query_inventory, item_id)
+outcomes = await ctx.gather(profile, inventory)
+for outcome in outcomes:
+    if outcome.is_failure():
+        raise outcome.error
+profile_result = outcomes[0].value
+```
+
+For a single call, use `result = await ctx.execute_async(query_profile, user_id)`.
+Use `ctx.gather` for composition; standard asyncio functions are not supported.
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+AsyncFuture<String> profile = ctx.executeAsync(() -> queryProfile(userId));
+AsyncFuture<String> inventory = ctx.executeAsync(() -> queryInventory(itemId));
+List<Outcome<String>> outcomes = ctx.gather(List.of(profile, inventory)).await();
+for (Outcome<String> outcome : outcomes) {
+    if (outcome.isFailure()) {
+        throw outcome.getError();
+    }
+}
+String profileResult = outcomes.get(0).getValue();
+```
+
+For a single call, use `String result = ctx.executeAsync(() -> queryProfile(userId)).await()`.
+{{< /tab >}}
+{{< /tabs >}}
+
+`gather` returns an `Outcome` for each call in input order, including individual
+failures. Batch concurrency is controlled by `async.batch.parallelism`.
+Java and Python support concurrent batches on all supported JDK versions.
+
+Keep futures within the action that created them. Repeated awaits reuse the same
+future's result or exception; a future that is never awaited performs no work.
+Obtain resources before creating calls, and update memory or send events after
+awaiting results. Callbacks must not access `RunnerContext`, and any clients they
+share must support concurrent use.
+
 ### Durable Execution
 
-Use durable execution when you wrap a time-consuming or side-effecting operation. The framework persists the result and replays it on recovery when the same call is encountered, so the function will not be called again and side effects are avoided. When recovery re-enters an action that has not been recorded as completed, code outside `durable_execute` / `durable_execute_async` will still be re-executed.
+Use durable execution when an operation needs result persistence and recovery replay. When a matching persisted result is available during recovery, the framework reuses it without invoking the function again. When recovery re-enters an action that has not been recorded as completed, code outside `durable_execute` / `durable_execute_async` will still be re-executed.
 
 **Constraints:**
 - The function must be deterministic and called in the same order on recovery.
@@ -596,9 +649,16 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 {{< /tab >}}
 {{< /tabs >}}
 
-### Async Execution
+### Durable Async Execution
 
-Async execution uses the same durable semantics but yields while waiting for a thread-pool task. This is useful for high-latency I/O.
+Durable async execution adds result persistence and recovery replay to
+[async execution](#async-execution). Ordinary async calls may execute again if an
+action is re-executed after a failure. Use `durable_execute_async` (Python) or
+`durableExecuteAsync` (Java) when you need to reuse a saved result instead.
+
+Await the returned `DurableFuture` directly or combine calls with `ctx.gather(...)`.
+A batch can mix ordinary and durable calls; only durable calls save their results
+for recovery. The [durable execution constraints](#durable-execution) also apply.
 
 {{< tabs "Async Execution" >}}
 {{< tab "Python" >}}
@@ -615,17 +675,11 @@ async def process_with_async(event: Event, ctx: RunnerContext) -> None:
     result = await ctx.durable_execute_async(slow_external_call, input_event.input)
     ctx.send_event(OutputEvent(output=result))
 ```
-{{< hint info >}}
-Python durable futures can be awaited directly or composed with `ctx.gather(...)`.
-Standard asyncio functions like `asyncio.gather`, `asyncio.wait`,
-`asyncio.create_task`, and `asyncio.sleep` are **NOT** supported because there is
-no asyncio event loop.
-{{< /hint >}}
 {{< /tab >}}
 
 {{< tab "Java" >}}
-Use `ctx.durableExecuteAsync(DurableCallable)`; on **JDK 21+** it yields using Continuation,
-and on **JDK < 21** it falls back to synchronous execution. The same optional `reconciler()` hook can be used for recovery.
+Use `ctx.durableExecuteAsync(DurableCallable)` and await the returned future.
+The optional `reconciler()` hook can be used for recovery.
 ```java
 @Action(EventType.InputEvent)
 public static void processInput(Event event, RunnerContext ctx) throws Exception {

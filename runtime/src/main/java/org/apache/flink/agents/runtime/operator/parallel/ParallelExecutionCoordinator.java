@@ -247,6 +247,11 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
         }
     }
 
+    /** Stops dispatch and interrupts action workers without waiting for exit cleanup. */
+    public void shutdown() {
+        workerExecutor.shutdownNow();
+    }
+
     @Override
     public void close() {
         // Wait for in-flight workers to terminate before the caller releases resources they may
@@ -259,7 +264,7 @@ public final class ParallelExecutionCoordinator implements AutoCloseable {
                 System.nanoTime() + TimeUnit.SECONDS.toNanos(WORKER_TERMINATION_TIMEOUT_SECONDS);
         try {
             do {
-                workerExecutor.shutdownNow();
+                shutdown();
             } while (!workerExecutor.awaitTermination(1, TimeUnit.SECONDS)
                     && System.nanoTime() < deadlineNanos);
             if (workerExecutor.isTerminated()) {

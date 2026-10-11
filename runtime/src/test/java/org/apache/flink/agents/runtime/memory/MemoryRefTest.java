@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.memory;
 
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -145,13 +146,17 @@ public class MemoryRefTest {
         }
 
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             return new ImmediateDurableFuture<>(callable);
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new ImmediateDurableFuture<>(
                     new DurableCallable<List<Outcome<T>>>() {
                         @Override
@@ -168,7 +173,7 @@ public class MemoryRefTest {
                         @Override
                         public List<Outcome<T>> call() throws Exception {
                             List<Outcome<T>> outcomes = new ArrayList<>();
-                            for (DurableFuture<T> future : futures) {
+                            for (AsyncFuture<T> future : futures) {
                                 outcomes.add(Outcome.success(future.await()));
                             }
                             return outcomes;

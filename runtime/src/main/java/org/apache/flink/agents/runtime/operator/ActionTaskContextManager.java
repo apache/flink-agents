@@ -34,6 +34,7 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
 import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
 import org.apache.flink.api.common.state.MapState;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.Preconditions;
@@ -112,6 +113,7 @@ class ActionTaskContextManager implements AutoCloseable {
         @Nullable private RunnerContextImpl.MemoryContext memoryContext;
         @Nullable private ContinuationContext continuationContext;
         @Nullable private String pythonAwaitableRef;
+        @Nullable private RunnerContextImpl.SubagentScope subagentScope;
         private List<Event> pendingEvents = new ArrayList<>();
         @Nullable private List<ComponentExecutionListener> componentListeners;
         @Nullable private String contextKey;
@@ -119,6 +121,17 @@ class ActionTaskContextManager implements AutoCloseable {
 
     private boolean hasContexts(ActionTask actionTask) {
         return actionTaskContexts.containsKey(actionTask);
+    }
+
+    /**
+     * Creates the task's contexts record if absent. Idempotent, for callers that need the record
+     * before wiring (the operator attaches a sub-agent scope before {@link
+     * #createAndSetRunnerContext}).
+     */
+    void ensureContexts(ActionTask actionTask) {
+        if (!hasContexts(actionTask)) {
+            createContexts(actionTask);
+        }
     }
 
     /**
@@ -250,6 +263,7 @@ class ActionTaskContextManager implements AutoCloseable {
             MapState<String, MemoryObjectImpl.MemoryItem> shortTermMemState,
             PythonRunnerContextImpl pythonRunnerContext,
             @Nullable InteranlBaseLongTermMemory longTermMemory,
+            @Nullable RunnerContextImpl.SubagentScope subagentScope,
             @Nullable
                     Function<ActionTask, List<ComponentExecutionListener>>
                             componentListenerFactory) {
@@ -258,6 +272,9 @@ class ActionTaskContextManager implements AutoCloseable {
             // suspended task, or preparation of a generated successor, already have one (created by
             // transferContexts), so we never recreate here.
             createContexts(actionTask);
+        }
+        if (subagentScope != null) {
+            setSubagentScope(actionTask, subagentScope);
         }
         RunnerContextImpl context;
         if (actionTask.action.getExec() instanceof JavaFunction) {
@@ -289,10 +306,22 @@ class ActionTaskContextManager implements AutoCloseable {
 
         RunnerContextImpl.MemoryContext memoryContext = getMemoryContext(actionTask);
         if (memoryContext == null) {
-            memoryContext =
-                    new RunnerContextImpl.MemoryContext(
-                            new CachedMemoryStore(sensoryMemState),
-                            new CachedMemoryStore(shortTermMemState));
+            RunnerContextImpl.SubagentScope scope = getSubagentScope(actionTask);
+            if (scope != null) {
+                // A sub-agent call runs against an isolated memory view so its reads/writes do not
+                // leak into the caller. The view is shared by every action of the same call and
+                // lives as long as the call status, so a value one child action writes stays
+                // readable by the next action of that call.
+                InternalSubagentCallStatus callStatus = scope.getCallStatus();
+                memoryContext =
+                        callStatus.getOrCreateIsolatedMemoryContext(
+                                RunnerContextImpl.MemoryContext::createChildContext);
+            } else {
+                memoryContext =
+                        new RunnerContextImpl.MemoryContext(
+                                new CachedMemoryStore(sensoryMemState),
+                                new CachedMemoryStore(shortTermMemState));
+            }
             putMemoryContext(actionTask, memoryContext);
         }
 
@@ -305,6 +334,9 @@ class ActionTaskContextManager implements AutoCloseable {
                 actionTask.getObservationId(),
                 MemoryEvent.isMemoryType(actionTask.event.getType()),
                 getOrCreateComponentListeners(actionTask, componentListenerFactory));
+        // Applied on every switch (possibly null): the shared context must not inherit the scope
+        // of whichever task was wired on previously.
+        context.setSubagentScope(getSubagentScope(actionTask));
 
         if (context instanceof JavaRunnerContextImpl) {
             ContinuationContext continuationContext;
@@ -372,6 +404,20 @@ class ActionTaskContextManager implements AutoCloseable {
         requireContexts(actionTask).memoryContext = memoryContext;
     }
 
+    /**
+     * The sub-agent call a child action runs inside, or {@code null} for a top-level action. Set by
+     * the operator when it dispatches a sub-agent call event; carried across a suspend/resume by
+     * {@link #transferContexts}.
+     */
+    @Nullable
+    RunnerContextImpl.SubagentScope getSubagentScope(ActionTask actionTask) {
+        return requireContexts(actionTask).subagentScope;
+    }
+
+    void setSubagentScope(ActionTask actionTask, RunnerContextImpl.SubagentScope scope) {
+        requireContexts(actionTask).subagentScope = scope;
+    }
+
     @Nullable
     private RunnerContextImpl.MemoryContext getMemoryContext(ActionTask actionTask) {
         return requireContexts(actionTask).memoryContext;
@@ -405,6 +451,13 @@ class ActionTaskContextManager implements AutoCloseable {
                 fromTask.getRunnerContext().getDurableExecutionContext();
         if (durableContext != null) {
             durableExecManager.putDurableContext(toTask, durableContext);
+        }
+        // The fromTask's contexts record was already removed by the operator before this
+        // transfer; read the scope off the runner context (still wired to the fromTask) instead.
+        RunnerContextImpl.SubagentScope subagentScope =
+                fromTask.getRunnerContext().getSubagentScope();
+        if (subagentScope != null) {
+            setSubagentScope(toTask, subagentScope);
         }
         if (fromTask.getRunnerContext() instanceof JavaRunnerContextImpl) {
             this.putContinuationContext(
@@ -458,18 +511,26 @@ class ActionTaskContextManager implements AutoCloseable {
         requireContexts(actionTask).pythonAwaitableRef = ref;
     }
 
+    /** Stops async workers without closing the runner context or waiting for thread cleanup. */
+    void shutdownAsyncExecutor() {
+        if (continuationActionExecutor != null) {
+            continuationActionExecutor.shutdown();
+        }
+    }
+
     /** Closes the shared runner context and the continuation executor. */
     @Override
     public void close() throws Exception {
-        // Close the continuation executor even when the runner context fails to close. The first
-        // failure is rethrown with the later one suppressed.
-        //
-        // The ladder catches Throwable, not Exception, so a non-Exception Throwable from the
-        // runner context cannot strand the executor's thread pool. Neither type implements
-        // AutoCloseable, so the aggregation is spelled out rather than delegated. Both rungs go
-        // through firstOrSuppressed even though the first one cannot yet have a previous failure,
-        // so that a close inserted above it later suppresses rather than overwrites.
+        // Drain async callbacks before closing resources they may still be using. Close every
+        // component even after a failure, preserving later failures as suppressed exceptions.
         Throwable firstFailure = null;
+        if (continuationActionExecutor != null) {
+            try {
+                continuationActionExecutor.close();
+            } catch (Throwable t) {
+                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
+            }
+        }
         if (runnerContext != null) {
             try {
                 runnerContext.close();
@@ -477,13 +538,6 @@ class ActionTaskContextManager implements AutoCloseable {
                 firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             } finally {
                 runnerContext = null;
-            }
-        }
-        if (continuationActionExecutor != null) {
-            try {
-                continuationActionExecutor.close();
-            } catch (Throwable t) {
-                firstFailure = ExceptionUtils.firstOrSuppressed(t, firstFailure);
             }
         }
         if (firstFailure != null) {

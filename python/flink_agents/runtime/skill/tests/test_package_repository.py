@@ -82,3 +82,44 @@ class TestPackageSkillRepository:
     def test_missing_resource(self, installed_pkg: str) -> None:
         with pytest.raises(ValueError, match="not found in package"):
             PackageSkillRepository(installed_pkg, "no_such_resource")
+
+
+def test_zip_imported_package_directory_is_owned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Package directories need not have physical paths (including on Python 3.10)."""
+    package = "_issue1194_zip_package"
+    archive = tmp_path / "package.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr(f"{package}/__init__.py", "")
+        zf.writestr(
+            f"{package}/skills/demo/SKILL.md",
+            "---\nname: demo\ndescription: Packed skill\n---\nBody",
+        )
+        zf.writestr(f"{package}/skills/demo/example.txt", "attachment")
+    monkeypatch.syspath_prepend(str(archive))
+    try:
+        repo = PackageSkillRepository(package, "skills")
+        try:
+            directory = repo.get_skill_dir("demo")
+            assert repo.get_resources("demo")["example.txt"] == "attachment"
+            assert (directory / "SKILL.md").is_file()
+        finally:
+            repo.close()
+        assert not directory.exists()
+        assert archive.exists()
+    finally:
+        sys.modules.pop(package, None)
+
+
+def test_missing_package_does_not_leak_temp_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import flink_agents.runtime.skill.repository.package_repository as module
+
+    target = tmp_path / "materialized"
+    target.mkdir()
+    monkeypatch.setattr(module.tempfile, "mkdtemp", lambda **_: str(target))
+    with pytest.raises(ModuleNotFoundError, match="_issue1194_missing_package"):
+        PackageSkillRepository("_issue1194_missing_package", "skills")
+    assert not target.exists()

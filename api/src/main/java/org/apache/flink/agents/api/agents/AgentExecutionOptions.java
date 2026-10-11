@@ -60,50 +60,33 @@ public class AgentExecutionOptions {
             new ConfigOption<>("tool-call.async", Boolean.class, true);
 
     /**
-     * In-flight concurrency for tool calls from one {@code ToolRequestEvent} batch
+     * Maximum in-flight calls in one async batch composed with RunnerContext.gather, including
+     * ordinary, durable, and built-in tool calls.
      *
-     * <p>{@code 1} runs tools serially. Values {@code > 1} run a parallel durable batch with a
-     * sliding window of at most that many concurrent tool calls. On **Java**, concurrent in-batch
-     * execution requires **JDK 21+** (Continuation API); below JDK 21 the batch still runs but tool
-     * calls execute serially regardless of this setting.
-     *
-     * <p><b>Important:</b> the default is {@code availableProcessors()}, so multi-tool batches run
-     * in parallel out of the box on most hosts (JDK 21+). Parallel tool batches use the same {@link
-     * #NUM_ASYNC_THREADS} fixed thread pool as chat and RAG async work. That pool is created once
-     * per operator subtask and shared by every key handled by that subtask — not a separate pool
-     * per key. Built-in actions for one key run one at a time, so a chat async call and a tool
-     * batch on the same key do not overlap in the usual chat → tool flow; contention shows up
-     * mainly across keys on the same subtask (or when several keys each run large parallel
-     * batches). With defaults ({@code num-async-threads = 2 × cores}, {@code tool-call.parallelism
-     * = cores}), one batch can hold up to half of the pool; multiple busy keys can still saturate
-     * it. Lower this value (for example {@code 1} or {@code 2}) or raise {@link #NUM_ASYNC_THREADS}
-     * when mixing heavy tool batches with chat/RAG on hot subtasks.
+     * <p>The default is {@code availableProcessors()}; {@code 1} runs calls serially. The shared
+     * {@link #NUM_ASYNC_THREADS} pool also limits actual concurrency. Lower this per-batch limit to
+     * leave capacity for other calls on the same operator subtask.
      */
-    public static final ConfigOption<Integer> TOOL_CALL_PARALLELISM =
+    public static final ConfigOption<Integer> ASYNC_BATCH_PARALLELISM =
             new ConfigOption<>(
-                    "tool-call.parallelism",
+                    "async.batch.parallelism",
                     Integer.class,
                     Runtime.getRuntime().availableProcessors());
 
     /**
-     * Overall timeout for one parallel tool-call batch, in milliseconds.
+     * Overall timeout for one async batch composed with RunnerContext.gather, in milliseconds.
+     * Applies to ordinary, durable, and built-in tool calls. Non-positive values disable it.
      *
-     * <p>Non-positive values disable the timeout. When the deadline elapses, slots that already
-     * completed keep their success or failure outcome; slots that started but did not finish are
-     * recorded as failures; slots that never started executing (for example, queued in a saturated
-     * pool) stay pending, so they are re-executed after recovery instead of recording a false
-     * failure.
+     * <p>Completed calls keep their outcomes; unfinished calls receive timeout failures. For
+     * durable calls, started calls are finalized as failures while unstarted calls remain pending
+     * for recovery.
      *
-     * <p><b>Thread reclamation:</b> the timeout unblocks the action but does not interrupt a tool
-     * that is still running. {@code cancel(true)} cannot interrupt an in-flight {@code
-     * CompletableFuture}, so a hung tool keeps its worker thread in the shared {@link
-     * #NUM_ASYNC_THREADS} pool until it returns on its own. That thread is not reclaimed by the
-     * timeout and stays unavailable to other keys on the same subtask, so a tool that never returns
-     * permanently reduces pool capacity. Bound blocking work inside the tool itself (for example an
-     * HTTP client read timeout) rather than relying on this batch timeout to free the thread.
+     * <p>A timeout cannot interrupt an already-running callback or undo its external effects. The
+     * callback occupies its worker until it returns, so blocking operations should also set their
+     * own timeouts, such as an HTTP client read timeout.
      */
-    public static final ConfigOption<Long> TOOL_CALL_BATCH_TIMEOUT_MS =
-            new ConfigOption<>("tool-call.batch.timeout.ms", Long.class, -1L);
+    public static final ConfigOption<Long> ASYNC_BATCH_TIMEOUT_MS =
+            new ConfigOption<>("async.batch.timeout.ms", Long.class, -1L);
 
     public static final ConfigOption<Boolean> RAG_ASYNC =
             new ConfigOption<>("rag.async", Boolean.class, true);

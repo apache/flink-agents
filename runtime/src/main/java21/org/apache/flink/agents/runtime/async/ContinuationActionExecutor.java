@@ -31,6 +31,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -296,7 +297,7 @@ public class ContinuationActionExecutor {
             List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
         List<Outcome<T>> results = new ArrayList<>(futures.size());
         for (CompletableFuture<Outcome<T>> future : futures) {
-            results.add(future.join());
+            results.add(joinBatchOutcome(future));
         }
         return new BatchExecutionResult<>(results, toStartedFlags(started));
     }
@@ -334,12 +335,25 @@ public class ContinuationActionExecutor {
                 future.cancel(true);
             }
             if (future.isDone() && !future.isCancelled()) {
-                results.add(future.join());
+                results.add(joinBatchOutcome(future));
             } else {
                 results.add(Outcome.failure(timeoutException));
             }
         }
         return new BatchExecutionResult<>(results, toStartedFlags(started));
+    }
+
+    private static <T> Outcome<T> joinBatchOutcome(CompletableFuture<Outcome<T>> future) {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            // Business Exceptions are already stored in Outcome. Preserve a worker's Error
+            // instead of exposing CompletableFuture's wrapper to catch (Exception) handlers.
+            if (e.getCause() instanceof Error) {
+                throw (Error) e.getCause();
+            }
+            throw e;
+        }
     }
 
     private static boolean[] toStartedFlags(AtomicIntegerArray started) {
@@ -356,8 +370,13 @@ public class ContinuationActionExecutor {
                 : System.nanoTime() + timeout.toNanos();
     }
 
-    public void close() {
+    /** Stops async work without waiting for worker exit cleanup. */
+    public void shutdown() {
         asyncExecutor.shutdownNow();
+    }
+
+    public void close() {
+        shutdown();
         boolean interrupted = false;
         try {
             while (!asyncExecutor.isTerminated()) {

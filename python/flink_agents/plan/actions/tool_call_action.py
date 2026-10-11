@@ -132,7 +132,7 @@ async def process_tool_request(event: Event, ctx: RunnerContext) -> None:
     # boundary), so the dispatched ToolRequestEvent is used directly.
     event = cast("ToolRequestEvent", event)
     tool_call_async = ctx.config.get(AgentExecutionOptions.TOOL_CALL_ASYNC)
-    tool_call_parallelism = ctx.config.get(AgentExecutionOptions.TOOL_CALL_PARALLELISM)
+    tool_call_parallelism = ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM)
 
     if tool_call_async:
         # To avoid https://github.com/alibaba/pemja/issues/88, we log a message here.

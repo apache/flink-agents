@@ -58,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -87,7 +88,9 @@ class ActionTaskContextManagerTest {
                 // Contract 3: a lone failure arrives with nothing attached to it.
                 .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
-        verify(continuationExecutor).close();
+        org.mockito.InOrder order = inOrder(continuationExecutor, failingContext);
+        order.verify(continuationExecutor).close();
+        order.verify(failingContext).close();
     }
 
     /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
@@ -108,12 +111,12 @@ class ActionTaskContextManagerTest {
 
         assertThatThrownBy(mgr::close)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("runner context close failed")
+                .hasMessage("continuation executor close failed")
                 .satisfies(
                         thrown ->
                                 assertThat(thrown.getSuppressed())
                                         .extracting(Throwable::getMessage)
-                                        .containsExactly("continuation executor close failed"));
+                                        .containsExactly("runner context close failed"));
     }
 
     private static void setField(ActionTaskContextManager mgr, String name, Object value)
@@ -453,7 +456,9 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, to);
 
             assertThat(to.getRunnerContext().getPendingEvents()).isSameAs(liveBuffer);
-            assertThat(to.getRunnerContext().drainEvents(null))
+            assertThat(to.getRunnerContext().drainEventsAtActionYield(null)).isEmpty();
+            assertThat(liveBuffer).containsExactly(bufferedBeforeYield);
+            assertThat(to.getRunnerContext().drainEventsAtActionFinish(null))
                     .containsExactly(bufferedBeforeYield);
             assertThat(liveBuffer).isEmpty();
         }
@@ -595,6 +600,7 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
+                /* subagentScope */ null,
                 componentListenerFactory);
     }
 

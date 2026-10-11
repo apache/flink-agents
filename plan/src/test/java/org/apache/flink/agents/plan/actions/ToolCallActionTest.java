@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -54,6 +55,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 public class ToolCallActionTest {
 
@@ -108,7 +110,7 @@ public class ToolCallActionTest {
         }
 
         FakeRunnerContext withToolCallParallelism(int parallelism) {
-            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, parallelism);
+            config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, parallelism);
             return this;
         }
 
@@ -192,6 +194,11 @@ public class ToolCallActionTest {
         }
 
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableExecuteAsyncIds.add(callable.getId());
             return new TestDurableFuture<>(callable.getId(), callable::call);
@@ -199,10 +206,9 @@ public class ToolCallActionTest {
 
         @Override
         @SuppressWarnings("unchecked")
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             List<String> ids = new ArrayList<>();
-            for (DurableFuture<T> future : futures) {
+            for (AsyncFuture<T> future : futures) {
                 ids.add(((TestDurableFuture<T>) future).getId());
             }
             gatherIds.add(ids);
@@ -213,7 +219,7 @@ public class ToolCallActionTest {
                             return (List<Outcome<T>>) (List<?>) gatherOutcomes;
                         }
                         List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
-                        for (DurableFuture<T> future : futures) {
+                        for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {
@@ -577,8 +583,8 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
-                    public <T> DurableFuture<List<Outcome<T>>> gather(
-                            List<? extends DurableFuture<T>> futures) {
+                    public <T> AsyncFuture<List<Outcome<T>>> gather(
+                            List<? extends AsyncFuture<T>> futures) {
                         return new TestDurableFuture<>(
                                 "gather",
                                 () -> {
@@ -594,6 +600,51 @@ public class ToolCallActionTest {
         assertThat(response.getSuccess()).containsEntry("call-2", false);
         assertThat(response.getError()).containsEntry("call-1", "persist failed");
         assertThat(response.getError()).containsEntry("call-2", "persist failed");
+    }
+
+    @Test
+    void processToolRequestPropagatesWrappedCancellationWithoutSendingResponse() throws Exception {
+        for (boolean parallel : List.of(false, true)) {
+            for (Exception failure :
+                    List.of(
+                            new RuntimeException(new InterruptedException()),
+                            new java.nio.channels.ClosedByInterruptException(),
+                            new java.util.concurrent.CancellationException())) {
+                FakeRunnerContext ctx =
+                        new FakeRunnerContext() {
+                            @Override
+                            public <T> T durableExecute(DurableCallable<T> callable)
+                                    throws Exception {
+                                throw failure;
+                            }
+
+                            @Override
+                            public <T> AsyncFuture<List<Outcome<T>>> gather(
+                                    List<? extends AsyncFuture<T>> futures) {
+                                return new TestDurableFuture<>(
+                                        "gather",
+                                        () -> {
+                                            throw failure;
+                                        });
+                            }
+                        }.withToolCallAsync(parallel);
+                try {
+                    assertThatThrownBy(
+                                    () ->
+                                            ToolCallAction.processToolRequest(
+                                                    toolRequest("queryOrder", "call-1", "call-2"),
+                                                    ctx))
+                            .isSameAs(failure);
+                    assertThat(ctx.sentEvents).isEmpty();
+                    assertThat(Thread.interrupted())
+                            .isEqualTo(
+                                    !(failure
+                                            instanceof java.util.concurrent.CancellationException));
+                } finally {
+                    Thread.interrupted();
+                }
+            }
+        }
     }
 
     @Test
@@ -652,8 +703,8 @@ public class ToolCallActionTest {
         FakeRunnerContext ctx =
                 new FakeRunnerContext() {
                     @Override
-                    public <T> DurableFuture<List<Outcome<T>>> gather(
-                            List<? extends DurableFuture<T>> futures) {
+                    public <T> AsyncFuture<List<Outcome<T>>> gather(
+                            List<? extends AsyncFuture<T>> futures) {
                         return new TestDurableFuture<>(
                                 "gather",
                                 () -> {
