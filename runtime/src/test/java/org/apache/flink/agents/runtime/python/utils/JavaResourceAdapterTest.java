@@ -26,13 +26,20 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class JavaResourceAdapterTest {
 
@@ -194,6 +201,38 @@ public class JavaResourceAdapterTest {
                 .containsEntry("error", "tool rejected input")
                 .containsEntry("execution_time_ms", 0L);
         assertThat(result).doesNotContainKey("result");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void resolveSkillNamesForSourcesConvertsWireMapsAndDelegates() throws Exception {
+        ResourceContext context = mock(ResourceContext.class);
+        when(context.resolveSkillNamesForSources(anyList())).thenReturn(List.of("demo"));
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(context, Thread.currentThread().getContextClassLoader());
+
+        List<String> resolved =
+                adapter.resolveSkillNamesForSources(
+                        List.of(
+                                Map.<String, Object>of(
+                                        "scheme", "Local", "params", Map.of("path", "/data"))));
+
+        assertThat(resolved).containsExactly("demo");
+        ArgumentCaptor<List<SkillSourceSpec>> captor = ArgumentCaptor.forClass(List.class);
+        verify(context).resolveSkillNamesForSources(captor.capture());
+        assertThat(captor.getValue())
+                .containsExactly(new SkillSourceSpec("local", Map.of("path", "/data")));
+    }
+
+    @Test
+    void resolveSkillNamesForSourcesReturnsEmptyForNullAndEmptyInput() throws Exception {
+        ResourceContext context = mock(ResourceContext.class);
+        when(context.resolveSkillNamesForSources(anyList())).thenReturn(List.of());
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(context, Thread.currentThread().getContextClassLoader());
+
+        assertThat(adapter.resolveSkillNamesForSources(null)).isEmpty();
+        assertThat(adapter.resolveSkillNamesForSources(List.of())).isEmpty();
     }
 
     @Tool(description = "Query order.")

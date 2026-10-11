@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, List
+from typing import TYPE_CHECKING, Any, List
 
 from pydantic import ConfigDict, Field
 from typing_extensions import override
@@ -26,6 +26,9 @@ from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.tools.tool import Tool, ToolMetadata, ToolType
 from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAdapter
+
+if TYPE_CHECKING:
+    from flink_agents.api.skills import SkillSourceSpec
 
 
 class JavaTool(Tool):
@@ -114,4 +117,24 @@ class JavaResourceContextWrapper(ResourceContext):
     def get_skill_dirs(self, *skill_names: str) -> List[str]:
         """Return absolute directory paths for the given skill names."""
         result = self._j_resource_adapter.getSkillDirs(list(skill_names))
+        return list(result) if result is not None else []
+
+    @override
+    def resolve_skill_names_for_sources(
+        self, sources: list["SkillSourceSpec"]
+    ) -> List[str]:
+        """Resolve skill names from the given source specifications.
+
+        Forwards to the Java ``JavaResourceAdapter#resolveSkillNamesForSources``
+        so that a Python chat model running inside a Java agent can expand the
+        ``skills_sources`` marker written by a Java-side ``Skills`` object. An
+        empty input short-circuits, keeping the no-skill path free of a bridge
+        call. The specs cross as plain ``{scheme, params}`` maps, per the bridge
+        rule that values entering Java stay flattened.
+        """
+        if not sources:
+            return []
+        result = self._j_resource_adapter.resolveSkillNamesForSources(
+            [source.model_dump() for source in sources]
+        )
         return list(result) if result is not None else []

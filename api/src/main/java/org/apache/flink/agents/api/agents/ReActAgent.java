@@ -199,8 +199,11 @@ public class ReActAgent extends Agent {
      * @param prompt Prompt to format the input into user messages.
      * @param outputSchema A {@link RowTypeInfo} or a Pojo class the response must match.
      * @param skills Skill sources to expose to the chat model — all skills from these sources
-     *     become available. May be {@code null} or empty, in which case no source marker is
-     *     recorded.
+     *     become available. A single {@code Skills} object may declare several sources, so it is
+     *     not limited to one source. To combine sources declared in separate objects, gather them
+     *     into one {@code Skills}, declare further {@code @Skills} methods, or register them on the
+     *     agent with {@code addResource}. May be {@code null} or empty, in which case no source
+     *     marker is recorded.
      */
     public ReActAgent(
             ResourceDescriptor descriptor,

@@ -54,6 +54,10 @@ class JavaResourceAdapterImpl:
         """Resolve the directories of Java-hosted skills."""
         return list(self._bridge.getSkillDirs(skill_names) or [])
 
+    def resolveSkillNamesForSources(self, sources: list[dict]) -> list[str]:
+        """Resolve the names of Java-hosted skills declared by source specs."""
+        return list(self._bridge.resolveSkillNamesForSources(sources) or [])
+
     def set_metric_group(self, resource: Any, metric_group: Any) -> None:
         """Forward the Java metric group without exposing runtime types to Plan."""
         if resource is None:

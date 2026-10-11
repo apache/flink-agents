@@ -84,17 +84,23 @@ def _chat_model(**arguments: Any) -> ResourceDescriptor:
 
 
 @contextmanager
-def _opened_chat_model(agent: ReActAgent) -> Iterator[BaseChatModelSetup]:
+def _opened_chat_model(
+    agent: ReActAgent, *, register_skill_source: bool = True
+) -> Iterator[BaseChatModelSetup]:
     agent.add_resource(
         name=_CONNECTION,
         resource_type=ResourceType.CHAT_MODEL_CONNECTION,
         instance=ResourceDescriptor(clazz=_import_path(StubConnection)),
     )
-    agent.add_resource(
-        name="test_skills",
-        resource_type=ResourceType.SKILLS,
-        instance=Skills.from_local_dir(str(_SKILLS_DIR)),
-    )
+    if register_skill_source:
+        # Names-form tests name skills from this shared source. Skills-object
+        # tests register their own source through the constructor instead, so
+        # they pass ``register_skill_source=False``.
+        agent.add_resource(
+            name="test_skills",
+            resource_type=ResourceType.SKILLS,
+            instance=Skills.from_local_dir(str(_SKILLS_DIR)),
+        )
     plan = AgentPlan.from_agent(agent, AgentConfiguration())
     cache = ResourceCache(plan.resource_providers, plan.config)
     try:
@@ -149,6 +155,43 @@ def test_empty_constructor_skills_leave_the_chat_model_without_skills() -> None:
     agent = ReActAgent(chat_model=_chat_model(), skills=[])
 
     with _opened_chat_model(agent) as setup:
+        assert setup.skills is None
+        assert setup.skill_discovery_prompt is None
+        assert setup.tools == []
+
+
+def test_skills_object_constructor_resolves_sources_to_skill_names() -> None:
+    # The constructor registers the source itself, so the setup resolves the
+    # names from it at open time rather than being handed a list of names.
+    agent = ReActAgent(
+        chat_model=_chat_model(), skills=Skills.from_local_dir(str(_SKILLS_DIR))
+    )
+
+    with _opened_chat_model(agent, register_skill_source=False) as setup:
+        assert set(setup.skills or []) == {"github", "nano-banana-pro"}
+        assert "<name>github</name>" in setup.skill_discovery_prompt
+        assert "<name>nano-banana-pro</name>" in setup.skill_discovery_prompt
+        assert [tool.name for tool in setup.tools] == [LOAD_SKILL_TOOL, BASH_TOOL]
+
+
+def test_skills_object_with_explicit_skills_merges_both_at_runtime() -> None:
+    agent = ReActAgent(
+        chat_model=_chat_model(skills=["github"]),
+        skills=Skills.from_local_dir(str(_SKILLS_DIR)),
+    )
+
+    with _opened_chat_model(agent, register_skill_source=False) as setup:
+        # Explicit skills come first, then the names resolved from the sources;
+        # "github" is kept once.
+        assert setup.skills == ["github", "nano-banana-pro"]
+
+
+def test_empty_skills_object_leaves_the_chat_model_without_skills() -> None:
+    # An empty Skills object registers no source and writes no marker, so the
+    # chat model has nothing to resolve.
+    agent = ReActAgent(chat_model=_chat_model(), skills=Skills())
+
+    with _opened_chat_model(agent, register_skill_source=False) as setup:
         assert setup.skills is None
         assert setup.skill_discovery_prompt is None
         assert setup.tools == []

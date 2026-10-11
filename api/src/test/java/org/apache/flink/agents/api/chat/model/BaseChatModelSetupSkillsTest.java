@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -26,6 +27,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -177,5 +179,67 @@ class BaseChatModelSetupSkillsTest {
         assertEquals(MessageRole.SYSTEM, connection.capturedMessages.get(1).getRole());
         assertTrue(connection.capturedMessages.get(1).getText().contains("<available_skills>"));
         assertEquals(MessageRole.USER, connection.capturedMessages.get(2).getRole());
+    }
+
+    @Test
+    void openResolvesSkillsSourcesMarkerAfterJsonRoundTrip() throws Exception {
+        // The skills_sources marker is declared as a List<SkillSourceSpec> but travels inside
+        // ResourceDescriptor's Map<String, Object>. An AgentPlan Java-serialization round trip
+        // re-reads the descriptor through Jackson, erasing the element type into plain maps, so
+        // the read point must re-type the marker instead of blindly casting the list.
+        ObjectMapper mapper = new ObjectMapper();
+        List<SkillSourceSpec> declared =
+                List.of(new SkillSourceSpec("local", Map.of("path", "/tmp/skills")));
+        Object roundTripped = mapper.readValue(mapper.writeValueAsString(declared), Object.class);
+
+        Map<String, Resource> store = new HashMap<>();
+        StubConnection connection = new StubConnection(new ResourceDescriptor("X", Map.of()), null);
+        store.put("conn", connection);
+        store.put(Skills.LOAD_SKILL_TOOL, new StubTool(Skills.LOAD_SKILL_TOOL));
+        store.put(Skills.BASH_TOOL, new StubTool(Skills.BASH_TOOL));
+
+        List<SkillSourceSpec> resolvedFrom = new ArrayList<>();
+        ResourceContext ctx =
+                new ResourceContext() {
+                    @Override
+                    public Resource getResource(String name, ResourceType type) {
+                        return store.get(name);
+                    }
+
+                    @Override
+                    public String generateAvailableSkillsPrompt(List<String> skillNames) {
+                        return "<available_skills>marker</available_skills>";
+                    }
+
+                    @Override
+                    public List<String> getSkillDirs(List<String> skillNames) {
+                        return List.of();
+                    }
+
+                    @Override
+                    public List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources) {
+                        // Iterate with the declared element type, exactly as
+                        // SkillManager.getSkillNamesForSources does, so an untyped marker
+                        // surfaces as the same ClassCastException production would see.
+                        for (SkillSourceSpec source : sources) {
+                            resolvedFrom.add(source);
+                        }
+                        return List.of("math-calculator");
+                    }
+                };
+
+        Map<String, Object> args = new HashMap<>();
+        args.put("connection", "conn");
+        args.put("skills", List.of("explicit-skill"));
+        args.put("skills_sources", roundTripped);
+
+        StubChatSetup setup = new StubChatSetup(new ResourceDescriptor("X", args), ctx);
+        setup.open();
+
+        // The marker reached the resolver as real SkillSourceSpec entries, not maps.
+        assertEquals(
+                List.of(new SkillSourceSpec("local", Map.of("path", "/tmp/skills"))), resolvedFrom);
+        // Explicit names come first, resolved names are appended.
+        assertEquals(List.of("explicit-skill", "math-calculator"), setup.getSkills());
     }
 }

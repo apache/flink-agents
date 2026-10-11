@@ -51,7 +51,6 @@ class ResourceContext(ABC):
         requested skills are filesystem-backed.
         """
 
-    @abstractmethod
     def resolve_skill_names_for_sources(
         self, sources: list["SkillSourceSpec"]
     ) -> List[str]:
@@ -64,4 +63,10 @@ class ResourceContext(ABC):
 
         Returns an empty list if no skills are configured or the sources are not
         loaded.
+
+        Deliberately not abstract, mirroring the Java ``ResourceContext``
+        ``default`` method: the empty default keeps ``ResourceContext``
+        subclasses that predate skill-source resolution instantiable instead of
+        breaking them.
         """
+        return []

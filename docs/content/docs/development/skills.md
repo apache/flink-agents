@@ -131,6 +131,7 @@ public class MathAgent extends Agent {
   - In Python, use `@skills`.
   - In Java, use `@Skills`.
 - Declare more than one `@skills`/`@Skills` method on the same agent to combine sources; the runtime merges them and de-duplicates identical entries.
+  - The order in which those methods are merged is deterministic, but it differs between languages: Java orders them by method name, while Python keeps declaration order. When two sources provide the same skill name, the later source wins.
 - Declaring a skill source only makes the skills *available*. A skill is exposed to a chat model only when that model lists it in its `skills` (see [Enable Skills on a Chat Model](#enable-skills-on-a-chat-model)).
 
 ### Skill Sources

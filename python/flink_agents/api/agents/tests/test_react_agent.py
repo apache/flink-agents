@@ -32,6 +32,7 @@ from flink_agents.api.resource import (
     ResourceDescriptor,
     ResourceType,
 )
+from flink_agents.api.skills import Skills
 
 # Named rather than imported so building an agent needs no chat model on the path;
 # a descriptor records the class and resolves it only when the resource is created.
@@ -231,3 +232,68 @@ def test_bare_string_skills_are_rejected() -> None:
     """A bare string is rejected rather than split into one-letter skill names."""
     with pytest.raises(TypeError, match="not the string 'math-calculator'"):
         _chat_model(_descriptor(), "math-calculator")
+
+
+def _chat_model_of(agent: ReActAgent) -> ResourceDescriptor:
+    """The chat model descriptor an agent registered."""
+    return agent._resources[ResourceType.CHAT_MODEL][_DEFAULT_CHAT_MODEL]
+
+
+def test_skills_object_records_sources_and_registers_the_resource() -> None:
+    """A Skills object becomes a source marker plus an agent-level resource."""
+    chat_model = _descriptor(model="qwen3:8b")
+    skills = Skills.from_local_dir("/tmp/skill-a", "/tmp/skill-b")
+
+    agent = ReActAgent(chat_model=chat_model, skills=skills)
+    actual = _chat_model_of(agent)
+
+    sources = actual.arguments["skills_sources"]
+    assert [spec.scheme for spec in sources] == ["local", "local"]
+    assert sources[0].params == {"path": "/tmp/skill-a"}
+    assert sources[1].params == {"path": "/tmp/skill-b"}
+    # The original descriptor is never modified.
+    assert "skills_sources" not in chat_model.arguments
+    # The Skills object is registered under the reserved agent-level name.
+    assert "_react_agent_skills" in agent.resources[ResourceType.SKILLS]
+
+
+def test_empty_skills_object_is_a_no_op() -> None:
+    """A Skills object with no sources adds neither a marker nor a resource."""
+    chat_model = _descriptor(model="qwen3:8b")
+
+    agent = ReActAgent(chat_model=chat_model, skills=Skills())
+    actual = _chat_model_of(agent)
+
+    assert actual is chat_model
+    assert "skills_sources" not in actual.arguments
+    assert "_react_agent_skills" not in agent.resources[ResourceType.SKILLS]
+
+
+def test_skills_object_and_descriptor_skills_coexist() -> None:
+    """A recorded source marker leaves the descriptor's explicit skills as given."""
+    chat_model = _descriptor(skills=["a", "b"], model="qwen3:8b")
+
+    agent = ReActAgent(
+        chat_model=chat_model, skills=Skills.from_local_dir("/tmp/skill-c")
+    )
+    actual = _chat_model_of(agent)
+
+    # Explicit skills are preserved; the marker carries the sources for the
+    # runtime to resolve, and the two are merged when the setup is opened.
+    assert actual.arguments["skills"] == ["a", "b"]
+    assert len(actual.arguments["skills_sources"]) == 1
+    assert "skills_sources" not in chat_model.arguments
+
+
+def test_skills_object_keeps_the_descriptor_language() -> None:
+    """Sources recorded on a Java chat model keep it a Java declaration."""
+    chat_model = JavaResourceDescriptor(clazz="com.example.ChatModel", skills=["a"])
+
+    agent = ReActAgent(
+        chat_model=chat_model, skills=Skills.from_local_dir("/tmp/skill-b")
+    )
+    actual = _chat_model_of(agent)
+
+    assert isinstance(actual, JavaResourceDescriptor)
+    assert (actual.target_module, actual.target_clazz) == ("", "com.example.ChatModel")
+    assert len(actual.arguments["skills_sources"]) == 1

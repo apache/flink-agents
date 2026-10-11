@@ -173,16 +173,29 @@ class ReActAgent(Agent):
             natively, the prompt describes the schema's fields without requiring
             JSON, and the schema is applied on the final conversion. Otherwise it
             asks for a JSON response matching the schema.
-        skills : Optional[Sequence[str]] = None
-            Names of the skills to expose to the chat model, each matching the
-            ``name`` of a ``SKILL.md`` available to the agent. They are combined
-            with the ``skills`` argument of ``chat_model``: the descriptor's skills
-            come first, followed by these, keeping only the first occurrence of
-            each name. ``None`` or an empty sequence adds nothing, so the
-            descriptor is used exactly as given. The descriptor itself is never
-            modified. Only skill names are combined; the ``bash`` tool's command
-            policy, such as ``allowed_commands``, stays owned by the chat model
-            descriptor and is left unchanged.
+        skills : Optional[Sequence[str] | Skills] = None
+            Either the names of the skills to expose to the chat model, each
+            matching the ``name`` of a ``SKILL.md`` available to the agent, or a
+            :class:`Skills` object declaring one or more skill sources.
+
+            With names, they are combined with the ``skills`` argument of
+            ``chat_model``: the descriptor's skills come first, followed by these,
+            keeping only the first occurrence of each name. ``None`` or an empty
+            sequence adds nothing, so the descriptor is used exactly as given.
+
+            With a :class:`Skills` object, its sources are registered on the agent
+            and recorded as a marker on the chat model descriptor; the skill names
+            are resolved from those sources at runtime and appended to any
+            explicitly named skills. A single ``Skills`` may declare several
+            sources, so the object is not limited to one source. To combine
+            sources declared in separate objects, gather them into one ``Skills``,
+            declare further ``@skills`` methods, or register them on the agent with
+            ``add_resource``. An empty ``Skills`` adds nothing.
+
+            In both forms the descriptor itself is never modified, and only skill
+            names are combined; the ``bash`` tool's command policy, such as
+            ``allowed_commands``, stays owned by the chat model descriptor and is
+            left unchanged.
 
         Raises:
         ------

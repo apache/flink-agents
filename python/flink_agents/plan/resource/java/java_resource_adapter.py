@@ -46,3 +46,7 @@ class JavaResourceAdapter(Protocol):
     def getSkillDirs(self, skill_names: list[str]) -> list[str]:
         """Resolve materialized skill directories."""
         ...
+
+    def resolveSkillNamesForSources(self, sources: list[dict]) -> list[str]:
+        """Resolve skill names declared by skill source specs."""
+        ...

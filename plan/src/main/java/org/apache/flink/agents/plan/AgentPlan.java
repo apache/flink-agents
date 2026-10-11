@@ -487,10 +487,9 @@ public class AgentPlan implements Serializable {
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
         Class<?> agentClass = agent.getClass();
 
-        // Collect Skills declarations from both @Skills methods and Agent.addResource(SKILLS, ...)
-        Map<String, Skills> skillsObjects = new LinkedHashMap<>();
-        // Collect @Skills methods separately so we can sort them (getDeclaredMethods()
-        // order is non-deterministic across JDKs / class layouts).
+        // Collect @Skills methods into a sorted staging map (getDeclaredMethods() order is
+        // non-deterministic across JDKs / class layouts). These seed the merge map built after
+        // the scan, which Agent.addResource(SKILLS, ...) entries are appended to.
         Map<String, Skills> annotationSkills = new java.util.TreeMap<>();
 
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
@@ -577,7 +576,6 @@ public class AgentPlan implements Serializable {
                                     + method.getName()
                                     + " must return org.apache.flink.agents.api.skills.Skills");
                 }
-                skillsObjects.put(method.getName(), (Skills) value);
                 annotationSkills.put(method.getName(), (Skills) value);
             } else if (method.isAnnotationPresent(MCPServer.class)) {
                 // Check the MCPServer annotation version to determine which version to use.
@@ -611,9 +609,11 @@ public class AgentPlan implements Serializable {
             }
         }
 
-        // @Skills-annotated methods are sorted by name for deterministic ordering,
-        // then placed first. Environment and agent-level resources follow in order.
-        skillsObjects.putAll(annotationSkills);
+        // Seed the merge with the sorted @Skills methods: the LinkedHashMap copy constructor
+        // inserts them in annotationSkills' (method-name) order. Environment and agent resources
+        // are appended afterwards, in that order; later sources win on duplicate skill names
+        // (see addSkills).
+        Map<String, Skills> skillsObjects = new LinkedHashMap<>(annotationSkills);
 
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();

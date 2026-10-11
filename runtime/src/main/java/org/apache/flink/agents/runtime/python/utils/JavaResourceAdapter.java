@@ -23,6 +23,7 @@ import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -91,6 +92,31 @@ public class JavaResourceAdapter {
     /** Return absolute directory paths for the given skill names. */
     public List<String> getSkillDirs(List<String> skillNames) throws Exception {
         return resourceContext.getSkillDirs(skillNames);
+    }
+
+    /**
+     * Resolve the skill names declared by a set of skill source specs. Used by the Python {@code
+     * JavaResourceContextWrapper} when a Python chat model running in a Java agent was constructed
+     * with a {@code Skills} object: the descriptor carries its sources as a marker, and expanding
+     * that marker into names requires the agent's skill manager, which only the Java side owns.
+     *
+     * <p>The specs cross the boundary as plain {@code {"scheme": ..., "params": {...}}} maps, per
+     * the bridge rule that values crossing into Java stay flattened to primitives, strings, lists,
+     * and maps.
+     *
+     * @param sources the source specs as flat maps
+     * @return the resolved skill names
+     */
+    public List<String> resolveSkillNamesForSources(List<Map<String, Object>> sources)
+            throws Exception {
+        List<SkillSourceSpec> specs = new java.util.ArrayList<>();
+        if (sources != null) {
+            ObjectMapper mapper = new ObjectMapper();
+            for (Map<String, Object> source : sources) {
+                specs.add(mapper.convertValue(source, SkillSourceSpec.class));
+            }
+        }
+        return resourceContext.resolveSkillNamesForSources(specs);
     }
 
     /**

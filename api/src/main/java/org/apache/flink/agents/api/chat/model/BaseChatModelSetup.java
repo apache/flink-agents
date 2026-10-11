@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -50,6 +51,9 @@ public abstract class BaseChatModelSetup extends Resource {
     // Providers reject these parameters on a request that defines no tools.
     private static final Set<String> TOOL_ONLY_PARAMS =
             Set.of("tool_choice", "tool_choice_option", "parallel_tool_calls");
+
+    /** Used to re-type the {@code skills_sources} marker on read (see below). */
+    private static final ObjectMapper SKILL_SOURCES_MAPPER = new ObjectMapper();
 
     protected final String connectionName;
     protected String model;
@@ -112,10 +116,9 @@ public abstract class BaseChatModelSetup extends Resource {
         // Resolve skills_sources marker (plan-time source declarations) into skill names,
         // then merge with the descriptor's explicit "skills" list. Explicit names come first;
         // resolved names are appended, de-duplicated while preserving order.
-        @SuppressWarnings("unchecked")
         List<SkillSourceSpec> skillsSources =
-                (List<SkillSourceSpec>) descriptor.getArgument("skills_sources");
-        if (skillsSources != null && !skillsSources.isEmpty()) {
+                toSkillSourceSpecs(descriptor.getArgument("skills_sources"));
+        if (!skillsSources.isEmpty()) {
             List<String> resolved = this.resourceContext.resolveSkillNamesForSources(skillsSources);
             Set<String> merged = new LinkedHashSet<>();
             if (this.skills != null) {
@@ -184,6 +187,31 @@ public abstract class BaseChatModelSetup extends Resource {
     @Nullable
     private static String nullIfEmpty(@Nullable String value) {
         return value == null || value.isEmpty() ? null : value;
+    }
+
+    /**
+     * Re-type the {@code skills_sources} descriptor argument into {@link SkillSourceSpec} entries.
+     *
+     * <p>The marker is written as a {@code List<SkillSourceSpec>} at plan time, but it travels
+     * inside {@link ResourceDescriptor#getInitialArguments()} — a {@code Map<String, Object>} — so
+     * its element type is erased. An {@code AgentPlan} Java-serialization round trip re-reads the
+     * plan through Jackson, which leaves plain maps in the list; casting that list back to {@code
+     * List<SkillSourceSpec>} then fails with a {@link ClassCastException}. Re-typing each element
+     * at the read point keeps the marker usable across serialization boundaries.
+     */
+    private static List<SkillSourceSpec> toSkillSourceSpecs(@Nullable Object raw) {
+        if (!(raw instanceof List)) {
+            return Collections.emptyList();
+        }
+        List<SkillSourceSpec> specs = new ArrayList<>();
+        for (Object element : (List<?>) raw) {
+            if (element instanceof SkillSourceSpec) {
+                specs.add((SkillSourceSpec) element);
+            } else if (element != null) {
+                specs.add(SKILL_SOURCES_MAPPER.convertValue(element, SkillSourceSpec.class));
+            }
+        }
+        return specs;
     }
 
     public abstract Map<String, Object> getParameters();
