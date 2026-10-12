@@ -502,27 +502,44 @@ public class FlussActionStateStore implements ActionStateStore {
         }
     }
 
+    @Override
+    public Object getRecoveryMarker() {
+        return getRecoveryMarker(Map.of());
+    }
+
     /**
-     * Captures bucket end offsets, then synchronously appends the cached states after those offsets
+     * Captures bucket end offsets, then synchronously appends cached states needed for replay
      * before returning the recovery marker.
      *
      * <p>A pending action may already have persisted call results before the checkpoint. Starting
      * recovery at the unmodified log end would lose those results. Fluss append acknowledgements do
      * not expose record offsets, so refreshing the cache into the recovery window avoids guessing
-     * where the earlier writes landed. Completed actions are also retained until the enclosing
-     * input sequence is pruned after a completed checkpoint.
+     * where the earlier writes landed. States at or below the key's completed input sequence in
+     * this checkpoint are skipped. Completed actions in unfinished inputs and all states for keys
+     * without a completed sequence number are still refreshed.
      *
      * <p>Called on the operator thread, serially with puts and pruning. A failed refresh fails the
-     * checkpoint; partial appends remain safe for earlier recovery markers. This adds one append
-     * per cached state per snapshot and requires Fluss retention to preserve the recovery window.
+     * checkpoint; partial appends remain safe for earlier recovery markers. Skipped states stay in
+     * the cache until checkpoint completion prunes them. This adds one append per state needed for
+     * replay and requires Fluss retention to preserve the recovery window.
      */
     @Override
-    public Object getRecoveryMarker() {
+    public Object getRecoveryMarker(Map<?, Long> lastCompletedSequenceNumbers) {
+        Map<String, Long> completedSequencesByIdentity = new HashMap<>();
+        lastCompletedSequenceNumbers.forEach(
+                (key, sequenceNumber) ->
+                        completedSequencesByIdentity.put(
+                                keyEncoder.generateBusinessKeyIdentity(key), sequenceNumber));
         Map<Integer, Long> offsets = getBucketEndOffsets();
         try {
             for (Map.Entry<String, ActionState> entry : actionStates.entrySet()) {
-                String identity = ActionStateUtil.parseKey(entry.getKey()).get(4);
-                appendState(entry.getKey(), identity, entry.getValue());
+                List<String> keyParts = ActionStateUtil.parseKey(entry.getKey());
+                String identity = keyParts.get(4);
+                Long completedSequenceNumber = completedSequencesByIdentity.get(identity);
+                if (completedSequenceNumber == null
+                        || Long.parseLong(keyParts.get(1)) > completedSequenceNumber) {
+                    appendState(entry.getKey(), identity, entry.getValue());
+                }
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to refresh Fluss action state for checkpoint", e);

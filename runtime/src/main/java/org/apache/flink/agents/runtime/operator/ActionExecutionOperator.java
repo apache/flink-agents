@@ -757,9 +757,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
-        durableExecManager.snapshotRecoveryMarker();
-        durableExecManager.snapshotLastCompletedSequenceNumbers(
-                getKeyedStateBackend(), context.getCheckpointId());
+        durableExecManager.snapshotState(getKeyedStateBackend(), context.getCheckpointId());
 
         super.snapshotState(context);
     }

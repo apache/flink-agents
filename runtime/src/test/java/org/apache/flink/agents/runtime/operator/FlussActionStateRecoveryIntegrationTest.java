@@ -60,7 +60,10 @@ import static org.apache.flink.agents.api.configuration.AgentConfigOptions.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** Real Fluss writes and operator checkpoints must preserve pending durable results. */
@@ -87,8 +90,17 @@ public class FlussActionStateRecoveryIntegrationTest {
                         harness(plan, store)) {
             waitForTableReady(config);
             harness.open();
-            harness.processElement(new StreamRecord<>(7L));
             ActionExecutionOperator<Long, Object> operator = operator(harness);
+            // Leave two completed inputs cached without notifying checkpoint completion.
+            // Their sequences are below and at this checkpoint's completed boundary.
+            for (int i = 0; i < 2; i++) {
+                harness.processElement(new StreamRecord<>(7L));
+                operator.waitInFlightEventsFinished();
+            }
+            assertThat(CALLS.get()).isEqualTo(2);
+            assertThat(harness.getRecordOutput()).hasSize(2);
+            harness.getOutput().clear();
+            harness.processElement(new StreamRecord<>(7L));
             operator.setCurrentKey(7L);
             ListState<ActionTask> tasks =
                     operator.getRuntimeContext()
@@ -101,15 +113,22 @@ public class FlussActionStateRecoveryIntegrationTest {
             // The operator handles the unfinished result and checkpoints a normal Java task.
             tasks.update(List.of(new CallThenYieldTask(queued)));
             harness.getTaskMailbox().take(TaskMailbox.MIN_PRIORITY).run();
-            assertThat(CALLS.get()).isEqualTo(1);
+            assertThat(CALLS.get()).isEqualTo(3);
             assertThat(harness.getRecordOutput()).isEmpty();
             assertThat(tasks.get()).hasSize(1);
-            ActionState pending = store.get(7L, 0L, action, pendingEvent);
+            ActionState pending = store.get(7L, 2L, action, pendingEvent);
             assertThat(pending.isCompleted()).isFalse();
             assertThat(pending.getCallResults()).hasSize(1);
+            Field writerField = FlussActionStateStore.class.getDeclaredField("writer");
+            writerField.setAccessible(true);
+            AppendWriter writer = spy((AppendWriter) writerField.get(store));
+            writerField.set(store, writer);
+            clearInvocations(writer);
             snapshot = harness.snapshot(1L, 1L);
+            // Only the unfinished input is refreshed, even before completed inputs are pruned.
+            verify(writer).append(any(InternalRow.class));
             harness.notifyOfCompletedCheckpoint(1L);
-            assertThat(store.get(7L, 0L, action, pendingEvent)).isNotNull();
+            assertThat(store.get(7L, 2L, action, pendingEvent)).isNotNull();
         }
 
         try (FlussActionStateStore store = store(config);
@@ -117,7 +136,7 @@ public class FlussActionStateRecoveryIntegrationTest {
                         harness(plan, store)) {
             harness.initializeState(snapshot);
             harness.open();
-            assertThat(store.get(7L, 0L, action, pendingEvent)).isNotNull();
+            assertThat(store.get(7L, 2L, action, pendingEvent)).isNotNull();
             // Checkpoint again before replay runs: recovered cache entries need protection too.
             snapshot = harness.snapshot(2L, 2L);
             harness.notifyOfCompletedCheckpoint(2L);
@@ -131,10 +150,10 @@ public class FlussActionStateRecoveryIntegrationTest {
             operator(harness).waitInFlightEventsFinished();
             assertThat(harness.getRecordOutput()).hasSize(1);
             assertThat(harness.getRecordOutput().iterator().next().getValue()).isEqualTo(21L);
-            assertThat(CALLS.get()).as("persisted call must not execute again").isEqualTo(1);
+            assertThat(CALLS.get()).as("persisted call must not execute again").isEqualTo(3);
             snapshot = harness.snapshot(3L, 3L);
             harness.notifyOfCompletedCheckpoint(3L);
-            assertThat(store.get(7L, 0L, action, pendingEvent)).isNull();
+            assertThat(store.get(7L, 2L, action, pendingEvent)).isNull();
             // Pruning must stop refreshing the completed input's records.
             assertThat(store.getRecoveryMarker()).isEqualTo(store.getRecoveryMarker());
         }
@@ -147,7 +166,7 @@ public class FlussActionStateRecoveryIntegrationTest {
             harness.open();
             operator(harness).waitInFlightEventsFinished();
             assertThat(harness.getRecordOutput()).isEmpty();
-            assertThat(CALLS.get()).isEqualTo(1);
+            assertThat(CALLS.get()).isEqualTo(3);
         }
     }
 

@@ -142,6 +142,54 @@ public class FlussActionStateStoreTest {
     }
 
     @Test
+    void testCheckpointRefreshesOnlySequencesNeedingReplay() throws Exception {
+        ActionState completed = new ActionState(testEvent);
+        completed.markCompleted();
+        store.put(TEST_KEY, 1L, testAction, testEvent, completed);
+        store.put(TEST_KEY, 2L, testAction, testEvent, completed);
+        // Completed actions in an unfinished input still need replay protection.
+        store.put(TEST_KEY, 3L, testAction, testEvent, completed);
+        Action pendingAction = new NoOpAction("pending");
+        store.put(TEST_KEY, 3L, pendingAction, testEvent, testActionState);
+        store.put("no-boundary", 1L, testAction, testEvent, completed);
+        Map<String, ActionState> cachedBeforeCheckpoint = new HashMap<>(actionStates);
+        clearInvocations(mockWriter);
+
+        assertThat(store.getRecoveryMarker(Map.of(TEST_KEY, 2L))).isEqualTo(Map.of(0, 10L));
+
+        ArgumentCaptor<InternalRow> rows = ArgumentCaptor.forClass(InternalRow.class);
+        verify(mockWriter, times(3)).append(rows.capture());
+        assertThat(rows.getAllValues())
+                .extracting(row -> row.getString(0).toString())
+                .containsExactlyInAnyOrder(
+                        generateKey(TEST_KEY, 3L, testAction, testEvent, MAX_PARALLELISM),
+                        generateKey(TEST_KEY, 3L, pendingAction, testEvent, MAX_PARALLELISM),
+                        generateKey("no-boundary", 1L, testAction, testEvent, MAX_PARALLELISM));
+        assertThat(actionStates).containsExactlyInAnyOrderEntriesOf(cachedBeforeCheckpoint);
+
+        // Boundaries belong to one snapshot; a later unbounded marker must refresh every state.
+        clearInvocations(mockWriter);
+        store.getRecoveryMarker();
+        verify(mockWriter, times(5)).append(any());
+    }
+
+    @Test
+    void testCheckpointBoundariesSeparateTypedKeysWithSameStringForm() throws Exception {
+        store = createStore(1);
+        store.put(1L, 1L, testAction, testEvent, testActionState);
+        store.put("1", 1L, testAction, testEvent, testActionState);
+        clearInvocations(mockWriter);
+
+        store.getRecoveryMarker(Map.of(1L, 1L));
+
+        ArgumentCaptor<InternalRow> rows = ArgumentCaptor.forClass(InternalRow.class);
+        verify(mockWriter).append(rows.capture());
+        assertThat(rows.getValue().getString(0).toString())
+                .isEqualTo(generateKey("1", 1L, testAction, testEvent, 1));
+        assertThat(actionStates).hasSize(2);
+    }
+
+    @Test
     void testCheckpointDoesNotRefreshPrunedOrDivergedStates() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
         store.put(TEST_KEY, 2L, testAction, testEvent, testActionState);
