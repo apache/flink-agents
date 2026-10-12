@@ -221,9 +221,9 @@ class EventRouter<IN, OUT> {
      *     run and source references already populated.
      */
     void notifyEventProcessed(Event event, TraceContext eventTraceContext) throws Exception {
+        EventContext eventContext = new EventContext(event);
         traceLogWriter.appendAndFlush(
                 TraceRecord.create(eventTraceContext, null, null, event.getAttributes()));
-        EventContext eventContext = new EventContext(event);
         if (eventListeners != null) {
             // Notify all registered event listeners about the event.
             for (EventListener listener : eventListeners) {

@@ -33,9 +33,7 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /** Selects records and resolves their recording detail from trace log targets. */
@@ -247,8 +245,6 @@ final class TraceLogTargetResolver {
         @Nullable private TraceLogDetail defaultDetail;
         private final Map<String, TraceLogDetail> exactDetails = new LinkedHashMap<>();
         private final List<PrefixTarget> prefixDetails = new ArrayList<>();
-        private final ConcurrentHashMap<String, Optional<TraceLogDetail>> cache =
-                new ConcurrentHashMap<>();
 
         private TypeTargets(@Nullable TraceLogDetail defaultDetail) {
             this.defaultDetail = defaultDetail;
@@ -270,12 +266,6 @@ final class TraceLogTargetResolver {
             if (entityName == null || (exactDetails.isEmpty() && prefixDetails.isEmpty())) {
                 return defaultDetail;
             }
-            return cache.computeIfAbsent(entityName, name -> Optional.ofNullable(resolveName(name)))
-                    .orElse(null);
-        }
-
-        @Nullable
-        private TraceLogDetail resolveName(String entityName) {
             TraceLogDetail exact = exactDetails.get(entityName);
             if (exact != null) {
                 return exact;

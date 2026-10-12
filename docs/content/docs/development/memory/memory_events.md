@@ -30,7 +30,7 @@ When an action finishes, the framework folds the memory operations performed by 
 
 Memory events use the same event infrastructure as other Flink Agents events. They can be written to the [Trace Log]({{< ref "docs/operations/monitoring#trace-log" >}}), observed by registered `EventListener`s, and used to trigger actions through normal event routing.
 
-The framework can also emit an **agent-run begin event** (`_agent_run_begin_event`) when an `InputEvent` starts a run for a key. This opt-in event is disabled by default. When enabled, it is emitted before any action in that run executes and carries the key's short-term memory **values** as a flat map. Its Event Lineage points to the triggering `InputEvent` through the framework virtual Action `agent_run_begin_action`, so the event and any Actions it triggers remain in the same Trace Tree. Object nodes and empty-object structure are outside the event contract.
+The framework can also emit an **agent-run begin event** (`_agent_run_begin_event`) when an `InputEvent` starts a run for a key. This opt-in event is disabled by default. When enabled, it is emitted before any action in that run executes and carries the key's short-term memory **values** as a flat map. When recorded, Trace Log links it to the triggering `InputEvent` through the virtual Action `agent_run_begin_action`, so the Event and any Actions it triggers remain in the same Trace Tree. Object nodes and empty-object structure are outside the event contract.
 
 ## When to Use
 
@@ -146,7 +146,7 @@ The seven memory event classes (Java: `org.apache.flink.agents.api.event`, Pytho
 
 `LongTermSearchEvent` exposes the search shape as `getResults()` in Java and `.results` in Python: memory set to query string to ordered hit list.
 
-### Wire Format
+### Event Attributes
 
 All memory events and run-begin events are emitted for keyed streams and carry two common attributes:
 
@@ -155,10 +155,17 @@ All memory events and run-begin events are emitted for keyed streams and carry t
 | `key` | The key for this memory event, stored as text. Java keys and PyFlink keys with an explicit type normally use `String.valueOf`. PyFlink keys stored with pickle are decoded first and then converted with Python `str`. PyFlink byte-array keys with an explicit type use Python's bytes text directly and are not decoded with pickle. This value identifies the memory context. Flink does not use it to route records. |
 | `value` | An operation-specific folded JSON map. Short-term, sensory, and run-begin snapshots use dot-key flat paths; long-term events use structured memory-set/item/query maps described below. |
 
-The `key` and `value` fields are nested under `attributes`; they are not top-level event fields:
+The `key` and `value` fields belong to the Event's `attributes` map. When this Event is written to [Trace Log]({{< ref "docs/operations/monitoring#json-format" >}}), the JSON output separates those attributes from identity and relationship metadata. For example:
 
 ```json
-{"timestamp": "2026-07-03T04:22:36.087914Z", "detail": "VERBOSE", "entityType": "event", "entityName": "_short_term_write_event", "entityMetadata": {"eventId": "da8ca017-25cc-4942-9085-ae38490e303c"}, "attributes": {"key": "user-42", "value": {"user.tier": "gold"}}}
+{
+  "timestamp": "2026-07-03T04:22:36.087914Z",
+  "detail": "VERBOSE",
+  "entityType": "event",
+  "entityName": "_short_term_write_event",
+  "entityMetadata": {"eventId": "da8ca017-25cc-4942-9085-ae38490e303c"},
+  "attributes": {"key": "user-42", "value": {"user.tier": "gold"}}
+}
 ```
 
 ### Value Semantics
@@ -231,7 +238,7 @@ Because `agent-run.begin-event` is disabled by default, the Trace Log has no bui
 
 ## Semantics & Caveats
 
-- **Trace Log detail.** Configure `trace-log.targets` with `scope: EVENT_ONLY` and `detail: VERBOSE` when full memory-event attributes are required, or select individual Event names with an entity scope.
+- **Trace Log detail.** Configure [recording targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) with `scope: EVENT_ONLY` and `detail: VERBOSE` when full memory-event attributes are required, or select individual Event names with an entity scope. Memory-event generation and log selection are independent: the emission switches determine whether Events are produced, while targets determine whether they are written to Trace Log.
 - **Durable execution.** A long-term memory operation wrapped in `durable_execute` is not recorded again when the durable result is replayed from state. The generated events describe operations that actually executed in the current attempt.
 - **Observation failures.** Unsupported short-term or sensory values are omitted. Invalid long-term records are skipped individually after a valid batch is parsed, but a bridge, batch-serialization, or malformed-payload failure drops the current partition key's LTM observation batch. Warnings do not include observed values. These failures do not fail the action or roll back a completed long-term backend operation.
 - **Failed actions.** A failed action does not reach the memory-event emission boundary. The operator task fails and recovery rebuilds the interpreter, so queued actions do not continue in the same interpreter instance after the failure.

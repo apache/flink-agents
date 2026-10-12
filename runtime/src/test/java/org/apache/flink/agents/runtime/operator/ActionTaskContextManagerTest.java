@@ -264,7 +264,7 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, from);
             RunnerContextImpl.MemoryContext fromMemCtx = from.getRunnerContext().getMemoryContext();
             assertThat(fromMemCtx).isNotNull();
-            from.markExecutionStartedRecordEmitted();
+            from.markExecutionStartedNotified();
             OutputEvent bufferedBeforeYield = new OutputEvent("before-yield");
             from.getRunnerContext().sendEvent(bufferedBeforeYield);
             List<Event> liveBuffer = from.getRunnerContext().getPendingEvents();
@@ -295,7 +295,7 @@ class ActionTaskContextManagerTest {
                     .hasMessageContaining("Missing contexts for action task");
 
             // (e) Persisted Action lifecycle state follows the continuation task.
-            assertThat(to.hasExecutionStartedRecordEmitted()).isTrue();
+            assertThat(to.isExecutionStartedNotified()).isTrue();
         }
     }
 
@@ -483,7 +483,7 @@ class ActionTaskContextManagerTest {
                             ExecutionReporter.EntityTypes.TOOL,
                             "search",
                             Map.of("toolCallId", "call-1"));
-            task.markExecutionStartedRecordEmitted();
+            task.markExecutionStartedNotified();
 
             TypeSerializer<ActionTask> serializer =
                     TypeInformation.of(ActionTask.class)
@@ -494,7 +494,7 @@ class ActionTaskContextManagerTest {
                     serializer.deserialize(new DataInputDeserializer(output.getCopyOfBuffer()));
 
             assertThat(restored.getTraceContext()).isEqualTo(task.getTraceContext());
-            assertThat(restored.hasExecutionStartedRecordEmitted()).isTrue();
+            assertThat(restored.isExecutionStartedNotified()).isTrue();
             assertThat(restored.getRunnerContext()).isNull();
         }
     }

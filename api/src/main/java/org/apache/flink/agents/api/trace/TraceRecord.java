@@ -56,7 +56,6 @@ import java.util.Objects;
  * <p>JSON output flattens the context fields, while keeping entity metadata and attributes as
  * separate objects.
  */
-@Internal
 @JsonSerialize(using = TraceRecordJsonSerializer.class)
 @JsonDeserialize(using = TraceRecordJsonDeserializer.class)
 public final class TraceRecord {
@@ -83,6 +82,7 @@ public final class TraceRecord {
      *
      * <p>The fields must follow the applicability rules described by this class.
      */
+    @Internal
     public TraceRecord(
             TraceContext context,
             String timestamp,
@@ -126,6 +126,7 @@ public final class TraceRecord {
     }
 
     /** Creates a record using the current observation time. */
+    @Internal
     public static TraceRecord create(
             TraceContext context,
             @Nullable String status,

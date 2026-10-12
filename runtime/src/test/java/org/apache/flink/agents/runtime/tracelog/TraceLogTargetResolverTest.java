@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.logger.TraceLogDetail;
 import org.apache.flink.agents.api.logger.TraceLogScope;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -52,7 +53,13 @@ class TraceLogTargetResolverTest {
     @Test
     void allOffAndEmptyTargetsSelectNothingInsteadOfFallingBackToDefaults() {
         for (TraceLogTargetResolver resolver :
-                List.of(resolver(), resolver(target("ALL", "OFF")))) {
+                List.of(
+                        resolver(),
+                        resolver(target("ALL", "OFF")),
+                        new TraceLogTargetResolver(
+                                new AgentConfiguration(
+                                                Map.of("trace-log", Map.of("targets", List.of())))
+                                        .getConfData()))) {
             assertThat(resolver.resolve("event", "some.Event")).isNull();
             assertThat(resolver.resolve("action", "process")).isNull();
         }
@@ -371,7 +378,10 @@ class TraceLogTargetResolverTest {
     @ParameterizedTest
     @MethodSource("malformedConfigs")
     void malformedConfigFailsAtStartup(Map<String, Object> config) {
-        assertThatThrownBy(() -> new TraceLogTargetResolver(config))
+        assertThatThrownBy(
+                        () ->
+                                new TraceLogTargetResolver(
+                                        new AgentConfiguration(config).getConfData()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("trace-log.targets");
     }
@@ -393,6 +403,8 @@ class TraceLogTargetResolverTest {
     private static Stream<Map<String, Object>> malformedConfigs() {
         return Stream.of(
                 Map.of("trace-log.targets", "not-a-list"),
+                Map.of("trace-log.targets", Map.of()),
+                Map.of("trace-log", Map.of("targets", Map.of())),
                 Map.of("trace-log.targets.scope", "ALL"),
                 Map.of("trace-log.targets", List.of("not-an-object")),
                 config(Map.of("detail", "STANDARD")),

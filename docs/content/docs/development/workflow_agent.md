@@ -826,9 +826,7 @@ public static void handleMyEvent(Event event, RunnerContext ctx) {
 {{< /tabs >}}
 
 {{< hint info >}}
-The runtime records Event relationships in Trace Log `entityMetadata`, using
-`upstreamEventId` and `upstreamActionName`. These fields are not part of the Event API.
-User code should keep user data in `attributes`.
+The runtime records Event IDs and source relationships in [Trace Log]({{< ref "docs/operations/monitoring#json-format" >}}), separately from the Event payload. Source relationships are not fields of the Event API, and callers do not need to manage them when sending Events. Keep user data in `attributes`.
 {{< /hint >}}
 
 ### JSON Serialization
@@ -910,8 +908,8 @@ versions may assign `result.id = event.id`; that assignment now raises a Pydanti
 `ValidationError`. Replace `result.id = event.id` followed by `return result` with
 `return result.reconstruct_from(event)`.
 
-Typed reconstruction represents the same Event occurrence, so it must preserve the base Event's
-identity and framework-managed metadata:
+Typed reconstruction represents the same Event occurrence, so it preserves the original ID and
+attachments rather than creating a new occurrence:
 
 - **Python**: return `reconstruct_from(event)` after constructing the typed object.
   It returns a new typed object with the Event's UUIDv4 `id` and a copy of its

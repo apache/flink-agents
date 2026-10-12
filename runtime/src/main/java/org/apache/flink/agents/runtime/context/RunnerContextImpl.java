@@ -170,54 +170,38 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 String status,
                 @Nullable String problemCategory,
                 Map<String, Object> attributes) {
-            return new TraceRecord(
-                    contextForReport(entityType, entityName, entityMetadata, status),
-                    timestamp,
-                    status,
-                    problemCategory,
-                    attributes);
-        }
-
-        private TraceContext contextForReport(
-                String entityType,
-                String entityName,
-                Map<String, Object> entityMetadata,
-                String status) {
             ReportedExecutionKey key =
                     new ReportedExecutionKey(entityType, entityName, entityMetadata);
-            TraceContext reportTraceContext;
-            if (TraceRecord.Statuses.CREATED.equals(status)) {
-                reportTraceContext =
-                        actionTraceContext.childExecution(
-                                entityType, entityName, key.getEntityMetadata());
-                TraceContext previous = activeCalls.put(key, reportTraceContext);
-                if (previous != null) {
+            TraceContext previous = activeCalls.get(key);
+            boolean created = TraceRecord.Statuses.CREATED.equals(status);
+            TraceContext reportTraceContext =
+                    created || previous == null
+                            ? actionTraceContext.childExecution(
+                                    entityType, entityName, key.getEntityMetadata())
+                            : previous;
+            TraceRecord record =
+                    new TraceRecord(
+                            reportTraceContext, timestamp, status, problemCategory, attributes);
+
+            // Commit the pairing change only after the record has been validated.
+            if (created || TraceRecord.Statuses.STARTED.equals(status)) {
+                activeCalls.put(key, reportTraceContext);
+                if (created && previous != null) {
                     LOG.debug(
                             "Execution creation report for {}:{} replaced an active report with the same metadata.",
                             entityType,
                             entityName);
                 }
-            } else if (TraceRecord.Statuses.STARTED.equals(status)) {
-                reportTraceContext = activeCalls.get(key);
-                if (reportTraceContext == null) {
-                    reportTraceContext =
-                            actionTraceContext.childExecution(
-                                    entityType, entityName, key.getEntityMetadata());
-                    activeCalls.put(key, reportTraceContext);
-                }
             } else {
-                reportTraceContext = activeCalls.remove(key);
-                if (reportTraceContext == null) {
+                activeCalls.remove(key);
+                if (previous == null) {
                     LOG.debug(
                             "Execution terminal report for {}:{} has no matching creation or start report; emitting it with a new execution id.",
                             entityType,
                             entityName);
-                    reportTraceContext =
-                            actionTraceContext.childExecution(
-                                    entityType, entityName, key.getEntityMetadata());
                 }
             }
-            return reportTraceContext;
+            return record;
         }
     }
 

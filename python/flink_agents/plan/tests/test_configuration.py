@@ -227,12 +227,24 @@ def test_get_with_default_value() -> None:
     default_str = ConfigOption("default.str", str, "default_value")
     default_int = ConfigOption("default.int", int, 100)
     default_double = ConfigOption("default.double", float, 2.5)
+    default_targets = ConfigOption(
+        "default.targets", list, [{"scope": "EVENT_ONLY", "detail": "STANDARD"}]
+    )
 
     config = AgentConfiguration()
 
     assert config.get(default_str) == "default_value"
     assert config.get(default_int) == 100
     assert config.get(default_double) == 2.5
+
+    targets = config.get(default_targets)
+    targets[0]["detail"] = "OFF"
+    targets.append({"scope": "ALL"})
+
+    expected_targets = [{"scope": "EVENT_ONLY", "detail": "STANDARD"}]
+    assert config.get(default_targets) == expected_targets
+    assert AgentConfiguration().get(default_targets) == expected_targets
+    assert default_targets.get_default_value() == expected_targets
 
 
 def test_get_with_null_and_default() -> None:
@@ -258,17 +270,26 @@ def test_trace_log_defaults_and_empty_targets_survive_json() -> None:
     assert restored.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE) is LoggerType.FILE
 
 
-def test_trace_log_targets_survive_yaml_and_json(tmp_path: Path) -> None:
-    targets = [
-        {"scope": "ALL", "detail": "OFF"},
-        {"scope": "EVENT_ONLY", "detail": "STANDARD"},
-        {
-            "scope": {"entityType": "event", "entityName": "com.foo.*"},
-            "detail": "VERBOSE",
-        },
-        {"scope": {"entityType": "action", "entityName": "process"}},
-        {"scope": {"entityType": "tool"}},
-    ]
+@pytest.mark.parametrize(
+    "targets",
+    [
+        [
+            {"scope": "ALL", "detail": "OFF"},
+            {"scope": "EVENT_ONLY", "detail": "STANDARD"},
+            {
+                "scope": {"entityType": "event", "entityName": "com.foo.*"},
+                "detail": "VERBOSE",
+            },
+            {"scope": {"entityType": "action", "entityName": "process"}},
+            {"scope": {"entityType": "tool"}},
+        ],
+        [],
+        {},
+    ],
+)
+def test_trace_log_targets_survive_yaml_and_json(
+    tmp_path: Path, targets: list[dict] | dict
+) -> None:
     config_file = tmp_path / "agent.yaml"
     config_file.write_text(
         yaml.safe_dump({"agent": {"trace-log": {"targets": targets}}}),
@@ -276,6 +297,10 @@ def test_trace_log_targets_survive_yaml_and_json(tmp_path: Path) -> None:
     )
     config = AgentConfiguration()
     config.load_from_file(str(config_file))
-    assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets
+    key = AgentConfigOptions.TRACE_LOG_TARGETS.get_key()
+    assert config.get_conf_data()[key] == targets
     restored = AgentConfiguration.model_validate_json(config.model_dump_json())
-    assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets
+    assert restored.get_conf_data()[key] == targets
+    if isinstance(targets, list):
+        assert config.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets
+        assert restored.get(AgentConfigOptions.TRACE_LOG_TARGETS) == targets

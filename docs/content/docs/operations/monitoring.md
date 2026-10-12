@@ -61,7 +61,9 @@ Input-run outcomes and all latency samples are process-local. Runs or Action exe
 
 #### Execution Metrics
 
-LLM and Tool outcome and latency metrics are derived from execution lifecycle Events. A Tool execution is created once its call identity and metadata are available. This happens before a preparation failure is reported and, for an invocable call, before submission to the durable execution path. The Tool callable then records its own start and completion timestamps. Start and terminal Events may be delivered after a parallel batch completes, but retain each call's occurrence timestamps rather than using the batch duration. The durable execution `Outcome` indicates whether the invocation returned or raised; a returned `ToolResponse` independently indicates whether the Tool operation succeeded or failed. Metrics preserve both layers without redefining the existing durable-persistence semantics. Event publication is independent of response aggregation, so a later response-processing failure does not repeat or discard reports for calls with available Outcomes. The `model_resource`, `tool`, `skill`, `mcp_server`, and `subagent` scopes are independent key-value scopes directly under an Action; none is nested under another. The existing `model` scope remains dedicated to model usage metrics.
+LLM, Tool, and sub-agent metrics describe calls observed by the framework within an Action. The framework reports each call's start and outcome directly to the metric collectors. These reports do not create Events for Action routing. Metrics are collected independently of Trace Log output: changing `trace-log.targets` or `detail` does not disable them.
+
+The `model_resource`, `tool`, `skill`, `mcp_server`, and `subagent` scopes are independent key-value scopes directly under an Action. The existing `model` scope remains dedicated to model usage metrics.
 
 | Scope | Metrics | Description | Type |
 |-------|---------|-------------|------|
@@ -84,17 +86,19 @@ LLM and Tool outcome and latency metrics are derived from execution lifecycle Ev
 
 An LLM metric represents one framework invocation of `ChatModel`. A framework retry that calls the model again produces another LLM outcome and latency sample; retries hidden inside a provider or connection are not observed. Every named Tool execution emits Tool metrics. Skill metrics are emitted only for explicit `load_skill` calls; subsequent Tool calls are not inferred to belong to a Skill. MCP metrics aggregate only Tool executions carrying an explicit MCP Server resource name. A `load_skill` or MCP Tool execution therefore contributes to both its Tool scope and the corresponding Skill or MCP Server scope. A sub-agent delegation the model requests through the reserved `_subagent_` callable name emits Subagent metrics keyed by the registered sub-agent name, and is reported only under the Subagent scope rather than also under a Tool scope. `subagentCallLatencyMs` spans the Action-observed delegation from hand-off to result observation; for delegations dispatched concurrently in one batch, this window includes their overlap.
 
-Execution metrics currently inherit Agent Trace's durable-replay behavior. During fine-grained recovery, a cached durable child result is reported as a new execution because child cache reuse is not exposed to execution reporting. A cached LLM result is reported as successful. A cached Tool result retains its normalized Tool outcome: an explicit `ToolResponse.error(...)` is reported as failed, while a successful `ToolResponse` or a raw Python return is reported as successful. A cached LLM result may produce a near-zero latency sample; a cached Tool result produces no latency sample because the Tool callable was not invoked and no execution duration was measured. Distinguishing reused child executions is follow-up work.
+During fine-grained recovery, a cached durable child result contributes another call outcome to these metrics; cache reuse is not separately identified. A cached LLM result is reported as successful and may produce a near-zero latency sample. A cached Tool result retains its normalized outcome: `ToolResponse.error(...)` counts as failed, while a successful `ToolResponse` or a raw Python return counts as successful. A cached Tool result produces no latency sample because its callable was not invoked.
 
-Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope. Requested Skill names that do not resolve in the runtime registry are similarly aggregated under `skill=unknown`. A `_subagent_` callable name that does not resolve to a registered sub-agent is reported as a Tool and therefore aggregated under `tool=unknown`; the Subagent scope is keyed only by registered sub-agent names, so its cardinality is bounded by the Agent plan. The original requested names remain available in Agent Trace records, while Metric scope cardinality remains bounded.
+Tool names that are not registered runtime resources are aggregated under the fixed `tool=unknown` scope. Requested Skill names that do not resolve in the runtime registry are similarly aggregated under `skill=unknown`. A `_subagent_` callable name that does not resolve to a registered sub-agent is reported as a Tool and therefore aggregated under `tool=unknown`; the Subagent scope is keyed only by registered sub-agent names, so its cardinality is bounded by the Agent plan. When selected for Trace Log output, the call observations retain the original requested names; metric scope cardinality remains bounded.
 
-Tool outcomes follow the same two-layer contract in Java and Python. Resource preparation and invocation exceptions are failures. A returned `ToolResponse.error(...)` is also a failed Tool execution even though the durable invocation returned normally. Existing Python Tools may continue returning arbitrary raw values, which are treated as successful without inspecting their payload. A durable-persistence exception is reflected as a Tool failure only when the existing durable execution path exposes it to `ToolCallAction`.
+Tool outcomes follow the same contract in Java and Python. The durable invocation's `Outcome` describes whether it returned or raised; a returned `ToolResponse` describes whether the Tool operation succeeded. Resource preparation and invocation exceptions count as failures, as does `ToolResponse.error(...)` even though the invocation returned normally. Existing Python Tools may return arbitrary raw values, which count as successful without payload inspection. A durable-persistence exception counts as a Tool failure only when the durable execution path exposes it to `ToolCallAction`.
 
 `numOfSkillLoads` counts terminal calls rather than successful loads. In both runtimes, `load_skill` reports an unavailable manager, missing Skill, or missing resource through `ToolResponse.error(...)`; the Tool outcome is therefore failed while the Skill load counter still increments. MCP protocol-level errors follow the same failed Tool outcome contract.
 
-Execution latency tracking is process-local and uses the occurrence timestamps in matching start and terminal Events. Creation Events do not start latency measurement. Both start and terminal Events must be observed in the same task attempt. A Tool latency sample additionally requires the Tool callable to start no later than the Action observes its durable result; queueing and parallel-batch fan-in are excluded. LLM and Tool terminal counters are still updated when no matching start Event is available.
+Execution latency is measured from matching start and outcome observations of the same call in the same task attempt. Assigning a call identity before preparation or submission does not start the timer. Invoked Tools retain their own start and completion timestamps, even when the reports arrive after a durable call or parallel batch returns. Queueing and time spent waiting for other calls in the batch are excluded. Outcome counters still update when no matching start is available.
 
-A request timeout does not necessarily stop a running Tool. `ToolCallAction` records when the durable call returns or raises, before processing responses or publishing terminal Events. If a Tool has not finished by that time, its terminal Event uses this fixed observation time; a later Tool completion cannot extend it or produce another terminal Event. This excludes response-processing and Event-publication delays, but is not the execution framework's exact timeout-decision time: any delay before the durable result reaches the Action remains included. A callable that starts after this observation retains its creation and timeout terminal Events without a start Event or latency sample, even if it later completes in the background. Cached results and failures before invocation follow the same creation-plus-terminal shape. If a batch aborts with an ordinary Exception without returning per-call Outcomes, every prepared call retains its creation Event and known starts may also be reported, but no terminal execution Events are inferred from timestamps or the batch exception. If a Java batch instead propagates an `Error`, directly or wrapped by a `CompletionException`, unresolved prepared calls are reported as failed and the original `Error` is rethrown. These failures denote a fatal batch abort, not that every Tool body was invoked. Existing business `ToolResponseEvent` error handling is unchanged. These observation rules do not change the execution framework's timeout, failure, or durable-persistence behavior.
+A timeout does not necessarily stop a running Tool. If the callable has not finished when the Action observes its durable result or failure, that observation time fixes the call's terminal timestamp. A later completion cannot extend the latency or add another outcome. This boundary excludes subsequent response processing and reporting delays, but may include a delay before the durable result reaches the Action. A callable that starts after this boundary has no reported start or latency sample, even if it later completes in the background. Cached results and failures before invocation also have no Tool latency sample.
+
+Available per-call outcomes are reported independently of response aggregation, so a later response-processing failure does not repeat or discard them. If a batch raises an ordinary Exception without returning per-call outcomes, known starts may still be observed, but no outcomes are inferred from timestamps or the batch exception. If a Java batch propagates an `Error`, directly or through a `CompletionException`, unresolved prepared calls are reported as failed and the original `Error` is rethrown. Those failures indicate a fatal batch abort; they do not imply that every Tool body ran. These rules describe the framework's observations and do not change timeout handling, durable persistence, or the business `ToolResponseEvent` error contract.
 
 In previous releases, `retryCount` and `retryWaitSec` used the `model.<connection_name>` scope. They now use `model_resource.<resource_name>` so retries are attributed to the configured ChatModel resource. Existing queries and dashboards for these two metrics must use the new scope.
 
@@ -205,15 +209,39 @@ We can check the log result in the WebUI of Flink Job:
 
 Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` detail. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their detail.
 
-The default output is **SLF4J Trace Log**. Setting `trace-log.base-dir` selects **File Trace Log**; `trace-log.output-type` can also select the output explicitly.
+The default output is **SLF4J Trace Log**. Select **File Trace Log** with `trace-log.output-type: FILE` or by setting a non-empty `trace-log.base-dir`. A configured base directory takes precedence over `output-type`.
 
 Trace Log writes are best-effort. An `append` or `flush` failure does not fail Event processing or the Flink job. The first failure is logged at `WARN`, subsequent failures at `DEBUG`, and every failed write attempt increments `traceLogWriteFailures`.
 
+### Recording Targets
+
+To record Events, Actions, and component calls at `STANDARD`, with full attributes for the `search` Tool, configure:
+
+```yaml
+agent:
+  trace-log:
+    targets:
+      - scope: ALL
+        detail: STANDARD
+      - scope:
+          entityType: tool
+          entityName: search
+        detail: VERBOSE
+    output-type: FILE
+    base-dir: /tmp/flink-agent-logs
+```
+
+This example uses file output so the records can be read locally. Each target combines a `scope` with an optional `detail`. The specific Tool target overrides the `ALL` preset. Use `detail: "OFF"` to suppress a matching entity. Selecting an entity does not automatically select its parents or children.
+
+See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for the complete matching, inheritance, and validation rules. The [Content Detail](#content-detail) section below explains how the selected detail affects the recorded data.
+
 ### SLF4J Trace Log (Default)
 
-The SLF4J logger uses the category `org.apache.flink.agents.TraceLog`. On startup, it automatically configures log4j2 with `FlinkAgentsTraceLogAppender` to write records to `{log.file}.trace-log.log` in Flink's log directory. The file is visible in the Flink Web UI **Logs** tab; no manual log4j2 configuration is required.
+The SLF4J logger uses the category `org.apache.flink.agents.TraceLog`. In Flink's default log4j2 environment, where `log.file` is set, it automatically creates `FlinkAgentsTraceLogAppender` and writes JSON to `{log.file}.trace-log.log`. This file is visible in the Flink Web UI **Logs** tab.
 
-All subtasks on a TaskManager share this destination. Each record therefore carries additional top-level `jobId`, `taskName`, and `subtaskId` fields.
+An existing configuration for this logger is respected. If no dedicated logger is configured and `log.file` is absent, records go to the root logger. If automatic appender configuration fails, a warning is logged and the existing logging configuration handles output. For local use with the Trace Tree reader, select `FILE` or configure a dedicated SLF4J appender to emit JSON without log prefixes.
+
+All subtasks on a TaskManager share the default SLF4J destination. Each record therefore carries additional top-level `jobId`, `taskName`, and `subtaskId` fields.
 
 ### File Trace Log
 
@@ -232,12 +260,14 @@ By default, each record occupies one line of JSONL. Setting `trace-log.pretty-pr
 
 ### JSON Format
 
-Both outputs serialize the same `TraceRecord` fields. The observed object's context is flattened into the record; its metadata and attributes remain separate objects.
+Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. The logger adds `detail` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
+
+For an Event, `attributes` contains its payload and `entityMetadata` contains its ID and source relationships. These relationships belong to the trace context and are not fields of the Event passed between Actions.
 
 | Field | Meaning |
 |-------|---------|
 | `timestamp` | Observation or occurrence time. |
-| `detail` | Resolved `STANDARD` or `VERBOSE` detail. |
+| `detail` | Output metadata identifying the resolved `STANDARD` or `VERBOSE` detail. |
 | `inputRunId`, `businessKey`, `agentName` | Available run identity and agent context. |
 | `entityType`, `entityName` | The observed entity's type and name. For an Event, its routing type is the entity name. |
 | `executionId`, `parentExecutionId` | Identity of an Action execution or component call, and its containing execution when available. These fields are absent for Events. |
@@ -249,7 +279,7 @@ For example, an output Event produced by an Action is recorded as:
 
 ```json
 {
-  "timestamp": "2024-01-15T10:30:00Z",
+  "timestamp": "2024-01-15T10:30:02Z",
   "detail": "STANDARD",
   "inputRunId": "run-1",
   "businessKey": "order-1001",
@@ -291,39 +321,12 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 
 One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
 
-### Recording Targets and Detail
-
-Every target pairs a `scope` with an optional `detail`. For example:
-
-```yaml
-agent:
-  trace-log:
-    targets:
-      - scope: ALL
-        detail: STANDARD
-      - scope:
-          entityType: tool
-          entityName: search
-        detail: VERBOSE
-    standard:
-      max-string-length: 2000
-      max-array-elements: 20
-      max-depth: 5
-    output-type: FILE
-    base-dir: /tmp/flink-agent-logs
-    pretty-print: false
-```
-
-The preset scopes are `EVENT_ONLY` and `ALL`. An entity scope matches a whole `entityType` or an `entityName` within that type. A matching target with `detail: OFF` suppresses recording; `OFF` is not a scope. An explicit empty `targets` list also records nothing. Selection of an entity does not automatically select its parent or child entities.
-
-For overlapping targets, the most specific match supplies detail: exact name, longest `.*` namespace prefix, whole entity type, `EVENT_ONLY`, then `ALL`. A local `OFF` target can therefore suppress one entity within an `ALL` recording range. Conversely, an explicit local `STANDARD` or `VERBOSE` target can enable recording under an `ALL` preset with `detail: OFF`. Target order does not affect the result.
-
-An entity target with omitted `detail` inherits a preset's detail, including `OFF`; it never inherits another entity target. Event targets prefer `EVENT_ONLY` over `ALL`. Other entity targets use `ALL`, falling back to `EVENT_ONLY` when it is the only preset. Without presets, entity targets use `STANDARD`. An `ALL` preset defaults to `STANDARD`; an `EVENT_ONLY` preset inherits `ALL` or defaults to `STANDARD`. See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for name matching and validation rules.
+### Content Detail
 
 | Detail | Behavior |
 |--------|----------|
 | `OFF` | Write no matching record. |
-| `STANDARD` | Truncate or summarize large values under `attributes`. Default when no preset supplies detail. |
+| `STANDARD` | Truncate or summarize large values under `attributes` using the configured limits. |
 | `VERBOSE` | Retain attributes without truncation, after media sanitization. |
 
 `trace-log.standard.max-string-length`, `trace-log.standard.max-array-elements`, and `trace-log.standard.max-depth` control long strings, large arrays, and deep nesting respectively. Setting a threshold to `0` disables that truncation limit. Setting all three to `0` makes `STANDARD` retain the same content as `VERBOSE`, apart from the `detail` label.
@@ -355,7 +358,28 @@ flink-agents-trace-tree /path/to/trace-logs --format text
 flink-agents-trace-tree /path/to/traces-job-task-0.log --format json
 ```
 
-The JSON result contains `roots`, Event `nodes`, and reconstruction `warnings`. Each Event node has `actions`, whose `children` list contains the IDs of Events produced by that Action. Observations with the same Event ID and type share one node and deduplicated edges, so shared descendants can appear under several branches. Attribute differences, including `STANDARD` truncation, do not affect identity or lineage. Sibling order is only a presentation order and does not indicate execution order.
+For an InputEvent handled by `process_order` that sends an OutputEvent, the text view is:
+
+```text
+Trace Tree 1
+  _input_event (input-1)
+    [Action: process_order]
+      _output_event (output-1)
+```
+
+The JSON result exposes the same graph:
+
+| Field | Meaning |
+|-------|---------|
+| `roots` | IDs of root InputEvents, one per reconstructed tree. |
+| `nodes` | Event nodes indexed by Event ID. |
+| `nodes[id].eventId`, `eventType`, `timestamp` | Event identity, routing type, and the first observed timestamp. The reader's `eventType` comes from the log record's `entityName`. |
+| `nodes[id].observationCount` | Number of log observations with this Event ID, including any conflicting observations reported in `warnings`. |
+| `nodes[id].upstreamEdges` | Distinct recorded upstream Event and Action references. Consult `warnings` for missing or invalid relationships. |
+| `nodes[id].actions` | Actions linked from this Event; each has a `name` and a `children` list of output Event IDs. |
+| `warnings` | Problems encountered while reading records or reconstructing relationships. |
+
+Observations with the same Event ID and type share one node and deduplicated edges. Shared descendants can appear under several branches, so the combined graph may be a DAG rather than a strict tree. Attribute differences, including `STANDARD` truncation, do not affect identity or relationships. Sibling order is only a presentation order and does not indicate execution order.
 
 Malformed records, conflicting Event identities, missing upstream Events, and cycles produce warnings. Recoverable records remain available in the JSON result, and cycle edges are removed before rendering. If recording targets filtered an upstream Event, the reader cannot reconstruct that missing part of the tree. Historical formats using `eventType`/`eventAttributes` or a nested `event` object are unsupported.
 
@@ -366,4 +390,4 @@ Malformed records, conflicting Event identities, missing upstream Events, and cy
 - File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
 - The log metrics are `traceLogTruncatedRecords` and `traceLogWriteFailures`. Update dashboards and alert queries using their old names.
 - Python Event IDs identify occurrences using UUID4. Equal payloads do not imply equal Event IDs.
-- Pending ActionTask state from before the execution-identity schema is not compatible with this state format. A versioned state migration is not included.
+- For checkpoint and savepoint compatibility, see [Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}}).

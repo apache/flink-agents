@@ -166,7 +166,7 @@ public class AgentConfiguration implements Configuration {
         config.forEach(
                 (key, value) -> {
                     String flattenedKey = keyPrefix + key;
-                    if (value instanceof Map) {
+                    if (value instanceof Map && !((Map<?, ?>) value).isEmpty()) {
                         Map<String, Object> e = (Map<String, Object>) value;
                         flattenedMap.putAll(flatten(e, flattenedKey + keySeparator, keySeparator));
                     } else {

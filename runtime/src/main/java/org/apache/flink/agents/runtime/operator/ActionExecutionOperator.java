@@ -1288,13 +1288,13 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void notifyActionStarted(ActionTask actionTask) {
-        if (actionTask.hasExecutionStartedRecordEmitted()) {
+        if (actionTask.isExecutionStartedNotified()) {
             return;
         }
         for (TaskLifecycleListener listener : taskLifecycleListeners) {
             listener.onActionStarted(actionTask);
         }
-        actionTask.markExecutionStartedRecordEmitted();
+        actionTask.markExecutionStartedNotified();
     }
 
     private void registerBuiltInLifecycleListeners() {
@@ -1579,7 +1579,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void enqueueActionTask(ActionTask actionTask) throws Exception {
         stateManager.addActionTask(actionTask);
         builtInMetrics.markActionTaskEnqueued(
-                actionTask.getTraceContext(), actionTask.hasExecutionStartedRecordEmitted());
+                actionTask.getTraceContext(), actionTask.isExecutionStartedNotified());
     }
 
     @Nullable
@@ -1587,7 +1587,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         ActionTask actionTask = stateManager.pollNextActionTask();
         if (actionTask != null && !isInternalNoopInputAction(actionTask.action)) {
             builtInMetrics.markActionTaskDequeued(
-                    actionTask.getTraceContext(), actionTask.hasExecutionStartedRecordEmitted());
+                    actionTask.getTraceContext(), actionTask.isExecutionStartedNotified());
         }
         return actionTask;
     }
@@ -1613,7 +1613,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     for (ActionTask actionTask : rootTasks) {
                         builtInMetrics.restoreActionTask(
                                 actionTask.getTraceContext(),
-                                actionTask.hasExecutionStartedRecordEmitted());
+                                actionTask.isExecutionStartedNotified());
                     }
                 });
 

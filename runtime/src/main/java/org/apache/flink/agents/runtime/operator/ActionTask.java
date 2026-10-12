@@ -59,7 +59,7 @@ public abstract class ActionTask implements Serializable {
 
     protected final TraceContext traceContext;
 
-    private boolean executionStartedRecordEmitted;
+    private boolean executionStartedNotified;
     /**
      * The sequence number of the input record that triggered this task, counted per key by {@link
      * OperatorStateManager#initOrIncSequenceNumber}. Every task generated while processing one
@@ -176,23 +176,22 @@ public abstract class ActionTask implements Serializable {
         if (source == this) {
             return;
         }
-        this.executionStartedRecordEmitted = source.executionStartedRecordEmitted;
+        this.executionStartedNotified = source.executionStartedNotified;
     }
 
     /**
-     * Returns whether a TraceRecord with status {@code started} has been emitted for this
-     * execution.
+     * Returns whether listeners have been notified that this execution started.
      *
-     * <p>This state is part of the pending continuation task so a resumed continuation does not
-     * emit duplicate started records for the same execution.
+     * <p>This state is retained with continuation tasks and checkpoints to avoid repeating the
+     * start notification when execution resumes.
      */
-    boolean hasExecutionStartedRecordEmitted() {
-        return executionStartedRecordEmitted;
+    boolean isExecutionStartedNotified() {
+        return executionStartedNotified;
     }
 
-    /** Marks the TraceRecord with status {@code started} as emitted for this execution. */
-    void markExecutionStartedRecordEmitted() {
-        executionStartedRecordEmitted = true;
+    /** Marks the execution start notification as delivered. */
+    void markExecutionStartedNotified() {
+        executionStartedNotified = true;
     }
 
     @Override

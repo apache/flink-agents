@@ -35,7 +35,6 @@ import java.util.UUID;
  * <p>Field applicability is defined by TraceRecord. A context may also represent the shared run
  * scope before an object is selected for observation.
  */
-@Internal
 public final class TraceContext implements Serializable {
     private static final long serialVersionUID = 1L;
 
@@ -73,12 +72,14 @@ public final class TraceContext implements Serializable {
     }
 
     /** Creates a run scope for one input, without identifying an Event or execution. */
+    @Internal
     public static TraceContext forInputRun(String businessKey, @Nullable String agentName) {
         return new TraceContext(
                 UUID.randomUUID().toString(), businessKey, agentName, null, null, null, null, null);
     }
 
     /** Creates an Action execution in the same run, linked to its triggering Event. */
+    @Internal
     public static TraceContext forAction(
             @Nullable TraceContext sourceContext, String actionName, String triggerEventId) {
         return new TraceContext(
@@ -100,6 +101,7 @@ public final class TraceContext implements Serializable {
      * Upstream references may also be supplied for framework Events without a producer execution.
      * Each observation of the same Event retains the same Event ID.
      */
+    @Internal
     public static TraceContext forEvent(
             @Nullable TraceContext sourceContext,
             String eventType,
@@ -150,6 +152,7 @@ public final class TraceContext implements Serializable {
     }
 
     /** Creates a child execution whose parent is the current execution. */
+    @Internal
     public TraceContext childExecution(
             String entityType, String entityName, @Nullable Map<String, Object> entityMetadata) {
         if (executionId == null || executionId.isEmpty()) {

@@ -265,6 +265,15 @@ class RunnerContextImplExecutionReporterTest {
         runnerContext.reportExecutionStartedAt(
                 ExecutionReporter.EntityTypes.TOOL, "search", Map.of(), TIMESTAMP);
         runnerContext.reportExecutionSucceededAt(
+                ExecutionReporter.EntityTypes.TOOL, "search", Map.of(), "");
+        runnerContext.reportExecutionFailedAt(
+                ExecutionReporter.EntityTypes.TOOL,
+                "search",
+                Map.of(),
+                new IllegalStateException("call failed"),
+                ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED,
+                "");
+        runnerContext.reportExecutionSucceededAt(
                 ExecutionReporter.EntityTypes.TOOL, "search", Map.of(), TIMESTAMP);
 
         assertThat(records)
