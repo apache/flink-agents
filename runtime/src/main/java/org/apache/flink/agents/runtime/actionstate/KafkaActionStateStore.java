@@ -217,8 +217,8 @@ public class KafkaActionStateStore implements ActionStateStore {
     /**
      * Persist the given action state to Kafka and add it to the attempt-local cache.
      *
-     * <p>The record is sent, the producer is flushed, and then the record's send future is
-     * awaited. Flushing before the wait forces the record out of the accumulator immediately, so a
+     * <p>The record is sent, the producer is flushed, and then the record's send future is awaited.
+     * Flushing before the wait forces the record out of the accumulator immediately, so a
      * synchronous write is not delayed by the producer's {@code linger.ms}. The send future is
      * still awaited afterwards because a successful {@code flush()} does not guarantee that an
      * individual record was acknowledged: a record-level, asynchronous broker failure is surfaced
@@ -226,9 +226,9 @@ public class KafkaActionStateStore implements ActionStateStore {
      *
      * <p>The state is added to the attempt-local cache only after both the flush and the
      * acknowledgement succeed. If the send, the acknowledgement, or the flush fails, the state is
-     * not cached and a {@link RuntimeException} wrapping the cause is thrown. If the acknowledgement
-     * wait is interrupted, {@link InterruptedException} is rethrown with the thread's interrupt flag
-     * restored.
+     * not cached and a {@link RuntimeException} wrapping the cause is thrown. If the
+     * acknowledgement wait is interrupted, {@link InterruptedException} is rethrown with the
+     * thread's interrupt flag restored.
      */
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
