@@ -370,6 +370,44 @@ public class ContinuationActionExecutor {
                 : System.nanoTime() + timeout.toNanos();
     }
 
+    /**
+     * Yields the current continuation until {@code future} completes, without occupying an
+     * async-pool worker. The caller must be running inside a continuation on the mailbox thread;
+     * this method yields that continuation and lets {@link #executeAction} resume it once the
+     * future is done.
+     *
+     * <p>This is the non-blocking alternative to submitting a blocking {@code future.get()} to the
+     * pool via {@link #executeAsync}. It prevents the deadlock where a parent awaiting a child
+     * holds the only pool worker the child needs to make progress (issue #1213).
+     */
+    public <T> T awaitFuture(ContinuationContext context, CompletableFuture<T> future)
+            throws Exception {
+        context.clearAsyncState();
+        // Bridge to Future<?> so executeAction's hasPendingAsync gate drives the resumption.
+        context.setPendingFuture(future.thenApply(v -> null));
+        // Re-checked before every yield, and resumption is polled by the operator's mail loop
+        // rather than signalled by a completion callback, so a future already done here — or one
+        // completing between the two lines above — simply never suspends.
+        while (!future.isDone()) {
+            Continuation.yield(SCOPE);
+        }
+        return joinCompletableFuture(future);
+    }
+
+    private static <T> T joinCompletableFuture(CompletableFuture<T> future) throws Exception {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            } else if (cause instanceof Error) {
+                throw (Error) cause;
+            }
+            throw e;
+        }
+    }
+
     /** Stops async work without waiting for worker exit cleanup. */
     public void shutdown() {
         asyncExecutor.shutdownNow();

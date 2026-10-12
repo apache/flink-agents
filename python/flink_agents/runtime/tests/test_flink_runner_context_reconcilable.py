@@ -246,15 +246,45 @@ def test_chat_failure_outcome_replays_without_provider_call(asynchronous: bool) 
     assert store.call_results[0].exception_payload is None
 
 
-def _run_async(result: Any) -> object:
-    iterator = result.__await__()
-    value = None
+def _drain(iterator: Any) -> object:
     while True:
         try:
-            iterator.send(value)
-            value = None
+            iterator.send(None)
         except StopIteration as e:  # noqa: PERF203
             return e.value
+
+
+def _run_async(result: Any) -> object:
+    return _drain(result.__await__())
+
+
+_WORKER_START_TIMEOUT_SECONDS = 30.0
+
+
+def _await_workers(started: list[threading.Event]) -> None:
+    deadline = time.monotonic() + _WORKER_START_TIMEOUT_SECONDS
+    for index, event in enumerate(started):
+        remaining = max(deadline - time.monotonic(), 0.0)
+        assert event.wait(remaining), f"async worker {index} never started"
+
+
+def _run_async_after_workers_started(
+    result: Any, started: list[threading.Event]
+) -> object:
+    """Run a batch, pausing after submission until its workers have begun.
+
+    A batch deadline is wall-clock from the first submission, so a test asserting
+    that a slot was *started* when the timeout hits cannot leave thread startup
+    racing that deadline: under CI load the worker has not begun yet and the slot
+    is persisted as PENDING instead of FAILED. One generator step submits the
+    batch; waiting there until every worker reports it began makes "started but
+    unfinished" hold by construction, and the deadline has certainly passed by the
+    time driving resumes.
+    """
+    iterator = result.__await__()
+    iterator.send(None)
+    _await_workers(started)
+    return _drain(iterator)
 
 
 def _preload_pending(
@@ -1052,27 +1082,32 @@ def test_flink_runner_context_gather_collects_failures() -> None:
 
 def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    config = AgentConfiguration({"async.batch.timeout.ms": 100})
+    config = AgentConfiguration(
+        {"async.batch.timeout.ms": 100, "async.batch.parallelism": 2}
+    )
     ctx = _create_runner_context(j_runner_context, config=config)
 
     # The slow worker blocks on an event instead of racing a sleep against the
-    # deadline. Once its worker thread starts, _mark_started_on_run has already
-    # flipped the started flag, so the timeout must record it as FAILED (started
-    # but unfinished) rather than PENDING. The event guarantees it never
-    # finishes before the deadline, and the finally block releases it so the
-    # pool can shut down.
+    # deadline, and announces itself so the driver can wait for it. Once its worker
+    # thread starts, _mark_started_on_run has already flipped the started flag, so
+    # the timeout must record it as FAILED (started but unfinished) rather than
+    # PENDING. The event guarantees it never finishes before the deadline, and the
+    # finally block releases it so the pool can shut down.
     release = threading.Event()
+    slow_started = threading.Event()
 
     def slow_call() -> str:
+        slow_started.set()
         release.wait(5)
         return "slow"
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(lambda: "fast"),
                 ctx.durable_execute_async(slow_call),
-            )
+            ),
+            [slow_started],
         )
     finally:
         release.set()
@@ -1096,22 +1131,26 @@ def test_flink_runner_context_gather_timeout_leaves_unsubmitted_slots_pending() 
     # The two blocking calls saturate the parallelism budget and hold their
     # worker threads (started flag flipped) until the deadline, so they fail; the
     # remaining two suppliers are never submitted and stay pending. Blocking on an
-    # event instead of sleeping makes "started" deterministic rather than racing
-    # thread startup against a short wall-clock timeout.
+    # event instead of sleeping, and waiting for both workers to announce
+    # themselves, makes "started" deterministic rather than racing thread startup
+    # against a short wall-clock timeout.
     release = threading.Event()
+    started_events = {"one": threading.Event(), "two": threading.Event()}
 
     def blocking_call(value: str) -> str:
+        started_events[value].set()
         release.wait(5)
         return value
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(blocking_call, "one"),
                 ctx.durable_execute_async(blocking_call, "two"),
                 ctx.durable_execute_async(_call_value, "three"),
                 ctx.durable_execute_async(_call_value, "four"),
-            )
+            ),
+            [started_events["one"], started_events["two"]],
         )
     finally:
         release.set()
@@ -1141,12 +1180,15 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
 
     # Blocking on an event (rather than sleeping) keeps the two running workers
     # deterministically "started but unfinished" until the deadline, while the two
-    # queued suppliers never begin.
+    # queued suppliers never begin. Waiting for both workers to announce themselves
+    # removes the race between thread startup and the wall-clock deadline.
     release = threading.Event()
+    started_events = {"one": threading.Event(), "two": threading.Event()}
     executions: list[str] = []
 
     def blocking_call(value: str) -> str:
         executions.append(value)
+        started_events[value].set()
         release.wait(5)
         return value
 
@@ -1155,13 +1197,14 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
         return value
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(blocking_call, "one"),
                 ctx.durable_execute_async(blocking_call, "two"),
                 ctx.durable_execute_async(queued_call, "three"),
                 ctx.durable_execute_async(queued_call, "four"),
-            )
+            ),
+            [started_events["one"], started_events["two"]],
         )
     finally:
         release.set()
@@ -1532,15 +1575,19 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
 
     try:
         # The cached durable child takes no worker; the ordinary child occupies the
-        # only worker, leaving the new durable child queued until the timeout.
+        # only worker, leaving the new durable child queued until the timeout. The
+        # driver waits for that worker to announce itself, so "the only worker is
+        # occupied when the deadline trips" does not race thread startup.
         assert ctx.durable_execute(lambda: "cached", durable_id="cached") == "cached"
         j_ctx.current_call_index = 0
-        outcomes = _run_async(ctx.gather(
-            ctx.durable_execute_async(lambda: "cached", durable_id="cached"),
-            ctx.execute_async(ordinary),
-            ctx.durable_execute_async(durable, durable_id="pending"),
-        ))
-        assert started.is_set()
+        outcomes = _run_async_after_workers_started(
+            ctx.gather(
+                ctx.durable_execute_async(lambda: "cached", durable_id="cached"),
+                ctx.execute_async(ordinary),
+                ctx.durable_execute_async(durable, durable_id="pending"),
+            ),
+            [started],
+        )
         assert outcomes[0].value == "cached"
         assert isinstance(outcomes[1].error, TimeoutError)
         assert isinstance(outcomes[2].error, TimeoutError)

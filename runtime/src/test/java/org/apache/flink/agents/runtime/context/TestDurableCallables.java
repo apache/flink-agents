@@ -19,6 +19,7 @@
 package org.apache.flink.agents.runtime.context;
 
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 
 import java.util.concurrent.Callable;
 
@@ -106,5 +107,22 @@ class TestReconcilableCallable<T> implements DurableCallable<T> {
 
     int getReconcileCount() {
         return reconcileCount;
+    }
+}
+
+/**
+ * Reconciliable fixture that is also marked {@link ContinuationNativeCallable}, so the runner
+ * context must run its {@link #call()} inline on the caller's thread rather than dispatch it to an
+ * async-pool worker.
+ */
+class TestContinuationNativeReconcilableCallable<T> extends TestReconcilableCallable<T>
+        implements ContinuationNativeCallable<T> {
+
+    TestContinuationNativeReconcilableCallable(
+            String id,
+            Class<T> resultClass,
+            Callable<T> callSupplier,
+            Callable<T> reconcileSupplier) {
+        super(id, resultClass, callSupplier, reconcileSupplier);
     }
 }

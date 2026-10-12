@@ -60,8 +60,9 @@ public interface MemoryObject {
      * @param path relative path from the current object to the target field
      * @param value new value of the field
      * @return a {@link MemoryRef} instance pointing to the data just set
-     * @throws Exception if trying to overwrite a nested object with a primitive value or set a
-     *     MemoryObject directly
+     * @throws Exception if trying to overwrite a nested object with a primitive value, set a
+     *     MemoryObject directly, write below a field that holds a value, or use a path with an
+     *     empty component
      */
     MemoryRef set(String path, Object value) throws Exception;
 
@@ -71,7 +72,8 @@ public interface MemoryObject {
      * @param path relative path from the current object to the target field
      * @param overwrite whether to overwrite existing field if it's not a nested object
      * @return the created object
-     * @throws Exception if field exists but is not a nested object and overwrite is false
+     * @throws Exception if field exists but is not a nested object and overwrite is false, if the
+     *     path runs below a field that holds a value, or if the path has an empty component
      */
     MemoryObject newObject(String path, boolean overwrite) throws Exception;
 
@@ -81,7 +83,8 @@ public interface MemoryObject {
      *
      * @param path relative path from the current object to the target field
      * @return the created object
-     * @throws Exception if field exists but is not a nested object and overwrite is false
+     * @throws Exception if field exists but is not a nested object, if the path runs below a field
+     *     that holds a value, or if the path has an empty component
      */
     default MemoryObject newObject(String path) throws Exception {
         return this.newObject(path, false);
