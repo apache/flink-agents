@@ -274,7 +274,7 @@ public class KafkaActionStateStoreTest {
                     .hasMessage("cancelled");
             assertThat(Thread.currentThread().isInterrupted()).isTrue();
             assertThat(actionStates).isEmpty();
-            assertThat(flushCalled).isFalse();
+            assertThat(flushCalled).isTrue();
         } finally {
             Thread.interrupted();
         }
