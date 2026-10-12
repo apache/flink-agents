@@ -38,6 +38,7 @@ import org.apache.kafka.clients.producer.KafkaProducer;
 import org.apache.kafka.clients.producer.Producer;
 import org.apache.kafka.clients.producer.ProducerConfig;
 import org.apache.kafka.clients.producer.ProducerRecord;
+import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.PartitionInfo;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.serialization.StringDeserializer;
@@ -55,6 +56,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntPredicate;
 
@@ -212,6 +214,22 @@ public class KafkaActionStateStore implements ActionStateStore {
         LOG.info("Initialized KafkaActionStateStore with topic: {}", topic);
     }
 
+    /**
+     * Persist the given action state to Kafka and add it to the attempt-local cache.
+     *
+     * <p>The record is sent, the producer is flushed, and then the record's send future is awaited.
+     * Flushing before the wait forces the record out of the accumulator immediately, so a
+     * synchronous write is not delayed by the producer's {@code linger.ms}. The send future is
+     * still awaited afterwards because a successful {@code flush()} does not guarantee that an
+     * individual record was acknowledged: a record-level, asynchronous broker failure is surfaced
+     * to the caller.
+     *
+     * <p>The state is added to the attempt-local cache only after both the flush and the
+     * acknowledgement succeed. If the send, the acknowledgement, or the flush fails, the state is
+     * not cached and a {@link RuntimeException} wrapping the cause is thrown. If the
+     * acknowledgement wait is interrupted, {@link InterruptedException} is rethrown with the
+     * thread's interrupt flag restored.
+     */
     @Override
     public void put(Object key, long seqNum, Action action, Event event, ActionState state)
             throws Exception {
@@ -224,13 +242,17 @@ public class KafkaActionStateStore implements ActionStateStore {
         try {
             ProducerRecord<String, ActionState> kafkaRecord =
                     new ProducerRecord<>(topic, stateKey, state);
-            producer.send(kafkaRecord);
-            actionStates.put(stateKey, state);
+            Future<RecordMetadata> ack = producer.send(kafkaRecord);
             producer.flush();
+            ack.get();
+            actionStates.put(stateKey, state);
             LOG.debug(
                     "Stored action state to Kafka: key={}, isCompleted={}",
                     stateKey,
                     state.isCompleted());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
             throw new RuntimeException("Failed to send action state to Kafka", e);
         }
