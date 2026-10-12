@@ -58,8 +58,10 @@ public abstract class BaseDeferredSubagentSetup extends BaseSubagentSetup {
      *
      * <p>Called exactly once per invocation, when the deferred handle is first resolved, on the
      * mailbox thread. Implementations may therefore perform the mailbox-confined part of issuing
-     * the request here; the returned callable's {@link DurableCallable#call()} carries only the
-     * part that runs off the mailbox thread.
+     * the request here; the returned callable's {@link DurableCallable#call()} then carries the
+     * wait, normally on an async-pool worker off the mailbox thread. A callable marked {@link
+     * org.apache.flink.agents.runtime.async.ContinuationNativeCallable} instead runs inline on the
+     * mailbox thread and releases it by suspending the caller's continuation.
      *
      * <p>The callable folds its own comprehensible failures into the returned {@link
      * SubagentResult}; an exception escaping {@link DurableCallable#call()} is a system-level

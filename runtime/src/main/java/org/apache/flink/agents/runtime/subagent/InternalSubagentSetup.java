@@ -33,6 +33,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -54,8 +55,10 @@ import java.util.Map;
  * <p>Execution mode is the deferred one, inherited from {@link BaseDeferredSubagentSetup}: {@link
  * #submit} returns a deferred handle whose request is prepared on first resolve. {@link #prepare}
  * then runs the mailbox-confined bootstrap — registering the call status and sending one {@code
- * InternalSubagentCallEvent} — and returns the durable callable that waits off the mailbox thread
- * for the child to quiesce, so the operator can dispatch the child agent's actions in between.
+ * InternalSubagentCallEvent} — and returns the durable callable that waits for the child to
+ * quiesce. Unlike the other deferred setups, that callable runs inline on the mailbox thread and
+ * releases it by yielding the caller's continuation, so the operator can dispatch the child agent's
+ * actions in between while no async-pool worker is held.
  *
  * <p>Orchestration state lives here, not in the operator: the per-call quiesce statuses, the
  * per-scope child resource caches, and the per-key session index used to clean up when a record
@@ -158,8 +161,15 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
     }
 
     /**
-     * The mailbox-confined bootstrap plus the off-mailbox wait. Sending the bootstrap event must
-     * happen before the wait releases the mailbox, so it runs here, on the resolving thread.
+     * The mailbox-confined bootstrap plus the wait. Sending the bootstrap event must happen before
+     * the wait releases the mailbox, so it runs here, on the resolving thread.
+     *
+     * <p>The returned callable is {@link ContinuationNativeCallable}, so it runs inline inside the
+     * caller's continuation rather than on an async-pool worker, and its wait suspends by yielding
+     * that continuation. A worker-dispatched wait would hold a pool worker for the whole child call
+     * while the child's own durable calls queue behind it for a worker from the same finite pool —
+     * a self-deadlock at {@code num-async-threads=1} and under enough nested or concurrent waits at
+     * any size (issue #1213).
      */
     @Override
     protected DurableCallable<SubagentResult> prepare(
@@ -171,7 +181,7 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             throw new IllegalStateException(
                     "Failed to bootstrap internal sub-agent call for scope " + scope, e);
         }
-        return new DurableCallable<SubagentResult>() {
+        return new ContinuationNativeCallable<SubagentResult>() {
             @Override
             public String getId() {
                 return sessionId + "#" + callId;
@@ -184,11 +194,11 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
             @Override
             public SubagentResult call() {
-                // Runs off the mailbox thread, so the operator can dispatch the child's
-                // actions; failures converge into a failed SubagentResult like the other
-                // deferred setups.
+                // Runs inline on the mailbox thread; the wait yields the continuation, so the
+                // operator can dispatch the child's actions without a pool worker being held.
+                // Failures converge into a failed SubagentResult like the other deferred setups.
                 try {
-                    return SubagentResult.ok(awaitSubagentCall(sessionId, callId));
+                    return SubagentResult.ok(awaitSubagentCallYielding(ctx, sessionId, callId));
                 } catch (Exception e) {
                     return SubagentResult.error(e);
                 }
@@ -251,6 +261,29 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
      * and returns its accumulated output. Must be invoked off the mailbox thread.
      */
     public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
+        try {
+            return requireCallStatus(sessionId, callId).getResponseFuture().get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw unwrapChildFailure(e);
+        }
+    }
+
+    /**
+     * Awaits the identified call by yielding the caller's continuation, so the wait holds no
+     * async-pool worker and the child can draw from the pool to make progress (issue #1213).
+     *
+     * <p>The wait runs inline on the mailbox thread, so the blocking {@link #awaitSubagentCall} is
+     * not an option here — it would pin the mailbox and stall the very child it waits for. Only a
+     * Java action reaches {@link #prepare}; Python bootstraps through {@code
+     * RunnerContextImpl.bootstrapSubagentCallForScope} and blocks on its own async worker instead.
+     */
+    private List<Object> awaitSubagentCallYielding(
+            RunnerContext ctx, String sessionId, String callId) throws Exception {
+        InternalSubagentCallStatus cs = requireCallStatus(sessionId, callId);
+        return ((JavaRunnerContextImpl) ctx).awaitCompletableFuture(cs.getResponseFuture());
+    }
+
+    private InternalSubagentCallStatus requireCallStatus(String sessionId, String callId) {
         InternalSubagentCallStatus cs = getCallStatus(sessionId, callId);
         if (cs == null) {
             throw new IllegalStateException(
@@ -259,17 +292,16 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
                             + ", callId="
                             + callId);
         }
-        try {
-            return cs.getResponseFuture().get();
-        } catch (java.util.concurrent.ExecutionException e) {
-            // Surface the child's failure directly, so the caller's SubagentResult carries
-            // the failing action's exception rather than the future's plumbing.
-            Throwable cause = e.getCause();
-            if (cause instanceof Exception) {
-                throw (Exception) cause;
-            }
-            throw e;
-        }
+        return cs;
+    }
+
+    /**
+     * Surfaces the child's failure directly, so the caller's {@link SubagentResult} carries the
+     * failing action's exception rather than the future's plumbing.
+     */
+    private static Exception unwrapChildFailure(java.util.concurrent.ExecutionException e) {
+        Throwable cause = e.getCause();
+        return cause instanceof Exception ? (Exception) cause : e;
     }
 
     /** The quiesce status of the identified call, or {@code null} when this setup owns none. */
