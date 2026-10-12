@@ -28,6 +28,7 @@ from flink_agents.api.core_options import (
     AgentConfigOptions,
     ConditionEvaluationFailureStrategy,
 )
+from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.function import (
     JavaFunction as ApiJavaFunction,
@@ -35,7 +36,7 @@ from flink_agents.api.function import (
 from flink_agents.api.function import (
     PythonFunction as ApiPythonFunction,
 )
-from flink_agents.api.resource import ResourceDescriptor, ResourceType
+from flink_agents.api.resource import JavaResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
@@ -45,7 +46,10 @@ from flink_agents.plan.function import (
 from flink_agents.plan.function import (
     PythonFunction as PlanPythonFunction,
 )
-from flink_agents.plan.resource_provider import JavaResourceProvider
+from flink_agents.plan.resource_provider import (
+    JavaResourceProvider,
+    PythonSerializableResourceProvider,
+)
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -93,7 +97,7 @@ def test_compile_agent_with_python_function_descriptor() -> None:
     )
     assert action.exec.module == pf.module
     assert action.exec.qualname == pf.qualname
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
 
 
 def test_compile_agent_with_java_function_descriptor() -> None:
@@ -116,7 +120,45 @@ def test_compile_agent_with_java_function_descriptor() -> None:
     assert action.exec.qualname == jf.qualname
     assert action.exec.method_name == jf.method_name
     assert list(action.exec.parameter_types) == list(jf.parameter_types)
-    assert action.trigger_conditions== [InputEvent.EVENT_TYPE]
+    assert action.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+def test_compile_agent_with_descriptor_action_class_attribute() -> None:
+    """``action(...)(descriptor)`` as a class attribute becomes a plan action.
+
+    The descriptor-first declaration form mirrors Java's ``@Action`` field: the
+    attribute name is the action name and the wrapped descriptor is the
+    executable target, with no placeholder body required.
+    """
+
+    class DescriptorAgent(Agent):
+        handle = action(InputEvent.EVENT_TYPE)(
+            ApiJavaFunction.for_action("com.example.Handlers", "handle")
+        )
+
+    plan = AgentPlan.from_agent(DescriptorAgent(), AgentConfiguration())
+    compiled = plan.actions["handle"]
+
+    assert isinstance(compiled.exec, PlanJavaFunction), (
+        f"Expected plan JavaFunction, got {type(compiled.exec).__name__}"
+    )
+    assert compiled.exec.qualname == "com.example.Handlers"
+    assert compiled.exec.method_name == "handle"
+    assert compiled.trigger_conditions == [InputEvent.EVENT_TYPE]
+
+
+def test_compile_agent_with_named_descriptor_action_class_attribute() -> None:
+    """``name=`` on the descriptor form overrides the attribute name."""
+
+    class NamedDescriptorAgent(Agent):
+        handle = action(InputEvent.EVENT_TYPE, name="renamed")(
+            ApiJavaFunction.for_action("com.example.Handlers", "handle")
+        )
+
+    plan = AgentPlan.from_agent(NamedDescriptorAgent(), AgentConfiguration())
+
+    assert "renamed" in plan.actions
+    assert "handle" not in plan.actions
 
 
 def test_python_plan_compile_does_not_validate_java_class_exists() -> None:
@@ -328,6 +370,39 @@ def test_python_can_deserialize_java_plan_with_python_action() -> None:
     ]
 
 
+def test_python_can_deserialize_java_plan_with_internal_subagent() -> None:
+    """Java compiles a directly-registered child Agent into an
+    ``InternalSubagentProvider`` that nests the child plan; Python must read it
+    back as its own internal sub-agent representation.
+
+    The snapshot is emitted by AgentPlanCrossLanguageTest on the Java side
+    (regenerate with -Dregenerate.snapshots=true). Python has no
+    ``InternalSubagentProvider`` class: it represents the same internal
+    sub-agent as a ``PythonSerializableResourceProvider`` referencing
+    ``InternalSubagentSetup``, so deserialization must convert to that form and
+    recursively rebuild the nested child plan.
+    """
+    snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_internal_subagent.json"
+    assert snapshot.exists(), (
+        f"Java internal sub-agent plan snapshot missing from {snapshot}; "
+        f"regenerate on the Java side with -Dregenerate.snapshots=true and commit it."
+    )
+
+    restored = AgentPlan.model_validate_json(snapshot.read_text())
+
+    provider = restored.resource_providers[ResourceType.AGENT]["child"]
+    assert isinstance(provider, PythonSerializableResourceProvider), (
+        f"Expected internal sub-agent to deserialize as "
+        f"PythonSerializableResourceProvider, got {type(provider).__name__}"
+    )
+    assert provider.module == "flink_agents.runtime.internal_subagent"
+    assert provider.clazz == "InternalSubagentSetup"
+    assert provider.serialized["scope"] == "child"
+    child_plan = provider.serialized["child_plan"]
+    assert isinstance(child_plan, AgentPlan)
+    assert "handle" in child_plan.actions
+
+
 def test_java_action_plan_matches_runtime_wire_shape() -> None:
     handler_qualname = (
         "org.apache.flink.agents.runtime.operator."
@@ -446,11 +521,10 @@ def test_python_can_deserialize_plan_with_java_model_router() -> None:
     provider = JavaResourceProvider(
         name="router",
         type=ResourceType.MODEL_ROUTER,
-        descriptor=ResourceDescriptor(
-            target_module="java",
-            target_clazz=(
-                "org.apache.flink.agents.api.chat.model.routing.ModelRouter"
-            ),
+        descriptor=JavaResourceDescriptor(
+            language="java",
+            target_module="",
+            target_clazz=("org.apache.flink.agents.api.chat.model.routing.ModelRouter"),
             arguments={"candidates": ["small", "big"]},
         ),
     )

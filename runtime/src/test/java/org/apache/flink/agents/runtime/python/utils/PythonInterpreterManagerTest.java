@@ -38,6 +38,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 /** Defect-oriented concurrency tests for {@link PythonInterpreterManager}. */
 class PythonInterpreterManagerTest {
@@ -67,6 +68,51 @@ class PythonInterpreterManagerTest {
             assertThat(interpreterCreationThread.get())
                     .as("an unmanaged caller must not create a Pemja thread state on itself")
                     .isNotSameAs(callerThread.get());
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void authorizedNonOwnerThreadCanInvokeOwnerInterpreter() throws Exception {
+        PythonInterpreter owner = mock(PythonInterpreter.class);
+        AtomicInteger accessChecks = new AtomicInteger();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        when(owner.invoke("owner-call")).thenReturn("result");
+
+        try (PythonInterpreterManager manager =
+                new PythonInterpreterManager(
+                        owner,
+                        () -> {
+                            throw new AssertionError(
+                                    "owner invocation created a worker interpreter");
+                        },
+                        1,
+                        accessChecks::incrementAndGet)) {
+            assertThat(executor.submit(() -> manager.invokeOnOwner("owner-call")).get())
+                    .isEqualTo("result");
+
+            assertThat(accessChecks).hasValue(1);
+            verify(owner).invoke("owner-call");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void nonOwnerThreadCannotInvokeOwnerInterpreterWithoutAccess() throws Exception {
+        PythonInterpreter owner = mock(PythonInterpreter.class);
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+
+        try (PythonInterpreterManager manager =
+                new PythonInterpreterManager(owner, () -> mock(PythonInterpreter.class))) {
+            Future<?> invocation = executor.submit(() -> manager.invokeOnOwner("owner-call"));
+
+            assertThatThrownBy(() -> invocation.get(5, TimeUnit.SECONDS))
+                    .hasCauseInstanceOf(IllegalStateException.class)
+                    .hasRootCauseMessage(
+                            "Owner interpreter access from a non-owner thread requires an execution checker.");
+            verify(owner, never()).invoke("owner-call");
         } finally {
             executor.shutdownNow();
         }

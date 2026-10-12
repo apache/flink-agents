@@ -19,7 +19,9 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -65,11 +67,11 @@ class BaseChatModelSetupSkillsTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
             this.capturedTools = new ArrayList<>(tools);
-            return new ChatMessage(MessageRole.ASSISTANT, "ok");
+            return new ChatResult(ChatMessage.assistant(List.of(new TextBlock("ok"))));
         }
     }
 
@@ -85,7 +87,7 @@ class BaseChatModelSetupSkillsTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success("");
+            return ToolResponse.text("");
         }
     }
 

@@ -229,4 +229,52 @@ class ChatModelInvokerTest {
         // retries), confirming the interruption fix doesn't disturb normal retry behavior.
         verify(ctx, times(3)).durableExecute(any());
     }
+
+    @Test
+    void providerCancellationStopsRetriesWithoutBecomingABusinessOutcome() throws Exception {
+        List<Exception> failures =
+                List.of(
+                        new RuntimeException(new java.nio.channels.ClosedByInterruptException()),
+                        new RuntimeException(new InterruptedException()),
+                        new java.util.concurrent.CancellationException(),
+                        new RuntimeException(new java.util.concurrent.CancellationException()));
+        for (int index = 0; index < failures.size(); index++) {
+            Exception failure = failures.get(index);
+            RunnerContext ctx = mock(RunnerContext.class);
+            BaseChatModelSetup model = mock(BaseChatModelSetup.class);
+            ReadableConfiguration config = mock(ReadableConfiguration.class);
+            when(ctx.getConfig()).thenReturn(config);
+            when(config.get(AgentExecutionOptions.CHAT_ASYNC)).thenReturn(false);
+            when(ctx.getResource("test-model", ResourceType.CHAT_MODEL)).thenReturn(model);
+            when(ctx.getActionMetricGroup()).thenReturn(mock(FlinkAgentsMetricGroup.class));
+            when(model.chat(any(), any(), any())).thenThrow(failure);
+            when(ctx.durableExecute(any()))
+                    .thenAnswer(
+                            invocation ->
+                                    ((org.apache.flink.agents.api.context.DurableCallable<?>)
+                                                    invocation.getArgument(0))
+                                            .call());
+            try {
+                org.junit.jupiter.api.Assertions.assertSame(
+                        failure,
+                        assertThrows(
+                                Exception.class,
+                                () ->
+                                        ChatModelInvoker.chatWithRetries(
+                                                UUID.randomUUID(),
+                                                "test-model",
+                                                "chat",
+                                                List.of(),
+                                                Map.of(),
+                                                null,
+                                                ctx,
+                                                3,
+                                                0)));
+                verify(model, times(1)).chat(any(), any(), any());
+                org.junit.jupiter.api.Assertions.assertEquals(index < 2, Thread.interrupted());
+            } finally {
+                Thread.interrupted();
+            }
+        }
+    }
 }

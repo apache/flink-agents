@@ -21,9 +21,15 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel, Field
 
 from flink_agents.api.tools.tool import ToolMetadata
-from flink_agents.api.tools.utils import create_schema_from_function
+
+
+class FooArgs(BaseModel):
+    bar: int = Field(description="The bar value.")
+    baz: str = Field(description="The baz value.")
+
 
 current_dir = Path(__file__).parent
 
@@ -51,7 +57,7 @@ def tool_metadata() -> ToolMetadata:
     return ToolMetadata(
         name="foo",
         description="Function for testing ToolMetadata",
-        args_schema=create_schema_from_function(name="foo", func=foo),
+        args_schema={**FooArgs.model_json_schema(), "title": "foo"},
     )
 
 

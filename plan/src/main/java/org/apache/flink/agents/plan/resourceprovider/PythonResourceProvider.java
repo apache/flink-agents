@@ -18,17 +18,18 @@
 
 package org.apache.flink.agents.plan.resourceprovider;
 
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelConnection;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
-import org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelConnection;
-import org.apache.flink.agents.api.embedding.model.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelConnection;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonCollectionManageableVectorStore;
+import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelConnection;
+import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
+import org.apache.flink.util.ExceptionUtils;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Constructor;
@@ -62,6 +63,10 @@ public class PythonResourceProvider extends ResourceProvider {
 
     public PythonResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
+        if (!"python".equals(descriptor.getLanguage())) {
+            throw new IllegalArgumentException(
+                    "PythonResourceProvider requires a Python descriptor.");
+        }
         this.descriptor = descriptor;
     }
 
@@ -92,37 +97,26 @@ public class PythonResourceProvider extends ResourceProvider {
             pyClazz = MCP_CLASS;
         }
 
-        // Extract module and class from kwargs if not provided in descriptor
-        if (pyModule == null || pyModule.isEmpty()) {
-            String pythonClazz = (String) kwargs.remove("pythonClazz");
-            if (pythonClazz == null || pythonClazz.isEmpty()) {
-                throw new IllegalArgumentException("pythonClazz should not be null or empty.");
-            }
-
-            int lastDotIndex = pythonClazz.lastIndexOf('.');
-            if (lastDotIndex <= 0) {
-                throw new IllegalArgumentException(
-                        "pythonClazz should be in format 'module.ClassName', got: " + pythonClazz);
-            }
-            pyModule = pythonClazz.substring(0, lastDotIndex);
-            pyClazz = pythonClazz.substring(lastDotIndex + 1);
-
-            if (pyModule.isEmpty() || pyClazz.isEmpty()) {
-                throw new IllegalArgumentException(
-                        "Invalid pythonClazz format, module or clazz is empty: " + pythonClazz);
-            }
-        }
-
         PyObject pyResource = pythonResourceAdapter.initPythonResource(pyModule, pyClazz, kwargs);
-        Constructor<?> constructor =
-                clazz.getConstructor(
-                        PythonResourceAdapter.class,
-                        PyObject.class,
-                        ResourceDescriptor.class,
-                        ResourceContext.class);
-        return (Resource)
-                constructor.newInstance(
-                        pythonResourceAdapter, pyResource, descriptor, resourceContext);
+        try {
+            Constructor<?> constructor =
+                    clazz.getConstructor(
+                            PythonResourceAdapter.class,
+                            PyObject.class,
+                            ResourceDescriptor.class,
+                            ResourceContext.class);
+            return (Resource)
+                    constructor.newInstance(
+                            pythonResourceAdapter, pyResource, descriptor, resourceContext);
+        } catch (Throwable constructionFailure) {
+            try {
+                pyResource.close();
+            } catch (Throwable closeFailure) {
+                constructionFailure.addSuppressed(closeFailure);
+            }
+            ExceptionUtils.rethrowException(constructionFailure);
+            throw new AssertionError("Unreachable after rethrowing resource construction failure");
+        }
     }
 
     @Override

@@ -1,13 +1,14 @@
 {
-  "name" : "my_chat_model",
-  "type" : "chat_model",
-  "descriptor" : {
-    "target_clazz" : "MockChatModelImpl",
-    "target_module" : "flink_agents.plan.tests.test_resource_provider",
-    "arguments" : {
-      "host" : "8.8.8.8",
-      "desc" : "mock chat model"
-    }
+  "name": "my_chat_model",
+  "type": "chat_model",
+  "descriptor": {
+    "target_clazz": "MockChatModelImpl",
+    "target_module": "flink_agents.plan.tests.test_resource_provider",
+    "arguments": {
+      "host": "8.8.8.8",
+      "desc": "mock chat model"
+    },
+    "language": "python"
   },
-  "__resource_provider_type__" : "PythonResourceProvider"
+  "__resource_provider_type__": "PythonResourceProvider"
 }

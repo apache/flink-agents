@@ -20,36 +20,26 @@ package org.apache.flink.agents.integrations.chatmodels.anthropic;
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
 import com.anthropic.core.JsonSchemaLocalValidation;
-import com.anthropic.core.JsonValue;
-import com.anthropic.models.messages.ContentBlock;
-import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
 import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
-import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
-import com.anthropic.models.messages.ToolResultBlockParam;
-import com.anthropic.models.messages.ToolUseBlockParam;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -87,9 +77,6 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
 
     private static final Logger LOG = LoggerFactory.getLogger(AnthropicChatModelConnection.class);
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-
-    private final ObjectMapper mapper = new ObjectMapper();
     private final AnthropicClient client;
     private final String defaultModel;
 
@@ -156,6 +143,19 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES =
             Set.of("claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5");
 
+    @Override
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
     /**
      * Whether Anthropic documents native structured-output support for {@code effectiveModel}.
      *
@@ -167,8 +167,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
      */
-    @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    private boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         // Load-bearing: the allowlist is an immutable Set, whose contains(null) throws rather than
         // reporting absence.
         if (effectiveModel == null) {
@@ -186,14 +185,53 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * The {@code model} parameter, falling back to the model configured on the connection when the
      * call names none, which is how the request itself resolves the model it is issued against.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         Object modelObj = modelParams != null ? modelParams.get("model") : null;
         String modelName = modelObj != null ? modelObj.toString() : null;
         if (modelName == null || modelName.isBlank()) {
             return this.defaultModel;
         }
         return modelName;
+    }
+
+    /**
+     * Whether a request built from these inputs would carry a derived {@code output_config}, the
+     * effective model's capability aside.
+     *
+     * <p>Two conditions. Only a POJO {@link Class} has a native translation here; a {@code
+     * RowTypeInfo} wrapped in {@code OutputSchema}, or any other form, has none. And a
+     * caller-supplied {@code output_config} wins: it is the caller being explicit about the exact
+     * parameter the native branch writes, so the schema falls back to prompt engineering rather
+     * than the two competing on one request.
+     *
+     * <p>The tools are not read; a bound tool does not stop this connection sending a schema.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read
+     * @param modelParams read for a caller-supplied {@code output_config} under {@code
+     *     additional_kwargs}. These must be the parameters as they arrived: {@code buildRequest}
+     *     removes that key from its own copy before the native branch runs, so the stripped copy
+     *     would report every caller's {@code output_config} absent
+     * @return true if {@code outputSchema} is a POJO {@link Class} and the caller supplied no
+     *     {@code output_config} of its own
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema,
+            List<org.apache.flink.agents.api.tools.Tool> tools,
+            Map<String, Object> modelParams) {
+        return outputSchema instanceof Class && !carriesCallerOutputConfig(modelParams);
+    }
+
+    /**
+     * Whether the caller set an {@code output_config} of its own under {@code additional_kwargs}.
+     *
+     * <p>Shared by the feasibility query and the JSON prefill decision so the two cannot disagree
+     * about what the caller supplied. Reads the parameters as they arrived.
+     */
+    private static boolean carriesCallerOutputConfig(Map<String, Object> modelParams) {
+        Object additionalKwargs = modelParams == null ? null : modelParams.get("additional_kwargs");
+        return additionalKwargs instanceof Map
+                && ((Map<?, ?>) additionalKwargs).containsKey("output_config");
     }
 
     // Models Anthropic documents as rejecting assistant-message prefilling. Source of truth:
@@ -230,7 +268,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * apart from the structured-output allowlists. An unrecognized name reports {@code true}, which
      * matches the documented rule: prefilling is the long-standing behaviour and only the listed
      * names withdraw it. The cost of that default runs the opposite way to {@link
-     * #supportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
+     * #modelSupportsNativeStructuredOutput}: a rejecting model this list has not caught up with is
      * prefilled and answered with a 400, where an unrecognized name on the structured-output path
      * degrades silently to the prompt-engineering fallback instead.
      */
@@ -397,7 +435,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
@@ -417,29 +455,17 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
      * documents message prefilling as incompatible with structured outputs.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("Anthropic", messages);
         try {
             BuiltRequest built = buildRequest(messages, tools, modelParams, outputSchema);
             Message response = client.messages().create(built.params);
-            ChatMessage result = convertResponse(built, response);
-
-            // Stash token usage
-            String modelName = null;
-            if (modelParams != null && modelParams.get("model") != null) {
-                modelName = modelParams.get("model").toString();
-            }
-            if (modelName == null || modelName.isBlank()) {
-                modelName = this.defaultModel;
-            }
-            if (modelName != null && !modelName.isBlank()) {
-                result.getExtraArgs().put("model_name", modelName);
-                result.getExtraArgs().put("promptTokens", response.usage().inputTokens());
-                result.getExtraArgs().put("completionTokens", response.usage().outputTokens());
-            }
+            ChatResult result = convertResponse(built, response);
 
             return result;
         } catch (Exception e) {
@@ -469,12 +495,12 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             modelName = this.defaultModel;
         }
 
-        List<TextBlockParam> systemBlocks = extractSystemMessages(messages);
+        List<TextBlockParam> systemBlocks = AnthropicChatUtils.extractSystemMessages(messages);
 
         List<MessageParam> anthropicMessages =
                 messages.stream()
                         .filter(m -> m.getRole() != MessageRole.SYSTEM)
-                        .map(this::convertToAnthropicMessage)
+                        .map(AnthropicChatUtils::convertToAnthropicMessage)
                         .collect(Collectors.toList());
 
         MessageCreateParams.Builder builder =
@@ -491,7 +517,7 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         boolean strictToolsEnabled = Boolean.TRUE.equals(strictTools);
 
         if (tools != null && !tools.isEmpty()) {
-            for (Tool tool : convertTools(tools, strictToolsEnabled)) {
+            for (Tool tool : AnthropicChatUtils.convertTools(tools, strictToolsEnabled)) {
                 builder.addTool(tool);
             }
         }
@@ -522,11 +548,10 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
             applyAdditionalKwargs(builder, additionalKwargs, modelName);
         }
 
-        // Read here rather than inside the native structured-output branch below because it governs
-        // the JSON prefill too, and a caller can supply an output_config without supplying any
-        // output schema for that branch to look at.
-        boolean callerSuppliedOutputConfig =
-                additionalKwargs != null && additionalKwargs.containsKey("output_config");
+        // Read from the parameters as they arrived, because the local copy no longer carries
+        // additional_kwargs by this point. It governs the JSON prefill too, and a caller can supply
+        // an output_config without supplying any output schema for the native branch to look at.
+        boolean callerSuppliedOutputConfig = carriesCallerOutputConfig(rawModelParams);
 
         // Native structured output applies only for a POJO Class schema on a model Anthropic
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
@@ -534,15 +559,11 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         // explicit about the exact parameter this branch writes, so it wins and the schema falls
         // back to prompt engineering rather than the two competing on the same request.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a model this predicate rejects therefore degrades silently to the
-        // prompt-engineering fallback instead of getting an error. Once strategy resolution is
-        // wired up, NATIVE must either bypass this capability re-check or fail explicitly.
+        // The schema form and the caller's output_config are asked rather than restated, so a
+        // caller asking the same question gets the answer this branch acts on.
         boolean nativeSchemaApplied = false;
-        if (outputSchema instanceof Class
-                && supportsNativeStructuredOutput(modelName)
-                && !callerSuppliedOutputConfig) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && modelSupportsNativeStructuredOutput(modelName)) {
             builder.outputConfig(toNativeOutputConfig((Class<?>) outputSchema));
             nativeSchemaApplied = true;
         }
@@ -590,256 +611,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
         }
     }
 
-    private List<TextBlockParam> extractSystemMessages(List<ChatMessage> messages) {
-        return messages.stream()
-                .filter(m -> m.getRole() == MessageRole.SYSTEM)
-                .map(m -> TextBlockParam.builder().text(m.getText()).build())
-                .collect(Collectors.toList());
-    }
-
-    private MessageParam convertToAnthropicMessage(ChatMessage message) {
-        MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getText()).orElse("");
-
-        switch (role) {
-            case USER:
-                return MessageParam.builder().role(MessageParam.Role.USER).content(content).build();
-
-            case ASSISTANT:
-                List<Map<String, Object>> toolCalls = message.getToolCalls();
-                if (toolCalls != null && !toolCalls.isEmpty()) {
-                    List<ContentBlockParam> contentBlocks = new ArrayList<>();
-                    if (!content.isEmpty()) {
-                        contentBlocks.add(
-                                ContentBlockParam.ofText(
-                                        TextBlockParam.builder().text(content).build()));
-                    }
-                    contentBlocks.addAll(convertToolCallsToToolUse(toolCalls));
-                    return MessageParam.builder()
-                            .role(MessageParam.Role.ASSISTANT)
-                            .contentOfBlockParams(contentBlocks)
-                            .build();
-                } else {
-                    return MessageParam.builder()
-                            .role(MessageParam.Role.ASSISTANT)
-                            .content(content)
-                            .build();
-                }
-
-            case TOOL:
-                Object toolCallId = message.getExtraArgs().get("externalId");
-                if (toolCallId == null) {
-                    throw new IllegalArgumentException(
-                            "Tool message must have an externalId in extraArgs.");
-                }
-                ToolResultBlockParam toolResult =
-                        ToolResultBlockParam.builder()
-                                .toolUseId(toolCallId.toString())
-                                .content(content)
-                                .build();
-                return MessageParam.builder()
-                        .role(MessageParam.Role.USER)
-                        .contentOfBlockParams(List.of(ContentBlockParam.ofToolResult(toolResult)))
-                        .build();
-
-            default:
-                throw new IllegalArgumentException("Unsupported role: " + role);
-        }
-    }
-
-    private List<ContentBlockParam> convertToolCallsToToolUse(List<Map<String, Object>> toolCalls) {
-        List<ContentBlockParam> blocks = new ArrayList<>();
-        for (Map<String, Object> call : toolCalls) {
-            Object type = call.getOrDefault("type", "function");
-            if (!"function".equals(String.valueOf(type))) {
-                continue;
-            }
-
-            Map<String, Object> functionPayload = toMap(call.get("function"));
-            String functionName = String.valueOf(functionPayload.get("name"));
-            Object arguments = functionPayload.get("arguments");
-            Map<String, Object> inputMap = toMap(arguments);
-
-            Object originalIdObj = call.get("original_id");
-            if (originalIdObj == null) {
-                throw new IllegalArgumentException(
-                        "Tool call must have an original_id for Anthropic.");
-            }
-
-            ToolUseBlockParam toolUse =
-                    ToolUseBlockParam.builder()
-                            .id(originalIdObj.toString())
-                            .name(functionName)
-                            .input(toJsonValue(inputMap))
-                            .build();
-
-            blocks.add(ContentBlockParam.ofToolUse(toolUse));
-        }
-        return blocks;
-    }
-
-    private List<Tool> convertTools(
-            List<org.apache.flink.agents.api.tools.Tool> tools, boolean strictToolsEnabled) {
-        List<Tool> anthropicTools = new ArrayList<>(tools.size());
-        for (org.apache.flink.agents.api.tools.Tool tool : tools) {
-            ToolMetadata metadata = tool.getMetadata();
-            Tool.Builder toolBuilder =
-                    Tool.builder().name(metadata.getName()).description(metadata.getDescription());
-
-            String schema = metadata.getInputSchema();
-            if (schema != null && !schema.isBlank()) {
-                toolBuilder.inputSchema(parseToolInputSchema(schema));
-            }
-
-            if (strictToolsEnabled) {
-                toolBuilder.putAdditionalProperty("strict", JsonValue.from(true));
-            }
-
-            anthropicTools.add(toolBuilder.build());
-        }
-        return anthropicTools;
-    }
-
-    private Tool.InputSchema parseToolInputSchema(String schemaJson) {
-        try {
-            JsonNode root = mapper.readTree(schemaJson);
-            if (root == null || !root.isObject()) {
-                return Tool.InputSchema.builder().build();
-            }
-
-            Tool.InputSchema.Builder builder = Tool.InputSchema.builder();
-            root.fields()
-                    .forEachRemaining(
-                            entry ->
-                                    builder.putAdditionalProperty(
-                                            entry.getKey(),
-                                            JsonValue.fromJsonNode(entry.getValue())));
-
-            return builder.build();
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to parse tool schema JSON.", e);
-        }
-    }
-
-    /**
-     * Converts a response into a {@link ChatMessage}, reconstructing the leading {@code "{"} when
-     * the request carried the JSON prefill.
-     *
-     * <p>Takes the whole {@link BuiltRequest} rather than the prefill flag on its own so the flag
-     * travels with the request it was derived from, instead of being computed separately at the call
-     * site where the two can drift apart. A flag that disagrees with the request either prepends a
-     * stray {@code "{"} or drops a required one, and the resulting JSON is malformed in a way the
-     * response itself gives no sign of.
-     */
-    ChatMessage convertResponse(BuiltRequest built, Message response) {
-        List<ContentBlock> contentBlocks = response.content();
-        if (contentBlocks.isEmpty()) {
-            throw new IllegalStateException("Anthropic response did not contain any content.");
-        }
-
-        StringBuilder textContent = new StringBuilder();
-        // If JSON prefill was used, prepend "{" since the response only contains the continuation
-        if (built.jsonPrefillApplied) {
-            textContent.append("{");
-        }
-        List<Map<String, Object>> toolCalls = new ArrayList<>();
-
-        for (ContentBlock block : contentBlocks) {
-            if (block.isText()) {
-                block.text()
-                        .ifPresent(
-                                textBlock -> {
-                                    textContent.append(textBlock.text());
-                                });
-            } else if (block.isToolUse()) {
-                block.toolUse()
-                        .ifPresent(
-                                toolUse -> {
-                                    String toolUseId = toolUse.id();
-                                    Map<String, Object> toolCall = new LinkedHashMap<>();
-                                    toolCall.put("id", toolUseId);
-                                    toolCall.put("type", "function");
-
-                                    Map<String, Object> functionMap = new LinkedHashMap<>();
-                                    functionMap.put("name", toolUse.name());
-                                    JsonValue inputValue = toolUse._input();
-                                    Map<String, Object> inputMap = jsonValueToMap(inputValue);
-                                    functionMap.put("arguments", inputMap);
-                                    toolCall.put("function", functionMap);
-                                    toolCall.put("original_id", toolUseId);
-
-                                    toolCalls.add(toolCall);
-                                });
-            }
-        }
-
-        String finalText = textContent.toString();
-
-        // If the response has no tool calls, try to extract JSON from markdown code blocks.
-        if (toolCalls.isEmpty()) {
-            finalText = extractJsonFromMarkdown(finalText);
-        }
-
-        ChatMessage chatMessage = ChatMessage.assistant(finalText);
-        if (!toolCalls.isEmpty()) {
-            chatMessage.setToolCalls(toolCalls);
-        }
-        response.stopReason()
-                .ifPresent(
-                        reason ->
-                                chatMessage
-                                        .getExtraArgs()
-                                        .put("finish_reason", toFinishReason(reason)));
-
-        return chatMessage;
-    }
-
-    /** Maps Anthropic's token-limit reason to the shared chat action's canonical value. */
-    private static String toFinishReason(StopReason reason) {
-        return StopReason.MAX_TOKENS.equals(reason) ? "length" : reason.asString();
-    }
-
-    /**
-     * Extracts JSON content from a string that may contain markdown code blocks.
-     *
-     * <p>Claude often wraps JSON responses in markdown code blocks like {@code ```json ... ```},
-     * especially on a response no JSON prefill was applied to, since an assistant turn already
-     * opened with {@code "{"} cannot be continued into a fence. This method extracts the JSON
-     * content from such responses. If no code block is found, the original content is returned
-     * unchanged.
-     *
-     * @param content The response content that may contain markdown-wrapped JSON
-     * @return The extracted JSON string, or the original content if no code block is found
-     */
-    private String extractJsonFromMarkdown(String content) {
-        if (content == null) {
-            return null;
-        }
-
-        String trimmed = content.trim();
-
-        // Try to find JSON in markdown code block (```json ... ``` or ``` ... ```)
-        int jsonBlockStart = trimmed.indexOf("```json");
-        int genericBlockStart = trimmed.indexOf("```");
-
-        int contentStart;
-
-        if (jsonBlockStart != -1) {
-            contentStart = jsonBlockStart + 7; // length of "```json"
-        } else if (genericBlockStart != -1) {
-            contentStart = genericBlockStart + 3; // length of "```"
-        } else {
-            return content;
-        }
-
-        // Find the closing ```
-        int blockEnd = trimmed.indexOf("```", contentStart);
-        if (blockEnd == -1) {
-            return content;
-        }
-
-        // Extract content between the markers
-        return trimmed.substring(contentStart, blockEnd).trim();
+    ChatResult convertResponse(BuiltRequest built, Message response) {
+        return AnthropicChatUtils.convertResponse(
+                response, built.params.model().asString(), built.jsonPrefillApplied);
     }
 
     private void applyAdditionalKwargs(
@@ -874,43 +648,9 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
                     }
                     break;
                 default:
-                    builder.putAdditionalBodyProperty(key, toJsonValue(value));
+                    builder.putAdditionalBodyProperty(key, AnthropicChatUtils.toJsonValue(value));
                     break;
             }
-        }
-    }
-
-    private Map<String, Object> toMap(Object value) {
-        if (value instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> casted = (Map<String, Object>) value;
-            return new LinkedHashMap<>(casted);
-        }
-        if (value == null) {
-            return new LinkedHashMap<>();
-        }
-        return mapper.convertValue(value, MAP_TYPE);
-    }
-
-    private JsonValue toJsonValue(Object value) {
-        if (value instanceof JsonValue) {
-            return (JsonValue) value;
-        }
-        if (value instanceof String
-                || value instanceof Number
-                || value instanceof Boolean
-                || value == null) {
-            return JsonValue.from(value);
-        }
-        return JsonValue.fromJsonNode(mapper.valueToTree(value));
-    }
-
-    private Map<String, Object> jsonValueToMap(JsonValue jsonValue) {
-        try {
-            String jsonString = mapper.writeValueAsString(jsonValue);
-            return mapper.readValue(jsonString, MAP_TYPE);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to convert JsonValue to Map.", e);
         }
     }
 }

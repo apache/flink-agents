@@ -42,8 +42,10 @@ public interface CustomRoutingExecutor extends Serializable {
      *
      * @param strategy the declaration this executor was configured with (type + arguments)
      * @param context the request messages, prompt args, and candidates
-     * @return the routing decision (selected candidate or abstain)
-     * @throws Exception if the executor fails
+     * @return the routing decision (selected candidate or abstain); a name outside the candidates
+     *     is treated as abstain
+     * @throws Exception if the executor fails; the request then fails and does not fall back to the
+     *     default model
      */
     RoutingDecision route(RoutingStrategy strategy, RoutingContext context) throws Exception;
 }

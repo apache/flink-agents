@@ -28,8 +28,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
-import org.apache.flink.agents.api.vectorstores.python.PythonVectorStore;
 import org.apache.flink.agents.plan.JavaFunction;
+import org.apache.flink.agents.plan.resource.python.PythonVectorStore;
 
 import java.util.List;
 
@@ -53,8 +53,10 @@ public class ContextRetrievalAction {
         if (ContextRetrievalRequestEvent.EVENT_TYPE.equals(event.getType())) {
             boolean ragAsync = ctx.getConfig().get(AgentExecutionOptions.RAG_ASYNC);
 
+            // The type check above guarantees the concrete subclass: built-in events are restored
+            // at the JSON boundary before reaching an action.
             final ContextRetrievalRequestEvent contextRetrievalRequestEvent =
-                    ContextRetrievalRequestEvent.fromEvent(event);
+                    (ContextRetrievalRequestEvent) event;
 
             final BaseVectorStore vectorStore =
                     (BaseVectorStore)

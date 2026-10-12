@@ -17,12 +17,17 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.memory.LongTermMemoryOptions;
+import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
+import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
@@ -46,14 +51,21 @@ import pemja.core.object.PyObject;
 
 import javax.annotation.Nullable;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
 
 /**
  * Owns the embedded Python runtime used by {@link ActionExecutionOperator} when an agent plan
- * contains Python actions or Python-defined resources.
+ * contains Python actions, Python-defined resources, or Python package skill sources.
  *
  * <p>Owned state:
  *
@@ -69,11 +81,11 @@ import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
  *
  * <p>Lifecycle: instantiated by the operator's {@code open()} (lazy — not in the operator
  * constructor), then immediately initialized via {@link #open} in the same call. {@link #open} is a
- * no-op when the agent plan contains no Python actions, Python resources, or Mem0 configuration —
- * in that case all accessors return {@code null} and {@link #isInitialized()} returns {@code
- * false}. {@link #close()} closes the owned resources in the reverse order of creation: {@code
- * longTermMemory} → {@code pythonActionExecutor} → {@code pythonResourceAdapter} → {@code
- * pythonInterpreterManager} → {@code pythonEnvironmentManager}.
+ * no-op when the agent plan contains no Python actions, Python resources, Python package skill
+ * sources, or Mem0 configuration — in that case all accessors return {@code null} and {@link
+ * #isInitialized()} returns {@code false}. {@link #close()} closes the owned resources in the
+ * reverse order of creation: {@code longTermMemory} → {@code pythonActionExecutor} → {@code
+ * pythonResourceAdapter} → {@code pythonInterpreterManager} → {@code pythonEnvironmentManager}.
  *
  * <p>Design constraint: package-private; no manager-to-manager held references. Other managers
  * receive what they need (e.g. the Python runner context, the action executor) via method
@@ -101,18 +113,18 @@ class PythonBridgeManager implements AutoCloseable {
      * Initializes the Python runtime if the agent plan needs it.
      *
      * <p>Scans the agent plan for any {@link PythonFunction} action or Python-owned resource
-     * provider. If neither is present and Mem0 is not configured, this method is a no-op and {@link
-     * #isInitialized()} stays {@code false}. Otherwise it builds the {@link
-     * PythonEnvironmentManager}, opens an owner {@link PythonInterpreter}, refreshes the shared
-     * import state for the current dependency generation, and creates a {@link
-     * PythonInterpreterManager} that binds interpreters to managed Java workers and routes other
-     * callers through bounded callback workers. It then constructs the shared {@link
-     * PythonRunnerContextImpl}, wires the Java/Python resource adapters, and conditionally
-     * initializes the Python resource adapter (when Python-owned resources or Mem0 are present) and
-     * the Python action executor (when Python actions, Python-owned resources, or Mem0 are present,
-     * since the executor is also the bridge that materializes Python-owned resources). The
-     * generation guard runs immediately after owner-interpreter construction and before any user
-     * module import.
+     * provider. If none of those or Python package skill sources are present and Mem0 is not
+     * configured, this method is a no-op and {@link #isInitialized()} stays {@code false}.
+     * Otherwise it builds the {@link PythonEnvironmentManager}, opens an owner {@link
+     * PythonInterpreter}, refreshes the shared import state for the current dependency generation,
+     * and creates a {@link PythonInterpreterManager} that binds interpreters to managed Java
+     * workers and routes other callers through bounded callback workers. It then constructs the
+     * shared {@link PythonRunnerContextImpl}, wires the Java/Python resource adapters, and
+     * conditionally initializes the Python resource adapter (when Python-owned resources or Mem0
+     * are present) and the Python action executor (when Python actions, Python-owned resources, or
+     * Mem0 are present, since the executor is also the bridge that materializes Python-owned
+     * resources). The generation guard runs immediately after owner-interpreter construction and
+     * before any user module import.
      *
      * @param agentPlan the agent plan describing actions and resources.
      * @param resourceCache the resource cache visible to both languages.
@@ -139,20 +151,21 @@ class PythonBridgeManager implements AutoCloseable {
             String jobIdentifier,
             ClassLoader userCodeClassLoader)
             throws Exception {
-        boolean containPythonAction =
-                agentPlan.getActions().values().stream()
-                        .anyMatch(action -> action.getExec() instanceof PythonFunction);
-
-        boolean containPythonResource =
-                agentPlan.getResourceProviders().values().stream()
-                        .anyMatch(
-                                resourceProviderMap ->
-                                        resourceProviderMap.values().stream()
-                                                .anyMatch(ResourceProvider::isPythonOwned));
+        // One Python runtime serves the whole plan tree: an internal sub-agent's child scope runs
+        // its Python actions and materializes its Python-owned resources through the root's
+        // executor (ResourceCache.effectivePythonActionExecutor falls back to the parent), and this
+        // runs before sub-agent setups are registered, so it can only inspect plans statically.
+        // Scanning the root alone would leave a Java root with a Python-bearing child uninitialized
+        // and the child's eagerMaterialize would then fail its "no Python runtime was initialized"
+        // guard. Mem0 stays a root-only check: long-term memory is wired against the root plan
+        // (wireLongTermMemory), not a child scope.
+        boolean containPythonAction = treeContainsPythonAction(agentPlan);
+        boolean containPythonResource = treeContainsPythonResource(agentPlan);
 
         boolean mem0Configured = isMem0Configured(agentPlan);
+        boolean packageSkills = hasPackageSkills(agentPlan);
 
-        if (containPythonAction || containPythonResource || mem0Configured) {
+        if (containPythonAction || containPythonResource || mem0Configured || packageSkills) {
             LOG.debug("Begin initialize PythonEnvironmentManager.");
             PythonDependencyInfo dependencyInfo =
                     PythonDependencyInfo.create(
@@ -186,7 +199,8 @@ class PythonBridgeManager implements AutoCloseable {
                     new PythonInterpreterManager(
                             ownerInterpreter,
                             env::getInterpreter,
-                            agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS));
+                            agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS),
+                            mailboxThreadChecker);
             pythonRunnerContext =
                     new PythonRunnerContextImpl(
                             metricGroup,
@@ -209,6 +223,71 @@ class PythonBridgeManager implements AutoCloseable {
                 wireLongTermMemory(agentPlan, mailboxThreadChecker);
             }
             initialized = true;
+        }
+    }
+
+    /** Inspect serialized configuration only; do not initialize user resources during bootstrap. */
+    static boolean hasPackageSkills(AgentPlan agentPlan) throws IOException {
+        ResourceProvider provider =
+                agentPlan
+                        .getResourceProviders()
+                        .getOrDefault(ResourceType.SKILLS, java.util.Collections.emptyMap())
+                        .get(Skills.SKILLS_CONFIG);
+        if (!(provider instanceof JavaSerializableResourceProvider)) {
+            // Python-owned providers already trigger initialization through isPythonOwned().
+            return false;
+        }
+        Skills skills =
+                new ObjectMapper()
+                        .readValue(
+                                ((JavaSerializableResourceProvider) provider)
+                                        .getSerializedResource(),
+                                Skills.class);
+        return skills.getSources().stream()
+                .anyMatch(source -> "package".equalsIgnoreCase(source.getScheme()));
+    }
+
+    /** Whether any plan in {@code plan}'s tree declares a {@link PythonFunction} action. */
+    static boolean treeContainsPythonAction(AgentPlan plan) {
+        return planTree(plan).stream()
+                .flatMap(p -> p.getActions().values().stream())
+                .anyMatch(action -> action.getExec() instanceof PythonFunction);
+    }
+
+    /** Whether any plan in {@code plan}'s tree declares a Python-owned resource provider. */
+    static boolean treeContainsPythonResource(AgentPlan plan) {
+        return planTree(plan).stream()
+                .flatMap(p -> p.getResourceProviders().values().stream())
+                .flatMap(resourceProviderMap -> resourceProviderMap.values().stream())
+                .anyMatch(ResourceProvider::isPythonOwned);
+    }
+
+    /**
+     * Every plan in the tree rooted at {@code plan}: the plan itself plus each internal sub-agent's
+     * child plan, recursively. Internal sub-agents are the only nested plans reachable from a
+     * parent's {@link ResourceType#AGENT} providers, through {@link
+     * InternalSubagentProvider#getChildPlan()}. Compilation rejects a cycle, and the identity guard
+     * also collapses a child plan shared by more than one parent so it is scanned once.
+     */
+    static List<AgentPlan> planTree(AgentPlan plan) {
+        List<AgentPlan> plans = new ArrayList<>();
+        collectPlanTree(plan, plans, Collections.newSetFromMap(new IdentityHashMap<>()));
+        return plans;
+    }
+
+    private static void collectPlanTree(
+            AgentPlan plan, List<AgentPlan> acc, Set<AgentPlan> visited) {
+        if (!visited.add(plan)) {
+            return;
+        }
+        acc.add(plan);
+        Map<String, ResourceProvider> agents =
+                plan.getResourceProviders()
+                        .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
+        for (ResourceProvider provider : agents.values()) {
+            if (provider instanceof InternalSubagentProvider) {
+                collectPlanTree(((InternalSubagentProvider) provider).getChildPlan(), acc, visited);
+            }
         }
     }
 
@@ -302,6 +381,12 @@ class PythonBridgeManager implements AutoCloseable {
         pythonResourceAdapter.open();
         PythonMCPResourceDiscovery.discoverPythonMCPResources(
                 agentPlan.getResourceProviders(), pythonResourceAdapter, resourceCache);
+    }
+
+    /** The operator's interpreter manager, or null before initialization or for Java-only plans. */
+    @Nullable
+    PythonInterpreterManager getPythonInterpreterManager() {
+        return pythonInterpreterManager;
     }
 
     /**

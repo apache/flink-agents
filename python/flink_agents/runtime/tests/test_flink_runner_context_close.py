@@ -28,6 +28,7 @@ def _create_context() -> tuple[FlinkRunnerContext, MagicMock, MagicMock]:
     resource_cache = MagicMock()
     ctx._FlinkRunnerContext__ltm = ltm
     ctx._FlinkRunnerContext__resource_cache = resource_cache
+    ctx._FlinkRunnerContext__scoped_resource_caches = {}
     return ctx, ltm, resource_cache
 
 

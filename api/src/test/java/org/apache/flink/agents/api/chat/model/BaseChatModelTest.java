@@ -18,13 +18,20 @@
 
 package org.apache.flink.agents.api.chat.model;
 
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,7 +43,12 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Test cases for BaseChatModel class, Tests chat model functionality, prompt processing, and
@@ -62,7 +74,7 @@ class BaseChatModelTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages,
                 Map<String, Object> promptArgs,
                 Map<String, Object> modelParams) {
@@ -79,7 +91,9 @@ class BaseChatModelTest {
                 lastUserContent = "No user message found";
             }
 
-            return new ChatMessage(MessageRole.ASSISTANT, responsePrefix + lastUserContent);
+            return new ChatResult(
+                    ChatMessage.assistant(
+                            List.of(new TextBlock(responsePrefix + lastUserContent))));
         }
 
         public void setResponsePrefix(String prefix) {
@@ -122,11 +136,11 @@ class BaseChatModelTest {
         Prompt formattedPrompt =
                 Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertEquals(MessageRole.ASSISTANT, response.getRole());
+        assertFalse(response.getMessage().getBlocks().isEmpty());
         assertTrue(response.getText().contains("Test Response:"));
     }
 
@@ -140,11 +154,11 @@ class BaseChatModelTest {
                 Prompt.fromMessages(
                         conversationPrompt.formatMessages(MessageRole.SYSTEM, variables));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertEquals(MessageRole.ASSISTANT, response.getRole());
+        assertFalse(response.getMessage().getBlocks().isEmpty());
         assertTrue(response.getText().contains("What's the weather like?"));
     }
 
@@ -153,11 +167,11 @@ class BaseChatModelTest {
     void testChatWithEmptyPrompt() {
         Prompt emptyPrompt = Prompt.fromText("");
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(emptyPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertEquals(MessageRole.ASSISTANT, response.getRole());
+        assertFalse(response.getMessage().getBlocks().isEmpty());
         assertTrue(response.getText().contains("No user message found"));
     }
 
@@ -174,7 +188,7 @@ class BaseChatModelTest {
 
         Prompt multiPrompt = Prompt.fromMessages(multipleMessages);
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(multiPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
@@ -192,7 +206,7 @@ class BaseChatModelTest {
         Prompt formattedPrompt =
                 Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertTrue(response.getText().startsWith("Custom Response:"));
@@ -206,11 +220,11 @@ class BaseChatModelTest {
                         Arrays.asList(
                                 new ChatMessage(MessageRole.SYSTEM, "System instruction only")));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(systemOnlyPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
-        assertEquals(MessageRole.ASSISTANT, response.getRole());
+        assertFalse(response.getMessage().getBlocks().isEmpty());
         assertTrue(response.getText().contains("No user message found"));
     }
 
@@ -223,14 +237,14 @@ class BaseChatModelTest {
         Prompt formattedPrompt =
                 Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         // Verify response structure
-        assertNotNull(response.getRole());
+        assertNotNull(response.getMessage().getBlocks());
         assertNotNull(response.getText());
         assertNotNull(response.getToolCalls());
-        assertNotNull(response.getExtraArgs());
+        assertNotNull(response.getMetadata());
         assertTrue(response.getText().length() > 0);
     }
 
@@ -247,11 +261,11 @@ class BaseChatModelTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             this.capturedMessages = new ArrayList<>(messages);
             this.capturedModelParams = new HashMap<>(modelParams);
-            return new ChatMessage(MessageRole.ASSISTANT, "ok");
+            return new ChatResult(ChatMessage.assistant(List.of(new TextBlock("ok"))));
         }
     }
 
@@ -293,8 +307,7 @@ class BaseChatModelTest {
         Prompt prompt = Prompt.fromText("Task: {key}");
         RecordingChatModelSetup setup = new RecordingChatModelSetup(connection, prompt);
 
-        ChatMessage userMessage =
-                new ChatMessage(MessageRole.USER, "hello", Map.of("key", "value"));
+        ChatMessage userMessage = ChatMessage.user("hello").withMetadata(Map.of("key", "value"));
         setup.chat(List.of(userMessage), Map.of(), Map.of());
 
         assertNotNull(connection.capturedMessages);
@@ -315,11 +328,17 @@ class BaseChatModelTest {
         assertEquals(1, connection.capturedMessages.size());
         assertEquals("Task: v1", connection.capturedMessages.get(0).getText());
 
-        ChatMessage toolResponse = new ChatMessage(MessageRole.TOOL, "tool result");
+        ChatMessage toolResponse =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call", List.of(new TextBlock("tool result {key}")), false));
         setup.chat(List.of(toolResponse), Map.of("key", "v1"), Map.of());
         assertEquals(2, connection.capturedMessages.size());
         assertEquals("Task: v1", connection.capturedMessages.get(0).getText());
-        assertEquals("tool result", connection.capturedMessages.get(1).getText());
+        assertEquals(
+                "tool result {key}",
+                ((ToolResultBlock) connection.capturedMessages.get(1).getBlocks().get(0))
+                        .getText());
     }
 
     @Test
@@ -350,7 +369,7 @@ class BaseChatModelTest {
         Map<String, Object> modelParams = new HashMap<>();
         modelParams.put("temperature", 0.5);
 
-        ChatMessage response =
+        ChatResult response =
                 connection.chat(
                         List.of(new ChatMessage(MessageRole.USER, "hi")),
                         List.of(),
@@ -364,13 +383,57 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("Default capability predicate reports no native structured output for any model")
-    void testDefaultCapabilityPredicateIsFalse() {
+    @DisplayName("Default query reports every request infeasible")
+    void testDefaultQueryIsInfeasible() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+
+        // Both forms a schema arrives in: a POJO class, and a wrapper a connection would have
+        // to unwrap before it could translate anything.
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(String.class, List.of(), modelParams));
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(
+                        new OutputSchema(
+                                new RowTypeInfo(
+                                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                                        new String[] {"name"})),
+                        List.of(),
+                        modelParams));
+    }
+
+    @Test
+    @DisplayName("Query accepts a null schema, tools and parameters without raising")
+    void testDefaultQueryAcceptsNullInputs() {
         RecordingConnection connection = new RecordingConnection();
 
-        assertFalse(connection.supportsNativeStructuredOutput("gpt-4o"));
-        assertFalse(connection.supportsNativeStructuredOutput("gpt-3.5-turbo"));
-        assertFalse(connection.supportsNativeStructuredOutput(null));
+        // An unconstrained request is an ordinary input to ask about, not a misuse. A request
+        // binding no tools may carry a null list, and a builder handed null parameters asks with
+        // the same null it was handed.
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(null, List.of(), Map.of()));
+        assertEquals(
+                NativeStructuredOutputSupport.INFEASIBLE,
+                connection.supportsNativeStructuredOutput(String.class, null, null));
+    }
+
+    @Test
+    @DisplayName("Query leaves the parameters a request would be built from intact")
+    void testDefaultQueryDoesNotConsumeModelParams() {
+        RecordingConnection connection = new RecordingConnection();
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", "gpt-4o");
+        modelParams.put("temperature", 0.5);
+
+        connection.supportsNativeStructuredOutput(String.class, List.of(), modelParams);
+
+        // The same map goes on to build the request the answer was about, so a query that
+        // took a key out of it would answer about one request and build another.
+        assertEquals(Map.of("model", "gpt-4o", "temperature", 0.5), modelParams);
     }
 
     @Test
@@ -422,22 +485,46 @@ class BaseChatModelTest {
     }
 
     @Test
-    @DisplayName("AUTO resolves to native only when the effective model is capable")
-    void testAutoStrategyResolvesToNativeOnlyWhenCapable() {
-        assertTrue(StructuredOutputStrategy.AUTO.resolvesToNative(true));
-        assertFalse(StructuredOutputStrategy.AUTO.resolvesToNative(false));
+    @DisplayName("AUTO resolves to native only when native is recommended")
+    void testAutoStrategyResolvesToNativeOnlyWhenRecommended() {
+        assertTrue(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED));
+        assertFalse(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.FEASIBLE));
+        assertFalse(
+                StructuredOutputStrategy.AUTO.resolvesToNative(
+                        NativeStructuredOutputSupport.INFEASIBLE));
     }
 
     @Test
-    @DisplayName("NATIVE forces native even when the model is not capable")
-    void testNativeStrategyForcesNativeRegardlessOfCapability() {
-        assertTrue(StructuredOutputStrategy.NATIVE.resolvesToNative(false));
+    @DisplayName("NATIVE resolves to native whenever the request can carry the schema")
+    void testNativeStrategyResolvesToNativeWhenFeasible() {
+        assertTrue(
+                StructuredOutputStrategy.NATIVE.resolvesToNative(
+                        NativeStructuredOutputSupport.NATIVE_RECOMMENDED));
+        assertTrue(
+                StructuredOutputStrategy.NATIVE.resolvesToNative(
+                        NativeStructuredOutputSupport.FEASIBLE));
     }
 
     @Test
-    @DisplayName("PROMPT never resolves to native even when the model is capable")
+    @DisplayName("NATIVE on an infeasible request is rejected rather than degraded")
+    void testNativeStrategyRejectsInfeasibleRequest() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        StructuredOutputStrategy.NATIVE.resolvesToNative(
+                                NativeStructuredOutputSupport.INFEASIBLE));
+    }
+
+    @Test
+    @DisplayName("PROMPT never resolves to native")
     void testPromptStrategyNeverResolvesToNative() {
-        assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(true));
+        for (NativeStructuredOutputSupport support : NativeStructuredOutputSupport.values()) {
+            assertFalse(StructuredOutputStrategy.PROMPT.resolvesToNative(support));
+        }
     }
 
     @Test
@@ -454,38 +541,10 @@ class BaseChatModelTest {
         Prompt formattedPrompt =
                 Prompt.fromMessages(simplePrompt.formatMessages(MessageRole.SYSTEM, variables));
 
-        ChatMessage response =
+        ChatResult response =
                 chatModel.chat(formattedPrompt.formatMessages(MessageRole.USER, new HashMap<>()));
 
         assertNotNull(response);
         assertTrue(response.getText().length() > 0);
-    }
-
-    @Test
-    @DisplayName("Effective model defaults to the model parameter a request would be built from")
-    void testEffectiveModelForReadsTheModelParameter() {
-        RecordingConnection connection = new RecordingConnection();
-        Map<String, Object> modelParams = new HashMap<>();
-        modelParams.put("model", "gpt-4o");
-
-        assertEquals("gpt-4o", connection.effectiveModelFor(modelParams));
-    }
-
-    @Test
-    @DisplayName("Effective model is null when the parameters name no model")
-    void testEffectiveModelForReturnsNullWhenModelParameterAbsent() {
-        RecordingConnection connection = new RecordingConnection();
-
-        // A connection carrying no default of its own has no model to resolve, and the capability
-        // predicate reports a null model not capable rather than throwing.
-        assertNull(connection.effectiveModelFor(Map.of("temperature", 0.5)));
-    }
-
-    @Test
-    @DisplayName("Effective model is null for null parameters")
-    void testEffectiveModelForReturnsNullForNullParameters() {
-        RecordingConnection connection = new RecordingConnection();
-
-        assertNull(connection.effectiveModelFor(null));
     }
 }

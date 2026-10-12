@@ -39,7 +39,7 @@ from flink_agents.e2e_tests.e2e_tests_integration.chat_model_integration_agent i
 
 current_dir = Path(__file__).parent
 
-TONGYI_MODEL = os.environ.get("TONGYI_CHAT_MODEL", "qwen-plus")
+DASHSCOPE_MODEL = os.environ.get("DASHSCOPE_CHAT_MODEL", "qwen-plus")
 OPENAI_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-3.5-turbo")
 AZURE_OPENAI_MODEL = os.environ.get("AZURE_OPENAI_CHAT_MODEL", "gpt-5")
 AZURE_OPENAI_API_VERSION = os.environ.get(
@@ -57,9 +57,9 @@ os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
     "model_provider",
     [
         pytest.param(
-            "Tongyi",
+            "DashScope",
             marks=pytest.mark.skipif(
-                not DASHSCOPE_API_KEY, reason="Tongyi api key is not set."
+                not DASHSCOPE_API_KEY, reason="DashScope api key is not set."
             ),
         ),
         pytest.param(
@@ -81,11 +81,11 @@ def test_chat_model_integration_remote(
 ) -> None:
     """Non-Ollama providers answer math and creative prompts on the remote path.
 
-    Covers the three credential-gated providers (Tongyi/OpenAI/AzureOpenAI) and
+    Covers the three credential-gated providers (DashScope/OpenAI/AzureOpenAI) and
     drives the agent through a real StreamExecutionEnvironment with a FileSource
     and file sink. Each parameter skips cleanly when its credential is absent.
     """
-    monkeypatch.setenv("TONGYI_CHAT_MODEL", TONGYI_MODEL)
+    monkeypatch.setenv("DASHSCOPE_CHAT_MODEL", DASHSCOPE_MODEL)
     monkeypatch.setenv("OPENAI_CHAT_MODEL", OPENAI_MODEL)
     monkeypatch.setenv("AZURE_OPENAI_CHAT_MODEL", AZURE_OPENAI_MODEL)
     monkeypatch.setenv("AZURE_OPENAI_API_VERSION", AZURE_OPENAI_API_VERSION)

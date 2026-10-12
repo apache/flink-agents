@@ -25,6 +25,7 @@ import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -96,7 +98,7 @@ public class BashTool extends Tool {
         if (cwd != null && !BashValidator.isUnderAllowedDirs(cwd, allowedScriptDirs, null)) {
             List<String> sorted = new ArrayList<>(allowedScriptDirs);
             Collections.sort(sorted);
-            return ToolResponse.success(
+            return ToolResponse.text(
                     "Command rejected: cwd '"
                             + cwd
                             + "' is not under any allowed script dir. Allowed script dirs: "
@@ -107,15 +109,16 @@ public class BashTool extends Tool {
         Optional<String> error =
                 BashValidator.validate(command, allowedCommands, allowedScriptDirs, cwd);
         if (error.isPresent()) {
-            return ToolResponse.success("Command rejected: " + error.get());
+            return ToolResponse.text("Command rejected: " + error.get());
         }
 
+        Process process = null;
         try {
             ProcessBuilder pb = new ProcessBuilder("bash", "-c", command);
             if (cwd != null) {
                 pb.directory(new File(cwd));
             }
-            Process process = pb.start();
+            process = pb.start();
             ByteArrayOutputStream stdout = new ByteArrayOutputStream();
             ByteArrayOutputStream stderr = new ByteArrayOutputStream();
             // Drain output streams to avoid blocking on pipe buffer fill.
@@ -124,8 +127,7 @@ public class BashTool extends Tool {
             boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
             if (!finished) {
                 process.destroyForcibly();
-                return ToolResponse.success(
-                        "Error: Command timed out after " + timeout + " seconds");
+                return ToolResponse.text("Error: Command timed out after " + timeout + " seconds");
             }
             tOut.join();
             tErr.join();
@@ -133,14 +135,23 @@ public class BashTool extends Tool {
             String stdoutStr = new String(stdout.toByteArray(), StandardCharsets.UTF_8).strip();
             String stderrStr = new String(stderr.toByteArray(), StandardCharsets.UTF_8).strip();
             if (exit == 0) {
-                return ToolResponse.success(stdoutStr.isEmpty() ? "Success" : stdoutStr);
+                return ToolResponse.text(stdoutStr.isEmpty() ? "Success" : stdoutStr);
             }
-            return ToolResponse.success("Error (exit code " + exit + "): " + stderrStr);
+            return ToolResponse.text("Error (exit code " + exit + "): " + stderrStr);
         } catch (IOException | InterruptedException e) {
-            if (e instanceof InterruptedException) {
-                Thread.currentThread().interrupt();
+            if (CancellationUtils.isCancellation(e)) {
+                if (process != null) {
+                    process.destroyForcibly();
+                }
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                CancellationException cancelled =
+                        new CancellationException("Bash tool interrupted");
+                cancelled.initCause(e);
+                throw cancelled;
             }
-            return ToolResponse.success("Error: " + e.getMessage());
+            return ToolResponse.text("Error: " + e.getMessage());
         }
     }
 

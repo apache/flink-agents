@@ -23,6 +23,14 @@ from flink_agents.api.skills import Skills, SkillSourceSpec
 
 
 class TestSkillsFactories:
+    def test_classpath_declaration_roundtrips_without_java(self) -> None:
+        skills = Skills.from_classpath("skills", "more-skills")
+        restored = Skills.model_validate_json(skills.model_dump_json())
+        assert restored.sources == [
+            SkillSourceSpec(scheme="classpath", params={"resource": "skills"}),
+            SkillSourceSpec(scheme="classpath", params={"resource": "more-skills"}),
+        ]
+
     def test_from_local_dir_emits_local_scheme(self) -> None:
         s = Skills.from_local_dir("/a", "/b.zip")
         assert s.sources == [

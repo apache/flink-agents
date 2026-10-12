@@ -15,7 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from unittest.mock import MagicMock
+import asyncio
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -28,7 +29,11 @@ from flink_agents.api.chat_message import (
     MessageRole,
     TextBlock,
 )
+from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.events.chat_event import ChatRequestEvent
+from flink_agents.api.events.event import Event
 from flink_agents.api.memory_object import MemoryType
+from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.actions.chat_model_action import (
     _TOOL_CALL_CONTEXT,
@@ -38,6 +43,7 @@ from flink_agents.plan.actions.chat_model_action import (
     _get_tool_request_event_context,
     _save_tool_request_event_context,
     _update_tool_call_context,
+    process_chat_request_or_tool_response,
 )
 from flink_agents.runtime.tests.local_memory_object import LocalMemoryObject
 
@@ -75,10 +81,12 @@ def test_structured_output_preserves_original_blocks():
     )
     original_blocks = message.blocks
     parsed = _generate_structured_output_with_report(
-        MagicMock(spec=ExecutionReporter), message, OutputSchema(output_schema=_Result)
+        MagicMock(spec=ExecutionReporter),
+        ChatResult(message=ChatMessage.assistant(message.blocks)),
+        OutputSchema(output_schema=_Result),
     )
-    assert parsed.blocks == original_blocks
-    assert parsed.extra_args["structured_output"] == _Result(result=42)
+    assert message.blocks == original_blocks
+    assert parsed == _Result(result=42)
 
 
 def test_clean_llm_response_with_json_block():
@@ -193,7 +201,7 @@ def test_tool_call_context_key_match_after_normalization():
     request_id = uuid4()
     initial = [ChatMessage.of(MessageRole.USER, "hi")]
     _update_tool_call_context(mem, request_id, initial, [])
-    extra = ChatMessage.of(MessageRole.TOOL, "result")
+    extra = ChatMessage.tool(ToolResponse.text("result").to_result_block("call"))
     result = _update_tool_call_context(mem, request_id, None, [extra])
     assert len(result) == 2
     assert len(mem.get(_TOOL_CALL_CONTEXT)[str(request_id)]) == 2
@@ -229,11 +237,9 @@ def test_save_get_preserves_model_and_prompt_args():
 _PARSEABLE_CONTENT = '{"result": 42}'
 
 
-def _response(extra_args) -> ChatMessage:
-    return ChatMessage.of(
-        role=MessageRole.ASSISTANT,
-        content=_PARSEABLE_CONTENT,
-        extra_args=extra_args,
+def _response(extra_args) -> ChatResult:
+    return ChatResult(
+        message=ChatMessage.assistant([TextBlock(text=_PARSEABLE_CONTENT)])
     )
 
 
@@ -251,3 +257,25 @@ def test_accepted_finish_reason_reports_parser_execution():
     ctx.report_execution_started.assert_called_once()
     ctx.report_execution_succeeded.assert_called_once()
     ctx.report_execution_failed.assert_not_called()
+
+
+def test_restored_chat_request_reaches_action_as_concrete_type() -> None:
+    """A built-in event restored from JSON reaches the dispatcher as concrete.
+
+    Follow-up (review: consumers use the concrete event directly instead of
+    ``from_event``): the dispatcher routes by type string and hands the concrete
+    event to its handler. If restoration degraded to a generic ``Event``, the
+    isinstance assertions below would fail.
+    """
+    original = ChatRequestEvent(
+        model="m", messages=[ChatMessage.of(MessageRole.USER, "hi")]
+    )
+    restored = Event.from_json(original.model_dump_json())
+
+    assert isinstance(restored, ChatRequestEvent)
+    with patch(
+        "flink_agents.plan.actions.chat_model_action._process_chat_request"
+    ) as handler:
+        asyncio.run(process_chat_request_or_tool_response(restored, MagicMock()))
+        handler.assert_awaited_once()
+        assert isinstance(handler.await_args.args[0], ChatRequestEvent)

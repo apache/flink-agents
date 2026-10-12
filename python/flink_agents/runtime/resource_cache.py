@@ -15,8 +15,6 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import logging
-from collections.abc import Callable
 from typing import Any, Dict
 
 from flink_agents.api.resource import Resource, ResourceType
@@ -24,39 +22,8 @@ from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import JavaFunction
 from flink_agents.plan.resource_provider import JavaResourceProvider, ResourceProvider
 from flink_agents.plan.tools.function_tool import FunctionTool
+from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.resource_context import ResourceContextImpl
-
-_LOG = logging.getLogger(__name__)
-
-
-def _failure_of(close: Callable[[], None]) -> Exception | None:
-    """Run ``close``, returning any failure instead of raising it.
-
-    Keeps the caller's cleanup loop free of a ``try`` block so one bad component
-    cannot end the iteration.
-    """
-    try:
-        close()
-    except Exception as e:
-        return e
-    return None
-
-
-def _first_or_logged(
-    failure: Exception | None, previous: Exception | None, what: str
-) -> Exception | None:
-    """Keep the first failure and log any later one.
-
-    The Python analogue of Flink's ``ExceptionUtils.firstOrSuppressed``. Later
-    failures are logged rather than attached, because ``ExceptionGroup`` requires
-    3.11 and this package supports 3.10.
-    """
-    if failure is None:
-        return previous
-    if previous is None:
-        return failure
-    _LOG.warning("Suppressed failure closing %s.", what, exc_info=failure)
-    return previous
 
 
 class ResourceCache:
@@ -90,13 +57,19 @@ class ResourceCache:
         self._j_resource_adapter: Any = None
         self._resource_context = ResourceContextImpl(self)
 
+    def get_java_resource_adapter(self) -> Any:
+        """Return this operator's Java bridge, or None in a standalone Python runner."""
+        return self._j_resource_adapter
+
     def get_resource_context(self) -> ResourceContextImpl:
         """Return the long-lived ResourceContext owned by this cache."""
         return self._resource_context
 
     def set_java_resource_adapter(self, j_resource_adapter: Any) -> None:
         """Set Java resource adapter for Java resource providers."""
-        self._j_resource_adapter = j_resource_adapter
+        from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
+
+        self._j_resource_adapter = JavaResourceAdapterImpl(j_resource_adapter)
 
     def get_resource(self, name: str, type: ResourceType) -> Resource:
         """Get resource by name and type, creating it from its provider if not cached.
@@ -121,7 +94,9 @@ class ResourceCache:
         resource = resource_provider.provide(
             resource_context=self._resource_context, config=self._config
         )
-        if isinstance(resource, FunctionTool) and isinstance(resource.func, JavaFunction):
+        if isinstance(resource, FunctionTool) and isinstance(
+            resource.func, JavaFunction
+        ):
             resource.set_java_resource_adapter(self._j_resource_adapter)
         # Local import avoids pulling sub-agent machinery for non-sub-agent usage.
         from flink_agents.runtime.base_subagent import BaseSubagentSetup
@@ -158,12 +133,12 @@ class ResourceCache:
         first_failure: Exception | None = None
         for typed in self._cache.values():
             for resource in typed.values():
-                first_failure = _first_or_logged(
-                    _failure_of(resource.close), first_failure, "resource"
+                first_failure = first_or_logged(
+                    failure_of(resource.close), first_failure, "resource"
                 )
         self._cache.clear()
-        first_failure = _first_or_logged(
-            _failure_of(self._resource_context.close), first_failure, "resource context"
+        first_failure = first_or_logged(
+            failure_of(self._resource_context.close), first_failure, "resource context"
         )
         if first_failure is not None:
             raise first_failure

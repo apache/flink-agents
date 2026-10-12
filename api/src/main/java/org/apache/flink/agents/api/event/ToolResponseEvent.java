@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.tools.ToolResponse;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -34,29 +35,27 @@ public class ToolResponseEvent extends Event {
 
     public static final String EVENT_TYPE = "_tool_response_event";
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUuid("request_id"),
+                    BuiltInAttribute.required("responses", Map.class),
+                    BuiltInAttribute.optional("success", Map.class),
+                    BuiltInAttribute.optional("error", Map.class),
+                    BuiltInAttribute.optional("timestamp", Number.class));
+
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     public ToolResponseEvent(
             UUID requestId,
             Map<String, ToolResponse> responses,
             Map<String, Boolean> success,
-            Map<String, String> error,
-            Map<String, String> externalIds) {
+            Map<String, String> error) {
         super(EVENT_TYPE);
         setAttr("request_id", requestId);
         setAttr("responses", responses);
         setAttr("success", success);
         setAttr("error", error);
-        setAttr("external_ids", externalIds);
         setAttr("timestamp", System.currentTimeMillis());
-    }
-
-    public ToolResponseEvent(
-            UUID requestId,
-            Map<String, ToolResponse> responses,
-            Map<String, Boolean> success,
-            Map<String, String> error) {
-        this(requestId, responses, success, error, Map.of());
     }
 
     @JsonCreator
@@ -75,6 +74,8 @@ public class ToolResponseEvent extends Event {
         }
         Map<String, ?> rawResponses = (Map<String, ?>) attributes.get("responses");
         if (rawResponses != null) {
+            Object rawSuccess = attributes.get("success");
+            Map<?, ?> success = rawSuccess instanceof Map ? (Map<?, ?>) rawSuccess : Map.of();
             Map<String, ToolResponse> responses = new HashMap<>();
             for (Map.Entry<String, ?> entry : rawResponses.entrySet()) {
                 Object v = entry.getValue();
@@ -82,8 +83,18 @@ public class ToolResponseEvent extends Event {
                     responses.put(entry.getKey(), (ToolResponse) v);
                 } else if (v instanceof Map) {
                     responses.put(entry.getKey(), MAPPER.convertValue(v, ToolResponse.class));
+                } else if (Boolean.FALSE.equals(success.get(entry.getKey()))) {
+                    // The Python runtime records a failed call as the text it shows the model in
+                    // `responses`, with `success` false and the diagnostic in `error`. Keep that
+                    // text as the error so Java consumers show the model the same thing.
+                    responses.put(entry.getKey(), ToolResponse.error(String.valueOf(v)));
                 } else {
-                    responses.put(entry.getKey(), ToolResponse.success(v));
+                    responses.put(
+                            entry.getKey(),
+                            ToolResponse.text(
+                                    v instanceof String
+                                            ? (String) v
+                                            : MAPPER.valueToTree(v).toString()));
                 }
             }
             attributes.put("responses", responses);
@@ -98,6 +109,7 @@ public class ToolResponseEvent extends Event {
      * @return a typed ToolResponseEvent
      */
     public static ToolResponseEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, ToolResponseEvent::new);
     }
 
@@ -114,12 +126,6 @@ public class ToolResponseEvent extends Event {
     @SuppressWarnings("unchecked")
     public Map<String, ToolResponse> getResponses() {
         return (Map<String, ToolResponse>) getAttr("responses");
-    }
-
-    @JsonIgnore
-    @SuppressWarnings("unchecked")
-    public Map<String, String> getExternalIds() {
-        return (Map<String, String>) getAttr("external_ids");
     }
 
     @JsonIgnore
@@ -146,9 +152,10 @@ public class ToolResponseEvent extends Event {
                 + getRequestId()
                 + ", response="
                 + getResponses()
-                + ", success=true"
+                + ", success="
+                + getAttr("success")
                 + ", timestamp="
-                + getTimestamp()
+                + getAttr("timestamp")
                 + '}';
     }
 }

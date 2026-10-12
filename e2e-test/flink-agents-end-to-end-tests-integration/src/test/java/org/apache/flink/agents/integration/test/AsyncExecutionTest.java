@@ -210,14 +210,15 @@ public class AsyncExecutionTest {
     }
 
     /**
-     * Tests that async execution on JDK 21+ actually executes tasks in parallel.
+     * Tests that async execution actually executes tasks in parallel.
      *
      * <p>This test creates multiple tasks that each sleep for a fixed duration. Each async task
      * records its start and end timestamps. We verify parallel execution by checking if the
      * execution time ranges overlap.
      *
-     * <p>On JDK 21+: Tasks run in parallel, their execution times overlap On JDK &lt; 21: Tasks run
-     * sequentially, no overlap
+     * <p>On JDK 21+: the coroutine engine runs tasks in parallel, their execution times overlap. On
+     * JDK &lt; 21: the blocking-inline parallel execution engine (enabled by default for pure-Java
+     * agents) also runs these multi-key tasks in parallel.
      */
     @Test
     public void testAsyncExecutionIsActuallyParallel() throws Exception {
@@ -322,15 +323,18 @@ public class AsyncExecutionTest {
                             expectedOverlaps - 1, overlapCount));
             System.out.println("✓ Async execution is PARALLEL (as expected on JDK 21+)");
         } else {
-            // On JDK < 21, tasks run sequentially - no overlap expected
-            Assertions.assertEquals(
-                    0,
-                    overlapCount,
+            // On JDK < 21, the blocking-inline parallel execution engine (enabled by default
+            // for pure-Java agents) also runs these multi-key tasks in parallel.
+            int expectedOverlaps = (numRequests * (numRequests - 1)) / 2;
+            Assertions.assertTrue(
+                    overlapCount >= expectedOverlaps - 1, // Allow some tolerance
                     String.format(
-                            "On JDK < 21, async tasks should run sequentially (no overlap). "
-                                    + "But found %d overlapping pairs.",
-                            overlapCount));
-            System.out.println("✓ Async execution is SEQUENTIAL (as expected on JDK < 21)");
+                            "On JDK < 21, the parallel execution engine should run async tasks "
+                                    + "in parallel (overlapping). "
+                                    + "Expected at least %d overlapping pairs, but found %d.",
+                            expectedOverlaps - 1, overlapCount));
+            System.out.println(
+                    "✓ Async execution is PARALLEL (blocking-inline engine on JDK < 21)");
         }
 
         System.out.println("=== Test Passed ===");
@@ -338,9 +342,6 @@ public class AsyncExecutionTest {
 
     @Test
     public void testToolCallBatchExecutionIsActuallyParallel() throws Exception {
-        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
-        int javaVersion = Runtime.version().feature();
-
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
@@ -352,7 +353,7 @@ public class AsyncExecutionTest {
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 3);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 3);
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -378,28 +379,13 @@ public class AsyncExecutionTest {
 
         Assertions.assertEquals(3, executionRanges.size());
         int overlapCount = countOverlaps(executionRanges);
-        if (continuationSupported && javaVersion >= 21) {
-            Assertions.assertTrue(
-                    overlapCount >= 2,
-                    "On JDK 21+, tool calls in one ToolRequestEvent should run in parallel.");
-        } else {
-            Assertions.assertEquals(
-                    0,
-                    overlapCount,
-                    "On JDK < 21, tool-call batch execution should use the sequential fallback.");
-        }
+        Assertions.assertTrue(
+                overlapCount >= 2,
+                "Tool calls in one ToolRequestEvent should run in parallel on all supported JDKs.");
     }
 
     @Test
     public void testToolCallBatchRespectsMaxParallelismInFlight() throws Exception {
-        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
-        int javaVersion = Runtime.version().feature();
-        if (!continuationSupported || javaVersion < 21) {
-            System.out.println(
-                    "Skipping max-parallelism e2e: requires JDK 21+ Continuation execution");
-            return;
-        }
-
         final int sleepTimeMs = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.SLEEP_MS;
         final int toolCount = AsyncExecutionAgent.ToolBatchMaxParallelismAgent.TOOL_COUNT;
         final int maxParallelism = 2;
@@ -415,7 +401,7 @@ public class AsyncExecutionTest {
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
         agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 8);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, maxParallelism);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, maxParallelism);
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -488,14 +474,6 @@ public class AsyncExecutionTest {
 
     @Test
     public void testToolCallBatchTimeoutKeepsCompletedOutcomes() throws Exception {
-        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
-        int javaVersion = Runtime.version().feature();
-        if (!continuationSupported || javaVersion < 21) {
-            System.out.println(
-                    "Skipping batch timeout e2e: requires JDK 21+ Continuation execution");
-            return;
-        }
-
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
@@ -505,8 +483,8 @@ public class AsyncExecutionTest {
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
 
         DataStream<Object> outputStream =
                 agentsEnv
@@ -546,22 +524,12 @@ public class AsyncExecutionTest {
      * Drives the production batch timeout path with a queued-but-unstarted slot, which {@link
      * #testToolCallBatchTimeoutKeepsCompletedOutcomes()} cannot reach: both of its calls start
      * because parallelism never exceeds the pool size. Here {@code num-async-threads = 1} is below
-     * {@code tool-call.parallelism = 2}, so while one slow tool holds the only worker past the
-     * deadline the second slot sits in the pool queue, and the timeout collector must cancel it in
-     * runtime/src/main/java21 ContinuationActionExecutor. Both slots are reported as timeout
-     * failures; whether the cancelled supplier is skipped by the JVM is an implementation detail
-     * the unit tests cover, not this e2e.
+     * {@code async.batch.parallelism = 2}, so while one slow tool holds the only worker past the
+     * deadline the second slot sits in the pool queue. Both slots are reported as timeout failures;
+     * runtime tests also verify that cancelled queued calls remain unstarted.
      */
     @Test
     public void testToolCallBatchTimeoutCancelsQueuedButUnstartedSlots() throws Exception {
-        boolean continuationSupported = ContinuationActionExecutor.isContinuationSupported();
-        int javaVersion = Runtime.version().feature();
-        if (!continuationSupported || javaVersion < 21) {
-            System.out.println(
-                    "Skipping queued-slot batch timeout e2e: requires JDK 21+ Continuation execution");
-            return;
-        }
-
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
@@ -571,8 +539,8 @@ public class AsyncExecutionTest {
         AgentsExecutionEnvironment agentsEnv =
                 AgentsExecutionEnvironment.getExecutionEnvironment(env);
         agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
-        agentsEnv.getConfig().set(AgentExecutionOptions.TOOL_CALL_BATCH_TIMEOUT_MS, 100L);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
+        agentsEnv.getConfig().set(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS, 100L);
         // One pool thread under the parallelism budget keeps the second slot queued.
         agentsEnv.getConfig().set(AgentExecutionOptions.NUM_ASYNC_THREADS, 1);
 

@@ -20,7 +20,6 @@ package org.apache.flink.agents.api.yaml;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.function.PythonFunction;
-import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.FunctionTool;
 import org.apache.flink.agents.api.yaml.YamlLoader.LoadedFile;
@@ -57,8 +56,7 @@ class YamlPythonFixtureParityTest {
                 (FunctionTool) agent.getResources().get(ResourceType.TOOL).get("add");
         assertThat(addTool.getFunc()).isInstanceOf(PythonFunction.class);
 
-        // Descriptor `clazz: ollama` with no `type:` is wrapped in the Java-side Python
-        // wrapper class, with the resolved Python FQN passed as the `pythonClazz` init arg.
+        // Descriptor `clazz: ollama` with no `type:` declares the actual Python class.
         Object connection =
                 agent.getResources()
                         .get(ResourceType.CHAT_MODEL_CONNECTION)
@@ -67,9 +65,7 @@ class YamlPythonFixtureParityTest {
                 .isInstanceOf(org.apache.flink.agents.api.resource.ResourceDescriptor.class);
         org.apache.flink.agents.api.resource.ResourceDescriptor descriptor =
                 (org.apache.flink.agents.api.resource.ResourceDescriptor) connection;
-        assertThat(descriptor.getClazz())
-                .isEqualTo(ResourceName.ChatModel.PYTHON_WRAPPER_CONNECTION);
-        assertThat(descriptor.getInitialArguments())
-                .containsEntry("pythonClazz", ResourceName.ChatModel.Python.OLLAMA_CONNECTION);
+        assertThat(descriptor.getClazz()).isEqualTo("OllamaChatModelConnection");
+        assertThat(descriptor.getInitialArguments()).doesNotContainKey("pythonClazz");
     }
 }

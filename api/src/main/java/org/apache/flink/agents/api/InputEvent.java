@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -29,6 +30,9 @@ import java.util.UUID;
 public class InputEvent extends Event {
 
     public static final String EVENT_TYPE = "_input_event";
+
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(BuiltInAttribute.requiredUntyped("input"));
 
     public InputEvent(Object input) {
         super(EVENT_TYPE);
@@ -47,8 +51,11 @@ public class InputEvent extends Event {
      *
      * @param event the base event containing the input data in attributes
      * @return a typed InputEvent
+     * @throws IllegalArgumentException if the event does not carry exactly the {@code input}
+     *     attribute
      */
     public static InputEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, InputEvent::new);
     }
 

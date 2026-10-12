@@ -98,6 +98,15 @@ under the License.
             <version>${flink.version}</version>
             <scope>provided</scope>
         </dependency>
+        <!-- Test-scoped planner so the typed toTable terminals can be unit-tested headlessly
+             (StreamTableEnvironment.create needs an ExecutorFactory); production gets the planner
+             from the cluster classpath. -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-table-planner_2.12</artifactId>
+            <version>${flink.version}</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-test-utils-junit</artifactId>
@@ -267,6 +276,37 @@ under the License.
                                         <compileSourceRoot>${project.basedir}/src/main/java21</compileSourceRoot>
                                     </compileSourceRoots>
                                     <outputDirectory>${project.build.outputDirectory}/META-INF/versions/21</outputDirectory>
+                                    <compilerArgs>
+                                        <arg>--add-exports</arg>
+                                        <arg>java.base/jdk.internal.vm=ALL-UNNAMED</arg>
+                                    </compilerArgs>
+                                </configuration>
+                            </execution>
+                            <!--
+                              Tests run against target/classes, where the multi-release layout is
+                              inert: only a packaged jar resolves META-INF/versions/21. Compiling
+                              the same sources into test-classes puts them ahead of the JDK 11
+                              fallback on the test classpath, so tests exercise the real
+                              continuation executor instead of its synchronous stand-in.
+
+                              These class files are JDK 21 bytecode, so switching this tree back
+                              to JDK 11 needs a `mvn clean` first: javac cannot read them.
+                            -->
+                            <execution>
+                                <id>compile-java21-for-tests</id>
+                                <phase>process-test-classes</phase>
+                                <goals>
+                                    <goal>compile</goal>
+                                </goals>
+                                <configuration>
+                                    <release combine.self="override"/>
+                                    <source>21</source>
+                                    <target>21</target>
+                                    <fork>true</fork>
+                                    <compileSourceRoots>
+                                        <compileSourceRoot>${project.basedir}/src/main/java21</compileSourceRoot>
+                                    </compileSourceRoots>
+                                    <outputDirectory>${project.build.testOutputDirectory}</outputDirectory>
                                     <compilerArgs>
                                         <arg>--add-exports</arg>
                                         <arg>java.base/jdk.internal.vm=ALL-UNNAMED</arg>

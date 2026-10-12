@@ -23,13 +23,21 @@ from typing_extensions import override
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+)
 from flink_agents.api.chat_models.chat_model import BaseChatModelConnection
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import action, chat_model_connection, chat_model_setup
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
-from flink_agents.api.resource import ResourceDescriptor, ResourceName
+from flink_agents.api.resource import (
+    JavaResourceDescriptor,
+    ResourceDescriptor,
+    ResourceName,
+)
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.tools.tool import Tool
 
@@ -48,7 +56,7 @@ class OverlappingPythonChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Echo the request after observing another in-flight call."""
         self._reject_unsupported_output_schema(output_schema)
         try:
@@ -57,9 +65,8 @@ class OverlappingPythonChatModelConnection(BaseChatModelConnection):
             message = "Timed out waiting for concurrent cross-language chat request."
             raise RuntimeError(message) from error
 
-        return ChatMessage.of(
-            role=MessageRole.ASSISTANT,
-            content=f"python-connection:{messages[-1].text}",
+        return ChatResult(
+            message=ChatMessage.assistant(f"python-connection:{messages[-1].text}")
         )
 
 
@@ -81,9 +88,8 @@ class ConcurrentChatModelCrossLanguageAgent(Agent):
     @staticmethod
     def java_chat_model() -> ResourceDescriptor:
         """Declare a Java setup backed by the Python connection."""
-        return ResourceDescriptor(
-            clazz=ResourceName.ChatModel.JAVA_WRAPPER_SETUP,
-            java_clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
+        return JavaResourceDescriptor(
+            clazz=ResourceName.ChatModel.Java.OLLAMA_SETUP,
             connection="overlapping_python_connection",
             model="mock-model",
             extract_reasoning=False,

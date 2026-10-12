@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -228,11 +229,11 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
-    public ChatMessage chat(List<ChatMessage> messages) {
+    public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
 
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Map<String, Object> modelParams) {
@@ -304,8 +305,9 @@ public abstract class BaseChatModelSetup extends Resource {
 
     /**
      * The configured intent about how an output schema should be applied, defaulting to {@link
-     * StructuredOutputStrategy#AUTO}. Whether native structured output is actually applied combines
-     * this policy with the connection's model-dependent capability.
+     * StructuredOutputStrategy#AUTO}. {@link
+     * StructuredOutputStrategy#resolvesToNative(NativeStructuredOutputSupport)} combines this
+     * policy with the connection's support for the request.
      *
      * @return the structured output strategy
      */

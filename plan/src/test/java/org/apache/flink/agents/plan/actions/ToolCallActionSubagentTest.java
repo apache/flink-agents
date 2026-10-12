@@ -20,6 +20,7 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -30,6 +31,7 @@ import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.memory.BaseLongTermMemory;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
@@ -42,6 +44,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -68,7 +71,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("{\"verdict\":\"approved\",\"findings\":[\"style\"]}");
         assertThat(response.getError()).doesNotContainKey("call-1");
     }
@@ -142,7 +145,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("{\"approved\":true,\"note\":\"clean\"}");
     }
 
@@ -159,7 +162,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent delegated = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(delegated.getSuccess()).containsEntry("call-1", true);
-        assertThat(delegated.getResponses().get("call-1").getResult()).isEqualTo("done");
+        assertThat(delegated.getResponses().get("call-1").getText()).isEqualTo("done");
         // A sub-agent call resolves through the setup, which owns its own durable execution.
         assertThat(ctx.durableExecutions).isZero();
 
@@ -167,7 +170,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent direct = ToolResponseEvent.fromEvent(ctx.sentEvents.get(1));
         assertThat(direct.getSuccess()).containsEntry("call-1", true);
-        assertThat(direct.getResponses().get("call-1").getResult()).isEqualTo("reviewer called");
+        assertThat(direct.getResponses().get("call-1").getText()).isEqualTo("reviewer called");
         assertThat(ctx.durableExecutions).isOne();
     }
 
@@ -205,8 +208,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
-                .isEqualTo("queryOrder called");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("queryOrder called");
         assertThat(ctx.durableExecutions).isOne();
     }
 
@@ -231,8 +233,8 @@ class ToolCallActionSubagentTest {
         assertThat(response.getSuccess())
                 .containsEntry("call-1", true)
                 .containsEntry("call-2", true);
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("a done");
-        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("b done");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("a done");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("b done");
     }
 
     /**
@@ -309,9 +311,9 @@ class ToolCallActionSubagentTest {
                 .containsEntry("call-1", true)
                 .containsEntry("call-2", true)
                 .containsEntry("call-3", true);
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("agent-result");
-        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("alpha called");
-        assertThat(response.getResponses().get("call-3").getResult()).isEqualTo("beta called");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("agent-result");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("alpha called");
+        assertThat(response.getResponses().get("call-3").getText()).isEqualTo("beta called");
     }
 
     /**
@@ -415,7 +417,7 @@ class ToolCallActionSubagentTest {
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -433,7 +435,7 @@ class ToolCallActionSubagentTest {
 
     /** One request carrying two sub-agent calls, so the batched path has more than one to run. */
     private static ToolRequestEvent twoSubagentRequest(String first, String second) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -467,7 +469,7 @@ class ToolCallActionSubagentTest {
      */
     private static ToolRequestEvent mixedRequest(
             String subagentName, String firstTool, String secondTool) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -497,6 +499,17 @@ class ToolCallActionSubagentTest {
                                 Map.of("name", secondTool, "arguments", Map.of("q", "y")))));
     }
 
+    /**
+     * Builds a metadata-only descriptor naming {@code concreteClass}, so each in-process double
+     * carries a descriptor naming its own type as the {@link SubagentSetup} constructor requires.
+     */
+    private static ResourceDescriptor subagentDescriptor(
+            Class<?> concreteClass, String description) {
+        return ResourceDescriptor.Builder.newBuilder(concreteClass.getName())
+                .addInitialArgument(SubagentSetup.FIELD_DESCRIPTION, description)
+                .build();
+    }
+
     /** Captures every prompt it is handed and resolves to a preset outcome. */
     private static class RecordingSubagentSetup extends SubagentSetup {
         private final SubagentResult outcome;
@@ -504,7 +517,11 @@ class ToolCallActionSubagentTest {
         private Exception submitFailure;
 
         RecordingSubagentSetup(SubagentResult outcome) {
-            super("Reviews a diff.");
+            this(subagentDescriptor(RecordingSubagentSetup.class, "Reviews a diff."), outcome);
+        }
+
+        RecordingSubagentSetup(ResourceDescriptor descriptor, SubagentResult outcome) {
+            super(descriptor, null);
             this.outcome = outcome;
         }
 
@@ -534,7 +551,9 @@ class ToolCallActionSubagentTest {
     /** Declares a result type, so its result is read through it. */
     private static class TypedRecordingSubagentSetup extends RecordingSubagentSetup {
         TypedRecordingSubagentSetup(SubagentResult outcome) {
-            super(outcome);
+            super(
+                    subagentDescriptor(TypedRecordingSubagentSetup.class, "Reviews a diff."),
+                    outcome);
         }
 
         @Override
@@ -602,7 +621,7 @@ class ToolCallActionSubagentTest {
         private final List<String> ops;
 
         OrderRecordingSubagentSetup(String label, List<String> ops) {
-            super("Orders a diff.");
+            super(subagentDescriptor(OrderRecordingSubagentSetup.class, "Orders a diff."), null);
             this.label = label;
             this.ops = ops;
         }
@@ -664,7 +683,9 @@ class ToolCallActionSubagentTest {
         private final List<String> ops;
 
         InterruptingSubagentSetup(String label, List<String> ops) {
-            super("Interrupts on await.");
+            super(
+                    subagentDescriptor(InterruptingSubagentSetup.class, "Interrupts on await."),
+                    null);
             this.label = label;
             this.ops = ops;
         }
@@ -723,7 +744,7 @@ class ToolCallActionSubagentTest {
     /** Its await overflows the stack, to drive the {@link StackOverflowError} absorption path. */
     private static class OverflowingSubagentSetup extends SubagentSetup {
         OverflowingSubagentSetup() {
-            super("Overflows on await.");
+            super(subagentDescriptor(OverflowingSubagentSetup.class, "Overflows on await."), null);
         }
 
         @Override
@@ -781,7 +802,7 @@ class ToolCallActionSubagentTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(getMetadata().getName() + " called");
+            return ToolResponse.text(getMetadata().getName() + " called");
         }
     }
 
@@ -806,7 +827,7 @@ class ToolCallActionSubagentTest {
         /** Turns on the batched path: async tool calls with room to run more than one. */
         FakeRunnerContext withParallelToolCalls() {
             config.set(AgentExecutionOptions.TOOL_CALL_ASYNC, true);
-            config.set(AgentExecutionOptions.TOOL_CALL_PARALLELISM, 2);
+            config.set(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM, 2);
             return this;
         }
 
@@ -872,6 +893,11 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             // A deferred handle: the callable runs only when the future is awaited, directly
             // or as part of gather, so the count reflects executions, not handle creations.
@@ -884,13 +910,12 @@ class ToolCallActionSubagentTest {
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new TestDurableFuture<>(
                     "gather",
                     () -> {
                         List<Outcome<T>> outcomes = new ArrayList<>(futures.size());
-                        for (DurableFuture<T> future : futures) {
+                        for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {

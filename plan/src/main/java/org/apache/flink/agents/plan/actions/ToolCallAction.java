@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
@@ -44,6 +45,7 @@ import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.plan.utils.ToolResultUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -61,7 +63,7 @@ import java.util.concurrent.CompletionException;
 
 /** Built-in action for processing tool call. */
 public class ToolCallAction {
-    static final String TOOL_CALL_DURABLE_ID = "tool-call";
+    static final String TOOL_CALL_DURABLE_ID = "tool-call:";
     private static final Logger LOG = LoggerFactory.getLogger(ToolCallAction.class);
 
     public static Action getToolCallAction() throws Exception {
@@ -74,20 +76,21 @@ public class ToolCallAction {
                 List.of(ToolRequestEvent.EVENT_TYPE));
     }
 
-    public static void processToolRequest(Event event, RunnerContext ctx)
-            throws InterruptedException {
-        ToolRequestEvent toolRequest = ToolRequestEvent.fromEvent(event);
+    public static void processToolRequest(Event event, RunnerContext ctx) throws Exception {
+        // Built-in events reach an action as their concrete subclass (restored at the JSON
+        // boundary), so the dispatched ToolRequestEvent is cast directly.
+        ToolRequestEvent toolRequest = (ToolRequestEvent) event;
         boolean toolCallAsync = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_ASYNC);
-        int toolCallParallelism = ctx.getConfig().get(AgentExecutionOptions.TOOL_CALL_PARALLELISM);
+        int toolCallParallelism =
+                ctx.getConfig().get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM);
 
         Map<String, Boolean> success = new HashMap<>();
         Map<String, String> error = new HashMap<>();
         Map<String, ToolResponse> responses = new HashMap<>();
-        Map<String, String> externalIds = new HashMap<>();
         List<ToolCallExecution> executions =
-                buildToolCallExecutions(toolRequest, ctx, externalIds, success, error, responses);
+                buildToolCallExecutions(toolRequest, ctx, success, error, responses);
 
-        // executeParallel/executeSequentially let InterruptedException propagate rather than
+        // executeParallel/executeSequentially let cancellation propagate rather than
         // recording it as a tool error, so a cancellation here skips sendEvent below entirely:
         // no ToolResponseEvent goes out, no further chat call gets driven off a cancelled tool
         // call, and the action is never persisted as completed on the back of it.
@@ -97,34 +100,31 @@ public class ToolCallAction {
             executeSequentially(executions, toolCallAsync, ctx, success, error, responses);
         }
 
-        ctx.sendEvent(
-                new ToolResponseEvent(toolRequest.getId(), responses, success, error, externalIds));
+        ctx.sendEvent(new ToolResponseEvent(toolRequest.getId(), responses, success, error));
     }
 
     @SuppressWarnings("unchecked")
     private static List<ToolCallExecution> buildToolCallExecutions(
             ToolRequestEvent toolRequest,
             RunnerContext ctx,
-            Map<String, String> externalIds,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws Exception {
         List<ToolCallExecution> executions = new ArrayList<>();
-        for (Map<String, Object> toolCall : toolRequest.getToolCalls()) {
-            String id = String.valueOf(toolCall.get("id"));
-            Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-            String name = (String) function.get("name");
-            Map<String, Object> arguments = (Map<String, Object>) function.get("arguments");
-            Map<String, Object> mergedArguments =
-                    arguments == null ? new HashMap<>() : new HashMap<>(arguments);
-
-            if (toolCall.containsKey("original_id")) {
-                externalIds.put(id, (String) toolCall.get("original_id"));
-            }
+        for (ToolCallBlock toolCall : toolRequest.getToolCalls()) {
+            String id = toolCall.getCallId();
+            String name = toolCall.getName();
+            Map<String, Object> arguments = toolCall.getInput();
+            Map<String, Object> mergedArguments = new HashMap<>(arguments);
 
             Tool tool = null;
             SubagentSetup agent = null;
-            Exception preparationError = null;
+            Exception preparationError =
+                    arguments == null
+                            ? new IllegalArgumentException(
+                                    "INVALID_ARGUMENT /: type (expected object)")
+                            : null;
             // The reserved _subagent_ prefix separates the two namespaces: tool
             // registration rejects the prefix, so a prefixed callable name can only
             // address a sub-agent. Matched once here and carried down, because resolving
@@ -141,6 +141,7 @@ public class ToolCallAction {
                     tool = (Tool) ctx.getResource(name, ResourceType.TOOL);
                 }
             } catch (Exception e) {
+                rethrowCancellation(e);
                 preparationError = e;
             }
 
@@ -148,23 +149,16 @@ public class ToolCallAction {
             // unchanged.
             if (tool != null) {
                 try {
-                    // Framework-owned injected args must win over model-provided values so hidden
-                    // context such as tenant ids cannot be spoofed by a tool call payload.
                     mergedArguments.putAll(resolveInjectedArguments(tool, ctx));
                 } catch (Exception e) {
+                    rethrowCancellation(e);
                     preparationError = e;
                 }
             }
 
             ToolParameters metadataParameters = new ToolParameters(mergedArguments);
             Map<String, Object> entityMetadata =
-                    toolEntityMetadata(
-                            toolRequest.getId(),
-                            id,
-                            externalIds.get(id),
-                            name,
-                            tool,
-                            metadataParameters);
+                    toolEntityMetadata(toolRequest.getId(), id, name, tool, metadataParameters);
             // A resolved delegation is reported under the sub-agent scope keyed by the registered
             // agent name, so the runtime attributes its outcome and latency to that sub-agent
             // instead of bucketing the reserved callable name as an unknown tool. An unresolved
@@ -214,7 +208,7 @@ public class ToolCallAction {
                     new DurableCallable<>() {
                         @Override
                         public String getId() {
-                            return TOOL_CALL_DURABLE_ID;
+                            return TOOL_CALL_DURABLE_ID + id;
                         }
 
                         @Override
@@ -245,7 +239,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         // Sub-agent calls run through durable execution inside the setup, so they cannot join the
         // tool batch below; they are dispatched concurrently on their own (submit every call, then
         // await each) so that, like the batched tool calls, they overlap instead of running one by
@@ -274,13 +268,8 @@ public class ToolCallAction {
             for (int i = 0; i < outcomes.size(); i++) {
                 recordOutcome(toolExecutions.get(i), outcomes.get(i), success, error, responses);
             }
-        } catch (InterruptedException e) {
-            // A cancellation signal, not a batch failure: propagate immediately instead of
-            // recording every execution as a tool error and letting the caller send a
-            // ToolResponseEvent that drives the action loop onward.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            rethrowCancellation(e);
             if (resultObservedAt == null) {
                 resultObservedAt = Instant.now();
             }
@@ -316,7 +305,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         for (ToolCallExecution execution : executions) {
             if (execution.agent != null) {
                 dispatchAgentExecution(execution, ctx, success, error, responses);
@@ -333,13 +322,8 @@ public class ToolCallAction {
                 resultObservedAt = Instant.now();
                 outcome = Outcome.success(response);
                 recordToolResponse(execution.id, response, success, error, responses);
-            } catch (InterruptedException e) {
-                // A cancellation signal, not a tool failure: propagate immediately instead of
-                // recording it as a tool error and letting the loop move on to (or past) the
-                // remaining executions and the caller send a ToolResponseEvent for it.
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                rethrowCancellation(e);
                 if (resultObservedAt == null) {
                     resultObservedAt = Instant.now();
                 }
@@ -357,13 +341,24 @@ public class ToolCallAction {
         }
     }
 
+    private static void rethrowCancellation(Exception failure) throws Exception {
+        if (CancellationUtils.isCancellation(failure)) {
+            if (CancellationUtils.isInterruption(failure)) {
+                Thread.currentThread().interrupt();
+            }
+            throw failure;
+        }
+    }
+
     private static void recordOutcome(
             ToolCallExecution execution,
             Outcome<ToolResponse> outcome,
             Map<String, Boolean> success,
             Map<String, String> error,
-            Map<String, ToolResponse> responses) {
+            Map<String, ToolResponse> responses)
+            throws Exception {
         if (outcome.isFailure()) {
+            rethrowCancellation(outcome.getError());
             recordExecutionException(execution, outcome.getError(), success, error, responses);
         } else {
             recordToolResponse(execution.id, outcome.getValue(), success, error, responses);
@@ -445,7 +440,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         try {
             // The start occurrence is reported once here, before the hand-off, so a failure while
             // normalizing the result -- which re-enters recordAgentFailure below -- still yields a
@@ -456,13 +451,8 @@ public class ToolCallAction {
             // wrapping the call again here would nest durable cursors.
             SubagentResult result = execution.agent.submit(ctx, execution.agentArguments).await();
             recordAgentResult(execution, result, ctx, success, error, responses);
-        } catch (InterruptedException e) {
-            // A cancellation, not a sub-agent failure: propagate it exactly like the tool paths do
-            // (#1111) so the caller skips sendEvent instead of folding the cancellation into a
-            // tool-error response and driving a further chat call off it.
-            Thread.currentThread().interrupt();
-            throw e;
         } catch (Exception e) {
+            rethrowCancellation(e);
             recordAgentFailure(execution, e, ctx, success, error, responses);
         } catch (StackOverflowError e) {
             // Normalizing a result nested deeper than the stack allows overflows it; the cycle
@@ -490,10 +480,10 @@ public class ToolCallAction {
      * durable keys stay stable. The per-call try/catch keeps the isolation the serial path had: one
      * sub-agent failing, at submit or at await, is recorded and reported without stopping the rest.
      *
-     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111), an
-     * {@link InterruptedException} propagates so the caller skips sendEvent, and every handle
-     * submitted but no longer going to be awaited is cancelled first, so the concurrent dispatch
-     * leaves no in-flight remote run dangling on the way out.
+     * <p>A cancellation is the one thing that is not isolated: like the tool batch (#1111),
+     * cancellation propagates so the caller skips sendEvent, and every handle submitted but no
+     * longer going to be awaited is cancelled first, so the concurrent dispatch leaves no in-flight
+     * remote run dangling on the way out.
      */
     private static void dispatchAgentExecutions(
             List<ToolCallExecution> agentExecutions,
@@ -501,7 +491,7 @@ public class ToolCallAction {
             Map<String, Boolean> success,
             Map<String, String> error,
             Map<String, ToolResponse> responses)
-            throws InterruptedException {
+            throws Exception {
         // submit() runs through durable execution inside the setup, so it is not wrapped here.
         List<ToolCallExecution> submitted = new ArrayList<>(agentExecutions.size());
         List<SubagentFuture> futures = new ArrayList<>(agentExecutions.size());
@@ -513,13 +503,14 @@ public class ToolCallAction {
                 reportSubagentStarted(execution, ctx);
                 futures.add(execution.agent.submit(ctx, execution.agentArguments));
                 submitted.add(execution);
-            } catch (InterruptedException e) {
-                // Cancelled mid-submit: everything submitted so far is now never going to be
-                // awaited, so cancel it before propagating like the tool paths (#1111).
-                cancelFrom(futures, 0);
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)) {
+                    cancelFrom(futures, 0);
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw e;
+                }
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             }
         }
@@ -528,13 +519,14 @@ public class ToolCallAction {
             try {
                 SubagentResult result = futures.get(i).await();
                 recordAgentResult(execution, result, ctx, success, error, responses);
-            } catch (InterruptedException e) {
-                // Cancelled mid-await: this handle and every later one were submitted but will not
-                // be awaited, so cancel them before propagating like the tool paths (#1111).
-                cancelFrom(futures, i);
-                Thread.currentThread().interrupt();
-                throw e;
             } catch (Exception e) {
+                if (CancellationUtils.isCancellation(e)) {
+                    cancelFrom(futures, i);
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
+                    throw e;
+                }
                 recordAgentFailure(execution, e, ctx, success, error, responses);
             } catch (StackOverflowError e) {
                 // As in the serial path: an overflow while normalizing one result is an Error that
@@ -594,7 +586,7 @@ public class ToolCallAction {
             success.put(execution.id, true);
             responses.put(
                     execution.id,
-                    ToolResponse.success(
+                    ToolResponse.text(
                             ToolResultUtils.toChatMessageContent(
                                     ToolResultUtils.normalizeAgentResult(
                                             result.getResult(), execution.agent.getResultType()))));
@@ -766,7 +758,6 @@ public class ToolCallAction {
     private static Map<String, Object> toolEntityMetadata(
             UUID toolRequestEventId,
             String toolCallId,
-            String externalId,
             String toolName,
             Tool tool,
             ToolParameters parameters) {
@@ -774,9 +765,6 @@ public class ToolCallAction {
         metadata.put(
                 ToolExecutionMetadataKeys.TOOL_REQUEST_EVENT_ID, toolRequestEventId.toString());
         metadata.put(ToolExecutionMetadataKeys.TOOL_CALL_ID, toolCallId);
-        if (externalId != null) {
-            metadata.put(ToolExecutionMetadataKeys.EXTERNAL_ID, externalId);
-        }
         ToolType toolType = tool == null ? null : tool.getToolType();
         if (toolType != null) {
             metadata.put(ToolExecutionMetadataKeys.TOOL_TYPE, toolType.getValue());

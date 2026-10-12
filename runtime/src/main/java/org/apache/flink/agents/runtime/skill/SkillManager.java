@@ -19,7 +19,13 @@
 package org.apache.flink.agents.runtime.skill;
 
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
+import org.apache.flink.agents.api.skills.SkillUrlUtils;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
+import org.apache.flink.agents.runtime.skill.repository.ClasspathSkillRepository;
+import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
+import org.apache.flink.agents.runtime.skill.repository.PackageSkillRepository;
+import org.apache.flink.agents.runtime.skill.repository.URLSkillRepository;
 import org.apache.flink.util.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -34,8 +40,11 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
+import java.util.function.Function;
 
 /**
  * Loads and indexes all skills referenced by a {@link Skills} configuration.
@@ -52,6 +61,7 @@ public class SkillManager implements AutoCloseable {
 
     private final Skills config;
     private final ClassLoader classLoader;
+    private final Map<String, SkillSourceHandler> handlers = new HashMap<>();
     private final Map<String, AgentSkill> skills = new LinkedHashMap<>();
     private final Map<String, SkillRepository> repos = new HashMap<>();
 
@@ -70,8 +80,16 @@ public class SkillManager implements AutoCloseable {
      * {@link #SkillManager(Skills)}.
      */
     public SkillManager(Skills config, ClassLoader classLoader) {
+        this(config, classLoader, null);
+    }
+
+    public SkillManager(
+            Skills config,
+            ClassLoader classLoader,
+            @Nullable PythonInterpreterManager interpreterManager) {
         this.config = config;
         this.classLoader = classLoader;
+        initializeHandlers(interpreterManager);
         loadAll();
     }
 
@@ -83,6 +101,91 @@ public class SkillManager implements AutoCloseable {
      */
     public SkillManager(Skills config) {
         this(config, Thread.currentThread().getContextClassLoader());
+    }
+
+    /** Construct with instance-local handlers for internal lifecycle tests. */
+    SkillManager(Skills config, Map<String, SkillSourceHandler> handlers) {
+        this.config = config;
+        this.classLoader = Thread.currentThread().getContextClassLoader();
+        this.handlers.putAll(handlers);
+        loadAll();
+    }
+
+    private void initializeHandlers(@Nullable PythonInterpreterManager interpreterManager) {
+        registerHandler(
+                "local",
+                (params, cl) -> new FileSystemSkillRepository(require(params, "local", "path")),
+                params -> params.getOrDefault("path", ""));
+        registerHandler(
+                "url",
+                (params, cl) ->
+                        new URLSkillRepository(
+                                require(params, "url", "url"),
+                                params.get("sha256"),
+                                Boolean.parseBoolean(
+                                        params.getOrDefault("allow_insecure_http", "false"))),
+                params -> SkillUrlUtils.redact(params.get("url")));
+        registerHandler(
+                "classpath",
+                (params, cl) ->
+                        new ClasspathSkillRepository(require(params, "classpath", "resource"), cl),
+                params -> params.getOrDefault("resource", ""));
+        registerHandler(
+                "package",
+                (params, cl) ->
+                        new PackageSkillRepository(
+                                require(params, "package", "package"),
+                                require(params, "package", "resource"),
+                                interpreterManager),
+                params ->
+                        params.getOrDefault("package", "")
+                                + "/"
+                                + params.getOrDefault("resource", ""));
+    }
+
+    private void registerHandler(
+            String scheme,
+            SkillSourceHandler opener,
+            Function<Map<String, String>, String> describer) {
+        handlers.put(
+                scheme,
+                new SkillSourceHandler() {
+                    @Override
+                    public SkillRepository open(Map<String, String> params, ClassLoader cl)
+                            throws IOException {
+                        return opener.open(params, cl);
+                    }
+
+                    @Override
+                    public String describeLocation(Map<String, String> params) {
+                        return describer.apply(params);
+                    }
+                });
+    }
+
+    SkillSourceHandler getHandler(String scheme) {
+        SkillSourceHandler handler = handlers.get(scheme.toLowerCase(Locale.ROOT));
+        if (handler == null) {
+            throw new IllegalArgumentException(
+                    "Unknown skill source scheme: "
+                            + scheme
+                            + ". Registered schemes: "
+                            + new TreeSet<>(handlers.keySet()));
+        }
+        return handler;
+    }
+
+    private static String require(Map<String, String> params, String scheme, String key) {
+        String value = params.get(key);
+        if (value == null) {
+            throw new IllegalArgumentException(
+                    "Missing required param '"
+                            + key
+                            + "' for skill source scheme '"
+                            + scheme
+                            + "'");
+        }
+        return value;
     }
 
     public int size() {
@@ -166,8 +269,7 @@ public class SkillManager implements AutoCloseable {
                 try {
                     origin = originOf(spec);
                     SkillRepository repo =
-                            SkillSourceRegistry.get(spec.getScheme())
-                                    .open(spec.getParams(), classLoader);
+                            getHandler(spec.getScheme()).open(spec.getParams(), classLoader);
                     openedRepos.add(repo);
                     registerRepo(repo, origin);
                 } catch (IOException | IllegalArgumentException e) {
@@ -197,10 +299,10 @@ public class SkillManager implements AutoCloseable {
     /**
      * Build a {@link SkillOrigin} from a spec for diagnostics (WARN on duplicates, etc.). The
      * location description is delegated to the handler registered for the scheme — see {@link
-     * SkillSourceHandler#describeLocation(Map)} — so adding a new scheme is a single registry call.
+     * SkillSourceHandler#describeLocation(Map)} for this manager instance.
      */
-    private static SkillOrigin originOf(SkillSourceSpec spec) {
-        SkillSourceHandler handler = SkillSourceRegistry.get(spec.getScheme());
+    private SkillOrigin originOf(SkillSourceSpec spec) {
+        SkillSourceHandler handler = getHandler(spec.getScheme());
         return new SkillOrigin(spec.getScheme(), handler.describeLocation(spec.getParams()));
     }
 

@@ -45,7 +45,8 @@ import java.util.Optional;
  * engine's plan layer (the {@code RoutingExecutor} implementations).
  *
  * <p>Abstain ({@link RoutingDecision#abstain()}) → {@link #getDefaultModel()}. A returned name that
- * is not a candidate is an invalid decision and is failed clearly by the caller.
+ * is not a candidate is treated as abstain, with the rejected name kept in the routing event's
+ * metadata. Declaration errors (a non-candidate default or rule target) still fail at build time.
  */
 public class ModelRouter extends Resource {
 

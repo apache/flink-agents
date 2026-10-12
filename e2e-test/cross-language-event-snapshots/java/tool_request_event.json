@@ -3,9 +3,11 @@
   "attributes" : {
     "model" : "test-model",
     "tool_calls" : [ {
-      "id" : "call_aaaa",
+      "type" : "tool_call",
       "name" : "echo",
-      "arguments" : {
+      "call_id" : "call_aaaa",
+      "metadata" : { },
+      "input" : {
         "value" : "ping"
       }
     } ]

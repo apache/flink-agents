@@ -25,8 +25,10 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
 
@@ -163,7 +165,12 @@ public abstract class Prompt extends SerializableResource {
                     messages -> {
                         List<String> formattedMessages = new ArrayList<>();
                         for (ChatMessage message : messages) {
-                            String formattedContent = format(message.getText(), kwargs);
+                            String text =
+                                    message.getRole() == MessageRole.TOOL
+                                            ? ((ToolResultBlock) message.getBlocks().get(0))
+                                                    .getText()
+                                            : message.getText();
+                            String formattedContent = format(text, kwargs);
                             String formatted =
                                     message.getRole().getValue() + ": " + formattedContent;
                             formattedMessages.add(formatted);
@@ -186,24 +193,43 @@ public abstract class Prompt extends SerializableResource {
                             messages.stream()
                                     .map(
                                             message ->
-                                                    new ChatMessage(
-                                                            message.getRole(),
+                                                    message.withBlocks(
                                                             formatBlocks(
                                                                     message.getBlocks(), kwargs)))
                                     .collect(Collectors.toList()));
         }
 
-        /** Placeholder substitution applies to text blocks; media blocks pass through as-is. */
+        /** Formats template text, including tool result text, without changing other content. */
         private List<ContentBlock> formatBlocks(
                 List<ContentBlock> blocks, Map<String, String> kwargs) {
             List<ContentBlock> formatted = new ArrayList<>(blocks.size());
             for (ContentBlock block : blocks) {
-                formatted.add(
-                        block instanceof TextBlock
-                                ? new TextBlock(format(((TextBlock) block).getText(), kwargs))
-                                : block);
+                if (block instanceof DataContentBlock) {
+                    formatted.add(formatDataBlock((DataContentBlock) block, kwargs));
+                } else if (block instanceof ToolResultBlock) {
+                    ToolResultBlock result = (ToolResultBlock) block;
+                    List<DataContentBlock> resultBlocks =
+                            result.getBlocks().stream()
+                                    .map(data -> formatDataBlock(data, kwargs))
+                                    .collect(Collectors.toList());
+                    formatted.add(
+                            new ToolResultBlock(
+                                    result.getCallId(),
+                                    resultBlocks,
+                                    result.isError(),
+                                    result.getMetadata()));
+                } else {
+                    formatted.add(block);
+                }
             }
             return formatted;
+        }
+
+        private DataContentBlock formatDataBlock(
+                DataContentBlock block, Map<String, String> kwargs) {
+            return block instanceof TextBlock
+                    ? new TextBlock(format(((TextBlock) block).getText(), kwargs))
+                    : block;
         }
 
         @Override

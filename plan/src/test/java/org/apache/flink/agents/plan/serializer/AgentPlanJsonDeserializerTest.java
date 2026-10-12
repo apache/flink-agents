@@ -117,9 +117,9 @@ public class AgentPlanJsonDeserializerTest {
                 new FunctionTool(
                         new ToolMetadata("query_order", "Query order.", "{}"),
                         new JavaFunction(
-                                MyAction.class.getName(),
-                                "doNothing",
-                                new Class[] {Event.class, RunnerContext.class}),
+                                AgentPlanJsonDeserializerTest.class,
+                                "queryOrder",
+                                new Class<?>[] {String.class}),
                         Map.of(
                                 "tenant_id",
                                 ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
@@ -157,6 +157,11 @@ public class AgentPlanJsonDeserializerTest {
         assertEquals(
                 Map.of("tenant_id", ToolParameterInjection.fromSensoryMemory("request.tenant_id")),
                 deserializedTool.getInjectedArgs());
+    }
+
+    public static String queryOrder(
+            @org.apache.flink.agents.api.annotation.ToolParam(name = "tenant_id") String tenantId) {
+        return tenantId;
     }
 
     private static class MyEvent extends Event {

@@ -20,6 +20,7 @@ from typing import Any, ClassVar, Dict, Sequence
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import action, chat_model_setup, tool
 from flink_agents.api.events.event import Event
 from flink_agents.api.events.event_type import EventType
@@ -46,7 +47,7 @@ class MockChatModel(BaseChatModelSetup):
         """Only for testing."""
         return {}
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Only for test plan compatibility."""
 
 

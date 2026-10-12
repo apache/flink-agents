@@ -17,11 +17,11 @@
 #################################################################################
 """Agent-run lifecycle events, mirroring the Java classes."""
 
-from typing import Any, ClassVar, Dict
+from typing import Any, ClassVar, Dict, Tuple
 
 from typing_extensions import override
 
-from flink_agents.api.events.event import Event
+from flink_agents.api.events.event import BuiltInAttribute, Event
 from flink_agents.api.events.memory_event import _observation_attributes
 
 
@@ -34,6 +34,11 @@ class AgentRunBeginEvent(Event):
 
     EVENT_TYPE: ClassVar[str] = "_agent_run_begin_event"
 
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped("key"),
+        BuiltInAttribute.required_untyped("value"),
+    )
+
     def __init__(self, *, key: str, value: Dict[str, Any]) -> None:
         """Create an AgentRunBeginEvent carrying STM VALUE nodes for the key."""
         super().__init__(
@@ -45,6 +50,9 @@ class AgentRunBeginEvent(Event):
     @override
     def from_event(cls, event: Event) -> "AgentRunBeginEvent":
         """Rebuild the typed view from a generic Event of this type."""
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, event.attributes, cls._ATTRIBUTE_SCHEMA
+        )
         result = AgentRunBeginEvent(
             key=event.attributes.get("key"), value=event.attributes.get("value")
         )

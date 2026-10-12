@@ -26,7 +26,8 @@
                 "baz"
             ],
             "title": "foo",
-            "type": "object"
+            "type": "object",
+            "additionalProperties": false
         }
     }
 }

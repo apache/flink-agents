@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api;
 
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
@@ -63,7 +64,17 @@ class AgentBuilderApplyByNameTest {
         }
 
         @Override
+        public <T> DataStream<T> toDataStream(TypeInformation<T> typeInformation) {
+            return null;
+        }
+
+        @Override
         public Table toTable(Schema schema) {
+            return null;
+        }
+
+        @Override
+        public <T> Table toTable(TypeInformation<T> typeInformation) {
             return null;
         }
     }
@@ -105,7 +116,17 @@ class AgentBuilderApplyByNameTest {
         }
 
         @Override
+        public <T> DataStream<T> toDataStream(TypeInformation<T> typeInformation) {
+            return null;
+        }
+
+        @Override
         public Table toTable(Schema schema) {
+            return null;
+        }
+
+        @Override
+        public <T> Table toTable(TypeInformation<T> typeInformation) {
             return null;
         }
     }

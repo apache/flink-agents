@@ -21,7 +21,8 @@ from unittest.mock import MagicMock, create_autospec
 
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, MessageRole, TextBlock
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.memory.long_term_memory import (
     MemorySetItem,
 )
@@ -85,16 +86,18 @@ class MockChatModelSetup:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage.of(
-                MessageRole.ASSISTANT,
-                json.dumps({"facts": self._last_facts}),
+            return ChatResult(
+                message=ChatMessage.assistant(
+                    [TextBlock(text=json.dumps({"facts": self._last_facts}))]
+                ),
             )
 
         # Call 2: Memory update — return ADD for each extracted fact.
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage.of(
-            MessageRole.ASSISTANT,
-            json.dumps({"memory": memory_ops}),
+        return ChatResult(
+            message=ChatMessage.assistant(
+                [TextBlock(text=json.dumps({"memory": memory_ops}))]
+            ),
         )
 
 
@@ -343,7 +346,7 @@ def test_switch_context(ltm) -> None:
 
 
 class MockChatModelWithTokenUsage:
-    """Mock chat model that returns token usage in extra_args."""
+    """Mock chat model that returns token usage in ChatResult."""
 
     def __init__(self) -> None:
         self._last_facts: list[str] = []
@@ -359,11 +362,7 @@ class MockChatModelWithTokenUsage:
             for msg in messages
         )
 
-        extra_args = {
-            "model_name": "mock-model",
-            "promptTokens": 10,
-            "completionTokens": 5,
-        }
+        usage = TokenUsage(prompt_tokens=10, completion_tokens=5)
 
         if has_system_msg:
             user_msg = next(
@@ -381,17 +380,21 @@ class MockChatModelWithTokenUsage:
                 user_text = user_text.split(": ", 1)[1]
 
             self._last_facts = [user_text] if user_text else []
-            return ChatMessage.of(
-                MessageRole.ASSISTANT,
-                json.dumps({"facts": self._last_facts}),
-                extra_args=extra_args,
+            return ChatResult(
+                message=ChatMessage.assistant(
+                    [TextBlock(text=json.dumps({"facts": self._last_facts}))]
+                ),
+                model="mock-model",
+                usage=usage,
             )
 
         memory_ops = [{"text": fact, "event": "ADD"} for fact in self._last_facts]
-        return ChatMessage.of(
-            MessageRole.ASSISTANT,
-            json.dumps({"memory": memory_ops}),
-            extra_args=extra_args,
+        return ChatResult(
+            message=ChatMessage.assistant(
+                [TextBlock(text=json.dumps({"memory": memory_ops}))]
+            ),
+            model="mock-model",
+            usage=usage,
         )
 
 

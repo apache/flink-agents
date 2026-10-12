@@ -31,13 +31,15 @@ import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.vectorstores.BaseVectorStore;
+import org.apache.flink.agents.api.vectorstores.CollectionManageableVectorStore;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryMode;
-import org.apache.flink.agents.api.vectorstores.python.PythonCollectionManageableVectorStore;
 import org.junit.jupiter.api.Assertions;
 import pemja.core.PythonException;
 
@@ -65,10 +67,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
     @EmbeddingModelConnection
     public static ResourceDescriptor embeddingConnection() {
         if (System.getProperty("EMBEDDING_TYPE", "PYTHON").equals("PYTHON")) {
-            return ResourceDescriptor.Builder.newBuilder(
-                            ResourceName.EmbeddingModel.PYTHON_WRAPPER_CONNECTION)
-                    .addInitialArgument(
-                            "pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
+            return PythonResourceDescriptor.Builder.newBuilder(
+                            ResourceName.EmbeddingModel.Python.OLLAMA_CONNECTION)
                     .build();
         } else {
             return ResourceDescriptor.Builder.newBuilder(
@@ -82,10 +82,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
     @EmbeddingModelSetup
     public static ResourceDescriptor embeddingModel() {
         if (System.getProperty("EMBEDDING_TYPE", "PYTHON").equals("PYTHON")) {
-            return ResourceDescriptor.Builder.newBuilder(
-                            ResourceName.EmbeddingModel.PYTHON_WRAPPER_SETUP)
-                    .addInitialArgument(
-                            "pythonClazz", ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
+            return PythonResourceDescriptor.Builder.newBuilder(
+                            ResourceName.EmbeddingModel.Python.OLLAMA_SETUP)
                     .addInitialArgument("connection", "embeddingConnection")
                     .addInitialArgument("model", OLLAMA_MODEL)
                     .build();
@@ -99,10 +97,8 @@ public class VectorStoreCrossLanguageAgent extends Agent {
 
     @VectorStore
     public static ResourceDescriptor vectorStore() {
-        return ResourceDescriptor.Builder.newBuilder(
-                        ResourceName.VectorStore.PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE)
-                .addInitialArgument(
-                        "pythonClazz", ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE)
+        return PythonResourceDescriptor.Builder.newBuilder(
+                        ResourceName.VectorStore.Python.CHROMA_VECTOR_STORE)
                 .addInitialArgument("embedding_model", "embeddingModel")
                 .build();
     }
@@ -114,19 +110,20 @@ public class VectorStoreCrossLanguageAgent extends Agent {
 
         MemoryObject isInitialized = ctx.getShortTermMemory().get("is_initialized");
         if (isInitialized == null) {
-            PythonCollectionManageableVectorStore vectorStore =
-                    (PythonCollectionManageableVectorStore)
-                            ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
+            BaseVectorStore vectorStore =
+                    (BaseVectorStore) ctx.getResource("vectorStore", ResourceType.VECTOR_STORE);
+            CollectionManageableVectorStore collections =
+                    (CollectionManageableVectorStore) vectorStore;
 
             // Initialize vector store
-            vectorStore.createCollectionIfNotExists(
+            collections.createCollectionIfNotExists(
                     TEST_COLLECTION,
                     Map.of("metadata", Map.of("key1", "value1", "key2", "value2")));
 
             System.out.printf(
                     "[TEST][%s] Vector store Collection Management PASSED%n", VECTOR_STORE_BACKEND);
 
-            vectorStore.deleteCollection(TEST_COLLECTION);
+            collections.deleteCollection(TEST_COLLECTION);
             Assertions.assertThrows(
                     PythonException.class,
                     () ->

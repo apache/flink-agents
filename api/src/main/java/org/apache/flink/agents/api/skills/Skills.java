@@ -43,11 +43,11 @@ import java.util.stream.Collectors;
  *   <li>{@link #fromLocalDir(String...)} for local directories or {@code .zip} files
  *   <li>{@link #fromUrl(String...)} for HTTPS URLs pointing to a {@code .zip}
  *   <li>{@link #fromClasspath(String...)} for resources on the classpath
+ *   <li>{@link #fromPackage(String, String)} for resources in installed Python packages
  * </ul>
  *
- * <p>The {@code "package"} scheme exists on the Python side only (Java has no analogous concept). A
- * plan written by Python with {@code scheme=package} deserializes successfully on Java, but {@code
- * SkillManager} will fail fast at load time with the registered-scheme list.
+ * <p>Cross-language sources are resolved through the runtime bridge during execution. Declaring a
+ * Python package source requires an embedded Python runtime on the task.
  *
  * <p>Multiple {@code @Skills} declarations on the same agent are merged at plan-build time;
  * duplicate {@link SkillSourceSpec} entries (same {@code scheme} and {@code params}) are collapsed.
@@ -166,6 +166,17 @@ public class Skills extends SerializableResource {
                 Arrays.stream(resources)
                         .map(r -> new SkillSourceSpec("classpath", Map.of("resource", r)))
                         .collect(Collectors.toList()));
+    }
+
+    /**
+     * Load a directory or zip resource from an installed Python package. Requires the embedded
+     * Python runtime and the package on the task's Python path.
+     */
+    public static Skills fromPackage(String packageName, String resource) {
+        return new Skills(
+                List.of(
+                        new SkillSourceSpec(
+                                "package", Map.of("package", packageName, "resource", resource))));
     }
 
     @JsonProperty("sources")

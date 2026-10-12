@@ -17,7 +17,7 @@
 #################################################################################
 import logging
 import uuid
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from anthropic import Anthropic, transform_schema
 from anthropic._types import NOT_GIVEN
@@ -26,14 +26,27 @@ from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
 from flink_agents.api.agents.types import OutputSchema, render_output_schema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
+    UnsupportedContentBlockError,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    NativeStructuredOutputSupport,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 logger = logging.getLogger(__name__)
+
+_ANTHROPIC_METADATA = "anthropic"
+_THINKING = "thinking"
+_REDACTED_THINKING = "redacted_thinking"
 
 
 def to_anthropic_tool(
@@ -55,34 +68,48 @@ def to_anthropic_tool(
 
 def convert_to_anthropic_message(message: ChatMessage) -> MessageParam:
     """Convert ChatMessage to Anthropic MessageParam format."""
+    blocks = (
+        message.blocks[0].blocks if message.role == MessageRole.TOOL else message.blocks
+    )
+    content = []
+    for block in blocks:
+        if isinstance(block, TextBlock):
+            content.append({"type": "text", "text": block.text})
+        elif isinstance(block, ToolCallBlock):
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": block.call_id,
+                    "name": block.name,
+                    "input": block.input,
+                }
+            )
+        elif isinstance(block, ReasoningBlock):
+            native = block.metadata.get(_ANTHROPIC_METADATA)
+            if native:
+                native_block = dict(native)
+                if native_block.get("type") == _THINKING:
+                    native_block[_THINKING] = block.text
+                content.append(native_block)
+        else:
+            provider = "Anthropic"
+            raise UnsupportedContentBlockError.for_block(
+                provider, block, "unsupported message content"
+            )
     if message.role == MessageRole.TOOL:
+        result = message.blocks[0]
         return {
-            "role": MessageRole.USER.value,
+            "role": "user",
             "content": [
                 {
                     "type": "tool_result",
-                    "tool_use_id": message.extra_args.get("external_id"),
-                    "content": message.text,
+                    "tool_use_id": result.call_id,
+                    "content": content,
+                    "is_error": result.is_error,
                 }
             ],
         }
-    elif message.role == MessageRole.ASSISTANT:
-        # Use original Anthropic content blocks if available for context
-        anthropic_content_blocks = message.extra_args.get("anthropic_content_blocks")
-        content = (
-            anthropic_content_blocks
-            if anthropic_content_blocks is not None
-            else message.text
-        )
-        return {
-            "role": message.role.value,
-            "content": content,  # type: ignore
-        }
-    else:
-        return {
-            "role": message.role.value,
-            "content": message.text,
-        }
+    return {"role": message.role.value, "content": content}
 
 
 def convert_to_anthropic_messages(
@@ -192,10 +219,10 @@ def _supports_json_prefill(effective_model: str | None) -> bool:
     kept apart from the structured-output allowlists. An unrecognized name reports
     ``True``, which matches the documented rule: prefilling is the long-standing
     behaviour and only the listed names withdraw it. The cost of that default runs the
-    opposite way to ``supports_native_structured_output``: a rejecting model this list
-    has not caught up with is prefilled and answered with a 400, where an unrecognized
-    name on the structured-output path degrades silently to the prompt-engineering
-    fallback instead.
+    opposite way to ``_model_supports_native_structured_output``: a rejecting model
+    this list has not caught up with is prefilled and answered with a 400, where an
+    unrecognized name on the structured-output path degrades silently to the
+    prompt-engineering fallback instead.
     """
     return effective_model not in _PREFILL_UNSUPPORTED_MODELS
 
@@ -258,6 +285,26 @@ def _supports_sampling_params(effective_model: str | None) -> bool:
     return effective_model not in _SAMPLING_UNSUPPORTED_MODELS
 
 
+def _native_output_model(output_schema: Any) -> type[BaseModel] | None:
+    """The model a schema translates natively to, or ``None`` where none applies.
+
+    ``None`` covers both no schema at all and a ``RowTypeInfo``, which has no native
+    translation and keeps the prompt-engineering fallback.
+
+    Separate from the render below because the feasibility check has to know whether a
+    schema would be sent without rendering it, and rendering raises on a schema it
+    cannot express.
+    """
+    if output_schema is None:
+        return None
+    model = (
+        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
+    )
+    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+        return None
+    return model
+
+
 def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     """Build the Anthropic ``output_config`` for a native structured-output request.
 
@@ -275,12 +322,8 @@ def _native_output_config(output_schema: Any) -> Dict[str, Any] | None:
     but declares no fields is sent as it is, leaving the provider to accept or refuse
     the document it receives.
     """
-    if output_schema is None:
-        return None
-    model = (
-        output_schema.output_schema if isinstance(output_schema, OutputSchema) else None
-    )
-    if not (isinstance(model, type) and issubclass(model, BaseModel)):
+    model = _native_output_model(output_schema)
+    if model is None:
         return None
     return {
         "format": {
@@ -345,7 +388,28 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         return self._client
 
     @override
-    def supports_native_structured_output(self, effective_model: str | None) -> bool:
+    def supports_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> NativeStructuredOutputSupport:
+        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+
+        The effective model is the ``model`` parameter verbatim.
+        """
+        if not self._can_apply_native_structured_output(
+            output_schema, tools, model_kwargs
+        ):
+            return NativeStructuredOutputSupport.INFEASIBLE
+        effective_model = None if model_kwargs is None else model_kwargs.get("model")
+        if self._model_supports_native_structured_output(effective_model):
+            return NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+        return NativeStructuredOutputSupport.FEASIBLE
+
+    def _model_supports_native_structured_output(
+        self, effective_model: str | None
+    ) -> bool:
         """Whether Anthropic documents structured output for ``effective_model``.
 
         See the module-level allowlists for the source of truth and for why a
@@ -363,13 +427,57 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             for prefix in _NATIVE_STRUCTURED_OUTPUT_ALIAS_PREFIXES
         )
 
+    def _can_apply_native_structured_output(
+        self,
+        output_schema: OutputSchema | None,
+        tools: List[Tool] | None,
+        model_kwargs: Mapping[str, Any] | None,
+    ) -> bool:
+        """Whether a request built from these inputs would carry a derived
+        ``output_config``, leaving the effective model's capability out of the answer.
+
+        Two conditions. Only a ``BaseModel`` subclass has a native translation here; a
+        ``RowTypeInfo`` wrapped in ``OutputSchema``, or no schema at all, has none. And
+        a caller-supplied ``output_config`` wins: it is the caller being explicit about
+        the exact parameter the native branch writes, so the schema keeps the
+        prompt-engineering fallback rather than the two competing on one request.
+
+        The tools are not read; a bound tool does not stop this connection sending a
+        schema.
+
+        A ``True`` is not a promise that the call succeeds. The branch renders the
+        schema once it has decided to apply it, and rendering raises on a ``BaseModel``
+        that carries no JSON Schema.
+
+        Parameters
+        ----------
+        output_schema : OutputSchema | None
+            The schema the request would carry, or ``None`` for an unconstrained
+            request.
+        tools : List[Tool] | None
+            Not read; bound tools do not stop this connection sending a native schema.
+        model_kwargs : Mapping[str, Any] | None
+            Read for a caller-supplied ``output_config``. These must be the parameters
+            as they arrived, since a mapping the request path has already stripped
+            could report a caller's value absent.
+
+        Returns:
+        -------
+        bool
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass and the caller
+            supplied no ``output_config`` of its own.
+        """
+        return _native_output_model(output_schema) is not None and (
+            model_kwargs is None or "output_config" not in model_kwargs
+        )
+
     def chat(
         self,
         messages: Sequence[ChatMessage],
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Direct communication with Anthropic model service for chat conversation.
 
         Parameters
@@ -392,9 +500,11 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message
         """
+        # Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockError.reject_media("Anthropic", messages)
         anthropic_tools = None
         if tools is not None:
             anthropic_tools = [
@@ -404,32 +514,33 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         anthropic_system = convert_to_anthropic_system_prompts(messages)
         anthropic_messages = convert_to_anthropic_messages(messages)
 
+        # Snapshotted before the pop below, so the feasibility check is asked with the
+        # parameters as they arrived rather than with a mapping this path has already
+        # stripped. The key the query reads is not among the stripped ones today; the
+        # shape is what keeps a term added later from reading a mapping the caller's
+        # value has already left.
+        raw_kwargs = dict(kwargs)
+
         # Removed from kwargs unconditionally: it is a framework parameter, and leaving
         # it in place would reach messages.create as an unknown request field.
         json_prefill = kwargs.pop("json_prefill", False)
 
-        # TODO(#912): the requested strategy is not visible here, so this check
-        # cannot tell an explicit NATIVE request apart from one that merely
-        # resolved to native. A caller asking for NATIVE on a model this
-        # predicate rejects therefore degrades silently to the prompt-engineering
-        # fallback instead of getting an error. Once strategy resolution is wired
-        # up, NATIVE must either bypass this capability check or fail explicitly.
-        if output_schema is not None and self.supports_native_structured_output(
-            kwargs.get("model")
-        ):
-            # An output_config already in kwargs is the caller being explicit about the
-            # exact parameter this branch writes, so it is left alone and the schema
-            # keeps the prompt-engineering fallback. Writing over it would drop the
-            # caller's value with no error and no other trace.
-            #
-            # The schema is rendered inside that test rather than before it, because
-            # rendering raises on a schema it cannot express. Rendering one whose
-            # result this branch is about to discard would fail a request the caller
-            # had already steered away from the derived config.
-            if "output_config" not in kwargs:
-                output_config = _native_output_config(output_schema)
-                if output_config is not None:
-                    kwargs["output_config"] = output_config
+        # Native structured output applies only for a BaseModel schema on a model the
+        # provider documents as capable, and only where the caller supplied no
+        # output_config of its own. That value is the caller being explicit about the
+        # exact parameter this branch writes, so it wins and the schema keeps the
+        # prompt-engineering fallback; writing over it would drop the caller's value
+        # with no error and no other trace.
+        #
+        # Both feasibility conditions are asked rather than restated, so a caller
+        # asking the same question gets the answer this branch acts on. The schema is
+        # rendered only once that answer is in, because rendering raises on a schema it
+        # cannot express, and rendering one this branch is about to discard would fail
+        # a request the caller had already steered away from the derived config.
+        if self._can_apply_native_structured_output(
+            output_schema, tools, raw_kwargs
+        ) and self._model_supports_native_structured_output(kwargs.get("model")):
+            kwargs["output_config"] = _native_output_config(output_schema)
 
         # JSON prefill appends a prefilled assistant "{" message to steer the model
         # into emitting a JSON document. It applies only when the request carries none
@@ -487,63 +598,46 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        extra_args = {}
-        # Record token metrics if model name and usage are available
-        model_name = kwargs.get("model")
-        if model_name and message.usage:
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = message.usage.input_tokens
-            extra_args["completionTokens"] = message.usage.output_tokens
-
-        if message.stop_reason is not None:
-            # The shared chat action recognizes the OpenAI-compatible ``length`` value.
-            # Anthropic calls the same terminal condition ``max_tokens``.
-            extra_args["finish_reason"] = (
-                "length" if message.stop_reason == "max_tokens" else message.stop_reason
+        blocks = []
+        needs_prefix = prefill_applied
+        for block in message.content:
+            if block.type == "text":
+                text = ("{" if needs_prefix else "") + block.text
+                needs_prefix = False
+                blocks.append(TextBlock(text=text))
+            elif block.type == "tool_use":
+                blocks.append(
+                    ToolCallBlock(
+                        call_id=block.id or str(uuid.uuid4()),
+                        name=block.name,
+                        input=block.input,
+                    )
+                )
+            elif block.type in (_THINKING, _REDACTED_THINKING):
+                native = block.model_dump(mode="json")
+                text = native.pop(_THINKING, None)
+                blocks.append(
+                    ReasoningBlock(text=text, metadata={_ANTHROPIC_METADATA: native})
+                )
+            else:
+                msg = f"Unsupported Anthropic response block: {block.type}"
+                raise ValueError(msg)
+        if needs_prefix:
+            blocks.insert(0, TextBlock(text="{"))
+        return ChatResult(
+            message=ChatMessage.assistant(blocks),
+            model=kwargs.get("model"),
+            response_id=message.id,
+            usage=TokenUsage(
+                prompt_tokens=message.usage.input_tokens,
+                completion_tokens=message.usage.output_tokens,
             )
-
-        # A response may lead with a non-text block (e.g. a tool_use block when
-        # the model calls a tool without any preface), so pick the first text
-        # block instead of assuming content[0] is text.
-        text = next(
-            (block.text for block in message.content if block.type == "text"), ""
+            if message.usage
+            else None,
+            finish_reason="length"
+            if message.stop_reason == "max_tokens"
+            else message.stop_reason,
         )
-
-        # The response continues the prefilled "{" rather than repeating it, so the
-        # document is only complete once it is put back. Keyed on the decision actually
-        # applied above: reconstructing on any other signal either prepends a stray "{"
-        # or drops a required one, and the response itself gives no sign of either.
-        if prefill_applied:
-            text = "{" + text
-
-        if message.stop_reason == "tool_use":
-            tool_calls = [
-                {
-                    "id": uuid.uuid4(),
-                    "type": "function",
-                    "function": {
-                        "name": content_block.name,
-                        "arguments": content_block.input,
-                    },
-                    "original_id": content_block.id,
-                }
-                for content_block in message.content
-                if content_block.type == "tool_use"
-            ]
-
-            extra_args["anthropic_content_blocks"] = message.content
-            return ChatMessage.of(
-                MessageRole(message.role),
-                text,
-                tool_calls=tool_calls,
-                extra_args=extra_args,
-            )
-        else:
-            return ChatMessage.of(
-                MessageRole(message.role),
-                text,
-                extra_args=extra_args,
-            )
 
     @override
     def close(self) -> None:

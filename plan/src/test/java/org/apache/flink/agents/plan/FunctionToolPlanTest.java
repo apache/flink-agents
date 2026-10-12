@@ -119,7 +119,7 @@ class FunctionToolPlanTest {
                                                 "b", 3.0,
                                                 "operation", "mul"))));
         assertTrue(ok.isSuccess());
-        assertEquals(36.0, (Double) ok.getResult(), 1e-9);
+        assertEquals("36.0", ok.getText());
 
         FunctionTool pyTool =
                 (FunctionTool)
@@ -148,7 +148,7 @@ class FunctionToolPlanTest {
                         new ToolParameters(
                                 new HashMap<>(Map.of("a", 10, "b", 2.5, "operation", "div"))));
         assertTrue(ok.isSuccess());
-        assertEquals(4.0, (Double) ok.getResult(), 1e-9);
+        assertEquals("4.0", ok.getText());
     }
 
     @Test

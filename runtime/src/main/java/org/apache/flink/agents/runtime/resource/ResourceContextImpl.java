@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.Skills;
+import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.SkillManager;
 
 import javax.annotation.Nullable;
@@ -29,6 +30,7 @@ import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
 import java.util.function.BiFunction;
+import java.util.function.Supplier;
 
 /**
  * Default {@link ResourceContext} implementation that delegates resource lookup to a {@link
@@ -45,6 +47,7 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
 
     @Nullable private SkillManager skillManager;
     private boolean skillManagerInitialized;
+    private final Supplier<PythonInterpreterManager> interpreterManagerSupplier;
 
     /**
      * Construct a context that resolves {@code classpath:} skill sources via {@code classLoader}.
@@ -53,8 +56,17 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
      */
     public ResourceContextImpl(
             BiFunction<String, ResourceType, Resource> getResource, ClassLoader classLoader) {
+        this(getResource, classLoader, () -> null);
+    }
+
+    /** Resolve the operator's interpreter only when skills are first used, after bridge setup. */
+    public ResourceContextImpl(
+            BiFunction<String, ResourceType, Resource> getResource,
+            ClassLoader classLoader,
+            Supplier<PythonInterpreterManager> interpreterManagerSupplier) {
         this.getResource = getResource;
         this.classLoader = classLoader;
+        this.interpreterManagerSupplier = interpreterManagerSupplier;
     }
 
     /** Convenience overload that uses the current thread's context class loader. */
@@ -97,8 +109,8 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
     @Nullable
     private synchronized SkillManager ensureSkillManager() throws Exception {
         if (!skillManagerInitialized) {
-            skillManagerInitialized = true;
             skillManager = createSkillManager();
+            skillManagerInitialized = true;
         }
         return skillManager;
     }
@@ -116,7 +128,7 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
             // No skills config registered — that's fine, return null.
             return null;
         }
-        return new SkillManager(config, classLoader);
+        return new SkillManager(config, classLoader, interpreterManagerSupplier.get());
     }
 
     /**

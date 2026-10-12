@@ -103,7 +103,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 | [Gemini]({{< ref "docs/development/chat_models#gemini" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
 | [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
-| [Tongyi (DashScope)]({{< ref "docs/development/chat_models#tongyi-dashscope" >}}) | ✅ | ❌ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/chat_models#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 | [vLLM]({{< ref "docs/development/chat_models#vllm" >}}) | ✅ | ✅ |
 | [Watsonx (IBM watsonx.ai)]({{< ref "docs/development/chat_models#watsonx-ibm-watsonxai" >}}) | ✅ | ✅ |
 
@@ -114,7 +114,7 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 | [Amazon Bedrock]({{< ref "docs/development/embedding_models#amazon-bedrock" >}}) | ❌ | ✅ |
 | [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
 | [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ✅ |
-| [Tongyi (DashScope)]({{< ref "docs/development/embedding_models#tongyi-dashscope" >}}) | ✅ | ❌ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/embedding_models#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **Vector Stores**
 

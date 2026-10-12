@@ -52,7 +52,14 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Test class for ActionState serialization and deserialization. */
 public class ActionStateSerdeTest {
@@ -203,9 +210,8 @@ public class ActionStateSerdeTest {
         ActionState originalState = new ActionState(inputEvent);
 
         // Add call results
-        CallResult result1 = new CallResult("module.func1", "digest1", "result1".getBytes());
-        CallResult result2 =
-                new CallResult("module.func2", "digest2", null, "exception".getBytes());
+        CallResult result1 = new CallResult("module.func1", "result1".getBytes());
+        CallResult result2 = new CallResult("module.func2", null, "exception".getBytes());
         originalState.addCallResult(result1);
         originalState.addCallResult(result2);
 
@@ -218,14 +224,12 @@ public class ActionStateSerdeTest {
 
         CallResult deserializedResult1 = deserializedState.getCallResult(0);
         assertEquals("module.func1", deserializedResult1.getFunctionId());
-        assertEquals("digest1", deserializedResult1.getArgsDigest());
         assertArrayEquals("result1".getBytes(), deserializedResult1.getResultPayload());
         assertNull(deserializedResult1.getExceptionPayload());
         assertTrue(deserializedResult1.isSuccess());
 
         CallResult deserializedResult2 = deserializedState.getCallResult(1);
         assertEquals("module.func2", deserializedResult2.getFunctionId());
-        assertEquals("digest2", deserializedResult2.getArgsDigest());
         assertNull(deserializedResult2.getResultPayload());
         assertArrayEquals("exception".getBytes(), deserializedResult2.getExceptionPayload());
         assertTrue(deserializedResult2.isFailure());
@@ -235,7 +239,7 @@ public class ActionStateSerdeTest {
     public void testActionStateWithPendingCallResult() throws Exception {
         InputEvent inputEvent = new InputEvent("test input");
         ActionState originalState = new ActionState(inputEvent);
-        originalState.addCallResult(CallResult.pending("module.func", "digest"));
+        originalState.addCallResult(CallResult.pending("module.func"));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
         ActionState deserializedState = ActionStateSerde.deserialize(serialized);
@@ -282,8 +286,8 @@ public class ActionStateSerdeTest {
         // Create in-progress ActionState with call results (simulating partial execution)
         InputEvent inputEvent = new InputEvent("test input");
         List<CallResult> callResults = new ArrayList<>();
-        callResults.add(new CallResult("func1", "hash1", "result1".getBytes()));
-        callResults.add(new CallResult("func2", "hash2", "result2".getBytes()));
+        callResults.add(new CallResult("func1", "result1".getBytes()));
+        callResults.add(new CallResult("func2", "result2".getBytes()));
 
         ActionState originalState =
                 new ActionState(inputEvent, null, null, null, callResults, false);
@@ -295,8 +299,8 @@ public class ActionStateSerdeTest {
         // Verify state
         assertFalse(deserializedState.isCompleted());
         assertEquals(2, deserializedState.getCallResultCount());
-        assertTrue(deserializedState.getCallResult(0).matches("func1", "hash1"));
-        assertTrue(deserializedState.getCallResult(1).matches("func2", "hash2"));
+        assertTrue(deserializedState.getCallResult(0).matches("func1"));
+        assertTrue(deserializedState.getCallResult(1).matches("func2"));
     }
 
     @Test
@@ -304,7 +308,7 @@ public class ActionStateSerdeTest {
         // Test CallResult with null payloads
         InputEvent inputEvent = new InputEvent("test");
         ActionState originalState = new ActionState(inputEvent);
-        originalState.addCallResult(new CallResult("func", "digest", null, null));
+        originalState.addCallResult(new CallResult("func", null, null));
 
         byte[] serialized = ActionStateSerde.serialize(originalState);
         ActionState deserializedState = ActionStateSerde.deserialize(serialized);
@@ -312,7 +316,6 @@ public class ActionStateSerdeTest {
         assertEquals(1, deserializedState.getCallResultCount());
         CallResult result = deserializedState.getCallResult(0);
         assertEquals("func", result.getFunctionId());
-        assertEquals("digest", result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
         assertTrue(result.isSuccess());
@@ -335,7 +338,6 @@ public class ActionStateSerdeTest {
                         + "\"callResults\":["
                         + "{"
                         + "\"functionId\":\"legacy.success\","
-                        + "\"argsDigest\":\"digest-success\","
                         + "\"resultPayload\":\""
                         + legacySuccessPayload
                         + "\","
@@ -343,7 +345,6 @@ public class ActionStateSerdeTest {
                         + "},"
                         + "{"
                         + "\"functionId\":\"legacy.failure\","
-                        + "\"argsDigest\":\"digest-failure\","
                         + "\"resultPayload\":null,"
                         + "\"exceptionPayload\":\""
                         + legacyFailurePayload
@@ -538,8 +539,12 @@ public class ActionStateSerdeTest {
 
         @Override
         public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof MemoryValuePojo)) return false;
+            if (this == o) {
+                return true;
+            }
+            if (!(o instanceof MemoryValuePojo)) {
+                return false;
+            }
             MemoryValuePojo that = (MemoryValuePojo) o;
             return count == that.count && java.util.Objects.equals(name, that.name);
         }
@@ -585,12 +590,21 @@ public class ActionStateSerdeTest {
         // outputEvents; cover both paths.
         ActionState originalState = new ActionState(new ChatRequestEvent("myModel", List.of(msg)));
         originalState.addEvent(new ChatRequestEvent("myModel", List.of(msg)));
-        originalState.addEvent(ChatResponseEvent.success(requestId, msg));
-        originalState.addEvent(new ToolRequestEvent("myModel", List.of(Map.of("name", "myTool"))));
+        originalState.addEvent(
+                ChatResponseEvent.success(
+                        requestId,
+                        new org.apache.flink.agents.api.chat.messages.ChatResult(
+                                ChatMessage.assistant(List.of(new TextBlock("hello"))))));
+        originalState.addEvent(
+                new ToolRequestEvent(
+                        "myModel",
+                        List.of(
+                                new org.apache.flink.agents.api.chat.messages.ToolCallBlock(
+                                        "call-1", "myTool", Map.of()))));
         originalState.addEvent(
                 new ToolResponseEvent(
                         requestId,
-                        Map.of("call-1", ToolResponse.success("result")),
+                        Map.of("call-1", ToolResponse.text("result")),
                         Map.of("call-1", true),
                         Map.of()));
         originalState.addEvent(new ContextRetrievalRequestEvent("query text", "myVectorStore", 5));
@@ -622,7 +636,7 @@ public class ActionStateSerdeTest {
 
         ToolResponseEvent toolResponse = (ToolResponseEvent) outputEvents.get(3);
         assertEquals(requestId, toolResponse.getRequestId());
-        assertEquals("result", toolResponse.getResponses().get("call-1").getResult());
+        assertEquals("result", toolResponse.getResponses().get("call-1").getText());
 
         ContextRetrievalResponseEvent retrievalResponse =
                 (ContextRetrievalResponseEvent) outputEvents.get(5);

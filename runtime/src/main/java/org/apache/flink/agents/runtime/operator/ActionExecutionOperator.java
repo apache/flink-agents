@@ -19,8 +19,10 @@ package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
+import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceType;
@@ -29,9 +31,16 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
+import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.eventlog.EventLogWriter;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.lifecycle.PythonTaskLifecycleListener;
@@ -42,9 +51,15 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryUpdateReplayer;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionCoordinator;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionTask;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.resource.PythonRuntimeResource;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.apache.flink.agents.runtime.trace.EventLogComponentExecutionListener;
 import org.apache.flink.agents.runtime.trace.EventLogTaskLifecycleListener;
 import org.apache.flink.agents.runtime.trace.ExecutionEventLogger;
@@ -53,6 +68,8 @@ import org.apache.flink.annotation.VisibleForTesting;
 import org.apache.flink.api.common.operators.MailboxExecutor;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.common.typeutils.TypeSerializer;
+import org.apache.flink.runtime.checkpoint.CheckpointOptions;
+import org.apache.flink.runtime.state.CheckpointStreamFactory;
 import org.apache.flink.runtime.state.KeyGroupRange;
 import org.apache.flink.runtime.state.StateInitializationContext;
 import org.apache.flink.runtime.state.StateSnapshotContext;
@@ -61,6 +78,7 @@ import org.apache.flink.streaming.api.operators.AbstractStreamOperator;
 import org.apache.flink.streaming.api.operators.BoundedOneInput;
 import org.apache.flink.streaming.api.operators.ChainingStrategy;
 import org.apache.flink.streaming.api.operators.OneInputStreamOperator;
+import org.apache.flink.streaming.api.operators.OperatorSnapshotFutures;
 import org.apache.flink.streaming.api.operators.Output;
 import org.apache.flink.streaming.api.watermark.Watermark;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
@@ -69,6 +87,7 @@ import org.apache.flink.streaming.runtime.tasks.StreamTask;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxExecutorImpl;
 import org.apache.flink.streaming.runtime.tasks.mailbox.MailboxProcessor;
 import org.apache.flink.util.ExceptionUtils;
+import org.apache.flink.util.function.ThrowingRunnable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,6 +95,7 @@ import javax.annotation.Nullable;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -85,6 +105,9 @@ import java.util.Set;
 import java.util.function.IntPredicate;
 
 import static org.apache.flink.agents.api.configuration.AgentConfigOptions.JOB_IDENTIFIER;
+import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
+import static org.apache.flink.util.Preconditions.checkArgument;
+import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
@@ -105,6 +128,54 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     private static final Logger LOG = LoggerFactory.getLogger(ActionExecutionOperator.class);
 
+    /** Idle time after which a surplus parallel-execution worker thread retires (min pool is 1). */
+    private static final long WORKER_IDLE_TIMEOUT_MS = 60_000L;
+
+    private static final String INTERNAL_NOOP_INPUT_ACTION_NAME =
+            "__flink_agents_internal_noop_input_action";
+
+    private static final Action INTERNAL_NOOP_INPUT_ACTION = createInternalNoopInputAction();
+
+    private static Action createInternalNoopInputAction() {
+        try {
+            return new Action(
+                    INTERNAL_NOOP_INPUT_ACTION_NAME,
+                    new JavaFunction(
+                            InternalNoopInputAction.class,
+                            "run",
+                            new Class<?>[] {Event.class, RunnerContext.class}),
+                    Collections.singletonList(InputEvent.EVENT_TYPE));
+        } catch (Exception e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private static boolean isInternalNoopInputAction(Action action) {
+        return INTERNAL_NOOP_INPUT_ACTION_NAME.equals(action.getName());
+    }
+
+    public static final class InternalNoopInputAction {
+        public static void run(Event event, RunnerContext ctx) {}
+
+        private InternalNoopInputAction() {}
+    }
+
+    static boolean shouldEnableParallelExecutionWithoutCoroutine(
+            AgentPlan agentPlan, boolean continuationSupported) {
+        return !continuationSupported
+                && agentPlan.getConfig().get(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED)
+                && agentPlan.getActions().values().stream()
+                        .allMatch(action -> action.getExec() instanceof JavaFunction)
+                && (!usesPythonResource(agentPlan) || supportAsync());
+    }
+
+    /** Whether the plan declares any Python resource. */
+    private static boolean usesPythonResource(AgentPlan agentPlan) {
+        return agentPlan.getResourceProviders().values().stream()
+                .flatMap(providersByName -> providersByName.values().stream())
+                .anyMatch(provider -> provider instanceof PythonResourceProvider);
+    }
+
     private final AgentPlan agentPlan;
 
     private transient ResourceCache resourceCache;
@@ -118,6 +189,25 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private final transient MailboxExecutor mailboxExecutor;
 
     private transient ActionTaskContextManager contextManager;
+
+    private transient boolean parallelExecutionWithoutCoroutineEnabled;
+
+    @Nullable private transient ParallelExecutionLock parallelExecutionLock;
+
+    @Nullable private transient ParallelExecutionCoordinator executionCoordinator;
+
+    /**
+     * Number of input records currently being processed (one per active key), compared against
+     * {@link #maxInFlightInputRecords} to apply input backpressure. Maintained on the mailbox
+     * thread alongside {@code addProcessingKey}/{@code removeProcessingKey} and rebuilt from the
+     * recovered processing keys.
+     */
+    private transient int inFlightInputRecords;
+
+    /**
+     * Configured cap on concurrently processed input records; see {@link #inFlightInputRecords}.
+     */
+    private int maxInFlightInputRecords;
 
     // Long-term memory backed by Mem0; non-null only when LongTermMemoryOptions.Mem0 is configured.
     private transient Mem0LongTermMemory ltm;
@@ -158,6 +248,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     // Broadcast targets for component execution reports, injected per action execution.
     private transient List<ComponentExecutionListener> componentExecutionListeners =
             new ArrayList<>();
+
+    // The internal sub-agent setups discovered among the eagerly materialized AGENT resources.
+    // Entry points of the setup subtree used to resolve envelope events to their quiesce status;
+    // nested setups are reached through each setup's child caches.
+    private transient List<InternalSubagentSetup> internalSetups = new ArrayList<>();
 
     public ActionExecutionOperator(
             AgentPlan agentPlan,
@@ -206,10 +301,12 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // down so classpath: skill sources resolve against the Flink user JAR regardless of
         // which thread (mailbox / Python interpreter / async pool) later triggers the lazy
         // SkillManager construction.
+        pythonBridge = new PythonBridgeManager();
         resourceCache =
                 new ResourceCache(
                         agentPlan.getResourceProviders(),
-                        getRuntimeContext().getUserCodeClassLoader());
+                        getRuntimeContext().getUserCodeClassLoader(),
+                        pythonBridge::getPythonInterpreterManager);
 
         metricGroup = new FlinkAgentsMetricGroupImpl(getMetricGroup());
         builtInMetrics =
@@ -226,8 +323,35 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         durableExecManager.initRecoveryMarkerState(getOperatorStateBackend());
         durableExecManager.initializeKeyedStates(getRuntimeContext());
 
+        int numAsyncThreads = agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS);
+        checkArgument(
+                numAsyncThreads > 0,
+                "%s must be positive, but was %s",
+                AgentExecutionOptions.NUM_ASYNC_THREADS.getKey(),
+                numAsyncThreads);
+
+        maxInFlightInputRecords =
+                agentPlan.getConfig().get(AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS);
+        checkArgument(
+                maxInFlightInputRecords > 0,
+                "%s must be positive, but was %s",
+                AgentExecutionOptions.MAX_IN_FLIGHT_INPUT_RECORDS.getKey(),
+                maxInFlightInputRecords);
+
+        parallelExecutionWithoutCoroutineEnabled =
+                shouldEnableParallelExecutionWithoutCoroutine(
+                        agentPlan, ContinuationActionExecutor.isContinuationSupported());
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            parallelExecutionLock = new ParallelExecutionLock();
+        } else {
+            // JDK21 cooperative-continuation path: there is no worker pool and no lock. All
+            // engine-shared sections (waitInFlightEventsFinished) must guard on the null lock.
+            parallelExecutionLock = null;
+        }
+
         // init PythonActionExecutor and PythonResourceAdapter
-        pythonBridge = new PythonBridgeManager();
+        // On the parallel engine the execution invariant is "holds the ParallelExecutionLock",
+        // not "is the physical mailbox thread".
         pythonBridge.open(
                 agentPlan,
                 resourceCache,
@@ -236,9 +360,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 getContainingTask().getEnvironment().getTaskManagerInfo().getTmpDirectories(),
                 getRuntimeContext().getJobInfo().getJobId(),
                 metricGroup,
-                this::checkMailboxThread,
+                parallelExecutionWithoutCoroutineEnabled
+                        ? parallelExecutionLock::checkReentrant
+                        : this::checkMailboxThread,
                 jobIdentifier,
                 getRuntimeContext().getUserCodeClassLoader());
+
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            executionCoordinator =
+                    new ParallelExecutionCoordinator(
+                            parallelExecutionLock,
+                            mailboxExecutor::execute,
+                            Work::new,
+                            pythonBridge::releaseCurrentThreadInterpreter,
+                            numAsyncThreads,
+                            WORKER_IDLE_TIMEOUT_MS);
+        }
 
         // Capture the wired Mem0 long-term memory, if any, so it can be plumbed into the Java
         // runner context created by ActionTaskContextManager.
@@ -250,15 +387,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         if (componentExecutionListeners == null) {
             componentExecutionListeners = new ArrayList<>();
         }
+        if (internalSetups == null) {
+            internalSetups = new ArrayList<>();
+        }
 
         registerBuiltInLifecycleListeners();
         registerSubagentSetups();
 
-        // init context manager for runner context creation and memory contexts
+        // The continuation executor only borrows the lock on the worker-pool path; on every other
+        // path it is null so executeAsync keeps its synchronous fallback.
         contextManager =
                 new ActionTaskContextManager(
-                        agentPlan.getConfig().get(AgentExecutionOptions.NUM_ASYNC_THREADS),
-                        pythonBridge::releaseCurrentThreadInterpreter);
+                        this,
+                        durableExecManager,
+                        numAsyncThreads,
+                        pythonBridge::releaseCurrentThreadInterpreter,
+                        parallelExecutionLock);
 
         mailboxProcessor = getMailboxProcessor();
 
@@ -271,17 +415,75 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // parallelism,
         // and {@link tryProcessActionTaskForKey} mails might be lost,
         // it is necessary to reprocess all keys to ensure correctness.
-        tryResumeProcessActionTasks();
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(this::tryResumeProcessActionTasks);
+        } else {
+            tryResumeProcessActionTasks();
+        }
     }
 
     @Override
     public void processWatermark(Watermark mark) throws Exception {
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(() -> processWatermarkInternal(mark));
+        } else {
+            processWatermarkInternal(mark);
+        }
+    }
+
+    private void processWatermarkInternal(Watermark mark) throws Exception {
         eventRouter.getKeySegmentQueue().addWatermark(mark);
         eventRouter.processEligibleWatermarks(super::processWatermark);
     }
 
+    /**
+     * On the JDK11 parallel engine, overridden to skip the framework's pre-{@link #processElement}
+     * key switch: the framework performs it on the mailbox thread but <em>outside</em> our mailbox
+     * lock, and a coordinator worker may be executing an action under the lock with a different
+     * current key that an off-lock switch would corrupt. On that engine we re-establish the
+     * record's key under the lock inside {@link #processElement}. On the normal engine there are no
+     * such workers, so we defer to the framework's switch. ({@link
+     * org.apache.flink.streaming.api.operators.Input#setKeyContextElement} default-delegates here,
+     * so this covers the one-input path.)
+     */
+    @Override
+    @SuppressWarnings("rawtypes")
+    public void setKeyContextElement1(StreamRecord record) throws Exception {
+        if (!parallelExecutionWithoutCoroutineEnabled) {
+            super.setKeyContextElement1(record);
+        }
+    }
+
     @Override
     public void processElement(StreamRecord<IN> record) throws Exception {
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(
+                    () -> {
+                        // Soft backpressure BEFORE establishing the key: yields may change the
+                        // current key, so the record's key is set after the last yield. Release
+                        // around yield (non-reentrant lock); re-acquire in finally for the outer
+                        // release.
+                        while (inFlightInputRecords >= maxInFlightInputRecords) {
+                            parallelExecutionLock.release();
+                            try {
+                                mailboxExecutor.yield();
+                            } finally {
+                                parallelExecutionLock.acquireByMain();
+                            }
+                        }
+                        super.setKeyContextElement1(record);
+                        processElementInternal(record);
+                    });
+        } else {
+            processElementInternal(record);
+        }
+    }
+
+    private void processElementInternal(StreamRecord<IN> record) throws Exception {
+        // Every admitted input record consumes one unit of in-flight budget, regardless of whether
+        // it activates a new key or queues behind an in-flight record for an already-active key.
+        // The matching decrement happens when that record's processing finishes.
+        inFlightInputRecords++;
         IN input = record.getValue();
         LOG.debug("Receive an element {}", input);
 
@@ -297,7 +499,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         try {
             eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
 
-            if (stateManager.hasMoreActionTasks()) {
+            boolean currentKeyBusy =
+                    parallelExecutionWithoutCoroutineEnabled
+                            ? executionCoordinator.hasOutstanding(getCurrentKey())
+                            : stateManager.hasMoreActionTasks();
+            if (currentKeyBusy) {
                 // If there are already actions being processed for the current key, the newly
                 // incoming event should be queued and processed later. Therefore, we add it to
                 // pendingInputEventsState.
@@ -338,6 +544,22 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             Object key, String contextKey, Event event, ExecutionTraceContext traceContext)
             throws Exception {
         eventRouter.notifyEventProcessed(event, traceContext);
+
+        if (event instanceof InternalSubagentCallEvent) {
+            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) event;
+            // Dispatch only: the quiesce accounting (addTriggeredActions) is done by the caller
+            // that surfaced this envelope, so it is counted exactly once regardless of the path.
+            for (Action triggerAction : subActionsTriggeredBy(envelope)) {
+                stateManager.addActionTask(
+                        createActionTask(
+                                key,
+                                triggerAction,
+                                envelope,
+                                stateManager.getSequenceNumber(),
+                                traceContext));
+            }
+            return;
+        }
 
         boolean isInputEvent = EventUtil.isInputEvent(event);
         if (EventUtil.isOutputEvent(event)) {
@@ -383,12 +605,26 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                         notifyRecordStart(key);
                         freshRecordRound = false;
                     }
+                    if (parallelExecutionWithoutCoroutineEnabled) {
+                        // Add one task node per queued task; a worker pulls+prepares it later.
+                        executionCoordinator.addTask(key);
+                    }
                 }
+            } else if (isInputEvent && parallelExecutionWithoutCoroutineEnabled) {
+                stateManager.addActionTask(
+                        createActionTask(
+                                key,
+                                INTERNAL_NOOP_INPUT_ACTION,
+                                event,
+                                stateManager.getSequenceNumber(),
+                                traceContext));
+                executionCoordinator.addTask(key);
             }
         }
 
-        if (isInputEvent) {
-            // If the event is an InputEvent, we submit a new mail to try processing the actions.
+        if (isInputEvent && !parallelExecutionWithoutCoroutineEnabled) {
+            // Kick mail for the normal engine only: it has no workers, so processActionTaskForKey
+            // runs from the mail. The parallel engine's addTask above already dispatched permits.
             mailboxExecutor.submit(
                     () -> tryProcessActionTaskForKey(key, contextKey, traceContext.getInputRunId()),
                     "process action task");
@@ -441,6 +677,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         processEvent(key, contextKey, beginEvent, traceContext);
     }
 
+    /** Kick mail used only on the normal engine to drive queued-task processing for a key. */
     private void tryProcessActionTaskForKey(
             Object key, String contextKey, @Nullable String inputRunId) {
         try {
@@ -454,6 +691,44 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     new ActionTaskExecutionException(
                                             "Failed to execute action task", t)),
                     "throw exception in mailbox");
+        }
+    }
+
+    private void maybeFinishCurrentInput(Object key, @Nullable Work lastCommitted)
+            throws Exception {
+        if (lastCommitted == null) {
+            // This drain committed nothing: the head is still running, or an earlier mail already
+            // drained and retired the input (stale mail). Only the tail-committing mail retires.
+            return;
+        }
+        setCurrentKey(key);
+        if (stateManager.hasMoreActionTasks() || executionCoordinator.hasOutstanding(key)) {
+            return;
+        }
+
+        lastCommitted.actionTask.getRunnerContext().clearSensoryMemory();
+        durableExecManager.updateLastCompletedSequenceNumber(lastCommitted.sequenceNumber);
+        // Mirror the serial path: notify record finished. Noop rounds stay silent.
+        if (!isInternalNoopInputAction(lastCommitted.actionTask.action)) {
+            notifyRecordFinished(key);
+        }
+        int removedCount = stateManager.removeProcessingKey(key);
+        inFlightInputRecords--;
+        checkState(
+                removedCount == 1,
+                "Current processing key count for key "
+                        + key
+                        + " should be 1, but got "
+                        + removedCount);
+        checkState(
+                eventRouter.getKeySegmentQueue().removeKey(key),
+                "Current key" + key + " is missing from the segmentedQueue.");
+        eventRouter.processEligibleWatermarks(super::processWatermark);
+        builtInMetrics.markInputRunCompleted(
+                lastCommitted.actionTask.getTraceContext().getInputRunId());
+        Event pendingInputEvent = pollNextPendingInputEvent();
+        if (pendingInputEvent != null) {
+            processInputEvent(key, pendingInputEvent);
         }
     }
 
@@ -491,6 +766,19 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     private void processActionTask(Object key, String contextKey, ActionTask actionTask)
             throws Exception {
         // 2. Invoke the action task.
+        long sequenceNumber = stateManager.getSequenceNumber();
+        // A resumed child action already carries its scope (transferred across the suspend);
+        // create it only on first dispatch. Computed before the context is wired so the shared
+        // context is scope-aware for the whole invocation.
+        RunnerContextImpl.SubagentScope subagentScope = null;
+        if (actionTask.isSubagentEvent()) {
+            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) actionTask.event;
+            contextManager.ensureContexts(actionTask);
+            subagentScope = contextManager.getSubagentScope(actionTask);
+            if (subagentScope == null) {
+                subagentScope = createSubagentScope(envelope);
+            }
+        }
         contextManager.createAndSetRunnerContext(
                 actionTask,
                 contextKey,
@@ -503,10 +791,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 stateManager.getShortTermMemState(),
                 pythonBridge.getPythonRunnerContext(),
                 ltm,
+                subagentScope,
                 this::createComponentListeners);
         notifyActionPrepared(actionTask);
 
-        long sequenceNumber = stateManager.getSequenceNumber();
         boolean isFinished;
         List<Event> outputEvents;
         Optional<ActionTask> generatedActionTaskOpt = Optional.empty();
@@ -517,12 +805,17 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         // Check if action is already completed
         if (actionState != null && actionState.isCompleted()) {
             // Action has completed, skip execution and replay memory/events
+            // TODO: unlike the executed path below (and the parallel engine's Work.commit), this
+            //  replay path never calls contextManager.removeBundle(actionTask); the bundle lingers
+            //  until close. Bounded during recovery, but asymmetric.
             LOG.debug(
                     "Skipping already completed action: {} for key: {}",
                     actionTask.action.getName(),
                     key);
             isFinished = true;
-            outputEvents = actionTask.finalizeOutputEvents(actionState.getOutputEvents());
+            outputEvents =
+                    actionTask.finalizeOutputEvents(
+                            completedActionOutputEvents(actionTask, actionState));
             MemoryUpdateReplayer.replay(
                     actionTask.getRunnerContext().getShortTermMemory(),
                     actionState.getShortTermMemoryUpdates());
@@ -557,15 +850,27 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                     getRuntimeContext().getUserCodeClassLoader(),
                                     this.pythonBridge.getPythonActionExecutor());
                 } catch (Throwable actionFailure) {
-                    try {
-                        actionTask.getRunnerContext().discardMemoryObservation();
-                    } catch (Throwable discardFailure) {
-                        if (discardFailure != actionFailure) {
-                            actionFailure.addSuppressed(discardFailure);
+                    if (actionTask.isSubagentEvent()) {
+                        // A child-call failure converges into the pending call future instead
+                        // of failing the whole job.
+                        InternalSubagentCallEvent envelope =
+                                (InternalSubagentCallEvent) actionTask.event;
+                        requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId())
+                                .failAction(actionFailure);
+                        actionTaskResult =
+                                actionTask
+                                .new ActionTaskResult(true, Collections.emptyList(), null);
+                    } else {
+                        try {
+                            actionTask.getRunnerContext().discardMemoryObservation();
+                        } catch (Throwable discardFailure) {
+                            if (discardFailure != actionFailure) {
+                                actionFailure.addSuppressed(discardFailure);
+                            }
                         }
+                        ExceptionUtils.rethrowException(actionFailure);
+                        throw new AssertionError("Unreachable after rethrowing action failure");
                     }
-                    ExceptionUtils.rethrowException(actionFailure);
-                    throw new AssertionError("Unreachable after rethrowing action failure");
                 }
 
                 // We remove the contexts record from the map after the task is processed. It
@@ -599,13 +904,47 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             }
         }
 
+        InternalSubagentCallStatus subagentCallStatus = null;
+        if (actionTask.isSubagentEvent()) {
+            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) actionTask.event;
+            subagentCallStatus =
+                    requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId());
+        }
         for (Event actionOutputEvent : outputEvents) {
-            processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
+            if (actionOutputEvent instanceof InternalSubagentCallEvent) {
+                // A sub-agent call bootstrapped by this action (drained from its buffer,
+                // whether it completed or suspended mid-call). The emitter (this action's
+                // own call, for a sub-agent action) releases its pending count; the
+                // envelope's target accounts the triggered actions. These differ for
+                // nested calls.
+                InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) actionOutputEvent;
+                if (actionTask.isSubagentEvent()) {
+                    subagentCallStatus.markEmittedEventDispatched();
+                }
+                InternalSubagentCallStatus targetStatus =
+                        requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId());
+                targetStatus.addTriggeredActions(subActionsTriggeredBy(envelope).size());
+                processEvent(key, contextKey, envelope, actionTask.getTraceContext());
+            } else if (actionTask.isSubagentEvent() && EventUtil.isOutputEvent(actionOutputEvent)) {
+                OutputEvent outputEvent =
+                        actionOutputEvent instanceof OutputEvent
+                                ? (OutputEvent) actionOutputEvent
+                                : OutputEvent.fromEvent(actionOutputEvent);
+                subagentCallStatus.accumulateOutput(outputEvent.getOutput());
+            } else {
+                processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
+            }
+        }
+        if (isFinished && actionTask.isSubagentEvent()) {
+            subagentCallStatus.completeAction();
         }
 
         boolean currentInputEventFinished = false;
         if (isFinished) {
-            builtInMetrics.markActionExecuted(actionTask.action.getName());
+            actionTask
+                    .getRunnerContext()
+                    .getBuiltInMetrics()
+                    .markActionExecuted(actionTask.action.getName());
             currentInputEventFinished = !stateManager.hasMoreActionTasks();
 
             // Persist memory to the Flink state when the action task is finished.
@@ -637,6 +976,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             // Once all sub-events and actions related to the current InputEvent are completed,
             // we can proceed to process the next InputEvent.
             int removedCount = stateManager.removeProcessingKey(key);
+            inFlightInputRecords--;
             checkState(
                     removedCount == 1,
                     "Current processing key count for key "
@@ -663,6 +1003,45 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         }
     }
 
+    private List<Event> completedActionOutputEvents(
+            ActionTask actionTask, ActionState actionState) {
+        if (!actionTask.isSubagentEvent()) {
+            // A root caller owns no sub-agent call, so every envelope it emitted bootstrapped a
+            // child call whose result this completed action already consumed and folded into its
+            // persisted outputs. Replay only the graph-driving events: a finished child's bootstrap
+            // envelope names a call that no longer registers a call status, so re-dispatching it
+            // would abort the replay.
+            List<Event> replayEvents = new ArrayList<>();
+            for (Event event : actionState.getOutputEvents()) {
+                if (!(event instanceof InternalSubagentCallEvent)) {
+                    replayEvents.add(event);
+                }
+            }
+            return replayEvents;
+        }
+
+        InternalSubagentCallEvent triggeringEnvelope = (InternalSubagentCallEvent) actionTask.event;
+        List<Event> replayEvents = new ArrayList<>();
+        for (Event event : actionState.getOutputEvents()) {
+            if (!(event instanceof InternalSubagentCallEvent)) {
+                replayEvents.add(event);
+                continue;
+            }
+            InternalSubagentCallEvent emittedEnvelope = (InternalSubagentCallEvent) event;
+            // Same-call envelopes continue the current sub-agent's action graph, whose downstream
+            // actions replay and reconcile against their ActionState. Different-call envelopes
+            // bootstrap nested calls whose results were already consumed by this completed action
+            // and reflected in its persisted outputs, so replaying them is unnecessary.
+            if (triggeringEnvelope.getSessionId().equals(emittedEnvelope.getSessionId())
+                    && triggeringEnvelope.getCallId().equals(emittedEnvelope.getCallId())) {
+                replayEvents.add(event);
+            }
+        }
+        // Terminal child outputs are accumulated separately from graph-driving events.
+        replayEvents.addAll(actionState.getSubagentResultEvents());
+        return replayEvents;
+    }
+
     @Override
     public void endInput() throws Exception {
         waitInFlightEventsFinished();
@@ -670,7 +1049,23 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @VisibleForTesting
     public void waitInFlightEventsFinished() throws Exception {
-        while (stateManager.hasProcessingKeys()) {
+        checkMailboxThread();
+        while (true) {
+            boolean hasProcessingKeys;
+            if (parallelExecutionLock != null) {
+                // Worker-pool engine: read under the lock so concurrent worker commits settle.
+                parallelExecutionLock.acquireByMain();
+                try {
+                    hasProcessingKeys = stateManager.hasProcessingKeys();
+                } finally {
+                    parallelExecutionLock.release();
+                }
+            } else {
+                hasProcessingKeys = stateManager.hasProcessingKeys();
+            }
+            if (!hasProcessingKeys) {
+                return;
+            }
             mailboxExecutor.yield();
         }
     }
@@ -679,8 +1074,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     public void close() throws Exception {
         // Close every component even when an earlier one fails, so a failing close cannot leak
         // the components behind it or skip super.close(). The first failure is rethrown with
-        // the later ones suppressed. Order is preserved: the resource cache must close before
-        // pythonInterpreter since cached resources may hold Python references.
+        // the later ones suppressed. Signal both worker pools before joining either: Action-worker
+        // interpreter cleanup can wait for a timed-out batch callback to release its lifecycle
+        // lock.
+        // Drain workers before resources; cached Python references must close before pythonBridge.
         //
         // The ladder catches Throwable, not Exception, and IOUtils.closeAll is deliberately not
         // used: both stop at the first non-Exception Throwable without closing what follows,
@@ -688,7 +1085,14 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
         Throwable firstFailure = null;
         for (AutoCloseable closeable :
                 new AutoCloseable[] {
-                    resourceCache, contextManager, pythonBridge, eventLogWriter, durableExecManager
+                    executionCoordinator == null ? null : executionCoordinator::shutdown,
+                    contextManager == null ? null : contextManager::shutdownAsyncExecutor,
+                    executionCoordinator,
+                    contextManager,
+                    resourceCache,
+                    pythonBridge,
+                    eventLogWriter,
+                    durableExecManager
                 }) {
             if (closeable == null) {
                 continue;
@@ -756,7 +1160,60 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     @Override
+    public void prepareSnapshotPreBarrier(long checkpointId) throws Exception {
+        if (!parallelExecutionWithoutCoroutineEnabled) {
+            super.prepareSnapshotPreBarrier(checkpointId);
+            return;
+        }
+        // Quiesce pulled-but-uncommitted tasks before the barrier (their results only live in
+        // memory and would be lost on restore): pause dispatch, then yield without the lock
+        // until everything in flight has committed.
+        try {
+            executionCoordinator.startDraining();
+            while (!executionCoordinator.isQuiesced()) {
+                mailboxExecutor.yield();
+            }
+            super.prepareSnapshotPreBarrier(checkpointId);
+        } catch (Exception e) {
+            // A failed pre-barrier never reaches snapshotState's stopDraining; resume dispatch.
+            try {
+                executionCoordinator.stopDraining();
+            } catch (Exception resumeFailure) {
+                e.addSuppressed(resumeFailure);
+            }
+            throw e;
+        }
+    }
+
+    @Override
+    public OperatorSnapshotFutures snapshotState(
+            long checkpointId,
+            long timestamp,
+            CheckpointOptions checkpointOptions,
+            CheckpointStreamFactory storageLocation)
+            throws Exception {
+        if (!parallelExecutionWithoutCoroutineEnabled) {
+            return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
+        }
+        try {
+            return super.snapshotState(checkpointId, timestamp, checkpointOptions, storageLocation);
+        } finally {
+            // Resume dispatch only after the synchronous snapshot capture: a worker woken any
+            // earlier could pull a queued task out of keyed state before it is captured.
+            executionCoordinator.stopDraining();
+        }
+    }
+
+    @Override
     public void snapshotState(StateSnapshotContext context) throws Exception {
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(() -> snapshotStateInternal(context));
+        } else {
+            snapshotStateInternal(context);
+        }
+    }
+
+    private void snapshotStateInternal(StateSnapshotContext context) throws Exception {
         durableExecManager.snapshotState(getKeyedStateBackend(), context.getCheckpointId());
 
         super.snapshotState(context);
@@ -764,12 +1221,28 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
 
     @Override
     public void notifyCheckpointComplete(long checkpointId) throws Exception {
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(() -> notifyCheckpointCompleteInternal(checkpointId));
+        } else {
+            notifyCheckpointCompleteInternal(checkpointId);
+        }
+    }
+
+    private void notifyCheckpointCompleteInternal(long checkpointId) throws Exception {
         durableExecManager.notifyCheckpointComplete(checkpointId);
         super.notifyCheckpointComplete(checkpointId);
     }
 
     @Override
     public void notifyCheckpointAborted(long checkpointId) throws Exception {
+        if (parallelExecutionWithoutCoroutineEnabled) {
+            runWithParallelExecutionLock(() -> notifyCheckpointAbortedInternal(checkpointId));
+        } else {
+            notifyCheckpointAbortedInternal(checkpointId);
+        }
+    }
+
+    private void notifyCheckpointAbortedInternal(long checkpointId) throws Exception {
         durableExecManager.notifyCheckpointAborted(checkpointId);
         super.notifyCheckpointAborted(checkpointId);
     }
@@ -841,6 +1314,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * lives in the Python runtime, so it joins the Python runtime's listeners and this operator
      * notifies them through a single bridge listener.
      *
+     * <p>The bridge listener is registered when the Python runtime has any sub-agent setup to
+     * notify: an external Python setup materialized eagerly here, or a Python-compiled internal
+     * sub-agent whose Java-owned child plan leaves its caller-facing handle to be built lazily in
+     * the Python runtime (see {@link #hasPythonCompiledSubagent()}).
+     *
      * <p>Runs while the operator opens, after the Python bridge is up, because the Python runtime
      * materializes the setups it owns.
      */
@@ -856,11 +1334,108 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
             } else if (setup instanceof TaskLifecycleListener) {
                 addTaskLifecycleListener((TaskLifecycleListener) setup);
             }
+            if (setup instanceof InternalSubagentSetup) {
+                // Entry point of a setup subtree: nested setups are reached through its child
+                // caches, so only top-level setups become internalSetups entries.
+                InternalSubagentSetup internalSetup = (InternalSubagentSetup) setup;
+                internalSetups.add(internalSetup);
+                bootstrapAgentResources(
+                        internalSetup.getOrCreateChildCache(
+                                getRuntimeContext().getUserCodeClassLoader(), resourceCache));
+            }
         }
-        if (pythonSetupRegistered) {
+        if (pythonSetupRegistered || hasPythonCompiledSubagent()) {
             addTaskLifecycleListener(
                     new PythonTaskLifecycleListener(pythonBridge.getPythonActionExecutor()));
         }
+    }
+
+    /**
+     * Whether the root plan declares a sub-agent compiled from Python. Such a sub-agent keeps a
+     * caller-facing handle in the Python runtime even when its child plan dispatches on the Java
+     * side — an internal sub-agent is Java-owned, so it is materialized as a Java {@link
+     * InternalSubagentSetup} here and its Python handle is built lazily during the action body. The
+     * operator must still bridge the task lifecycle into Python so that handle observes {@code
+     * onActionPrepared} and a no-id submit can mint identities. A Python-compiled agent declares
+     * its top-level sub-agents in the root plan, so this root-level check also covers nested ones
+     * (the bridge listener is operator-wide and fires for child-scope actions too).
+     */
+    private boolean hasPythonCompiledSubagent() {
+        Map<String, ResourceProvider> agentProviders =
+                agentPlan
+                        .getResourceProviders()
+                        .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
+        for (ResourceProvider provider : agentProviders.values()) {
+            if (provider instanceof PythonSerializableResourceProvider) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Materializes the AGENT resources of a nested child cache and recurses into the child plans of
+     * internal setups — the plan tree is a DAG because cycles are rejected at compile time, so this
+     * terminates — so every nested setup exists, with its lifecycle listeners registered, before
+     * the first record.
+     */
+    private void bootstrapAgentResources(ResourceCache cache) throws Exception {
+        for (Resource resource : cache.eagerMaterialize(ResourceType.AGENT)) {
+            if (resource instanceof TaskLifecycleListener) {
+                taskLifecycleListeners.add((TaskLifecycleListener) resource);
+            }
+            if (resource instanceof InternalSubagentSetup) {
+                InternalSubagentSetup setup = (InternalSubagentSetup) resource;
+                bootstrapAgentResources(
+                        setup.getOrCreateChildCache(
+                                getRuntimeContext().getUserCodeClassLoader(), resourceCache));
+            }
+        }
+    }
+
+    /**
+     * Resolves the quiesce status of an internal sub-agent call from anywhere in the setup subtree
+     * rooted at the eagerly materialized top-level setups.
+     */
+    private InternalSubagentCallStatus requireInternalCallStatus(String sessionId, String callId) {
+        for (InternalSubagentSetup setup : internalSetups) {
+            InternalSubagentCallStatus callStatus = setup.findCallStatus(sessionId, callId);
+            if (callStatus != null) {
+                return callStatus;
+            }
+        }
+        throw new IllegalStateException(
+                "Missing subagent call status for sessionId=" + sessionId + ", callId=" + callId);
+    }
+
+    /**
+     * The child-plan actions an envelope triggers. Resolved from the call status's setup because a
+     * nested call targets a scope registered in the caller's own child plan, not in the root cache.
+     * Matched against the delegate event -- its type and payload are what the child plan's trigger
+     * conditions are written against -- so condition filtering inside the scope works like at the
+     * root.
+     */
+    private List<Action> subActionsTriggeredBy(InternalSubagentCallEvent envelope) {
+        InternalSubagentCallStatus callStatus =
+                requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId());
+        return callStatus.getSetup().matchActions(envelope.getDelegate());
+    }
+
+    /**
+     * Builds the scope a child action executes in: the target setup's child plan and pooled child
+     * cache, plus the quiesce status the child's events accumulate into. The child cache was
+     * created during open()-time bootstrap, so this is a pure lookup.
+     */
+    private RunnerContextImpl.SubagentScope createSubagentScope(InternalSubagentCallEvent envelope)
+            throws Exception {
+        InternalSubagentCallStatus callStatus =
+                requireInternalCallStatus(envelope.getSessionId(), envelope.getCallId());
+        InternalSubagentSetup setup = callStatus.getSetup();
+        ResourceCache childCache =
+                setup.getOrCreateChildCache(
+                        getRuntimeContext().getUserCodeClassLoader(), resourceCache);
+        return new RunnerContextImpl.SubagentScope(
+                metricGroup, setup.getChildPlan(), childCache, callStatus);
     }
 
     /**
@@ -998,7 +1573,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     @Nullable
     private ActionTask pollNextActionTask() throws Exception {
         ActionTask actionTask = stateManager.pollNextActionTask();
-        if (actionTask != null) {
+        if (actionTask != null && !isInternalNoopInputAction(actionTask.action)) {
             builtInMetrics.markActionTaskDequeued(
                     actionTask.getTraceContext(), actionTask.hasExecutionStartedEventEmitted());
         }
@@ -1006,6 +1581,30 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void tryResumeProcessActionTasks() throws Exception {
+        stateManager.forEachActionTaskKey(
+                getKeyedStateBackend(),
+                (key, state) -> {
+                    List<ActionTask> rootTasks = new ArrayList<>();
+                    for (ActionTask task : state.get()) {
+                        if (!task.isSubagentEvent()) {
+                            rootTasks.add(task);
+                        }
+                    }
+
+                    // Retain only root tasks: replaying them regenerates the call tree, while
+                    // completedActionOutputEvents restores graph events from completed child state.
+                    // Retaining child tasks would run them alongside the regenerated copies.
+                    // Dropping children cannot strand a key: a child task is persisted only while
+                    // its root caller still awaits it (the caller resumes only after the child
+                    // quiesces), so the root is always retained here to drive the replay.
+                    state.update(rootTasks);
+                    for (ActionTask actionTask : rootTasks) {
+                        builtInMetrics.restoreActionTask(
+                                actionTask.getTraceContext(),
+                                actionTask.hasExecutionStartedEventEmitted());
+                    }
+                });
+
         Iterable<Object> keys = stateManager.getProcessingKeys();
         long activeInputRuns = 0L;
         if (keys != null) {
@@ -1023,39 +1622,290 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                     continue;
                 }
                 eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
-                String contextKey = resolveContextKey(key);
-                // Align with the task-level replay: re-emit the record start for the resumed
-                // round so listeners observe a paired start/finished bracket as well.
-                notifyRecordStart(key);
-                mailboxExecutor.submit(
-                        () -> tryProcessActionTaskForKey(key, contextKey, null),
-                        "process action task");
+                if (parallelExecutionWithoutCoroutineEnabled) {
+                    // Restored tasks were never enqueued through processEvent: add one node per
+                    // queued task; the worker-completion path finishes the input (no kick mail).
+                    // No sub-agent child reaches this engine: the parallel path requires
+                    // continuations to be unsupported (JDK < 21), where InternalSubagentSetup
+                    // fails fast, so the root-only filter above never drops anything here.
+                    setCurrentKey(key);
+                    int queued = stateManager.countActionTasks();
+                    for (int i = 0; i < queued; i++) {
+                        executionCoordinator.addTask(key);
+                    }
+                } else {
+                    // The normal engine has no workers; the kick mail drives
+                    // processActionTaskForKey.
+                    String contextKey = resolveContextKey(key);
+                    // Align with the task-level replay: re-emit the record start for the resumed
+                    // round so listeners observe a paired start/finished bracket as well.
+                    notifyRecordStart(key);
+                    mailboxExecutor.submit(
+                            () -> tryProcessActionTaskForKey(key, contextKey, null),
+                            "process action task");
+                }
             }
             stateManager.replaceProcessingKeys(new ArrayList<>(ownedKeys));
+            // Each recovered key has one active input record occupying in-flight budget; queued
+            // pending records for these keys are added below.
+            inFlightInputRecords = ownedKeys.size();
             activeInputRuns = ownedKeys.size();
         }
         builtInMetrics.restoreActiveInputRuns(activeInputRuns);
 
-        stateManager.forEachActionTaskKey(
-                getKeyedStateBackend(),
-                (key, state) -> {
-                    for (ActionTask actionTask : state.get()) {
-                        builtInMetrics.restoreActionTask(
-                                actionTask.getTraceContext(),
-                                actionTask.hasExecutionStartedEventEmitted());
-                    }
-                });
-
         long[] pendingInputEvents = {0L};
+        // Recovered pending input records will each be dequeued, processed, and decremented when
+        // they finish, so they must occupy in-flight budget too — count one unit per pending event.
         stateManager.forEachPendingInputEventKey(
                 getKeyedStateBackend(),
-                (key, state) -> {
-                    for (Event ignored : state.get()) {
-                        eventRouter.getKeySegmentQueue().addKeyToLastSegment(key);
-                        pendingInputEvents[0]++;
-                    }
-                });
+                (key, state) ->
+                        state.get()
+                                .forEach(
+                                        event -> {
+                                            inFlightInputRecords++;
+                                            pendingInputEvents[0]++;
+                                            eventRouter
+                                                    .getKeySegmentQueue()
+                                                    .addKeyToLastSegment(key);
+                                        }));
         builtInMetrics.restorePendingInputEvents(pendingInputEvents[0]);
+    }
+
+    private void runWithParallelExecutionLock(ThrowingRunnable<? extends Exception> action)
+            throws Exception {
+        boolean acquired = false;
+        try {
+            parallelExecutionLock.acquireByMain();
+            acquired = true;
+            action.run();
+        } finally {
+            if (acquired) {
+                parallelExecutionLock.release();
+            }
+        }
+    }
+
+    /**
+     * A single action task's full worker lifecycle on the parallel engine: a pool thread {@code
+     * setup}s and {@code execute}s it under the lock; the mailbox thread later restores and commits
+     * it. All task-specific processing lives here; the operator keeps only mailbox flow.
+     */
+    private final class Work implements ParallelExecutionTask {
+        private Object key;
+        private long recordIndex;
+        private long taskIndex;
+        private String contextKey;
+
+        private ActionTask actionTask;
+        private long sequenceNumber;
+        private boolean replayCompletedAction;
+
+        @Nullable private ActionTask.ActionTaskResult result;
+        @Nullable private Throwable failure;
+
+        @Override
+        public void setup(Object key, long recordIndex, long taskIndex) {
+            this.key = key;
+            this.recordIndex = recordIndex;
+            this.taskIndex = taskIndex;
+            this.contextKey = resolveContextKey(key);
+        }
+
+        @Override
+        public void execute() {
+            try {
+                // Pull + prepare under the lock hold: pairing the FIFO poll with the under-lock
+                // taskIndex keeps the (taskIndex, task) binding correct across concurrent workers.
+                // createAndSetRunnerContext already binds the context on this thread.
+                setCurrentKey(key);
+                ActionTask task = pollNextActionTask();
+                checkState(task != null, "Action task queue was empty.");
+
+                contextManager.createAndSetRunnerContext(
+                        task,
+                        contextKey,
+                        agentPlan,
+                        resourceCache,
+                        metricGroup,
+                        jobIdentifier,
+                        parallelExecutionLock::checkReentrant,
+                        stateManager.getSensoryMemState(),
+                        stateManager.getShortTermMemState(),
+                        pythonBridge.getPythonRunnerContext(),
+                        ltm,
+                        // The parallel engine runs only without continuation support, which
+                        // internal sub-agents require, so a sub-agent event never reaches this
+                        // path and there is no scope to bind here.
+                        null,
+                        ActionExecutionOperator.this::createComponentListeners);
+
+                // The synthetic noop input action stays lifecycle-silent.
+                boolean lifecycleVisible = !isInternalNoopInputAction(task.action);
+                if (lifecycleVisible) {
+                    notifyActionPrepared(task);
+                }
+
+                long seq = stateManager.getSequenceNumber();
+                ActionState state =
+                        durableExecManager.maybeGetActionState(key, seq, task.action, task.event);
+                boolean replay = state != null && state.isCompleted();
+                if (!replay) {
+                    if (state == null) {
+                        durableExecManager.maybeInitActionState(key, seq, task.action, task.event);
+                        state =
+                                durableExecManager.maybeGetActionState(
+                                        key, seq, task.action, task.event);
+                    }
+                    durableExecManager.setupDurableExecutionContext(task, state, seq);
+                }
+
+                // Recording the key and action task on the continuation context uses its
+                // JDK<21-only
+                // internals, so it lives on the operator's JDK<21 parallel MVP path and is never
+                // reached on JDK 21.
+                ContinuationContext context =
+                        checkNotNull(
+                                contextManager.getContinuationContext(task),
+                                "Missing continuation context for action task");
+                context.setKey(key);
+                context.setActionTask(task);
+                context.setPriority(recordIndex, taskIndex);
+
+                this.actionTask = task;
+                this.sequenceNumber = seq;
+                this.replayCompletedAction = replay;
+
+                // Run: replay a durably-completed action from its persisted state, or invoke it.
+                if (replay) {
+                    MemoryUpdateReplayer.replay(
+                            task.getRunnerContext().getShortTermMemory(),
+                            state.getShortTermMemoryUpdates());
+                    MemoryUpdateReplayer.replay(
+                            task.getRunnerContext().getSensoryMemory(),
+                            state.getSensoryMemoryUpdates());
+                    if (lifecycleVisible) {
+                        notifyActionReused(task);
+                    }
+                    result = task.new ActionTaskResult(true, state.getOutputEvents(), null);
+                } else {
+                    if (lifecycleVisible) {
+                        notifyActionStarted(task);
+                    }
+                    try {
+                        if (task instanceof JavaActionTask) {
+                            ((JavaActionTask) task).setEventSerializer(eventSerializer);
+                        }
+                        result =
+                                task.invoke(
+                                        getRuntimeContext().getUserCodeClassLoader(),
+                                        pythonBridge.getPythonActionExecutor());
+                    } catch (Throwable actionFailure) {
+                        try {
+                            task.getRunnerContext().discardMemoryObservation();
+                        } catch (Throwable discardFailure) {
+                            if (discardFailure != actionFailure) {
+                                actionFailure.addSuppressed(discardFailure);
+                            }
+                        }
+                        if (lifecycleVisible) {
+                            try {
+                                notifyActionFailed(task, actionFailure);
+                            } catch (Throwable notifyFailure) {
+                                if (notifyFailure != actionFailure) {
+                                    actionFailure.addSuppressed(notifyFailure);
+                                }
+                            }
+                        }
+                        throw actionFailure;
+                    }
+                }
+            } catch (Throwable t) {
+                failure = t;
+                if (CancellationUtils.isInterruption(t)) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+        }
+
+        @Override
+        public void restoreContext() {
+            parallelExecutionLock.checkReentrant();
+            if (failure != null) {
+                // Preparation failed before a context existed; commit() will rethrow the failure.
+                return;
+            }
+            contextManager.restore(key, actionTask);
+        }
+
+        @Override
+        public boolean isDone() {
+            return result != null || failure != null;
+        }
+
+        @Override
+        public void commit() throws Exception {
+            if (failure != null) {
+                throw new ActionTaskExecutionException("Failed to execute action task", failure);
+            }
+            checkState(result != null, "Action task completion result must not be null.");
+            // On this engine an action always finishes in one invoke (the base executor runs
+            // durableExecuteAsync inline); an unfinished result would mean the Loom overlay or a
+            // non-Java task leaked in — fail fast rather than run an untested branch.
+            checkState(
+                    result.isFinished(),
+                    "Parallel-engine action did not finish in one invoke: %s",
+                    actionTask.action.getName());
+
+            // The synthetic noop input action stays lifecycle-silent.
+            boolean lifecycleVisible = !isInternalNoopInputAction(actionTask.action);
+            try {
+                contextManager.removeContexts(actionTask);
+                durableExecManager.removeDurableContext(actionTask);
+
+                if (!replayCompletedAction) {
+                    if (lifecycleVisible) {
+                        notifyActionFinishing(actionTask);
+                    }
+                    durableExecManager.maybePersistTaskResult(
+                            key,
+                            sequenceNumber,
+                            actionTask.action,
+                            actionTask.event,
+                            actionTask.getRunnerContext(),
+                            result);
+                    if (lifecycleVisible) {
+                        notifyActionFinished(actionTask);
+                    }
+                }
+            } catch (Throwable t) {
+                if (lifecycleVisible) {
+                    notifyActionFailed(actionTask, t);
+                }
+                throw new ActionTaskExecutionException("Failed to execute action task", t);
+            }
+
+            for (Event actionOutputEvent : result.getOutputEvents()) {
+                try {
+                    processEvent(key, contextKey, actionOutputEvent, actionTask.getTraceContext());
+                } catch (Throwable t) {
+                    // Mirror the serial kick-mail wrapper (tryProcessActionTaskForKey): surface
+                    // output-event processing failures as ActionTaskExecutionException so callers
+                    // observe a uniform cause. The action itself already finished, so it is not
+                    // reported failed.
+                    throw new ActionTaskExecutionException("Failed to execute action task", t);
+                }
+            }
+
+            if (!isInternalNoopInputAction(actionTask.action)) {
+                builtInMetrics.markActionExecuted(actionTask.action.getName());
+            }
+            actionTask.getRunnerContext().persistMemory();
+        }
+
+        @Override
+        public void finishGroup(@Nullable ParallelExecutionTask lastCommitted) throws Exception {
+            maybeFinishCurrentInput(key, (Work) lastCommitted);
+        }
     }
 
     @VisibleForTesting

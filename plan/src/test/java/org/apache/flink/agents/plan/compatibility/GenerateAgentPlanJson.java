@@ -26,6 +26,9 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
 import org.apache.flink.agents.plan.AgentPlan;
 
@@ -79,7 +82,20 @@ public class GenerateAgentPlanJson {
     public static void main(String[] args) throws Exception {
         String jsonPath = args[0];
 
-        AgentPlan agentPlan = new AgentPlan(new JavaAgentPlanCompatibilityTestAgent());
+        Agent agent = new JavaAgentPlanCompatibilityTestAgent();
+        agent.addResource(
+                "python_chat",
+                ResourceType.CHAT_MODEL,
+                PythonResourceDescriptor.Builder.newBuilder("custom.models.Chat")
+                        .addInitialArgument("model", "test")
+                        .build());
+        agent.addResource(
+                "java_chat",
+                ResourceType.CHAT_MODEL,
+                ResourceDescriptor.Builder.newBuilder("custom.models.Chat")
+                        .addInitialArgument("model", "test")
+                        .build());
+        AgentPlan agentPlan = new AgentPlan(agent);
 
         // Serialize the agent plan to JSON
         String json = new ObjectMapper().writeValueAsString(agentPlan);

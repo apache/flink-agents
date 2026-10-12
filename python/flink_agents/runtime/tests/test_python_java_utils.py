@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import json
+from typing import Any
 
 import cloudpickle
 
@@ -52,7 +53,7 @@ def failed_python_tool(value: str) -> ToolResponse:
 
 
 def successful_python_tool(value: str) -> ToolResponse:
-    return ToolResponse.success(value, execution_time_ms=5, tool_name="successful")
+    return ToolResponse.text(value, execution_time_ms=5, tool_name="successful")
 
 
 class _FailedTool:
@@ -74,10 +75,12 @@ def test_get_python_tool_metadata_merges_callable_injected_args() -> None:
 def test_invoke_python_tool_wraps_raw_payload_without_inspecting_it() -> None:
     result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
 
-    assert result == {
-        "__flink_agents_tool_result__": "raw",
-        "result": {"__flink_agents_tool_result__": "response", "value": "raw"},
+    assert result["__flink_agents_tool_result__"] == "response"
+    assert json.loads(result["blocks"][0]["text"]) == {
+        "__flink_agents_tool_result__": "response",
+        "value": "raw",
     }
+    assert result["metadata"] == {}
 
 
 def test_invoke_python_tool_preserves_explicit_failure() -> None:
@@ -85,11 +88,12 @@ def test_invoke_python_tool_preserves_explicit_failure() -> None:
 
     assert result == {
         "__flink_agents_tool_result__": "response",
-        "result": None,
+        "metadata": {},
         "success": False,
         "error": "failed",
         "execution_time_ms": 7,
         "tool_name": "failed",
+        "blocks": [],
     }
 
 
@@ -98,11 +102,12 @@ def test_invoke_python_tool_preserves_explicit_success() -> None:
 
     assert result == {
         "__flink_agents_tool_result__": "response",
-        "result": "ok",
+        "metadata": {},
         "success": True,
         "error": None,
         "execution_time_ms": 5,
         "tool_name": "successful",
+        "blocks": [{"type": "text", "text": "ok"}],
     }
 
 
@@ -111,11 +116,12 @@ def test_invoke_python_tool_instance_preserves_explicit_failure() -> None:
 
     assert result == {
         "__flink_agents_tool_result__": "response",
-        "result": None,
+        "metadata": {},
         "success": False,
         "error": "failed",
         "execution_time_ms": 7,
         "tool_name": "failed",
+        "blocks": [],
     }
 
 
@@ -176,3 +182,39 @@ def test_to_python_memory_set_carries_the_action_context() -> None:
     assert memory_set.partition_key == "owner"
     assert memory_set.observation_id == "owner-action"
     assert memory_set.observation_suppressed is True
+
+
+def test_bridge_uses_function_tool_call() -> None:
+    from unittest.mock import patch
+
+    from flink_agents.plan.tools.function_tool import FunctionTool
+
+    original = FunctionTool.call
+    calls = []
+
+    def recording_call(self: FunctionTool, *args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return original(self, *args, **kwargs)
+
+    with patch.object(FunctionTool, "call", recording_call):
+        result = invoke_python_tool(__name__, "raw_python_tool", {"value": "raw"})
+    assert calls == [{"value": "raw"}]
+    assert result["__flink_agents_tool_result__"] == "response"
+
+
+def test_tool_bridge_preserves_explicit_blocks_in_both_directions() -> None:
+    from flink_agents.api.chat_message import ImageBlock, TextBlock
+    from flink_agents.plan.function import _decode_java_tool_result
+    from flink_agents.runtime.python_java_utils import _encode_python_tool_result
+
+    response = ToolResponse(
+        metadata={"diagnostics": b"\xff"},
+        blocks=[TextBlock(text="visible"), ImageBlock.from_base64("image/png", "aGk=")],
+    )
+    wire = _encode_python_tool_result(response)
+    assert wire["blocks"][1]["type"] == "image"
+    assert wire["metadata"]["diagnostics"] == b"\xff"
+    assert "result" not in wire
+    assert response.to_result_block("id").metadata == {}
+    assert _decode_java_tool_result(wire) == response
+    assert response.to_result_block("id").text == "visible"

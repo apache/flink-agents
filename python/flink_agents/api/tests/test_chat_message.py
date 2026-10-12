@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import base64
+
 import pytest
 from pydantic import ValidationError
 
@@ -24,8 +26,12 @@ from flink_agents.api.chat_message import (
     ChatMessage,
     DocumentBlock,
     ImageBlock,
+    MediaBlock,
     MessageRole,
+    ReasoningBlock,
     TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
     UrlSource,
     VideoBlock,
 )
@@ -38,31 +44,31 @@ def test_text_only_wire_shape() -> None:
     assert dumped == {
         "role": "user",
         "blocks": [{"type": "text", "text": "hello world"}],
-        "tool_calls": [],
-        "extra_args": {},
+        "metadata": {},
     }
 
 
 @pytest.mark.parametrize("blocks", [None, [None]])
 def test_null_blocks_rejected_at_construction_and_assignment(blocks) -> None:
     with pytest.raises(ValidationError):
-        ChatMessage(blocks=blocks)
+        ChatMessage(role=MessageRole.USER, blocks=blocks)
     message = ChatMessage.user("original")
     with pytest.raises(ValidationError):
         message.blocks = blocks
     assert message.text == "original"
 
 
-def test_block_list_copies_input_supports_append_and_dumps_as_list() -> None:
+def test_block_list_is_immutable_and_copies_input() -> None:
     blocks = [TextBlock(text="original")]
     message = ChatMessage.user(blocks)
     blocks.clear()
     assert message.text == "original"
-    message.blocks.append(TextBlock(text=" appended"))
-    assert message.text == "original appended"
-    message.blocks = [TextBlock(text="replacement")]
-    assert message.text == "replacement"
-    assert isinstance(message.model_dump()["blocks"], list)
+    with pytest.raises(AttributeError):
+        message.blocks.append(TextBlock(text="appended"))
+    with pytest.raises(ValidationError):
+        message.blocks = ()
+    assert message.with_blocks([TextBlock(text="replacement")]).text == "replacement"
+    assert message.text == "original"
     assert isinstance(message.model_dump(mode="json")["blocks"], list)
 
 
@@ -77,7 +83,7 @@ def test_media_strings_reject_coercion(kind, field, value) -> None:
         field: value,
     }
     with pytest.raises(ValidationError):
-        ChatMessage.model_validate({"blocks": [payload]})
+        ChatMessage.model_validate({"role": "user", "blocks": [payload]})
 
 
 @pytest.mark.parametrize("value", [-1, True, False, 1.5, 1.0, "1", "1.0", 2**63])
@@ -155,7 +161,7 @@ def test_media_block_wire_shape_omits_absent_fields() -> None:
 
 def test_mixed_blocks_round_trip_preserves_order_and_types() -> None:
     original = ChatMessage(
-        role=MessageRole.TOOL,
+        role=MessageRole.USER,
         blocks=[
             TextBlock(text="before"),
             ImageBlock(
@@ -202,8 +208,7 @@ def test_java_wire_shape_deserializes() -> None:
                 "source": {"type": "base64", "data": "aGk="},
             },
         ],
-        "tool_calls": [],
-        "extra_args": {},
+        "metadata": {},
     }
     message = ChatMessage.model_validate(payload)
     assert isinstance(message.blocks[0], TextBlock)
@@ -310,11 +315,120 @@ def test_blocks_are_frozen() -> None:
 def test_factories_and_text_projection() -> None:
     assert ChatMessage.system("be nice").role == MessageRole.SYSTEM
     assert ChatMessage.assistant("ok").text == "ok"
-    assert ChatMessage.tool("result").blocks == [TextBlock(text="result")]
+    result = ToolResultBlock(call_id="call", blocks=[TextBlock(text="result")])
+    assert ChatMessage.tool(result).blocks == (result,)
     # Empty text becomes an empty block list rather than an empty text block.
     empty = ChatMessage.user("")
-    assert empty.blocks == []
+    assert empty.blocks == ()
     assert empty.text == ""
-    empty.set_text("replaced")
-    assert empty.text == "replaced"
+    assert empty.with_blocks([TextBlock(text="replaced")]).text == "replaced"
     assert str(ChatMessage.user("hi")) == "user: hi"
+
+
+_MEDIA_TYPES = [
+    (ImageBlock, "image/png"),
+    (AudioBlock, "audio/wav"),
+    (VideoBlock, "video/mp4"),
+    (DocumentBlock, "application/pdf"),
+]
+
+
+@pytest.mark.parametrize(("block_type", "media_type"), _MEDIA_TYPES)
+@pytest.mark.parametrize(
+    "data", [b"\xff", b"\xff\x00", b"\xff\x00\x80", bytes(range(256))]
+)
+def test_from_bytes_preserves_binary_and_wire_contract(
+    block_type: type[MediaBlock], media_type: str, data: bytes
+) -> None:
+    """Exercise padding, non-UTF-8 bytes, and payloads longer than a MIME line."""
+    block = block_type.from_bytes(media_type, data)
+    encoded = block.source.data
+    assert "\n" not in encoded
+    assert "\r" not in encoded
+    assert base64.b64decode(encoded, validate=True) == data
+    assert len(encoded) == 4 * ((len(data) + 2) // 3)
+    assert block.source.size_bytes == len(data)
+    assert block.size_bytes is None
+    assert block == block_type.from_base64(
+        media_type, base64.b64encode(data).decode("ascii")
+    )
+    message = ChatMessage.user([block])
+    assert ChatMessage.model_validate_json(message.model_dump_json()) == message
+    assert message.model_dump(mode="json", exclude_none=True)["blocks"] == [
+        {
+            "type": block.type,
+            "media_type": media_type,
+            "source": {"type": "base64", "data": encoded},
+        }
+    ]
+    assert encoded not in repr(message)
+    assert encoded not in str(block)
+
+
+@pytest.mark.parametrize(("block_type", "media_type"), _MEDIA_TYPES)
+@pytest.mark.parametrize(
+    "data", [None, "aGk=", 3, [1, 2], bytearray(b"hi"), memoryview(b"hi")]
+)
+def test_from_bytes_rejects_non_bytes(block_type, media_type, data) -> None:
+    with pytest.raises(TypeError, match="must be bytes"):
+        block_type.from_bytes(media_type, data)
+
+
+@pytest.mark.parametrize(("block_type", "media_type"), _MEDIA_TYPES)
+def test_from_bytes_validation_and_metadata(block_type, media_type) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        block_type.from_bytes(media_type, b"")
+    for invalid_media_type in (None, "", 3):
+        with pytest.raises(ValidationError):
+            block_type.from_bytes(invalid_media_type, b"hi")
+    with pytest.raises(ValidationError):
+        block_type.from_bytes(media_type, b"hi", size_bytes=-1)
+    metadata = {"name": "sample", "size_bytes": 2, "sha256": "caller-supplied"}
+    assert block_type.from_bytes(
+        media_type, b"hi", **metadata
+    ) == block_type.from_base64(media_type, "aGk=", **metadata)
+    # Existing Base64 factories neither encode again nor start validating syntax.
+    assert (
+        block_type.from_base64(media_type, "not base64!").source.data == "not base64!"
+    )
+
+
+def test_nested_metadata_and_input_use_ordinary_containers() -> None:
+    data = {"nested": [{"x": 1}]}
+    call = ToolCallBlock(call_id="call", name="tool", input=data, metadata=data)
+    data["nested"][0]["x"] = 2
+    assert call.input["nested"][0]["x"] == 2
+    call.input["nested"][0]["x"] = 3
+    assert data["nested"][0]["x"] == 3
+    call.metadata["new"] = 1
+    assert call.metadata["new"] == 1
+    assert ToolCallBlock.model_validate_json(call.model_dump_json()) == call
+
+
+@pytest.mark.parametrize("value", [object(), float("nan"), {1: "bad"}])
+def test_metadata_and_tool_input_accept_arbitrary_values(value) -> None:
+    message = ChatMessage.user("hi", metadata={"custom": value})
+    assert message.metadata["custom"] is value
+    message.metadata["added"] = value
+    assert message.metadata["added"] is value
+    call = ToolCallBlock(call_id="id", name="tool", input={"custom": value})
+    assert call.input["custom"] is value
+
+
+def test_tool_and_reasoning_blocks_roundtrip_without_text_leak() -> None:
+    call = ToolCallBlock(call_id="provider-id", name="weather", input={"city": "杭州"})
+    message = ChatMessage.assistant(
+        [ReasoningBlock(text="private"), call, TextBlock(text="answer")]
+    )
+    restored = ChatMessage.model_validate_json(message.model_dump_json())
+    assert restored == message
+    assert restored.text == "answer"
+    assert restored.tool_calls == (call,)
+    assert "tool_calls" not in restored.model_dump()
+    with pytest.raises(ValidationError, match="Duplicate"):
+        ChatMessage.assistant([call, call])
+    for role in (MessageRole.USER, MessageRole.SYSTEM, MessageRole.TOOL):
+        with pytest.raises(ValidationError):
+            ChatMessage(role=role, blocks=[call])
+    with pytest.raises(ValidationError):
+        ToolResultBlock(call_id="id", blocks=[call])

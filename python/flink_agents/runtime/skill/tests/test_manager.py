@@ -29,11 +29,11 @@ from pathlib import Path
 import pytest
 
 from flink_agents.api.skills import Skills, SkillSourceSpec
-from flink_agents.runtime.skill import skill_source_registry
 from flink_agents.runtime.skill.repository.package_repository import (
     PackageSkillRepository,
 )
 from flink_agents.runtime.skill.skill_manager import SkillManager
+from flink_agents.runtime.skill.skill_source_handler import SkillSourceHandler
 
 base_dir = Path(__file__).parent
 
@@ -227,7 +227,7 @@ class TestSkillManagerMixedSources:
         assert secret not in str(exc_info.value.__cause__)
 
     def test_url_origin_description_omits_credentials_and_query(self) -> None:
-        description = skill_source_registry.get("url").describe_location(
+        description = SkillManager(Skills(sources=[]))._get_handler("url").describe_location(
             {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
         )
 
@@ -312,10 +312,11 @@ class TestSkillManagerMixedSources:
         if "url" in params:
             assert "url:<redacted>" in str(exc_info.value)
 
-    def test_close_releases_repo_displaced_by_duplicate_skill_name(self) -> None:
+    def test_close_releases_repo_displaced_by_duplicate_skill_name(
+        self, monkeypatch
+    ) -> None:
         from typing import Dict, List
 
-        from flink_agents.runtime.skill import skill_source_registry
         from flink_agents.runtime.skill.agent_skill import AgentSkill
         from flink_agents.runtime.skill.skill_repository import SkillRepository
 
@@ -343,7 +344,10 @@ class TestSkillManagerMixedSources:
             counter["n"] += 1
             return FakeRepo(counter["n"])
 
-        skill_source_registry.register("test-dup-close", opener)
+        monkeypatch.setattr(
+            SkillManager, "_create_handlers",
+            lambda self, bridge: {"test-dup-close": SkillSourceHandler(opener)},
+        )
 
         config = Skills(
             sources=[
@@ -358,10 +362,9 @@ class TestSkillManagerMixedSources:
             "duplicate-name registration must not orphan the displaced repo"
         )
 
-    def test_partial_load_failure_closes_already_opened_repos(self) -> None:
+    def test_partial_load_failure_closes_already_opened_repos(self, monkeypatch) -> None:
         from typing import Dict, List
 
-        from flink_agents.runtime.skill import skill_source_registry
         from flink_agents.runtime.skill.agent_skill import AgentSkill
         from flink_agents.runtime.skill.skill_repository import SkillRepository
 
@@ -396,7 +399,10 @@ class TestSkillManagerMixedSources:
                 raise OSError(msg)
             return FakeRepo(f"skill-{counter['n']}")
 
-        skill_source_registry.register("test-partial-load", opener)
+        monkeypatch.setattr(
+            SkillManager, "_create_handlers",
+            lambda self, bridge: {"test-partial-load": SkillSourceHandler(opener)},
+        )
 
         config = Skills(
             sources=[
@@ -412,13 +418,12 @@ class TestSkillManagerMixedSources:
         )
 
     def test_load_failure_outside_wrapped_types_closes_repos_and_propagates(
-        self,
+        self, monkeypatch
     ) -> None:
         # Contract: a source failure that is neither OSError nor ValueError still
         # closes the repos opened before it, and reaches the caller unwrapped.
         from typing import Dict, List
 
-        from flink_agents.runtime.skill import skill_source_registry
         from flink_agents.runtime.skill.agent_skill import AgentSkill
         from flink_agents.runtime.skill.skill_repository import SkillRepository
 
@@ -446,7 +451,10 @@ class TestSkillManagerMixedSources:
                 raise zipfile.BadZipFile(msg)
             return FakeRepo()
 
-        skill_source_registry.register("test-badzip-close", opener)
+        monkeypatch.setattr(
+            SkillManager, "_create_handlers",
+            lambda self, bridge: {"test-badzip-close": SkillSourceHandler(opener)},
+        )
 
         config = Skills(
             sources=[
@@ -462,12 +470,13 @@ class TestSkillManagerMixedSources:
             "repos opened before it"
         )
 
-    def test_registration_failure_closes_earlier_repo_and_propagates(self) -> None:
+    def test_registration_failure_closes_earlier_repo_and_propagates(
+        self, monkeypatch
+    ) -> None:
         # Contract: a failure raised while registering a repo — after its open()
         # already succeeded — still closes the repo from an earlier source.
         from typing import Dict, List
 
-        from flink_agents.runtime.skill import skill_source_registry
         from flink_agents.runtime.skill.agent_skill import AgentSkill
         from flink_agents.runtime.skill.skill_repository import SkillRepository
 
@@ -499,7 +508,10 @@ class TestSkillManagerMixedSources:
             counter["n"] += 1
             return FakeRepo(f"skill-{counter['n']}", boom=counter["n"] == 2)
 
-        skill_source_registry.register("test-register-boom", opener)
+        monkeypatch.setattr(
+            SkillManager, "_create_handlers",
+            lambda self, bridge: {"test-register-boom": SkillSourceHandler(opener)},
+        )
 
         config = Skills(
             sources=[

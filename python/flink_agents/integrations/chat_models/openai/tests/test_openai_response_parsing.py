@@ -20,7 +20,14 @@ from unittest.mock import MagicMock
 import pytest
 from openai.types.chat import ChatCompletion, ChatCompletionMessage
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+    ToolResultBlock,
+)
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.integrations.chat_models.openai.openai_chat_model import (
     OpenAIChatModelConnection,
 )
@@ -31,20 +38,18 @@ from flink_agents.integrations.chat_models.openai.openai_utils import (
 
 
 @pytest.mark.parametrize("refusal", ["I cannot help with that", ""])
-def test_refusal_is_preserved_in_extra_args(refusal: str) -> None:
-    """A provider refusal reaches the caller through extra_args."""
+def test_refusal_is_preserved_in_metadata(refusal: str) -> None:
+    """A provider refusal reaches the caller through metadata."""
     # A refused response carries no content, so the reason is the only thing that
     # distinguishes it from a genuinely empty completion. An empty reason is still
-    # a refusal, which a truthiness guard would silently drop. Callers hand in an
-    # extra_args already holding token metrics, so recording the reason must add to
-    # that dict rather than replace it. The reason belongs in extra_args alone:
+    # a refusal, which a truthiness guard would silently drop. The reason belongs
+    # in message metadata:
     # folding it into content would make a refusal read as an ordinary answer.
     message = ChatCompletionMessage(role="assistant", content=None, refusal=refusal)
 
-    result = convert_from_openai_message(message, {"promptTokens": 3})
+    result = convert_from_openai_message(message)
 
-    assert result.extra_args["refusal"] == refusal
-    assert result.extra_args["promptTokens"] == 3
+    assert result.metadata["refusal"] == refusal
     assert result.text == ""
 
 
@@ -54,9 +59,9 @@ def test_no_refusal_key_when_refusal_absent() -> None:
     # never refused.
     message = ChatCompletionMessage(role="assistant", content="ok", refusal=None)
 
-    result = convert_from_openai_message(message, {})
+    result = convert_from_openai_message(message)
 
-    assert "refusal" not in result.extra_args
+    assert "refusal" not in result.metadata
 
 
 @pytest.mark.parametrize(
@@ -65,11 +70,11 @@ def test_no_refusal_key_when_refusal_absent() -> None:
 def test_convert_to_openai_message_omits_response_metadata(
     role: MessageRole,
 ) -> None:
-    """Completion metadata held in extra_args never reaches an outbound param."""
+    """Completion metadata held in metadata never reaches an outbound param."""
     message = ChatMessage.of(
-        role=role,
-        content="hello",
-        extra_args={
+        role,
+        "hello",
+        metadata={
             "model_name": "gpt-4o",
             "promptTokens": 3,
             "completionTokens": 5,
@@ -86,11 +91,7 @@ def test_convert_to_openai_message_forwards_string_refusal(refusal: str) -> None
     """A string refusal on an assistant message is sent to the provider."""
     # The outbound guard is a type check rather than a truthiness check, so an
     # empty reason forwards like any other.
-    message = ChatMessage.of(
-        role=MessageRole.ASSISTANT,
-        content="",
-        extra_args={"refusal": refusal},
-    )
+    message = ChatMessage.of(MessageRole.ASSISTANT, "", metadata={"refusal": refusal})
 
     param = convert_to_openai_message(message)
 
@@ -102,11 +103,7 @@ def test_convert_to_openai_message_omits_non_string_refusal(
     refusal: object,
 ) -> None:
     """Only a string refusal is forwarded; a value of any other type is dropped."""
-    message = ChatMessage.of(
-        role=MessageRole.ASSISTANT,
-        content="",
-        extra_args={"refusal": refusal},
-    )
+    message = ChatMessage.of(MessageRole.ASSISTANT, "", metadata={"refusal": refusal})
 
     param = convert_to_openai_message(message)
 
@@ -115,16 +112,17 @@ def test_convert_to_openai_message_omits_non_string_refusal(
 
 def test_convert_to_openai_message_assistant_tool_calls() -> None:
     """An assistant message requesting tool calls sends them with a null content."""
-    message = ChatMessage.of(
+    message = ChatMessage(
         role=MessageRole.ASSISTANT,
-        content="",
-        tool_calls=[
-            {
-                "original_id": "call_abc",
-                "function": {"name": "get_weather", "arguments": {"city": "Berlin"}},
-            }
+        blocks=[
+            TextBlock(text=""),
+            *[
+                ToolCallBlock(
+                    call_id="call_abc", name="get_weather", input={"city": "Berlin"}
+                )
+            ],
         ],
-        extra_args={"model_name": "gpt-4o", "promptTokens": 3},
+        metadata={"model_name": "gpt-4o", "promptTokens": 3},
     )
 
     param = convert_to_openai_message(message)
@@ -135,11 +133,12 @@ def test_convert_to_openai_message_assistant_tool_calls() -> None:
 
 
 def test_convert_to_openai_message_tool_role_unchanged() -> None:
-    """A tool result carries its call id and nothing else from extra_args."""
-    message = ChatMessage.of(
-        role=MessageRole.TOOL,
-        content="42",
-        extra_args={"external_id": "call_abc", "promptTokens": 7},
+    """A tool result carries its call id and nothing else from metadata."""
+    message = ChatMessage.tool(
+        ToolResultBlock(
+            call_id="call_abc",
+            blocks=[TextBlock(text="42")],
+        )
     )
 
     param = convert_to_openai_message(message)
@@ -202,18 +201,18 @@ def _connection(
     return conn
 
 
-def _chat(conn: OpenAIChatModelConnection) -> ChatMessage:
+def _chat(conn: OpenAIChatModelConnection) -> ChatResult:
     return conn.chat(
         [ChatMessage.of(role=MessageRole.USER, content="hi")], model="gpt-4o"
     )
 
 
-def test_chat_records_finish_reason_in_extra_args() -> None:
+def test_chat_records_finish_reason() -> None:
     """The finish reason survives alongside the token metrics."""
     result = _chat(_connection("length", usage=USAGE))
 
-    assert result.extra_args["promptTokens"] == 1
-    assert result.extra_args["finish_reason"] == "length"
+    assert result.usage.prompt_tokens == 1
+    assert result.finish_reason == "length"
 
 
 def test_chat_records_finish_reason_when_usage_is_absent() -> None:
@@ -224,28 +223,28 @@ def test_chat_records_finish_reason_when_usage_is_absent() -> None:
     """
     result = _chat(_connection("tool_calls"))
 
-    assert "promptTokens" not in result.extra_args
-    assert result.extra_args["finish_reason"] == "tool_calls"
+    assert result.usage is None
+    assert result.finish_reason == "tool_calls"
 
 
 def test_chat_records_unrecognized_finish_reason_verbatim() -> None:
     """A finish reason outside the documented set is stored as received."""
     result = _chat(_connection("some_vendor_reason", usage=USAGE))
 
-    assert result.extra_args["finish_reason"] == "some_vendor_reason"
+    assert result.finish_reason == "some_vendor_reason"
 
 
 def test_chat_records_empty_finish_reason() -> None:
     """An empty finish reason is recorded rather than discarded."""
     # The capture turns on the value being present, not on it being non-empty,
-    # so an empty reason reaches extra_args like any other string.
+    # so an empty reason reaches finish_reason like any other string.
     result = _chat(_connection("", usage=USAGE))
 
-    assert result.extra_args["finish_reason"] == ""
+    assert result.finish_reason == ""
 
 
 def test_chat_omits_finish_reason_when_response_has_none() -> None:
     """A response whose choice carries no finish reason yields no key."""
     result = _chat(_connection(OMITTED, usage=USAGE))
 
-    assert "finish_reason" not in result.extra_args
+    assert result.finish_reason is None

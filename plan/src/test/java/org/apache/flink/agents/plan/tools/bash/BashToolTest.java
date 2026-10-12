@@ -29,9 +29,11 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BashToolTest {
@@ -54,13 +56,13 @@ class BashToolTest {
     @Test
     void allowedSimpleCommandRuns() {
         ToolResponse r = tool().call(args("echo hello", List.of("echo"), List.of()));
-        assertEquals("hello", r.getResult());
+        assertEquals("hello", r.getText());
     }
 
     @Test
     void disallowedCommandRejected() {
         ToolResponse r = tool().call(args("rm -rf /", List.of("echo"), List.of()));
-        String out = (String) r.getResult();
+        String out = r.getText();
         assertTrue(out.startsWith("Command rejected:"));
         assertTrue(out.contains("'rm' is not allowed"));
     }
@@ -69,7 +71,7 @@ class BashToolTest {
     void controlFlowRejected() {
         ToolResponse r =
                 tool().call(args("for i in 1 2 3; do echo $i; done", List.of("echo"), List.of()));
-        String out = (String) r.getResult();
+        String out = r.getText();
         assertTrue(out.startsWith("Command rejected:"));
     }
 
@@ -82,7 +84,7 @@ class BashToolTest {
                                         "declare -i VALUE='$(touch " + marker + ")'",
                                         List.of(),
                                         List.of()));
-        String out = (String) r.getResult();
+        String out = r.getText();
         assertTrue(out.startsWith("Command rejected:"));
         assertFalse(marker.toFile().exists());
     }
@@ -96,7 +98,7 @@ class BashToolTest {
                                         "VALUE='$(touch " + marker + ")'; echo $((VALUE))",
                                         List.of("echo"),
                                         List.of()));
-        String out = (String) r.getResult();
+        String out = r.getText();
         assertTrue(out.startsWith("Command rejected:"));
         assertFalse(marker.toFile().exists());
     }
@@ -104,7 +106,22 @@ class BashToolTest {
     @Test
     void successfulCommandWithEmptyOutput() {
         ToolResponse r = tool().call(args("true", List.of("true"), List.of()));
-        assertEquals("Success", r.getResult());
+        assertEquals("Success", r.getText());
+    }
+
+    @Test
+    void interruptionPropagatesInsteadOfReturningToolResult() {
+        Thread.currentThread().interrupt();
+        try {
+            CancellationException failure =
+                    assertThrows(
+                            CancellationException.class,
+                            () -> tool().call(args("sleep 1", List.of("sleep"), List.of())));
+            assertTrue(failure.getCause() instanceof InterruptedException);
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     @Test
@@ -115,7 +132,7 @@ class BashToolTest {
         m.put("allowed_script_dirs", List.of());
         m.put("timeout", 1);
         ToolResponse r = tool().call(new ToolParameters(m));
-        String out = (String) r.getResult();
+        String out = r.getText();
         assertTrue(out.startsWith("Error: Command timed out"));
     }
 }

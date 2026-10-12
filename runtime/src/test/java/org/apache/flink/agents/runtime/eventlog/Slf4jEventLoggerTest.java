@@ -24,6 +24,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
@@ -52,7 +55,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 class Slf4jEventLoggerTest {
@@ -300,6 +307,43 @@ class Slf4jEventLoggerTest {
         assertTrue(json.contains("\n"), "Pretty-printed output should span multiple lines");
         assertDoesNotThrow(
                 () -> objectMapper.readTree(json), "Pretty-printed output should be valid JSON");
+    }
+
+    @Test
+    void testContentBlocksInGenericEventAreSanitized() throws Exception {
+        EventLoggerConfig config = EventLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
+        logger = new Slf4jEventLogger(config);
+        logger.open(openParams);
+
+        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+        append(
+                new InputEvent(
+                        Map.of(
+                                "content",
+                                List.of(
+                                        TextBlock.of("picture"),
+                                        ImageBlock.fromBase64("image/png", payload),
+                                        new ImageBlock(
+                                                "image/png",
+                                                new UrlSource(
+                                                        "https://user:secret@example.org/cat.png?signature=abc"),
+                                                null,
+                                                null,
+                                                null)))),
+                null);
+
+        assertEquals(1, testAppender.getMessages().size());
+        String logged = testAppender.getMessages().get(0);
+        assertFalse(logged.contains(payload));
+        assertFalse(logged.contains("secret"));
+        assertFalse(logged.contains("signature"));
+        JsonNode blocks = objectMapper.readTree(logged).at("/eventAttributes/input/content");
+        assertEquals("text", blocks.at("/0/type").asText());
+        assertEquals("picture", blocks.at("/0/text").asText());
+        assertEquals("image", blocks.at("/1/type").asText());
+        assertEquals("base64", blocks.at("/1/source/type").asText());
+        assertFalse(blocks.get(1).get("source").has("data"));
+        assertEquals("https://example.org/cat.png", blocks.at("/2/source/url").asText());
     }
 
     @Test

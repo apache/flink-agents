@@ -22,18 +22,23 @@ import org.apache.flink.agents.api.context.Outcome;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 import java.util.function.Supplier;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,10 +57,19 @@ public class ContinuationActionExecutor {
     private final AsyncExecutorThreadFactory asyncThreadFactory;
 
     public ContinuationActionExecutor(int numAsyncThreads) {
-        this(numAsyncThreads, () -> {});
+        this(numAsyncThreads, () -> {}, null, null);
     }
 
-    public ContinuationActionExecutor(int numAsyncThreads, Runnable threadCleanup) {
+    /**
+     * Constructor kept signature-compatible with the base (JDK&lt;21) executor for multi-release
+     * uniformity. Continuation execution owns its own async thread pool and never uses the mailbox
+     * lock or context restorer, so both are ignored here.
+     */
+    public ContinuationActionExecutor(
+            int numAsyncThreads,
+            Runnable threadCleanup,
+            ParallelExecutionLock parallelExecutionLock,
+            ParallelExecutionContextRestorer contextRestorer) {
         LOG.info("Initialize fixed thread pool for async task with {} threads", numAsyncThreads);
         this.asyncThreadFactory = new AsyncExecutorThreadFactory(threadCleanup);
         this.asyncExecutor =
@@ -283,7 +297,7 @@ public class ContinuationActionExecutor {
             List<CompletableFuture<Outcome<T>>> futures, AtomicIntegerArray started) {
         List<Outcome<T>> results = new ArrayList<>(futures.size());
         for (CompletableFuture<Outcome<T>> future : futures) {
-            results.add(future.join());
+            results.add(joinBatchOutcome(future));
         }
         return new BatchExecutionResult<>(results, toStartedFlags(started));
     }
@@ -321,12 +335,25 @@ public class ContinuationActionExecutor {
                 future.cancel(true);
             }
             if (future.isDone() && !future.isCancelled()) {
-                results.add(future.join());
+                results.add(joinBatchOutcome(future));
             } else {
                 results.add(Outcome.failure(timeoutException));
             }
         }
         return new BatchExecutionResult<>(results, toStartedFlags(started));
+    }
+
+    private static <T> Outcome<T> joinBatchOutcome(CompletableFuture<Outcome<T>> future) {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            // Business Exceptions are already stored in Outcome. Preserve a worker's Error
+            // instead of exposing CompletableFuture's wrapper to catch (Exception) handlers.
+            if (e.getCause() instanceof Error) {
+                throw (Error) e.getCause();
+            }
+            throw e;
+        }
     }
 
     private static boolean[] toStartedFlags(AtomicIntegerArray started) {
@@ -343,8 +370,13 @@ public class ContinuationActionExecutor {
                 : System.nanoTime() + timeout.toNanos();
     }
 
-    public void close() {
+    /** Stops async work without waiting for worker exit cleanup. */
+    public void shutdown() {
         asyncExecutor.shutdownNow();
+    }
+
+    public void close() {
+        shutdown();
         boolean interrupted = false;
         try {
             while (!asyncExecutor.isTerminated()) {

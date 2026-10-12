@@ -162,7 +162,7 @@ class AgentPlanDeclareToolMethodTest {
                                         "operation", "multiply")));
         ToolResponse r = calculator.call(tp);
         assertTrue(r.isSuccess());
-        assertEquals(45.0, (Double) r.getResult(), 0.001);
+        assertEquals("45.0", r.getText());
 
         Tool weather =
                 (Tool)
@@ -183,8 +183,8 @@ class AgentPlanDeclareToolMethodTest {
                                                 "location", "London",
                                                 "units", "fahrenheit"))));
         assertTrue(wr.isSuccess());
-        assertTrue(wr.getResultAsString().contains("London"));
-        assertTrue(wr.getResultAsString().contains("72.0°F"));
+        assertTrue(wr.getText().contains("London"));
+        assertTrue(wr.getText().contains("72.0°F"));
     }
 
     @Test
@@ -409,7 +409,7 @@ class AgentPlanDeclareToolMethodTest {
                                                 "operation",
                                                 "divide"))));
         assertTrue(r.isSuccess());
-        assertEquals(4.0, (Double) r.getResult(), 0.001);
+        assertEquals("4.0", r.getText());
 
         r =
                 calculator.call(
@@ -419,8 +419,8 @@ class AgentPlanDeclareToolMethodTest {
                                                 "a", "20",
                                                 "b", "4",
                                                 "operation", "subtract"))));
-        assertTrue(r.isSuccess());
-        assertEquals(16.0, (Double) r.getResult(), 0.001);
+        assertFalse(r.isSuccess());
+        assertEquals("INVALID_ARGUMENT /a: type", r.getError());
 
         // Division by zero
         r =
@@ -487,6 +487,6 @@ class AgentPlanDeclareToolMethodTest {
                                                 "b", 7.0,
                                                 "operation", "multiply"))));
         assertTrue(r.isSuccess());
-        assertEquals(42.0, (Double) r.getResult(), 0.001);
+        assertEquals("42.0", r.getText());
     }
 }

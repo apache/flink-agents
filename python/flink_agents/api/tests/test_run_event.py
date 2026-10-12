@@ -45,7 +45,9 @@ def test_from_event() -> None:
 
 
 def test_from_event_missing_attributes_raises() -> None:
-    # Missing "value" -> from_event must reject rather than silently build a bad event.
+    # Missing "value" -> from_event must reject rather than silently build a bad
+    # event. The boundary schema check raises ValueError, matching Java's
+    # IllegalArgumentException from AgentRunBeginEvent.fromEvent.
     generic = Event(type=AgentRunBeginEvent.EVENT_TYPE, attributes={"key": "k"})
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError, match="value"):
         AgentRunBeginEvent.from_event(generic)

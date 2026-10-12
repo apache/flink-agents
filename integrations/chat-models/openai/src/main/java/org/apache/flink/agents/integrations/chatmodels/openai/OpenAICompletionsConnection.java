@@ -34,7 +34,10 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -159,7 +162,24 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
             Set.of("gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-2024-11-20", "o1", "o1-2024-12-17");
 
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        if (!canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
+            return NativeStructuredOutputSupport.INFEASIBLE;
+        }
+        return modelSupportsNativeStructuredOutput(effectiveModelFor(modelParams))
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.FEASIBLE;
+    }
+
+    /**
+     * Whether {@code effectiveModel} is documented to honor a {@code json_schema} response format.
+     * Protected so that a subclass serving models outside this allowlist can replace it alone.
+     *
+     * @param effectiveModel the model the request would reach, may be null
+     * @return true if the model is known to honor a native schema
+     */
+    protected boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         if (effectiveModel == null) {
             return false;
         }
@@ -175,8 +195,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
      * The {@code model} parameter, falling back to the model configured on the connection when the
      * call names none, which is how the request itself resolves the model it is issued against.
      */
-    @Override
-    protected String effectiveModelFor(Map<String, Object> modelParams) {
+    private String effectiveModelFor(Map<String, Object> modelParams) {
         String modelName = modelParams != null ? (String) modelParams.get("model") : null;
         if (modelName == null || modelName.isBlank()) {
             return this.defaultModel;
@@ -185,23 +204,43 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
     }
 
     /**
+     * Whether a request built from these inputs would carry a native {@code response_format}, the
+     * effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Nothing else about the request constrains the native branch, so neither the tools nor the
+     * parameters are read: this connection sends a native schema alongside bound tools, and the one
+     * parameter that would matter is the model, which is the capability question this excludes.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
+    }
+
+    /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
-     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
-     * set, and the entry is absent when the provider reports none.
+     * in {@link ChatResult#getFinishReason()}, including values outside the documented set, and the
+     * entry is absent when the provider reports none.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
 
     /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
-     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
-     * set, and the entry is absent when the provider reports none.
+     * in {@link ChatResult#getFinishReason()}, including values outside the documented set, and the
+     * entry is absent when the provider reports none.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -209,7 +248,7 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -221,29 +260,19 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         ChatMessage response =
                 OpenAIChatCompletionsUtils.convertFromOpenAIMessage(choice.message());
 
-        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException when the member is
-        // absent or null, so the value is read through the raw field.
-        choice._finishReason()
-                .asKnown()
-                .ifPresent(
-                        reason -> response.getExtraArgs().put("finish_reason", reason.asString()));
-
-        // Stash token usage
-        if (completion.usage().isPresent()) {
-            String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-            if (modelName == null || modelName.isBlank()) {
-                modelName = this.defaultModel;
-            }
-            if (modelName != null && !modelName.isBlank()) {
-                response.getExtraArgs().put("model_name", modelName);
-                response.getExtraArgs()
-                        .put("promptTokens", completion.usage().get().promptTokens());
-                response.getExtraArgs()
-                        .put("completionTokens", completion.usage().get().completionTokens());
-            }
-        }
-
-        return response;
+        return new ChatResult(
+                response,
+                effectiveModelFor(modelParams),
+                completion.id(),
+                completion
+                        .usage()
+                        .map(
+                                usage ->
+                                        new TokenUsage(
+                                                usage.promptTokens(), usage.completionTokens()))
+                        .orElse(null),
+                choice._finishReason().asKnown().map(reason -> reason.asString()).orElse(null),
+                null);
     }
 
     // Package-private so the request body (including the native response_format) can be asserted
@@ -257,10 +286,8 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
                 rawModelParams != null ? new HashMap<>(rawModelParams) : new HashMap<>();
 
         boolean strictMode = Boolean.TRUE.equals(modelParams.remove("strict"));
-        String modelName = (String) modelParams.remove("model");
-        if (modelName == null || modelName.isBlank()) {
-            modelName = this.defaultModel;
-        }
+        String modelName = effectiveModelFor(modelParams);
+        modelParams.remove("model");
 
         ChatCompletionCreateParams.Builder builder =
                 ChatCompletionCreateParams.builder()
@@ -275,12 +302,10 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         // documents as capable; a RowTypeInfo (wrapped in OutputSchema) or an incapable model keeps
         // the prompt-engineering fallback.
         //
-        // TODO(#912): the requested strategy is not visible here, so this re-check cannot tell an
-        // explicit NATIVE request apart from one that merely resolved to native. A caller asking
-        // for NATIVE on a model this predicate rejects therefore gets an unconstrained response
-        // instead of an error. Once strategy resolution is wired up, NATIVE must either bypass
-        // this capability re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility check is shared with the structured-output query rather than restated, so
+        // the query answers what this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
+                && modelSupportsNativeStructuredOutput(modelName)) {
             builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
         }
 

@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.skill;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -67,6 +69,41 @@ class LoadSkillToolTest {
     }
 
     @Test
+    void initializationFailuresReturnErrorResponsesOnRepeatedCalls() throws Exception {
+        try (ResourceContextImpl ctx =
+                new ResourceContextImpl((name, type) -> Skills.fromPackage("missing", "skills"))) {
+            LoadSkillTool tool = tool(ctx);
+            for (int attempt = 0; attempt < 2; attempt++) {
+                ToolResponse response = tool.call(args("demo", null));
+                assertTrue(response.isError());
+                assertEquals(
+                        "Failed to initialize skill manager: Failed to load skills from package:missing/skills",
+                        response.getError());
+            }
+        }
+    }
+
+    @Test
+    void initializationErrorResponseRedactsUrlCredentials() throws Exception {
+        try (ResourceContextImpl ctx =
+                new ResourceContextImpl(
+                        (name, type) ->
+                                new Skills(
+                                        List.of(
+                                                new SkillSourceSpec(
+                                                        "url",
+                                                        Map.of(
+                                                                "url",
+                                                                "https://user:password@example.com/skills.zip?token=secret#part")))))) {
+            ToolResponse response = tool(ctx).call(args("demo", null));
+            assertTrue(response.isError());
+            assertEquals(
+                    "Failed to initialize skill manager: Failed to load skills from url:https://example.com/skills.zip",
+                    response.getError());
+        }
+    }
+
+    @Test
     void unknownSkillReturnsAvailableList() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("does-not-exist", null));
@@ -81,7 +118,7 @@ class LoadSkillToolTest {
     void defaultPathReturnsSkillContentEnvelope() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("github", null));
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         assertTrue(out.startsWith("<skill_content name=\"github\">"));
         assertTrue(out.contains("# Skill: github"));
         assertTrue(out.contains("Base directory for this skill: "));
@@ -92,7 +129,7 @@ class LoadSkillToolTest {
     void resourcePathReturnsRawContent() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("nano-banana-pro", "scripts/generate_image.py"));
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         // The script file should be returned verbatim (not wrapped in <skill_content>).
         assertTrue(!out.startsWith("<skill_content"));
         assertTrue(out.length() > 0);
@@ -148,7 +185,7 @@ class LoadSkillToolTest {
 
         ToolResponse resp = t.call(new ToolParameters(parameters));
 
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         assertTrue(out.startsWith("<skill_content name=\"github\">"));
     }
 

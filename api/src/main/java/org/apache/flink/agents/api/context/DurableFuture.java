@@ -29,13 +29,13 @@ package org.apache.flink.agents.api.context;
  *
  * @param <T> the result type
  */
-public interface DurableFuture<T> {
+public interface DurableFuture<T> extends AsyncFuture<T> {
     /**
      * Resolves this durable future and returns its result.
      *
-     * <p>On JDK 21+, resolving a single durable future yields the current action execution while
-     * its callable runs. On JDK &lt; 21, execution falls back to the synchronous path. Awaiting an
-     * already resolved future returns or rethrows its locally cached outcome without consuming a
+     * <p>Uses the same runtime-aware waiting mechanism as {@link AsyncFuture#await()}, including
+     * worker execution with the shared lock released on the JDK &lt; 21 parallel engine. Awaiting
+     * an already resolved future returns or rethrows its locally cached outcome without consuming a
      * second durable slot.
      */
     T await() throws Exception;

@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -33,31 +34,79 @@ public class ContextRetrievalRequestEvent extends Event {
 
     private static final int DEFAULT_MAX_RESULTS = 3;
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.required("query", String.class),
+                    BuiltInAttribute.required("vector_store", String.class),
+                    BuiltInAttribute.optional("max_results", Number.class));
+
     public ContextRetrievalRequestEvent(String query, String vectorStore) {
         this(query, vectorStore, DEFAULT_MAX_RESULTS);
     }
 
+    /**
+     * Creates a new context retrieval request event.
+     *
+     * @param query the search query text
+     * @param vectorStore the name of the vector store to query
+     * @param maxResults the maximum number of results to return; must be positive
+     * @throws IllegalArgumentException if {@code maxResults} is non-positive
+     */
     public ContextRetrievalRequestEvent(String query, String vectorStore, int maxResults) {
         super(EVENT_TYPE);
+        validateMaxResults(maxResults);
         setAttr("query", query);
         setAttr("vector_store", vectorStore);
         setAttr("max_results", maxResults);
     }
 
+    /**
+     * Reconstructs a context retrieval request event from its serialized form.
+     *
+     * <p>The {@code max_results} attribute is validated here as well, so that reconstructed events
+     * are rejected the same way as directly constructed ones and stay consistent with the Python
+     * implementation.
+     *
+     * @param id the event id
+     * @param attributes the event attributes
+     * @throws IllegalArgumentException if {@code max_results} is present and non-positive
+     */
     @JsonCreator
     public ContextRetrievalRequestEvent(
             @JsonProperty("id") UUID id,
             @JsonProperty("attributes") Map<String, Object> attributes) {
         super(id, EVENT_TYPE, attributes);
+        Object maxResults = attributes == null ? null : attributes.get("max_results");
+        if (maxResults instanceof Number) {
+            validateMaxResults(((Number) maxResults).intValue());
+        }
+    }
+
+    private static void validateMaxResults(int maxResults) {
+        if (maxResults <= 0) {
+            throw new IllegalArgumentException(
+                    String.format("`max_results` must be positive, but was %d.", maxResults));
+        }
     }
 
     /**
      * Reconstructs a typed ContextRetrievalRequestEvent from a base Event.
      *
+     * <p>Enforces the fixed cross-language schema: {@code query} and {@code vector_store} are
+     * required strings, {@code max_results} is an optional positive number, and no other attribute
+     * is allowed.
+     *
      * @param event the base event containing context retrieval request data in attributes
      * @return a typed ContextRetrievalRequestEvent
+     * @throws IllegalArgumentException if the event violates the schema
      */
     public static ContextRetrievalRequestEvent fromEvent(Event event) {
+        Map<String, Object> attributes = event.getAttributes();
+        validateAttributeSchema(EVENT_TYPE, attributes, ATTRIBUTE_SCHEMA);
+        Object maxResults = attributes.get("max_results");
+        if (maxResults != null) {
+            validateMaxResults(((Number) maxResults).intValue());
+        }
         return reconstructFrom(event, ContextRetrievalRequestEvent::new);
     }
 

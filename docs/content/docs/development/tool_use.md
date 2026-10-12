@@ -179,11 +179,49 @@ ReActAgent reviewAnalysisReactAgent = new ReActAgent(
 - Use `AgentsExecutionEnvironment.add_resource` to register the tool to the execution environment
 - Reference the tool by its name in the `tools` list of the `ResourceDescriptor`
 
+### Argument Validation
+
+Function tools validate arguments before execution. Unknown fields, incorrect types,
+and violated constraints produce a failed tool response without running the function.
+Validation uses the complete function signature, including injected parameters.
+Numeric strings and booleans are not converted to numbers.
+
+Missing arguments use declared defaults. Explicit `null` does not select a default
+and is accepted only for nullable parameters. Framework values override model-supplied values for
+[injected parameters](#tool-parameter-injection). Missing or invalid framework values
+fail the call; model-supplied values are never used as a fallback.
+
+In Python, use type annotations and `Annotated[..., Field(...)]` for constraints:
+
+```python
+from typing import Annotated
+from pydantic import Field
+
+@tool
+def search(query: Annotated[str, Field(min_length=1)],
+           limit: Annotated[int, Field(ge=1, le=100)] = 10) -> str:
+    return query[:limit]
+```
+
+In Java, use `@ToolParam`. `defaultValue` is JSON: `"10"` for a number,
+`"null"` for null, and `"\"text\""` for a string. Set `nullable = true` to accept
+null; `required = false` needs a default or `nullable = true` (defaulting to null).
+
+```java
+@Tool(description = "Search documents")
+public static String search(
+        @ToolParam(name = "query", minLength = 1) String query,
+        @ToolParam(name = "limit", defaultValue = "10", minimum = "1", maximum = "100")
+                int limit) {
+    return query.substring(0, Math.min(query.length(), limit));
+}
+```
+
 ## Tool Parameter Injection
 
 Some tools need runtime data that should not be chosen by the model, such as a tenant id, account id, request trace id, or other framework-owned context. Mark those parameters as injected so they are hidden from the model-facing tool schema, and declare where the runtime should read each value.
 
-The model only sees and provides normal tool parameters. The injected parameters are merged into the tool call immediately before the built-in `tool_call_action` executes the tool.
+The model only sees and provides normal tool parameters. The built-in `tool_call_action` resolves injected values and overwrites any model-supplied values for the same parameters before calling the tool.
 
 {{< tabs "Inject Tool Parameters" >}}
 
@@ -284,23 +322,22 @@ Injected parameters are part of the tool execution contract, not the model contr
 
 - They are not included in the JSON schema sent to the model.
 - They are not written back to the original `ToolRequestEvent`.
-- If a model supplies an argument with the same name, the injected value wins during execution.
+- If a model supplies an argument with the same name, the framework-provided value takes precedence.
 
 ## Parallel tool-call batches
 
 When `tool-call.async` is enabled, the built-in `tool_call_action` runs all tool calls from one
-`ToolRequestEvent` as a single durable batch. Set `tool-call.parallelism` to control concurrency:
+`ToolRequestEvent` as a single durable batch. Set `async.batch.parallelism` to control concurrency:
 
 - `1` — serial execution (one tool at a time).
 - `> 1` — parallel batch with a sliding window of at most that many in-flight tool calls.
 
-On **Java**, concurrent in-batch execution uses a sliding window on **JDK 21+** (Continuation
-API); on JDK 11 the batch still completes but tool calls run serially. **Python** uses the shared
-async thread pool and runs batches concurrently regardless of JDK version.
+Java and Python support concurrent tool-call batches on all supported JDK versions.
 
-Chat, RAG, and tool batches share one `num-async-threads` pool **per operator subtask** (every
-key routed to that subtask). The default parallelism is the host CPU count, so multi-tool batches
-run in parallel on JDK 21+ / Python unless you change this setting.
+Tool batches share a `num-async-threads` pool **per operator subtask** (every key routed to
+that subtask). On JDK 21+ and in Python, chat and RAG calls also use this pool. On older JDKs,
+Java batches use a separate pool from the Action workers. The default batch parallelism is
+the host CPU count.
 
 Built-in actions for a **single key** run one at a time. In the usual chat → tool path, a chat
 async call finishes before `tool_call_action` starts, so they do not overlap on the same key.
@@ -308,13 +345,13 @@ Contention appears mainly **across keys** on the same subtask: one key's paralle
 delay another key's chat or RAG async work.
 
 {{< hint warning >}}
-**Cross-key impact:** with defaults (`num-async-threads = 2× cores`, `tool-call.parallelism =
+**Cross-key impact:** with defaults (`num-async-threads = 2× cores`, `async.batch.parallelism =
 cores`), one full tool batch can use up to half the subtask pool; several hot keys can saturate it.
 If your job mixes heavy tool batches with chat/RAG on the same subtask, lower
-`tool-call.parallelism` or increase `num-async-threads`.
+`async.batch.parallelism` or increase `num-async-threads`.
 {{< /hint >}}
 
-`tool-call.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
+`async.batch.timeout.ms` applies to the whole batch. On timeout, completed slots keep their
 outcome; slots that started but did not finish are recorded as failures; slots that never started
 executing (for example, queued in a saturated pool) stay pending, so they are re-executed after
 recovery instead of recording a false failure. Timeout cancellation is best-effort; side-effecting
@@ -328,6 +365,123 @@ the tool (for example an HTTP client read timeout) rather than relying on this b
 the thread.
 {{< /hint >}}
 
+## Tool response content and metadata
+
+For simple tools, return a value and the framework converts it to response text.
+Strings are used directly. Other values, such as maps and lists, are represented
+as JSON text when possible; otherwise, their string representation is used.
+For example, a Python tool can return a `date` directly and the model receives
+text such as `2026-01-01`.
+
+Binary values (`byte[]` in Java; `bytes` and `bytearray` in Python) are represented
+as Base64 strings in the JSON text, including when nested in maps or lists.
+For example, the byte `0xff` produces the response text `"/w=="`.
+To send images, audio, or other media to the model, return media blocks in a
+`ToolResponse` instead of returning raw binary data.
+
+Return a `ToolResponse` when you want to choose the content sent to the model or
+attach additional data for your application:
+
+- `blocks` contains the response content in order. It accepts text and media
+  blocks; reasoning, tool calls, and nested tool results are not supported.
+- `metadata` holds application data, such as a record ID, that is not sent to the
+  model. Use JSON-serializable values when the response needs to be persisted.
+
+For example, this tool returns a weather description for the model and a station
+ID for application code:
+
+{{< tabs "tool-response" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_message import TextBlock
+from flink_agents.api.decorators import tool
+from flink_agents.api.tools import ToolResponse
+
+# Declare this method inside an Agent class.
+@tool
+@staticmethod
+def get_weather(city: str) -> ToolResponse:
+    """Look up the weather.
+
+    Args:
+        city: City to query.
+    """
+    return ToolResponse(
+        blocks=[TextBlock(text=f"The temperature in {city} is 25°C.")],
+        metadata={"station_id": "station-123"},
+    )
+
+# Convenience factories:
+# ToolResponse.text("Operation completed")
+# ToolResponse.error("The station could not be reached")
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.annotation.Tool;
+import org.apache.flink.agents.api.annotation.ToolParam;
+import org.apache.flink.agents.api.tools.ToolResponse;
+
+import java.util.Map;
+
+@Tool(description = "Look up the weather")
+public static ToolResponse getWeather(@ToolParam(name = "city") String city) {
+    return ToolResponse.text("The temperature in " + city + " is 25°C.")
+            .withMetadata(Map.of("station_id", "station-123"));
+}
+```
+{{< /tab >}}
+{{< /tabs >}}
+
+Application code can read `metadata` without parsing the response text. Use
+`ToolResponse.error("reason")` to report an operation that could not be completed;
+the model receives the error description as the tool result.
+
+### Representing media returned by tools
+
+{{< hint warning >}}
+Current model integrations do not support sending media returned by tools to the
+model. A tool response containing media causes the chat request to fail, even if
+the model supports media in user messages. Use text-only tool responses in chat
+workflows for now.
+{{< /hint >}}
+
+Media must be provided explicitly as blocks. Returning bytes or a URL as an
+ordinary value does not identify it as an image or another media type. For
+example, given PNG bytes in `image_bytes` / `imageBytes`:
+
+{{< tabs "tool-response-media" >}}
+{{< tab "Python" >}}
+```python
+from flink_agents.api.chat_message import ImageBlock, TextBlock
+from flink_agents.api.tools import ToolResponse
+
+response = ToolResponse(
+    blocks=[
+        TextBlock(text="Generated chart:"),
+        ImageBlock.from_bytes("image/png", image_bytes),
+    ],
+    metadata={"report_id": "report-123"},
+)
+```
+{{< /tab >}}
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.tools.ToolResponse;
+
+import java.util.List;
+import java.util.Map;
+
+ToolResponse response = ToolResponse.success(
+        List.of(new TextBlock("Generated chart:"),
+                ImageBlock.fromBytes("image/png", imageBytes)))
+        .withMetadata(Map.of("report_id", "report-123"));
+```
+{{< /tab >}}
+{{< /tabs >}}
+
 ## MCP Tool
 
 See [MCP]({{< ref "docs/development/mcp" >}}) for details.
@@ -336,7 +490,7 @@ See [MCP]({{< ref "docs/development/mcp" >}}) for details.
 
 The built-in `tool_call_action` listens to `ToolRequestEvent`. For each tool call, it looks up the tool resource by function name, executes it through durable execution, and records whether it succeeded. After all tool calls in the batch have been processed, it sends a `ToolResponseEvent`.
 
-Python tools can continue returning raw values, which are treated as successful results. A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
+Ordinary tool return values are converted to successful text responses as described in [Tool response content and metadata](#tool-response-content-and-metadata). A tool that completes normally but cannot perform the requested operation can return `ToolResponse.error("reason")`; an exception still represents an invocation failure. Both failure forms are recorded as failed tool calls in `ToolResponseEvent`.
 
 When the tool request comes from `chat_model_action`, the emitted `ToolResponseEvent` is automatically consumed by `chat_model_action` to continue the chat. See [Built-in Events and Actions in Chat Models]({{< ref "docs/development/chat_models#built-in-events-and-actions" >}}) for details on how `chat_model_action` handles tool responses.
 

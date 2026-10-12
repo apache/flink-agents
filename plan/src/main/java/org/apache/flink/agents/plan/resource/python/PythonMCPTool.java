@@ -18,8 +18,6 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;

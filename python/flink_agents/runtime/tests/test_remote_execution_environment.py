@@ -18,20 +18,32 @@
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import cloudpickle
 import pytest
 import yaml
+from pyflink.common import Row
+from pyflink.common.typeinfo import ExternalTypeInfo, Types
+from pyflink.table import DataTypes, Schema
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.plan.configuration import AgentConfiguration
+from flink_agents.runtime.output_type_utils import (
+    infer_row_type_info,
+    schema_to_row_type_info,
+)
 from flink_agents.runtime.remote_execution_environment import (
     RemoteAgentBuilder,
     RemoteExecutionEnvironment,
+    _row_types_equal,
 )
+from flink_agents.runtime.tests.output_type_fixtures import DcOutput, ModelOutput
 
 test_data = {
     "agent": {
@@ -358,3 +370,205 @@ def test_to_datastream_submits_java_validated_plan_json() -> None:
     assert json.loads(submitted_plan_json)["config"]["conf_data"]["plan.version"] == (
         "validated"
     )
+
+
+def _output_schema() -> Schema:
+    return (
+        Schema.new_builder()
+        .column("id", DataTypes.BIGINT())
+        .column("label", DataTypes.STRING())
+        .column("score", DataTypes.DOUBLE())
+        .build()
+    )
+
+
+@contextmanager
+def _applied_builder(t_env=None) -> Iterator[tuple]:
+    """Yield an applied builder with a capturable raw output stream.
+
+    ``invoke_method`` is patched so plan validation passes and ``connectToAgent``
+    returns a stub; ``DataStream`` is patched so the cached raw stream is
+    ``raw_mock``. A test then inspects each terminal's conversion operator through
+    ``raw_mock.map.call_args_list`` without a Flink runtime.
+    """
+    if t_env is None:
+        t_env = MagicMock()
+    builder = RemoteAgentBuilder(
+        input=MagicMock(),
+        config=AgentConfiguration(),
+        t_env=t_env,
+        resources={},
+        agents={},
+    )
+    agent = _agent_with_conditions(["_input_event"])
+    raw_mock = MagicMock(name="raw_output")
+    with (
+        patch(
+            "flink_agents.runtime.remote_execution_environment.invoke_method",
+            side_effect=[None, MagicMock()],
+        ) as invoke_mock,
+        patch(
+            "flink_agents.runtime.remote_execution_environment.DataStream",
+            return_value=raw_mock,
+        ),
+    ):
+        builder.apply(agent)
+        yield builder, raw_mock, t_env, invoke_mock
+
+
+def _last_map(raw_mock) -> tuple:
+    """Return ``(func, output_type)`` of the most recent ``raw.map`` call."""
+    call = raw_mock.map.call_args_list[-1]
+    return call.args[0], call.kwargs.get("output_type")
+
+
+def test_to_datastream_raw_view_is_untyped():
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream()
+    func, output_type = _last_map(raw_mock)
+    assert output_type is None
+    assert func(cloudpickle.dumps({"id": 1})) == {"id": 1}
+
+
+def test_to_datastream_scalar_type():
+    long_ti = Types.LONG()
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream(long_ti)
+    func, output_type = _last_map(raw_mock)
+    assert output_type is long_ti
+    assert func(cloudpickle.dumps(42)) == 42
+
+
+def test_to_datastream_structured_model_yields_instances():
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream(ModelOutput)
+    func, output_type = _last_map(raw_mock)
+    # A Pydantic model has no native Flink type: the stream stays pickle-typed.
+    assert output_type is None
+    payload = cloudpickle.dumps({"id": 1, "label": "a", "score": 1.5})
+    assert func(payload) == ModelOutput(id=1, label="a", score=1.5)
+    # The closure captures no py4j object, so it survives a pickle round-trip.
+    restored = cloudpickle.loads(cloudpickle.dumps(func))
+    assert restored(payload) == ModelOutput(id=1, label="a", score=1.5)
+
+
+def test_to_datastream_row_type_info_yields_rows():
+    row_ti = infer_row_type_info(ModelOutput)
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream(row_ti)
+    func, output_type = _last_map(raw_mock)
+    assert isinstance(output_type, ExternalTypeInfo)
+    payload = cloudpickle.dumps({"id": 1, "label": "a", "score": 1.5})
+    assert list(func(payload)) == [1, "a", 1.5]
+    # The closure captures only the picklable shape, not the py4j RowTypeInfo.
+    restored = cloudpickle.loads(cloudpickle.dumps(func))
+    assert list(restored(payload)) == [1, "a", 1.5]
+
+
+def test_to_datastream_external_row_type_info_yields_rows():
+    # An ExternalTypeInfo-wrapped RowTypeInfo (the form a Table terminal hands
+    # back) is unwrapped to its inner row type before the row conversion.
+    wrapped = ExternalTypeInfo(infer_row_type_info(ModelOutput))
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream(wrapped)
+    func, output_type = _last_map(raw_mock)
+    assert isinstance(output_type, ExternalTypeInfo)
+    payload = cloudpickle.dumps({"id": 1, "label": "a", "score": 1.5})
+    assert list(func(payload)) == [1, "a", 1.5]
+
+
+def test_to_datastream_caches_raw_stream_without_welding_type():
+    long_ti = Types.LONG()
+    with _applied_builder() as (builder, raw_mock, _, invoke_mock):
+        builder.to_datastream()
+        builder.to_datastream(long_ti)
+    # The agent operator is connected once; each view maps its own conversion.
+    assert invoke_mock.call_count == 2
+    assert raw_mock.map.call_count == 2
+    first_type = raw_mock.map.call_args_list[0].kwargs.get("output_type")
+    second_type = raw_mock.map.call_args_list[1].kwargs.get("output_type")
+    assert first_type is None
+    assert second_type is long_ti
+
+
+def test_multiple_typed_datastreams_of_different_types_coexist():
+    # With no single-declaration guard, one execution exposes several independent
+    # typed streams. Each typed call binds its own type through a separate
+    # conversion operator on the shared raw stream, and the unrestricted view
+    # stays untyped.
+    with _applied_builder() as (builder, raw_mock, _, _):
+        builder.to_datastream()
+        builder.to_datastream(ModelOutput)
+        builder.to_datastream(DcOutput)
+    # Raw view + two typed streams = three independent operators; no conflict.
+    assert raw_mock.map.call_count == 3
+    assert raw_mock.map.call_args_list[0].kwargs.get("output_type") is None
+
+
+def test_to_table_rejects_type_declaration_in_schema_slot():
+    # The builder's 'schema' slot is Schema-only; a type declaration must be
+    # passed as output_type=... instead.
+    with (
+        _applied_builder() as (builder, _, _, _),
+        pytest.raises(TypeError, match="accepts a Table Schema only"),
+    ):
+        builder.to_table(ModelOutput)
+
+
+def test_to_table_schema_only_builds_row_stream():
+    schema = _output_schema()
+    with _applied_builder() as (builder, raw_mock, t_env, _):
+        builder.to_table(schema)
+    func, output_type = _last_map(raw_mock)
+    assert isinstance(output_type, ExternalTypeInfo)
+    payload = cloudpickle.dumps({"id": 1, "label": "a", "score": 1.5})
+    assert isinstance(func(payload), Row)
+    # The caller's Schema is passed through to preserve Table-domain information.
+    assert t_env.from_data_stream.call_args.args[1] is schema
+
+
+def test_to_table_output_type_derives_schema():
+    with _applied_builder() as (builder, _, t_env, _):
+        builder.to_table(output_type=ModelOutput)
+    derived = t_env.from_data_stream.call_args.args[1]
+    assert isinstance(derived, Schema)
+    assert _row_types_equal(
+        schema_to_row_type_info(derived), infer_row_type_info(ModelOutput)
+    )
+
+
+def test_to_table_cross_check_matching():
+    schema = _output_schema()
+    output_type = ExternalTypeInfo(infer_row_type_info(ModelOutput))
+    with _applied_builder() as (builder, _, t_env, _):
+        builder.to_table(schema=schema, output_type=output_type)
+    assert t_env.from_data_stream.call_args.args[1] is schema
+
+
+def test_to_table_cross_check_mismatched():
+    schema = _output_schema()
+    output_type = ExternalTypeInfo(infer_row_type_info(DcOutput))
+    with (
+        _applied_builder() as (builder, _, _, _),
+        pytest.raises(ValueError, match="different row types"),
+    ):
+        builder.to_table(schema=schema, output_type=output_type)
+
+
+def test_to_table_requires_schema_or_output_type():
+    # Neither a schema nor an output type: the terminal cannot derive a row type.
+    with (
+        _applied_builder() as (builder, _, _, _),
+        pytest.raises(ValueError, match="at least one of 'schema' or 'output_type'"),
+    ):
+        builder.to_table()
+
+
+def test_to_table_rejects_schema_in_output_type_slot():
+    # The 'output_type' slot takes a type declaration; a Table Schema belongs in
+    # the schema= slot, mirroring the schema-slot rejection above.
+    with (
+        _applied_builder() as (builder, _, _, _),
+        pytest.raises(TypeError, match="pass a Table Schema as schema="),
+    ):
+        builder.to_table(output_type=_output_schema())

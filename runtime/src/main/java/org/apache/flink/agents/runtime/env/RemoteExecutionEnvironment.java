@@ -25,7 +25,11 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.CompileUtils;
+import org.apache.flink.agents.runtime.OutputTypeUtils;
+import org.apache.flink.api.common.functions.MapFunction;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.configuration.ConfigConstants;
 import org.apache.flink.configuration.YamlParserUtils;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -33,6 +37,7 @@ import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Schema;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.types.Row;
 
 import javax.annotation.Nullable;
 
@@ -235,9 +240,51 @@ public class RemoteExecutionEnvironment extends AgentsExecutionEnvironment {
         }
 
         @Override
+        public <V> DataStream<V> toDataStream(TypeInformation<V> typeInformation) {
+            // Layer a downstream conversion operator on the shared raw stream instead of
+            // retyping it, so the raw Object view stays unrestricted and heterogeneous output
+            // remains available through toDataStream(). Each call is independent, so several
+            // typed views of different types can coexist on one execution.
+            return toDataStream().map(new OutputCaster<V>()).returns(typeInformation);
+        }
+
+        @Override
         public Table toTable(Schema schema) {
-            DataStream<Object> dataStream = toDataStream();
-            return getTableEnvironment().fromDataStream(dataStream, schema);
+            // Convert each agent output into a Row matching the schema's physical columns before
+            // handing the stream to the planner, so named columns declared in the schema resolve
+            // against the emitted values. The conversion is a downstream operator on the shared
+            // raw stream, so the unrestricted toDataStream() view stays unaffected.
+            RowTypeInfo rowType = OutputTypeUtils.schemaToRowTypeInfo(schema);
+            DataStream<Row> rowStream =
+                    toDataStream()
+                            .map(value -> OutputTypeUtils.adaptToRow(value, rowType))
+                            .returns(rowType);
+            return getTableEnvironment().fromDataStream(rowStream, schema);
+        }
+
+        @Override
+        public <V> Table toTable(TypeInformation<V> typeInformation) {
+            // Derive the physical schema from the declared type: fromDataStream reads the
+            // table structure off the typed stream's TypeInformation (a POJO's fields become
+            // columns). The type is applied by a downstream operator on the shared raw stream,
+            // so the unrestricted toDataStream() view is unaffected.
+            return getTableEnvironment().fromDataStream(toDataStream(typeInformation));
+        }
+    }
+
+    /**
+     * Casts the unrestricted agent output objects to the type declared by a typed terminal. The
+     * elements are already instances of the declared type; the operator exists so the declared type
+     * is attached downstream of the shared raw stream rather than welded onto it.
+     */
+    private static final class OutputCaster<T> implements MapFunction<Object, T> {
+
+        private static final long serialVersionUID = 1L;
+
+        @Override
+        @SuppressWarnings("unchecked")
+        public T map(Object value) {
+            return (T) value;
         }
     }
 }

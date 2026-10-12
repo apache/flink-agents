@@ -414,7 +414,7 @@ input_table = t_env.from_path("product_reviews")
 review_analysis_res_stream = (
     agents_env.from_table(input=input_table, key_selector=TableKeySelector())
     .apply(TableReviewAnalysisAgent())
-    .to_datastream()
+    .to_datastream(ProductReviewAnalysisRes)
 )
 ```
 {{< /tab >}}
@@ -423,11 +423,11 @@ review_analysis_res_stream = (
 ```java
 Table inputTable = tableEnv.from("product_reviews");
 
-DataStream<Object> reviewAnalysisResStream =
+DataStream<ProductReviewAnalysisRes> reviewAnalysisResStream =
         agentsEnv
                 .fromTable(inputTable, new TableReviewAnalysisAgent.RowKeySelector())
                 .apply(new TableReviewAnalysisAgent())
-                .toDataStream();
+                .toDataStream(ProductReviewAnalysisRes.class);
 ```
 {{< /tab >}}
 

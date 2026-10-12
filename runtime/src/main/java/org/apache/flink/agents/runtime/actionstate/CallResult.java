@@ -18,6 +18,7 @@
 package org.apache.flink.agents.runtime.actionstate;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import java.util.Arrays;
@@ -33,6 +34,7 @@ import java.util.Objects;
  * <p>During recovery, the success or failure of the original call is determined by checking whether
  * {@code exceptionPayload} is null.
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class CallResult {
 
     /** Persisted status of the durable call. */
@@ -42,11 +44,8 @@ public class CallResult {
         FAILED
     }
 
-    /** Function identifier: module+qualname for Python, or method signature for Java. */
+    /** Function identifier that uniquely identifies the durable call for recovery matching. */
     private final String functionId;
-
-    /** Stable digest of the serialized arguments for validation during recovery. */
-    private final String argsDigest;
 
     /** Serialized return value of the function call (null if the call threw an exception). */
     private final byte[] resultPayload;
@@ -61,7 +60,6 @@ public class CallResult {
     /** Default constructor for deserialization. */
     public CallResult() {
         this.functionId = null;
-        this.argsDigest = null;
         this.resultPayload = null;
         this.exceptionPayload = null;
         this.status = null;
@@ -71,12 +69,10 @@ public class CallResult {
      * Constructs a CallResult for a successful function call.
      *
      * @param functionId the function identifier
-     * @param argsDigest the digest of serialized arguments
      * @param resultPayload the serialized return value
      */
-    public CallResult(String functionId, String argsDigest, byte[] resultPayload) {
+    public CallResult(String functionId, byte[] resultPayload) {
         this.functionId = functionId;
-        this.argsDigest = argsDigest;
         this.resultPayload = resultPayload;
         this.exceptionPayload = null;
         this.status = Status.SUCCEEDED;
@@ -86,15 +82,12 @@ public class CallResult {
      * Constructs a CallResult with explicit result and exception payloads.
      *
      * @param functionId the function identifier
-     * @param argsDigest the digest of serialized arguments
      * @param resultPayload the serialized return value (null if exception occurred)
      * @param exceptionPayload the serialized exception (null if call succeeded)
      */
-    public CallResult(
-            String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
+    public CallResult(String functionId, byte[] resultPayload, byte[] exceptionPayload) {
         this(
                 functionId,
-                argsDigest,
                 resultPayload,
                 exceptionPayload,
                 exceptionPayload == null ? Status.SUCCEEDED : Status.FAILED);
@@ -104,19 +97,13 @@ public class CallResult {
      * Constructs a CallResult with explicit result, exception payloads, and status.
      *
      * @param functionId the function identifier
-     * @param argsDigest the digest of serialized arguments
      * @param resultPayload the serialized return value (null if exception occurred or pending)
      * @param exceptionPayload the serialized exception (null if call succeeded or pending)
      * @param status the persisted call status
      */
     private CallResult(
-            String functionId,
-            String argsDigest,
-            byte[] resultPayload,
-            byte[] exceptionPayload,
-            Status status) {
+            String functionId, byte[] resultPayload, byte[] exceptionPayload, Status status) {
         this.functionId = functionId;
-        this.argsDigest = argsDigest;
         this.resultPayload = resultPayload;
         this.exceptionPayload = exceptionPayload;
         this.status = status;
@@ -127,19 +114,14 @@ public class CallResult {
      * persisted.
      *
      * @param functionId the function identifier
-     * @param argsDigest the digest of serialized arguments
      * @return a new CallResult representing a pending call
      */
-    public static CallResult pending(String functionId, String argsDigest) {
-        return new CallResult(functionId, argsDigest, null, null, Status.PENDING);
+    public static CallResult pending(String functionId) {
+        return new CallResult(functionId, null, null, Status.PENDING);
     }
 
     public String getFunctionId() {
         return functionId;
-    }
-
-    public String getArgsDigest() {
-        return argsDigest;
     }
 
     public byte[] getResultPayload() {
@@ -151,15 +133,13 @@ public class CallResult {
     }
 
     /**
-     * Validates if this CallResult matches the given function identifier and arguments digest.
+     * Validates if this CallResult matches the given function identifier.
      *
      * @param functionId the function identifier to match
-     * @param argsDigest the arguments digest to match
-     * @return true if both functionId and argsDigest match, false otherwise
+     * @return true if functionId matches, false otherwise
      */
-    public boolean matches(String functionId, String argsDigest) {
-        return Objects.equals(this.functionId, functionId)
-                && Objects.equals(this.argsDigest, argsDigest);
+    public boolean matches(String functionId) {
+        return Objects.equals(this.functionId, functionId);
     }
 
     /**
@@ -190,8 +170,8 @@ public class CallResult {
      * <p>Used by backward-compatibility tests for legacy serialized state.
      */
     static CallResult ofNullStatus(
-            String functionId, String argsDigest, byte[] resultPayload, byte[] exceptionPayload) {
-        return new CallResult(functionId, argsDigest, resultPayload, exceptionPayload, null);
+            String functionId, byte[] resultPayload, byte[] exceptionPayload) {
+        return new CallResult(functionId, resultPayload, exceptionPayload, null);
     }
 
     /**
@@ -218,7 +198,6 @@ public class CallResult {
         }
         CallResult that = (CallResult) o;
         return Objects.equals(functionId, that.functionId)
-                && Objects.equals(argsDigest, that.argsDigest)
                 && Arrays.equals(resultPayload, that.resultPayload)
                 && Arrays.equals(exceptionPayload, that.exceptionPayload)
                 && status == that.status;
@@ -226,7 +205,7 @@ public class CallResult {
 
     @Override
     public int hashCode() {
-        int result = Objects.hash(functionId, argsDigest, status);
+        int result = Objects.hash(functionId, status);
         result = 31 * result + Arrays.hashCode(resultPayload);
         result = 31 * result + Arrays.hashCode(exceptionPayload);
         return result;
@@ -237,9 +216,6 @@ public class CallResult {
         return "CallResult{"
                 + "functionId='"
                 + functionId
-                + '\''
-                + ", argsDigest='"
-                + argsDigest
                 + '\''
                 + ", resultPayload="
                 + (resultPayload != null ? resultPayload.length + " bytes" : "null")

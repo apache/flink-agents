@@ -39,6 +39,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -133,6 +134,12 @@ public class ExternalAgentSubagentSetupTest {
             stub.close();
             stub = null;
         }
+    }
+
+    @BeforeEach
+    void resetObservationState() {
+        ExternalAsyncSubagentSetup.reset();
+        ExternalDeferredSubagentSetup.reset();
     }
 
     // ------------------------------------------------------------------------------------------

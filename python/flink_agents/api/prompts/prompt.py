@@ -20,7 +20,14 @@ from typing import List, Sequence
 
 from typing_extensions import override
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole, TextBlock
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    ContentBlock,
+    DataContentBlock,
+    MessageRole,
+    TextBlock,
+    ToolResultBlock,
+)
 from flink_agents.api.prompts.utils import format_string
 from flink_agents.api.resource import ResourceType, SerializableResource
 
@@ -73,9 +80,8 @@ class LocalPrompt(Prompt):
         else:
             msgs = []
             for m in self.template:
-                msg = f"{m.role.value}: {format_string(m.text, **kwargs)}"
-                if m.extra_args is not None and len(m.extra_args) > 0:
-                    msg += f"{m.extra_args}"
+                text = m.blocks[0].text if m.role == MessageRole.TOOL else m.text
+                msg = f"{m.role.value}: {format_string(text, **kwargs)}"
                 msgs.append(msg)
             return "\n".join(msgs)
 
@@ -88,14 +94,29 @@ class LocalPrompt(Prompt):
         else:
             msgs = []
             for m in self.template:
-                msg = ChatMessage(
-                    role=m.role,
-                    blocks=[
-                        TextBlock(text=format_string(b.text, **kwargs))
-                        if isinstance(b, TextBlock)
-                        else b
-                        for b in m.blocks
-                    ],
-                )
+                msg = m.with_blocks([self._format_block(b, **kwargs) for b in m.blocks])
                 msgs.append(msg)
             return msgs
+
+    @staticmethod
+    def _format_data_block(
+        block: DataContentBlock, /, **kwargs: str
+    ) -> DataContentBlock:
+        """Substitute template text and preserve media as-is."""
+        if isinstance(block, TextBlock):
+            return TextBlock(text=format_string(block.text, **kwargs))
+        return block
+
+    @classmethod
+    def _format_block(cls, block: ContentBlock, /, **kwargs: str) -> ContentBlock:
+        """Format text, including tool result text, without changing other fields."""
+        if isinstance(block, TextBlock):
+            return cls._format_data_block(block, **kwargs)
+        if isinstance(block, ToolResultBlock):
+            return ToolResultBlock(
+                call_id=block.call_id,
+                blocks=[cls._format_data_block(b, **kwargs) for b in block.blocks],
+                is_error=block.is_error,
+                metadata=block.metadata,
+            )
+        return block

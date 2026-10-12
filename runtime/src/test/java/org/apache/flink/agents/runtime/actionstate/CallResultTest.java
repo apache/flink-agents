@@ -27,13 +27,11 @@ public class CallResultTest {
     @Test
     public void testSuccessfulCallResult() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
 
-        CallResult result = new CallResult(functionId, argsDigest, resultPayload);
+        CallResult result = new CallResult(functionId, resultPayload);
 
         assertEquals(functionId, result.getFunctionId());
-        assertEquals(argsDigest, result.getArgsDigest());
         assertArrayEquals(resultPayload, result.getResultPayload());
         assertNull(result.getExceptionPayload());
         assertTrue(result.isSuccess());
@@ -42,13 +40,11 @@ public class CallResultTest {
     @Test
     public void testFailedCallResult() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] exceptionPayload = "exception".getBytes();
 
-        CallResult result = new CallResult(functionId, argsDigest, null, exceptionPayload);
+        CallResult result = new CallResult(functionId, null, exceptionPayload);
 
         assertEquals(functionId, result.getFunctionId());
-        assertEquals(argsDigest, result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertArrayEquals(exceptionPayload, result.getExceptionPayload());
         assertTrue(result.isFailure());
@@ -57,14 +53,12 @@ public class CallResultTest {
     @Test
     public void testFullConstructor() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
         byte[] exceptionPayload = null;
 
-        CallResult result = new CallResult(functionId, argsDigest, resultPayload, exceptionPayload);
+        CallResult result = new CallResult(functionId, resultPayload, exceptionPayload);
 
         assertEquals(functionId, result.getFunctionId());
-        assertEquals(argsDigest, result.getArgsDigest());
         assertArrayEquals(resultPayload, result.getResultPayload());
         assertNull(result.getExceptionPayload());
         assertTrue(result.isSuccess());
@@ -72,7 +66,7 @@ public class CallResultTest {
 
     @Test
     public void testPendingCallResult() {
-        CallResult result = CallResult.pending("my_module.my_function", "abc123");
+        CallResult result = CallResult.pending("my_module.my_function");
 
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
@@ -82,11 +76,9 @@ public class CallResultTest {
     @Test
     public void testLegacyStatusInference() {
         CallResult success =
-                CallResult.ofNullStatus(
-                        "my_module.my_function", "abc123", "result".getBytes(), null);
+                CallResult.ofNullStatus("my_module.my_function", "result".getBytes(), null);
         CallResult failure =
-                CallResult.ofNullStatus(
-                        "my_module.my_function", "abc123", null, "exception".getBytes());
+                CallResult.ofNullStatus("my_module.my_function", null, "exception".getBytes());
 
         assertTrue(success.isSuccess());
         assertTrue(failure.isFailure());
@@ -95,35 +87,33 @@ public class CallResultTest {
     @Test
     public void testMatches() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
 
-        CallResult result = new CallResult(functionId, argsDigest, resultPayload);
+        CallResult result = new CallResult(functionId, resultPayload);
 
-        assertTrue(result.matches(functionId, argsDigest));
-        assertFalse(result.matches("other_function", argsDigest));
-        assertFalse(result.matches(functionId, "other_digest"));
-        assertFalse(result.matches("other_function", "other_digest"));
+        assertTrue(result.matches(functionId));
+        assertFalse(result.matches("other_function"));
+        assertTrue(result.matches(functionId));
+        assertFalse(result.matches("other_function"));
     }
 
     @Test
     public void testMatchesWithNullValues() {
         CallResult result = new CallResult();
 
-        assertTrue(result.matches(null, null));
-        assertFalse(result.matches("function", null));
-        assertFalse(result.matches(null, "digest"));
+        assertTrue(result.matches(null));
+        assertFalse(result.matches("function"));
+        assertTrue(result.matches(null));
     }
 
     @Test
     public void testEquals() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
 
-        CallResult result1 = new CallResult(functionId, argsDigest, resultPayload);
-        CallResult result2 = new CallResult(functionId, argsDigest, resultPayload);
-        CallResult result3 = new CallResult("other", argsDigest, resultPayload);
+        CallResult result1 = new CallResult(functionId, resultPayload);
+        CallResult result2 = new CallResult(functionId, resultPayload);
+        CallResult result3 = new CallResult("other", resultPayload);
 
         assertEquals(result1, result2);
         assertNotEquals(result1, result3);
@@ -135,11 +125,10 @@ public class CallResultTest {
     @Test
     public void testHashCode() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
 
-        CallResult result1 = new CallResult(functionId, argsDigest, resultPayload);
-        CallResult result2 = new CallResult(functionId, argsDigest, resultPayload);
+        CallResult result1 = new CallResult(functionId, resultPayload);
+        CallResult result2 = new CallResult(functionId, resultPayload);
 
         assertEquals(result1.hashCode(), result2.hashCode());
     }
@@ -147,20 +136,18 @@ public class CallResultTest {
     @Test
     public void testToString() {
         String functionId = "my_module.my_function";
-        String argsDigest = "abc123";
         byte[] resultPayload = "result".getBytes();
 
-        CallResult result = new CallResult(functionId, argsDigest, resultPayload);
+        CallResult result = new CallResult(functionId, resultPayload);
         String str = result.toString();
 
         assertTrue(str.contains(functionId));
-        assertTrue(str.contains(argsDigest));
         assertTrue(str.contains("bytes"));
     }
 
     @Test
     public void testToStringWithNullPayloads() {
-        CallResult result = new CallResult("func", "digest", null, null);
+        CallResult result = new CallResult("func", null, null);
         String str = result.toString();
 
         assertTrue(str.contains("null"));
@@ -172,7 +159,6 @@ public class CallResultTest {
         CallResult result = new CallResult();
 
         assertNull(result.getFunctionId());
-        assertNull(result.getArgsDigest());
         assertNull(result.getResultPayload());
         assertNull(result.getExceptionPayload());
         assertTrue(result.isSuccess()); // exceptionPayload is null

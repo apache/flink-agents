@@ -22,10 +22,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from flink_agents.api.resource import ResourceType
 from flink_agents.api.resource_context import ResourceContext
-from flink_agents.api.skills import Skills
+from flink_agents.api.skills import Skills, SkillSourceSpec
 from flink_agents.api.tools import ToolResponse
 from flink_agents.api.trace import ToolExecutionMetadataKeys
+from flink_agents.plan.agent_plan import SKILLS_CONFIG
+from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.skill.skill_manager import SkillManager
 from flink_agents.runtime.skill.skill_tools import LoadSkillTool
 
@@ -51,6 +54,49 @@ def tool(manager: SkillManager) -> LoadSkillTool:
 
 class TestLoadSkillTool:
     """Tests for LoadSkillTool.call."""
+
+    @pytest.mark.parametrize(
+        ("config", "source"),
+        [
+            (Skills.from_classpath("missing"), "classpath:missing"),
+            (
+                Skills(
+                    sources=[
+                        SkillSourceSpec(
+                            scheme="url",
+                            params={
+                                "url": "https://user:password@example.com/skills.zip?token=secret#part"
+                            },
+                        )
+                    ]
+                ),
+                "url:https://example.com/skills.zip",
+            ),
+        ],
+    )
+    def test_initialization_errors_return_responses_on_repeated_calls(
+        self, config: Skills, source: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        cache = ResourceCache({})
+        cache._cache[ResourceType.SKILLS] = {SKILLS_CONFIG: config}
+        tool = LoadSkillTool(resource_context=cache.get_resource_context())
+        try:
+            for _ in range(2):
+                response = tool.call(name="demo")
+                assert isinstance(response, ToolResponse)
+                assert response.is_error()
+                assert response.error_message == (
+                    f"Failed to initialize skill manager: Failed to load skills from {source}"
+                )
+            failures = [
+                record
+                for record in caplog.records
+                if record.getMessage() == "Failed to initialize skill manager"
+            ]
+            assert len(failures) == 2
+            assert all(record.exc_info[1].__cause__ is not None for record in failures)
+        finally:
+            cache.close()
 
     # -- load SKILL.md content -----------------------------------------------
 

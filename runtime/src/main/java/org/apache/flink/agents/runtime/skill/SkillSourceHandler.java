@@ -21,28 +21,12 @@ package org.apache.flink.agents.runtime.skill;
 import java.io.IOException;
 import java.util.Map;
 
-/**
- * Opens a {@link SkillRepository} from a scheme-specific {@code params} map. Implementations are
- * registered in {@link SkillSourceRegistry} keyed by scheme.
- *
- * <p>{@code classLoader} is the Flink user-code class loader threaded down from the operator; the
- * {@code classpath} handler uses it to resolve resources. Other handlers ignore it. Threading the
- * class loader explicitly avoids depending on {@link Thread#getContextClassLoader} at the moment
- * {@link SkillManager} is lazily constructed — that context can be the Python interpreter thread's
- * CL or an async-pool CL depending on which action triggered the lookup first.
- */
+/** Creates a repository and describes its source for a SkillManager instance. */
 @FunctionalInterface
 public interface SkillSourceHandler {
-
     SkillRepository open(Map<String, String> params, ClassLoader classLoader) throws IOException;
 
-    /**
-     * Human-readable description of the source location, embedded in {@link SkillOrigin} for
-     * logging and duplicate-name diagnostics. Default returns the raw {@code params} — handlers
-     * registered with a custom describer via {@link SkillSourceRegistry#register(String,
-     * SkillSourceHandler, java.util.function.Function)} narrow it to the relevant param (e.g.
-     * {@code path} for local sources).
-     */
+    /** Human-readable source location used in diagnostics. */
     default String describeLocation(Map<String, String> params) {
         return params.toString();
     }

@@ -20,6 +20,8 @@ package org.apache.flink.agents.runtime.subagent.external;
 
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.runtime.subagent.BaseDeferredSubagentSetup;
 import org.slf4j.Logger;
@@ -43,15 +45,40 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
 
     private static final Logger LOG = LoggerFactory.getLogger(ExternalDeferredSubagentSetup.class);
 
+    private static final String FIELD_BASE_URL = "base_url";
+    private static final String FIELD_POLL_INTERVAL_MILLIS = "poll_interval_millis";
+
     private final String baseUrl;
     private final long pollIntervalMillis;
-    private final AtomicInteger pollCount = new AtomicInteger();
+
+    // Static because the operator materializes a rebuilt instance from the descriptor; the
+    // registered setup a test holds is not the one that polls. Call reset() before each scenario.
+    // Atomic because polls are counted on async pool threads, where batched calls run
+    // concurrently.
+    private static final AtomicInteger POLL_COUNT = new AtomicInteger();
 
     @Nullable private transient ExternalAgentClient client;
 
+    /** Clears the poll counter. Call before each independent scenario. */
+    public static void reset() {
+        POLL_COUNT.set(0);
+    }
+
     public ExternalDeferredSubagentSetup(String baseUrl, long pollIntervalMillis) {
-        this.baseUrl = baseUrl;
-        this.pollIntervalMillis = pollIntervalMillis;
+        this(
+                ResourceDescriptor.Builder.newBuilder(ExternalDeferredSubagentSetup.class.getName())
+                        .addInitialArgument(FIELD_BASE_URL, baseUrl)
+                        .addInitialArgument(FIELD_POLL_INTERVAL_MILLIS, pollIntervalMillis)
+                        .build(),
+                null);
+    }
+
+    /** Descriptor-based construction, reading the config the convenience constructor captured. */
+    public ExternalDeferredSubagentSetup(
+            ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+        this.baseUrl = descriptor.getArgument(FIELD_BASE_URL);
+        this.pollIntervalMillis = descriptor.getArgument(FIELD_POLL_INTERVAL_MILLIS, 0L);
     }
 
     private ExternalAgentClient client() {
@@ -90,7 +117,7 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
                             callId,
                             taskId);
                     while (true) {
-                        int check = pollCount.incrementAndGet();
+                        int check = POLL_COUNT.incrementAndGet();
                         ExternalAgentClient.TaskStatus probe = client().status(taskId);
                         LOG.info(
                                 "[deferred] {}#{} check #{} -> {}",
@@ -125,6 +152,6 @@ public class ExternalDeferredSubagentSetup extends BaseDeferredSubagentSetup {
 
     /** Total number of status polls across all invocations, for test pacing assertions. */
     public int pollCount() {
-        return pollCount.get();
+        return POLL_COUNT.get();
     }
 }

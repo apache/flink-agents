@@ -76,7 +76,8 @@
                         "desc": "mock resource just for testing.",
                         "connection": "mock",
                         "model": "mock-model"
-                    }
+                    },
+                    "language": "python"
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }
@@ -91,7 +92,8 @@
                     "arguments": {
                         "model": "test-model",
                         "connection": "mock_embedding_conn"
-                    }
+                    },
+                    "language": "python"
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }
@@ -105,7 +107,8 @@
                     "target_clazz": "MockEmbeddingModelConnection",
                     "arguments": {
                         "api_key": "mock-api-key"
-                    }
+                    },
+                    "language": "python"
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }
@@ -122,7 +125,8 @@
                         "host": "localhost",
                         "port": 8000,
                         "collection_name": "test_collection"
-                    }
+                    },
+                    "language": "python"
                 },
                 "__resource_provider_type__": "PythonResourceProvider"
             }

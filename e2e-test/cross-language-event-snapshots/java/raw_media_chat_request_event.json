@@ -1,0 +1,41 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "messages" : [ {
+      "role" : "user",
+      "blocks" : [ {
+        "type" : "image",
+        "media_type" : "image/png",
+        "source" : {
+          "type" : "base64",
+          "data" : "/wCA+w=="
+        }
+      }, {
+        "type" : "audio",
+        "media_type" : "audio/wav",
+        "source" : {
+          "type" : "base64",
+          "data" : "/wCA+w=="
+        }
+      }, {
+        "type" : "video",
+        "media_type" : "video/mp4",
+        "source" : {
+          "type" : "base64",
+          "data" : "/wCA+w=="
+        }
+      }, {
+        "type" : "document",
+        "media_type" : "application/pdf",
+        "source" : {
+          "type" : "base64",
+          "data" : "/wCA+w=="
+        }
+      } ],
+      "metadata" : { }
+    } ],
+    "model" : "test-model"
+  },
+  "attachments" : { },
+  "type" : "_chat_request_event"
+}

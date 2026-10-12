@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.plan.AgentConfiguration;
@@ -334,6 +335,8 @@ public class FlussActionStateRecoveryIntegrationTest {
 
     private static KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> harness(
             AgentPlan plan, FlussActionStateStore store) throws Exception {
+        // These tests replace queued tasks and drive the mailbox to simulate suspension.
+        plan.getConfig().set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
         return new KeyedOneInputStreamOperatorTestHarness<>(
                 new ActionExecutionOperatorFactory<>(plan, true, store),
                 (KeySelector<Long, Long>) value -> value,

@@ -32,17 +32,12 @@ JAVA_HANDLER_METHOD = "multiplyByTwo"
 class PythonAgentWithJavaActionAgent(Agent):
     """Python agent whose overlapping expressions dispatch one Java action."""
 
-    def __init__(self) -> None:
-        """Create a PythonAgentWithJavaActionAgent."""
-        super().__init__()
-        self.add_action(
-            name="multiply_by_two",
-            trigger_conditions=[
-                "type == EventType.InputEvent && input > 1 && input < 7",
-                "type == EventType.InputEvent && input > 3 && input < 9",
-            ],
-            func=JavaFunction.for_action(JAVA_HANDLER_QUALNAME, JAVA_HANDLER_METHOD),
-        )
+    # Cross-language action declared on the attribute that is its Java target;
+    # the attribute name is the action name.
+    multiply_by_two = action(
+        "type == EventType.InputEvent && input > 1 && input < 7",
+        "type == EventType.InputEvent && input > 3 && input < 9",
+    )(JavaFunction.for_action(JAVA_HANDLER_QUALNAME, JAVA_HANDLER_METHOD))
 
 
 class InvalidTriggerConditionAgent(Agent):

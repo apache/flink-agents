@@ -25,32 +25,35 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
-import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
 import org.apache.flink.agents.runtime.resource.ResourceContextImpl;
 import org.apache.flink.agents.runtime.skill.AgentSkill;
 import org.apache.flink.agents.runtime.skill.SkillManager;
 import org.apache.flink.agents.runtime.skill.SkillRepository;
-import org.apache.flink.agents.runtime.skill.SkillSourceRegistry;
+import org.apache.flink.agents.runtime.skill.repository.FileSystemSkillRepository;
 import org.apache.flink.agents.runtime.subagent.BaseSubagentSetup;
+import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
 import org.junit.jupiter.api.Test;
+import org.mockito.MockedConstruction;
 import pemja.core.object.PyObject;
 
 import java.lang.reflect.Field;
@@ -58,12 +61,13 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.catchThrowable;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockConstruction;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -136,14 +140,12 @@ public class ResourceCacheTest {
         private TestSerializableChatModel chatModel =
                 new TestSerializableChatModel("defaultChatModel");
 
+        @Tool private TestTool anotherTool = new TestTool("anotherTool");
+
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
-            return ResourceDescriptor.Builder.newBuilder(TestPythonResource.class.getName())
-                    .addInitialArgument("pythonClazz", "test.module.TestClazz")
-                    .build();
+            return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
-
-        @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
@@ -166,6 +168,12 @@ public class ResourceCacheTest {
 
         @Override
         public Object toPythonChatMessage(ChatMessage message) {
+            return null;
+        }
+
+        @Override
+        public org.apache.flink.agents.api.chat.messages.ChatResult fromPythonChatResult(
+                Object response) {
             return null;
         }
 
@@ -257,7 +265,7 @@ public class ResourceCacheTest {
         // No Python resource adapter is wired, so resolving the Python provider here would fail:
         // the type materializes only because the Python runtime is asked for its own resources.
         PythonActionExecutor pythonActionExecutor = mock(PythonActionExecutor.class);
-        when(pythonActionExecutor.eagerMaterialize(ResourceType.CHAT_MODEL))
+        when(pythonActionExecutor.eagerMaterialize(ResourceType.CHAT_MODEL, null))
                 .thenReturn(Collections.singletonMap("pythonChatModel", handle));
         cache.setPythonActionExecutor(pythonActionExecutor);
 
@@ -278,6 +286,44 @@ public class ResourceCacheTest {
                 .hasMessageContaining("declared in Python but no Python runtime was initialized");
     }
 
+    /**
+     * An internal child that registers a Python-owned external sub-agent must materialize it even
+     * though the operator never wires the child cache with the Python bridge: the cache inherits
+     * the root's executor and hands it the child plan JSON, so the runtime builds the resource
+     * against the child plan rather than the root plan, where it does not exist.
+     */
+    @Test
+    public void testInternalChildCacheMaterializesPythonOwnedResourcesThroughTheRootBridge()
+            throws Exception {
+        PythonResourceProvider pythonAgent =
+                new PythonResourceProvider(
+                        "external",
+                        ResourceType.AGENT,
+                        new PythonResourceDescriptor("test.module", "ExternalSubagent", Map.of()));
+        Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
+        childProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("external", pythonAgent)));
+        InternalSubagentSetup setup =
+                new InternalSubagentSetup("child", new AgentPlan(Map.of(), childProviders));
+
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        ResourceCache rootCache = new ResourceCache(new HashMap<>(), classLoader);
+        PythonActionExecutor executor = mock(PythonActionExecutor.class);
+        TestPythonHandle handle = new TestPythonHandle();
+        when(executor.eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson()))
+                .thenReturn(Collections.singletonMap("external", handle));
+        rootCache.setPythonActionExecutor(executor);
+
+        // The operator builds the child cache from the root cache as parent, never wiring the
+        // Python bridge onto the child itself.
+        ResourceCache childCache = setup.getOrCreateChildCache(classLoader, rootCache);
+        List<Resource> materialized = childCache.eagerMaterialize(ResourceType.AGENT);
+
+        assertThat(materialized).containsExactly(handle);
+        assertThat(childCache.getResource("external", ResourceType.AGENT)).isSameAs(handle);
+        // The runtime is asked for the child plan's resources, keyed by the child plan JSON.
+        verify(executor).eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson());
+    }
+
     @Test
     public void testGetResourceNotFound() throws Exception {
         Agent agent = new Agent();
@@ -287,6 +333,27 @@ public class ResourceCacheTest {
         assertThatThrownBy(() -> cache.getResource("non-existent", ResourceType.CHAT_MODEL))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Resource not found: non-existent");
+    }
+
+    @Test
+    public void getResourceClosesUncachedResourceWhenOpenFails() throws Exception {
+        RuntimeException openFailure = new RuntimeException("open failed");
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        Resource resource = mock(Resource.class);
+        ResourceProvider provider = mock(ResourceProvider.class);
+        when(provider.provide(org.mockito.ArgumentMatchers.any())).thenReturn(resource);
+        doThrow(openFailure).when(resource).open();
+        doThrow(closeFailure).when(resource).close();
+        ResourceCache cache =
+                new ResourceCache(Map.of(ResourceType.TOOL, Map.of("tool", provider)));
+
+        assertThatThrownBy(() -> cache.getResource("tool", ResourceType.TOOL))
+                .isSameAs(openFailure)
+                .satisfies(
+                        thrown -> assertThat(thrown.getSuppressed()).containsExactly(closeFailure));
+
+        verify(resource).close();
+        assertThat(cachedResources(cache)).isEmpty();
     }
 
     @Test
@@ -418,31 +485,39 @@ public class ResourceCacheTest {
         Error secondBoom = new Error("other repo close failed");
         RecordingRepo failing = new RecordingRepo("alpha", firstBoom);
         RecordingRepo surviving = new RecordingRepo("beta", secondBoom);
-        AtomicInteger seq = new AtomicInteger();
         List<RecordingRepo> ordered = List.of(failing, surviving);
-        SkillSourceRegistry.register(
-                "test-resource-cache-close-error",
-                (params, cl) -> ordered.get(seq.getAndIncrement()));
-        Skills skills =
-                new Skills(
-                        List.of(
-                                new SkillSourceSpec("test-resource-cache-close-error", Map.of()),
-                                new SkillSourceSpec("test-resource-cache-close-error", Map.of())));
+        Skills skills = Skills.fromLocalDir("first", "second");
+        try (MockedConstruction<FileSystemSkillRepository> ignored =
+                mockConstruction(
+                        FileSystemSkillRepository.class,
+                        (repo, context) -> {
+                            RecordingRepo recording = ordered.get(context.getCount() - 1);
+                            when(repo.getSkills()).thenAnswer(invocation -> recording.getSkills());
+                            when(repo.getSkillDir(org.mockito.ArgumentMatchers.anyString()))
+                                    .thenReturn(java.nio.file.Path.of("unused"));
+                            org.mockito.Mockito.doAnswer(
+                                            invocation -> {
+                                                recording.close();
+                                                return null;
+                                            })
+                                    .when(repo)
+                                    .close();
+                        })) {
+            ResourceCache cache = new ResourceCache(new HashMap<>());
+            cache.put(Skills.SKILLS_CONFIG, ResourceType.SKILLS, skills);
+            // Force the lazily-cached SkillManager to exist, so close() has repos to release.
+            cache.getResourceContext().getSkillDirs(List.of("alpha"));
 
-        ResourceCache cache = new ResourceCache(new HashMap<>());
-        cache.put(Skills.SKILLS_CONFIG, ResourceType.SKILLS, skills);
-        // Force the lazily-cached SkillManager to exist, so close() has repos to release.
-        cache.getResourceContext().getSkillDirs(List.of("alpha"));
+            // The Error reaches the caller unwrapped, through both intervening close() methods.
+            Throwable thrown = catchThrowable(cache::close);
 
-        // The Error reaches the caller unwrapped, through both intervening close() methods.
-        Throwable thrown = catchThrowable(cache::close);
-
-        assertThat(thrown).isInstanceOf(Error.class);
-        assertThat(failing.closed).isTrue();
-        assertThat(surviving.closed).isTrue();
-        assertThat(thrown.getSuppressed()).hasSize(1);
-        assertThat(List.of(thrown, thrown.getSuppressed()[0]))
-                .containsExactlyInAnyOrder(firstBoom, secondBoom);
+            assertThat(thrown).isInstanceOf(Error.class);
+            assertThat(failing.closed).isTrue();
+            assertThat(surviving.closed).isTrue();
+            assertThat(thrown.getSuppressed()).hasSize(1);
+            assertThat(List.of(thrown, thrown.getSuppressed()[0]))
+                    .containsExactlyInAnyOrder(firstBoom, secondBoom);
+        }
     }
 
     /** A skill repository that records its close and can be made to fail it. */
@@ -528,6 +603,17 @@ public class ResourceCacheTest {
 
     /** Test Java sub-agent setup, registered as an AGENT resource. */
     public static class TestAgentSetup extends BaseSubagentSetup {
+
+        public TestAgentSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(TestAgentSetup.class.getName()).build(),
+                    null);
+        }
+
+        public TestAgentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
         @Override
         public SubagentFuture submit(
                 RunnerContext ctx, Object prompt, String sessionId, String callId) {

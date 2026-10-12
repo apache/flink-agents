@@ -48,7 +48,20 @@ public final class AudioBlock extends MediaBlock {
         super(mediaType, source, name, sizeBytes, sha256);
     }
 
-    /** Creates an audio block carrying an inline base64 payload. */
+    /**
+     * Creates a block from non-empty raw bytes, encoded as standard Base64 without line wrapping.
+     * The caller's array is not retained; subsequent changes to it do not affect the block.
+     *
+     * @throws IllegalArgumentException if the media type or data is null or empty
+     */
+    public static AudioBlock fromBytes(String mediaType, byte[] data) {
+        return new AudioBlock(mediaType, Base64Source.fromBytes(data), null, null, null);
+    }
+
+    /**
+     * Creates a block from a non-empty, already Base64-encoded string. The string is preserved
+     * without encoding or validating Base64 syntax.
+     */
     public static AudioBlock fromBase64(String mediaType, String data) {
         return new AudioBlock(mediaType, new Base64Source(data), null, null, null);
     }

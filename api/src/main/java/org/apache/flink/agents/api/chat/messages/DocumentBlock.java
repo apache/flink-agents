@@ -48,7 +48,20 @@ public final class DocumentBlock extends MediaBlock {
         super(mediaType, source, name, sizeBytes, sha256);
     }
 
-    /** Creates a document block carrying an inline base64 payload. */
+    /**
+     * Creates a block from non-empty raw bytes, encoded as standard Base64 without line wrapping.
+     * The caller's array is not retained; subsequent changes to it do not affect the block.
+     *
+     * @throws IllegalArgumentException if the media type or data is null or empty
+     */
+    public static DocumentBlock fromBytes(String mediaType, byte[] data) {
+        return new DocumentBlock(mediaType, Base64Source.fromBytes(data), null, null, null);
+    }
+
+    /**
+     * Creates a block from a non-empty, already Base64-encoded string. The string is preserved
+     * without encoding or validating Base64 syntax.
+     */
     public static DocumentBlock fromBase64(String mediaType, String data) {
         return new DocumentBlock(mediaType, new Base64Source(data), null, null, null);
     }

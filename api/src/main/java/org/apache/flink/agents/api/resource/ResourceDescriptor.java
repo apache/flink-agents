@@ -56,15 +56,9 @@ public class ResourceDescriptor {
      * @param module The Python module path for cross-platform compatibility. Defaults to empty
      *     string for Java resources. Example: "your_module.submodule"
      * @param initialArguments Additional arguments for resource initialization. Can be null or
-     *     empty map if no initial arguments are needed.
-     *     <ul>
-     *       <li><b>For Python resources (when declaring from Java): put the fully-qualified Python
-     *           class under the pythonClazz key in initialArguments (e.g. ("pythonClazz",
-     *           "your_module.submodule.YourPythonClass")). The clazz argument is unused in this
-     *           case.
-     *     </ul>
+     *     empty map if no initial arguments are needed. Python resources should be declared using
+     *     PythonResourceDescriptor.
      */
-    @JsonCreator
     public ResourceDescriptor(
             @JsonProperty(FIELD_MODULE) String module,
             @JsonProperty(FIELD_CLAZZ) String clazz,
@@ -72,6 +66,27 @@ public class ResourceDescriptor {
         this.clazz = clazz;
         this.module = module;
         this.initialArguments = initialArguments;
+    }
+
+    /** Restore the declaration in the language that owns the target implementation. */
+    @JsonCreator
+    public static ResourceDescriptor fromJson(
+            @JsonProperty("language") String language,
+            @JsonProperty(FIELD_MODULE) String module,
+            @JsonProperty(FIELD_CLAZZ) String clazz,
+            @JsonProperty(FIELD_INITIAL_ARGUMENTS) Map<String, Object> arguments) {
+        if ("python".equals(language)) {
+            return new PythonResourceDescriptor(module, clazz, arguments);
+        }
+        if (!"java".equals(language)) {
+            throw new IllegalArgumentException("Unknown resource language: " + language);
+        }
+        return new ResourceDescriptor(module, clazz, arguments);
+    }
+
+    @JsonProperty("language")
+    public String getLanguage() {
+        return "java";
     }
 
     public ResourceDescriptor(String clazz, Map<String, Object> initialArguments) {

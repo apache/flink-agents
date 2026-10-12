@@ -26,10 +26,22 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.api.tools.ToolMetadata;
+import org.apache.flink.agents.api.tools.ToolParameters;
+import org.apache.flink.agents.api.tools.ToolResponse;
+import org.apache.flink.agents.api.tools.ToolType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -42,6 +54,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -170,7 +184,7 @@ class WatsonxChatModelConnectionTest {
         exchange.close();
     }
 
-    private static ChatMessage chat(WatsonxChatModelConnection connection) {
+    private static ChatResult chat(WatsonxChatModelConnection connection) {
         return connection.chat(
                 List.of(new ChatMessage(MessageRole.USER, "Hello!")),
                 List.of(),
@@ -334,21 +348,12 @@ class WatsonxChatModelConnectionTest {
     @Test
     @DisplayName("System, user, assistant and tool messages convert to the watsonx format")
     void testConvertMessages() {
-        ChatMessage assistant = new ChatMessage(MessageRole.ASSISTANT, "");
-        assistant.setToolCalls(
-                List.of(
-                        Map.of(
-                                "id", "internal-uuid",
-                                "original_id", "call_abc123",
-                                "type", "function",
-                                "function",
-                                        Map.of(
-                                                "name",
-                                                "add",
-                                                "arguments",
-                                                Map.of("a", 1, "b", 2)))));
+        ChatMessage assistant =
+                ChatMessage.assistant(
+                        List.of(new ToolCallBlock("call_abc123", "add", Map.of("a", 1, "b", 2))));
         ChatMessage toolResult =
-                new ChatMessage(MessageRole.TOOL, "3", Map.of("externalId", "call_abc123"));
+                ChatMessage.tool(
+                        new ToolResultBlock("call_abc123", List.of(new TextBlock("3")), false));
 
         ArrayNode converted =
                 WatsonxChatModelConnection.convertMessages(
@@ -386,7 +391,7 @@ class WatsonxChatModelConnectionTest {
                                 WatsonxChatModelConnection.convertMessages(
                                         List.of(new ChatMessage(MessageRole.TOOL, "3"))))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("externalId");
+                .hasMessageContaining("ToolResultBlock");
     }
 
     @Test
@@ -454,16 +459,15 @@ class WatsonxChatModelConnectionTest {
                                 + " \"usage\": {\"prompt_tokens\": 100, \"completion_tokens\": 50,"
                                 + " \"total_tokens\": 150}}");
 
-        ChatMessage message =
+        ChatResult message =
                 WatsonxChatModelConnection.parseResponse(response, "ibm/granite-3-3-8b-instruct");
 
-        assertThat(message.getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(message.getMessage().getRole()).isEqualTo(MessageRole.ASSISTANT);
         assertThat(message.getText()).isEqualTo("Hello there!");
-        assertThat(message.getExtraArgs().get("model_name"))
-                .isEqualTo("ibm/granite-3-3-8b-instruct");
-        assertThat(message.getExtraArgs().get("promptTokens")).isEqualTo(100L);
-        assertThat(message.getExtraArgs().get("completionTokens")).isEqualTo(50L);
-        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "stop");
+        assertThat(message.getModel()).isEqualTo("ibm/granite-3-3-8b-instruct");
+        assertThat(message.getUsage().getPromptTokens()).isEqualTo(100L);
+        assertThat(message.getUsage().getCompletionTokens()).isEqualTo(50L);
+        assertThat(message.getFinishReason()).isEqualTo("stop");
     }
 
     @Test
@@ -475,9 +479,9 @@ class WatsonxChatModelConnectionTest {
                                 + " \"content\": \"hi\"}, \"finish_reason\":"
                                 + " \"some_vendor_reason\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+        assertThat(message.getFinishReason()).isEqualTo("some_vendor_reason");
     }
 
     @Test
@@ -488,9 +492,9 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(message.getFinishReason()).isNull();
     }
 
     @Test
@@ -501,9 +505,9 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}, \"finish_reason\": null}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(message.getFinishReason()).isNull();
     }
 
     @Test
@@ -516,11 +520,10 @@ class WatsonxChatModelConnectionTest {
                         "{\"choices\": [{\"index\": 0, \"message\": {\"role\": \"assistant\","
                                 + " \"content\": \"hi\"}, \"finish_reason\": \"tool_calls\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
-        assertThat(message.getExtraArgs())
-                .containsEntry("finish_reason", "tool_calls")
-                .doesNotContainKey("promptTokens");
+        assertThat(message.getFinishReason()).isEqualTo("tool_calls");
+        assertThat(message.getUsage()).isNull();
     }
 
     @Test
@@ -744,16 +747,13 @@ class WatsonxChatModelConnectionTest {
                                 + " \"{\\\"a\\\": 1, \\\"b\\\": 2}\"}}]}, \"finish_reason\":"
                                 + " \"tool_calls\"}]}");
 
-        ChatMessage message = WatsonxChatModelConnection.parseResponse(response, null);
+        ChatResult message = WatsonxChatModelConnection.parseResponse(response, null);
 
         assertThat(message.getToolCalls()).hasSize(1);
-        Map<String, Object> toolCall = message.getToolCalls().get(0);
-        assertThat(toolCall.get("id")).isEqualTo("call_abc123");
-        assertThat(toolCall.get("original_id")).isEqualTo("call_abc123");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-        assertThat(function.get("name")).isEqualTo("add");
-        assertThat(function.get("arguments")).isEqualTo(Map.of("a", 1, "b", 2));
+        ToolCallBlock toolCall = message.getToolCalls().get(0);
+        assertThat(toolCall.getCallId()).isEqualTo("call_abc123");
+        assertThat(toolCall.getName()).isEqualTo("add");
+        assertThat(toolCall.getInput()).isEqualTo(Map.of("a", 1, "b", 2));
     }
 
     @ParameterizedTest
@@ -765,13 +765,16 @@ class WatsonxChatModelConnectionTest {
                 "mistralai/mistral-large",
                 " "
             })
-    @DisplayName("Capability is reported for any model, since the endpoint provides it")
-    void supportsNativeStructuredOutputIsUnconditional(String model) {
+    @DisplayName("Native is recommended for any model, since the endpoint provides it")
+    void queryRecommendsNativeForAnyModel(String model) {
         // Capability comes from the serving runtime the chat API requires rather than from the
         // model, so a model allowlist here would silently drop back to the prompt fallback for
         // anything the list had not caught up with. Null and blank are included because the
-        // answer does not depend on the argument at all.
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+        // answer does not depend on the model at all.
+        Map<String, Object> modelParams = new HashMap<>();
+        modelParams.put("model", model);
+        assertThat(connection().supportsNativeStructuredOutput(Report.class, null, modelParams))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @Test
@@ -810,6 +813,103 @@ class WatsonxChatModelConnectionTest {
         ObjectNode payload = payloadFor(nonClassSchema);
 
         assertThat(payload.has("response_format")).isFalse();
+    }
+
+    /** Minimal tool carrying only metadata; never invoked in these tests. */
+    private static final class SchemaOnlyTool extends Tool {
+        SchemaOnlyTool() {
+            super(new ToolMetadata("add", "Add two numbers.", "{\"type\":\"object\"}"));
+        }
+
+        @Override
+        public ToolType getToolType() {
+            return ToolType.FUNCTION;
+        }
+
+        @Override
+        public ToolResponse call(ToolParameters parameters) {
+            throw new UnsupportedOperationException("not invoked in this test");
+        }
+    }
+
+    @Test
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
+    void queryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the payload ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. Capability does
+        // not depend on the model here, so the schema form is the only thing that moves.
+        WatsonxChatModelConnection connection = connection();
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                schema, tools, Map.of("model", MODEL));
+
+                ObjectNode payload =
+                        connection.buildPayload(
+                                List.of(new ChatMessage(MessageRole.USER, "Hello!")),
+                                tools,
+                                Map.of("model", MODEL),
+                                schema);
+
+                assertThat(answer)
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(
+                                payload.has("response_format")
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.INFEASIBLE);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools do not make a POJO schema infeasible here")
+    void queryIgnoresBoundTools() {
+        // watsonx's native branch imposes no empty-tools precondition, unlike Gemini's. Pinning the
+        // answer keeps the query from acquiring one by being copied from a connection that does.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(new SchemaOnlyTool()),
+                                        Map.of("model", MODEL)))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+    }
+
+    @Test
+    @DisplayName("A caller response format does not make a POJO schema infeasible")
+    void queryIgnoresACallerResponseFormat() {
+        // The conflict between a caller response_format and a derived schema is raised by the
+        // branch rather than being reported as infeasible, so the query has to keep answering
+        // feasible here. Reporting INFEASIBLE instead would silently turn that error into a
+        // skipped branch.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class, List.of(), callerFormatInModelParams()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class, List.of(), callerFormatInAdditionalKwargs()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+    }
+
+    @Test
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void queryDoesNotConsumeItsInputs() {
+        // The same tools and parameters go on to build the payload the answer was about, so a
+        // query that took anything out of either would answer about one request and build another.
+        // Both are immutable, so a consuming implementation raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool());
+        Map<String, Object> modelParams = Map.of("model", MODEL);
+
+        connection().supportsNativeStructuredOutput(Report.class, tools, modelParams);
+
+        assertThat(tools).hasSize(1);
+        assertThat(modelParams).isEqualTo(Map.of("model", MODEL));
     }
 
     @Test
@@ -952,5 +1052,27 @@ class WatsonxChatModelConnectionTest {
         } finally {
             server.stop(0);
         }
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        String expected =
+                "IBM watsonx.ai cannot send an image block (image/png, base64 source): this"
+                        + " integration sends text only.";
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(expected);
+        // The three-argument overload is what BaseChatModelSetup calls.
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>()))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(expected);
     }
 }

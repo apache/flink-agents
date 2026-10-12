@@ -17,10 +17,16 @@
  */
 package org.apache.flink.agents.plan.actions;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.chat.model.routing.CustomRoutingExecutor;
 import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
@@ -29,6 +35,7 @@ import org.apache.flink.agents.api.chat.model.routing.RoutingDecision;
 import org.apache.flink.agents.api.chat.model.routing.RoutingStrategy;
 import org.apache.flink.agents.api.chat.model.routing.Strategies;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
+import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.DurableFuture;
 import org.apache.flink.agents.api.context.MemoryObject;
@@ -47,6 +54,8 @@ import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
 import org.apache.flink.metrics.Counter;
 import org.apache.flink.metrics.Histogram;
 import org.junit.jupiter.api.Test;
@@ -70,13 +79,17 @@ import static org.mockito.Mockito.when;
 /** Integration tests for model routing inside {@link ChatModelAction}. */
 public class ChatModelActionRoutingTest {
 
-    /** An executor that returns a name that is not a candidate (to exercise the invalid path). */
+    /** An executor that returns a name that is not a candidate (to exercise the abstain path). */
     public static class SelectsUnknownStrategy implements CustomRoutingExecutor {
         public SelectsUnknownStrategy() {}
 
         @Override
         public RoutingDecision route(RoutingStrategy strategy, RoutingContext context) {
-            return RoutingDecision.of("nonexistent");
+            return RoutingDecision.builder("nonexistent")
+                    .reason("tenant override")
+                    .score(0.9)
+                    .metadata("tenant", "t1")
+                    .build();
         }
     }
 
@@ -100,7 +113,7 @@ public class ChatModelActionRoutingTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages,
                 Map<String, Object> promptArgs,
                 Map<String, Object> modelParams) {
@@ -109,10 +122,10 @@ public class ChatModelActionRoutingTest {
             if (next instanceof RuntimeException) {
                 throw (RuntimeException) next;
             }
-            if (next instanceof ChatMessage) {
-                return (ChatMessage) next;
+            if (next instanceof ChatResult) {
+                return (ChatResult) next;
             }
-            return new ChatMessage(MessageRole.ASSISTANT, "answer");
+            return ChatFixtures.response("answer");
         }
     }
 
@@ -126,6 +139,9 @@ public class ChatModelActionRoutingTest {
         private final MemoryObject sensoryMemory = new FakeMemoryObject(new HashMap<>());
         private final AgentConfiguration config = new AgentConfiguration(Map.of());
         private FlinkAgentsMetricGroup actionMetricGroup;
+
+        /** Seeded results by durable-call id: present means "stored from a previous run". */
+        final Map<String, Object> durableStore = new HashMap<>();
 
         FakeRunnerContext(ModelRouter router) {
             this.router = router;
@@ -218,9 +234,6 @@ public class ChatModelActionRoutingTest {
             return null;
         }
 
-        /** Seeded results by durable-call id: present means "stored from a previous run". */
-        final Map<String, Object> durableStore = new HashMap<>();
-
         /** Seeds a stored durable result so the next lookup takes the replay path. */
         FakeRunnerContext seedDurable(String id, Object value) {
             if (value instanceof RoutingDecision) {
@@ -229,8 +242,8 @@ public class ChatModelActionRoutingTest {
                                 .RoutingOutcome();
                 outcome.decision = (RoutingDecision) value;
                 value = outcome;
-            } else if (value instanceof ChatMessage) {
-                value = new ChatModelInvoker.InvocationOutcome((ChatMessage) value, null);
+            } else if (value instanceof ChatResult) {
+                value = new ChatModelInvoker.InvocationOutcome((ChatResult) value, null);
             }
             durableStore.put(id, value);
             return this;
@@ -248,6 +261,11 @@ public class ChatModelActionRoutingTest {
 
         @SuppressWarnings("unchecked")
         @Override
+        public <T> AsyncFuture<T> executeAsync(java.util.concurrent.Callable<T> callable) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
         public <T> DurableFuture<T> durableExecuteAsync(DurableCallable<T> callable) {
             durableCallIds.add(callable.getId());
             return new TestDurableFuture<>(
@@ -261,13 +279,12 @@ public class ChatModelActionRoutingTest {
         }
 
         @Override
-        public <T> DurableFuture<List<Outcome<T>>> gather(
-                List<? extends DurableFuture<T>> futures) {
+        public <T> AsyncFuture<List<Outcome<T>>> gather(List<? extends AsyncFuture<T>> futures) {
             return new TestDurableFuture<>(
                     "gather",
                     () -> {
                         List<Outcome<T>> outcomes = new ArrayList<>();
-                        for (DurableFuture<T> future : futures) {
+                        for (AsyncFuture<T> future : futures) {
                             try {
                                 outcomes.add(Outcome.success(future.await()));
                             } catch (Exception e) {
@@ -364,6 +381,29 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.chatResponse().isFailed()).isTrue();
     }
 
+    /**
+     * Follow-up (review: consumers cast the concrete event instead of calling {@code fromEvent}): a
+     * built-in event crossing the JSON boundary is restored to its concrete subclass by {@link
+     * Event#fromJson}, so the bare cast in {@link ChatModelAction#processChatRequestOrToolResponse}
+     * succeeds. Were restoration to degrade to a generic {@link Event}, both the instanceof
+     * assertion and the cast would fail.
+     */
+    @Test
+    void restoredChatRequestReachesActionAsConcreteType() throws Exception {
+        String wireJson =
+                new ObjectMapper()
+                        .writeValueAsString(
+                                new ChatRequestEvent("small", List.of(ChatMessage.user("hi"))));
+
+        Event restored = Event.fromJson(wireJson);
+
+        assertThat(restored).isInstanceOf(ChatRequestEvent.class);
+        FakeRunnerContext ctx = new FakeRunnerContext(null).register("small", new FakeChatModel());
+        ChatModelAction.processChatRequestOrToolResponse(restored, ctx);
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+    }
+
     private static ModelRouter router() throws Exception {
         return new ModelRouter(
                 ModelRouter.of("small", "big")
@@ -423,7 +463,7 @@ public class ChatModelActionRoutingTest {
                         "router",
                         List.of(
                                 new ChatMessage(MessageRole.USER, "please write some sql for me"),
-                                new ChatMessage(MessageRole.ASSISTANT, "SELECT 1;"),
+                                ChatMessage.assistant("SELECT 1;"),
                                 new ChatMessage(MessageRole.USER, "thanks, how is the weather?"))),
                 earlySqlLateChat);
         assertThat(earlySqlLateChat.routingEvent().getSelectedModel()).isEqualTo("small");
@@ -437,7 +477,7 @@ public class ChatModelActionRoutingTest {
                         "router",
                         List.of(
                                 new ChatMessage(MessageRole.USER, "hello there"),
-                                new ChatMessage(MessageRole.ASSISTANT, "hi!"),
+                                ChatMessage.assistant("hi!"),
                                 new ChatMessage(MessageRole.USER, "now write some sql"))),
                 earlyChatLateSql);
         assertThat(earlyChatLateSql.routingEvent().getSelectedModel()).isEqualTo("big");
@@ -445,8 +485,12 @@ public class ChatModelActionRoutingTest {
                 .isEqualTo(ModelRoutingEvent.SOURCE_STRATEGY);
     }
 
+    /**
+     * A custom strategy naming a non-candidate abstains to the default, like a non-candidate judge
+     * verdict; the rejected name and the strategy's own reason stay visible on the routing event.
+     */
     @Test
-    void invalidCandidateFailsClearly() throws Exception {
+    void customNonCandidateSelectionAbstainsToDefault() throws Exception {
         ModelRouter router =
                 new ModelRouter(
                         ModelRouter.of("small", "big")
@@ -458,8 +502,41 @@ public class ChatModelActionRoutingTest {
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
                 ctx);
-        assertThat(ctx.chatResponse().isFailed()).isTrue();
-        assertThat(ctx.chatResponse().getError()).contains("non-candidate");
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("small");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getReason()).contains("not a candidate");
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "nonexistent")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "tenant override")
+                .containsEntry("tenant", "t1");
+        // the score belonged to the rejected selection, not to the default
+        assertThat(event.getScore()).isNull();
+        assertThat(event.getDecisionMs()).isNotNull();
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
+    }
+
+    /** Without a configured default, a non-candidate selection lands on the first candidate. */
+    @Test
+    void customNonCandidateSelectionWithoutDefaultUsesFirstCandidate() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(SelectsUnknownStrategy.class))
+                                .build(),
+                        null);
+        FakeRunnerContext ctx = new FakeRunnerContext(router);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(ctx.routingEvent().getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "nonexistent");
+        assertThat(ctx.resolvedChatModels).containsExactly("small");
     }
 
     @Test
@@ -496,9 +573,7 @@ public class ChatModelActionRoutingTest {
                 new FakeRunnerContext(router)
                         .register(
                                 "judge",
-                                new FakeChatModel(
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT, "{\"model\": \"big\"}")))
+                                new FakeChatModel(ChatFixtures.response("{\"model\": \"big\"}")))
                         .register("big", new FakeChatModel());
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent(
@@ -536,8 +611,7 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "judge",
                                 new FakeChatModel(
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT,
+                                        ChatFixtures.response(
                                                 "You should probably use the biggest model.")))
                         .register("small", new FakeChatModel());
         ChatModelAction.processChatRequestOrToolResponse(
@@ -565,9 +639,7 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "judge",
                                 new FakeChatModel(
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT,
-                                                "{\"model\": \"gpt-attacker\"}")))
+                                        ChatFixtures.response("{\"model\": \"gpt-attacker\"}")))
                         .register("small", new FakeChatModel());
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent(
@@ -577,6 +649,11 @@ public class ChatModelActionRoutingTest {
         assertThat(ctx.routingEvent().getSelectedModel()).isEqualTo("small");
         assertThat(ctx.routingEvent().getDecisionSource())
                 .isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(ctx.routingEvent().getReason())
+                .isEqualTo("judge verdict was not a candidate name");
+        // the judge abstains on its own; the resolver's non-candidate normalization is not involved
+        assertThat(ctx.routingEvent().getMetadata())
+                .doesNotContainKey(ModelRoutingResolver.REJECTED_MODEL_KEY);
     }
 
     @Test
@@ -607,8 +684,7 @@ public class ChatModelActionRoutingTest {
                                 "judge",
                                 new FakeChatModel(
                                         new RuntimeException("transient"),
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT, "{\"model\": \"big\"}")))
+                                        ChatFixtures.response("{\"model\": \"big\"}")))
                         .register("big", new FakeChatModel());
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent(
@@ -704,7 +780,7 @@ public class ChatModelActionRoutingTest {
                         null);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)
-                        .register("big", new FakeChatModel(ChatMessage.assistant("ok")));
+                        .register("big", new FakeChatModel(ChatFixtures.response("ok")));
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
         // the decision and the chat attempt are distinct durable calls with routed ids
@@ -740,9 +816,9 @@ public class ChatModelActionRoutingTest {
                                 "big",
                                 new FakeChatModel(
                                         new RuntimeException("transient"),
-                                        ChatMessage.assistant("recovered on retry")))
+                                        ChatFixtures.response("recovered on retry")))
                         .register(
-                                "small", new FakeChatModel(ChatMessage.assistant("small answer")));
+                                "small", new FakeChatModel(ChatFixtures.response("small answer")));
 
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
@@ -782,7 +858,7 @@ public class ChatModelActionRoutingTest {
                 new FakeRunnerContext(router)
                         .register("big", new FakeChatModel(new RuntimeException("big is down")))
                         .register(
-                                "small", new FakeChatModel(ChatMessage.assistant("ok from small")));
+                                "small", new FakeChatModel(ChatFixtures.response("ok from small")));
 
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(ChatMessage.user("write sql"))), ctx);
@@ -796,8 +872,7 @@ public class ChatModelActionRoutingTest {
         ChatResponseEvent response = ctx.chatResponse();
         assertThat(response).isNotNull();
         assertThat(response.getResponse().getText()).isEqualTo("ok from small");
-        Map<String, Object> routing =
-                (Map<String, Object>) response.getResponse().getExtraArgs().get("model_routing");
+        Map<String, Object> routing = (Map<String, Object>) response.getAttr("model_routing");
         assertThat(routing.get("final_model")).isEqualTo("small");
         assertThat(routing.get("decision_source")).isEqualTo(ModelRoutingEvent.SOURCE_FALLBACK);
         List<String> tried = (List<String>) routing.get("fallback_models_tried");
@@ -988,13 +1063,10 @@ public class ChatModelActionRoutingTest {
                                 "function",
                                 "function",
                                 Map.of("name", "lookup", "arguments", Map.of())));
-        ChatMessage intermediate = ChatMessage.assistant("", toolCall);
-        FakeRunnerContext ctx =
-                new FakeRunnerContext(router)
-                        .register(
-                                "big",
-                                new FakeChatModel(
-                                        intermediate, ChatMessage.assistant("final answer")));
+        ChatResult intermediate = ChatFixtures.response("", toolCall);
+        RecordingChatModel model =
+                new RecordingChatModel(intermediate, ChatFixtures.response("final answer"));
+        FakeRunnerContext ctx = new FakeRunnerContext(router).register("big", model);
 
         // initial routed request -> big -> tool call
         ChatModelAction.processChatRequestOrToolResponse(
@@ -1007,7 +1079,7 @@ public class ChatModelActionRoutingTest {
         ChatModelAction.processChatRequestOrToolResponse(
                 new ToolResponseEvent(
                         toolRequest.getId(),
-                        Map.of("call-1", ToolResponse.success("42")),
+                        Map.of("call-1", ToolResponse.text("42")),
                         Map.of("call-1", true),
                         Map.of()),
                 ctx);
@@ -1021,8 +1093,7 @@ public class ChatModelActionRoutingTest {
         // the routing metadata from the initial decision is carried onto the final response
         @SuppressWarnings("unchecked")
         Map<String, Object> routing =
-                (Map<String, Object>)
-                        ctx.chatResponse().getResponse().getExtraArgs().get("model_routing");
+                (Map<String, Object>) ctx.chatResponse().getAttr("model_routing");
         assertThat(routing).isNotNull();
         assertThat(routing.get("router")).isEqualTo("router");
         assertThat(routing.get("final_model")).isEqualTo("big");
@@ -1030,7 +1101,10 @@ public class ChatModelActionRoutingTest {
 
         // the intermediate tool-call message (which lives in the conversation history for the
         // whole loop) is NOT stamped with observability metadata
-        assertThat(intermediate.getExtraArgs()).doesNotContainKey("model_routing");
+        assertThat(model.lastMessages.get(1).getRole()).isEqualTo(MessageRole.ASSISTANT);
+        assertThat(model.lastMessages.get(1).getBlocks())
+                .isEqualTo(intermediate.getMessage().getBlocks());
+        assertThat(model.lastMessages.get(1).getMetadata()).doesNotContainKey("model_routing");
 
         // the parked metadata context was created for the loop and consumed by the final
         // response (no leak) — asserted strictly so this fails if the context is never used
@@ -1063,7 +1137,7 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "big",
                                 new FakeChatModel(
-                                        ChatMessage.assistant("", toolCall),
+                                        ChatFixtures.response("", toolCall),
                                         new RuntimeException("tool round exploded")));
 
         ChatModelAction.processChatRequestOrToolResponse(
@@ -1079,7 +1153,7 @@ public class ChatModelActionRoutingTest {
         ChatModelAction.processChatRequestOrToolResponse(
                 new ToolResponseEvent(
                         toolRequest.getId(),
-                        Map.of("call-1", ToolResponse.success("42")),
+                        Map.of("call-1", ToolResponse.text("42")),
                         Map.of("call-1", true),
                         Map.of()),
                 ctx);
@@ -1160,7 +1234,7 @@ public class ChatModelActionRoutingTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages,
                 Map<String, Object> promptArgs,
                 Map<String, Object> modelParams) {
@@ -1181,6 +1255,60 @@ public class ChatModelActionRoutingTest {
         public Object getPrompt() {
             return prompt;
         }
+    }
+
+    @Test
+    void judgeReceivesToolResultMediaAndSelectedModelReceivesOriginalConversation()
+            throws Exception {
+        ImageBlock image = ImageBlock.fromBase64("image/png", "aGk=");
+        List<ChatMessage> conversation =
+                List.of(
+                        ChatMessage.user("inspect the result"),
+                        ChatMessage.tool(
+                                new ToolResultBlock(
+                                        "call", List.of(new TextBlock("result"), image), false)));
+        RecordingChatModel judge = new RecordingChatModel(ChatFixtures.response("big"));
+        RecordingChatModel selected = new RecordingChatModel();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", selected);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", conversation), ctx);
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        assertThat(judge.lastMessages.get(1).getBlocks()).contains(image);
+        assertThat(judge.lastMessages.get(1).getText()).contains("TOOL: Tool result", "result");
+        assertThat(selected.lastMessages).containsExactlyElementsOf(conversation);
+    }
+
+    @Test
+    void textOnlyJudgeRejectsMediaRatherThanRoutingWithoutIt() throws Exception {
+        FakeChatModel judge =
+                new FakeChatModel() {
+                    @Override
+                    public ChatResult chat(
+                            List<ChatMessage> messages,
+                            Map<String, Object> promptArgs,
+                            Map<String, Object> modelParams) {
+                        UnsupportedContentBlockException.rejectMedia("text-only judge", messages);
+                        return ChatFixtures.response("big");
+                    }
+                };
+        RecordingChatModel selected = new RecordingChatModel();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(judgeRouter())
+                        .register("judge", judge)
+                        .register("big", selected)
+                        .withRetryBudget(0, 0);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent(
+                        "router",
+                        List.of(
+                                ChatMessage.user(
+                                        List.of(ImageBlock.fromBase64("image/png", "aGk="))))),
+                ctx);
+        assertThat(ctx.chatResponse().isFailed()).isTrue();
+        assertThat(selected.lastMessages).isNull();
     }
 
     private static ModelRouter judgeRouter() throws Exception {
@@ -1274,6 +1402,117 @@ public class ChatModelActionRoutingTest {
     }
 
     /**
+     * A stored concrete decision whose model was removed from the candidates before recovery is
+     * normalized like a fresh non-candidate selection: it abstains to the router's current default,
+     * keeps its original latency, and records the rejected name. The strategy is not re-run.
+     */
+    @Test
+    void storedDecisionForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "medium")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .defaultModel("medium")
+                                .build(),
+                        null);
+        RoutingDecision stored =
+                RoutingDecision.builder("big").reason("stored").build().withDecisionMs(42.0);
+        FakeRunnerContext ctx = new FakeRunnerContext(router).seedDurable("route:router", stored);
+
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("medium");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "big")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "stored");
+        assertThat(event.getDecisionMs()).isEqualTo(42.0);
+        assertThat(ctx.resolvedChatModels).containsExactly("medium");
+    }
+
+    /**
+     * The same stored non-candidate decision follows whatever default the router has at recovery: a
+     * changed default, or the first candidate when none is configured.
+     */
+    @Test
+    void storedNonCandidateDecisionFollowsCurrentDefault() throws Exception {
+        RoutingDecision stored = RoutingDecision.of("removed");
+
+        ModelRouter changedDefault =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .defaultModel("big")
+                                .build(),
+                        null);
+        FakeRunnerContext first =
+                new FakeRunnerContext(changedDefault).seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                first);
+        assertThat(first.chatResponse().isFailed()).isFalse();
+        assertThat(first.routingEvent().getSelectedModel()).isEqualTo("big");
+        assertThat(first.routingEvent().getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "removed");
+        assertThat(first.resolvedChatModels).containsExactly("big");
+
+        ModelRouter noDefault =
+                new ModelRouter(
+                        ModelRouter.of("small", "big")
+                                .strategy(Strategies.custom(ExplodingStrategy.class))
+                                .build(),
+                        null);
+        FakeRunnerContext second =
+                new FakeRunnerContext(noDefault).seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hi"))),
+                second);
+        assertThat(second.chatResponse().isFailed()).isFalse();
+        assertThat(second.routingEvent().getSelectedModel()).isEqualTo("small");
+        assertThat(second.resolvedChatModels).containsExactly("small");
+    }
+
+    /**
+     * A stored judge verdict naming a candidate that was removed before recovery gets the same
+     * treatment as a custom strategy's: abstain to the current default, rejected name recorded. The
+     * judge chat replays from its own record and the judge model is not re-invoked.
+     */
+    @Test
+    void storedJudgeVerdictForRemovedCandidateAbstainsToCurrentDefault() throws Exception {
+        ModelRouter router =
+                new ModelRouter(
+                        ModelRouter.of("small", "medium")
+                                .strategy(Strategies.llm("judge"))
+                                .defaultModel("medium")
+                                .build(),
+                        null);
+        RoutingDecision stored = RoutingDecision.builder("big").reason("llm judge verdict").build();
+        FakeRunnerContext ctx =
+                new FakeRunnerContext(router)
+                        .register(
+                                "judge",
+                                new FakeChatModel(
+                                        new RuntimeException("judge re-invoked on replay")))
+                        .seedDurable("judge:router", ChatFixtures.response("{\"model\": \"big\"}"))
+                        .seedDurable("route:router", stored);
+        ChatModelAction.processChatRequestOrToolResponse(
+                new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hard"))),
+                ctx);
+
+        assertThat(ctx.chatResponse().isFailed()).isFalse();
+        ModelRoutingEvent event = ctx.routingEvent();
+        assertThat(event.getSelectedModel()).isEqualTo("medium");
+        assertThat(event.getDecisionSource()).isEqualTo(ModelRoutingEvent.SOURCE_DEFAULT);
+        assertThat(event.getMetadata())
+                .containsEntry(ModelRoutingResolver.REJECTED_MODEL_KEY, "big")
+                .containsEntry(ModelRoutingResolver.REJECTED_REASON_KEY, "llm judge verdict");
+    }
+
+    /**
      * Replay for a judge router (review: both replay tests seeded a CUSTOM strategy, which takes
      * the simple durable path). The judge path persists two records — the judge chat under {@code
      * judge:<router>} and the decision under {@code route:<router>} — and on recovery both replay:
@@ -1294,9 +1533,7 @@ public class ChatModelActionRoutingTest {
                                 new FakeChatModel(
                                         new RuntimeException("judge re-invoked on replay")))
                         .register("big", new FakeChatModel())
-                        .seedDurable(
-                                "judge:router",
-                                new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"))
+                        .seedDurable("judge:router", ChatFixtures.response("{\"model\": \"big\"}"))
                         .seedDurable("route:router", stored);
         ChatModelAction.processChatRequestOrToolResponse(
                 new ChatRequestEvent("router", List.of(new ChatMessage(MessageRole.USER, "hard"))),
@@ -1320,8 +1557,7 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "judge",
                                 new FakeChatModel(
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT,
+                                        ChatFixtures.response(
                                                 "{\"model\": \"big\"}",
                                                 Map.of(
                                                         "promptTokens", "12",
@@ -1345,8 +1581,7 @@ public class ChatModelActionRoutingTest {
                         .register(
                                 "judge",
                                 new FakeChatModel(
-                                        new ChatMessage(
-                                                MessageRole.ASSISTANT,
+                                        ChatFixtures.response(
                                                 "{\"model\": \"big\"}",
                                                 Map.of("promptTokens", 12, "completionTokens", 3))))
                         .register("big", new FakeChatModel());
@@ -1355,8 +1590,8 @@ public class ChatModelActionRoutingTest {
                 ctx);
 
         ModelRoutingEvent event = ctx.routingEvent();
-        assertThat(event.getMetadata()).containsEntry("judge_prompt_tokens", 12);
-        assertThat(event.getMetadata()).containsEntry("judge_completion_tokens", 3);
+        assertThat(event.getMetadata()).containsEntry("judge_prompt_tokens", 12L);
+        assertThat(event.getMetadata()).containsEntry("judge_completion_tokens", 3L);
     }
 
     /**
@@ -1366,8 +1601,7 @@ public class ChatModelActionRoutingTest {
     @Test
     void judgeSeesFullConversation() throws Exception {
         RecordingChatModel judge =
-                new RecordingChatModel(
-                        new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"));
+                new RecordingChatModel(ChatFixtures.response("{\"model\": \"big\"}"));
         FakeRunnerContext ctx =
                 new FakeRunnerContext(judgeRouter())
                         .register("judge", judge)
@@ -1396,8 +1630,7 @@ public class ChatModelActionRoutingTest {
     @Test
     void judgeSeesRenderedBoundPrompt() throws Exception {
         RecordingChatModel judge =
-                new RecordingChatModel(
-                        new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"));
+                new RecordingChatModel(ChatFixtures.response("{\"model\": \"big\"}"));
         FakeRunnerContext ctx =
                 new FakeRunnerContext(judgeRouter())
                         .register(
@@ -1433,8 +1666,7 @@ public class ChatModelActionRoutingTest {
                                 .build(),
                         null);
         RecordingChatModel judge =
-                new RecordingChatModel(
-                        new ChatMessage(MessageRole.ASSISTANT, "{\"model\": \"big\"}"));
+                new RecordingChatModel(ChatFixtures.response("{\"model\": \"big\"}"));
         String oldTurn = "x".repeat(500);
         FakeRunnerContext ctx =
                 new FakeRunnerContext(router)

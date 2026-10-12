@@ -24,8 +24,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * A single {@code package} skill source entry: a Python package name plus a resource path relative
- * to that package's root. The {@code package} scheme is Python-only at runtime — a YAML using this
- * field deserializes on Java but fails at skill load time.
+ * to that package's root. Java agents use the embedded Python runtime to resolve these resources.
  */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public final class PackageSkillSpec {

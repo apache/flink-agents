@@ -102,13 +102,17 @@ def test_from_event_dispatches_to_subclass() -> None:
 
 
 def test_constructors_reject_incomplete_attributes() -> None:
+    # The constructor enforces the native Python type contract (TypeError).
     with pytest.raises(TypeError, match="key"):
         ShortTermWriteEvent(key=None, value={})  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="value"):
         ShortTermWriteEvent(key="k", value=None)  # type: ignore[arg-type]
 
+    # from_event enforces the cross-language schema contract at the JSON
+    # boundary: a missing required attribute raises ValueError, matching Java's
+    # IllegalArgumentException from MemoryEvent.fromEvent.
     generic = Event(type=ShortTermWriteEvent.EVENT_TYPE, attributes={"key": "k"})
-    with pytest.raises(TypeError, match="value"):
+    with pytest.raises(ValueError, match="value"):
         MemoryEvent.from_event(generic)
 
 

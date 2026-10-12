@@ -60,9 +60,7 @@ def test_import_core_options_does_not_call_get_gateway() -> None:
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setitem(sys.modules, "pyflink", fake_pyflink_module)
-        monkeypatch.setitem(
-            sys.modules, "pyflink.java_gateway", fake_gateway_module
-        )
+        monkeypatch.setitem(sys.modules, "pyflink.java_gateway", fake_gateway_module)
 
         importlib.import_module("flink_agents.api.core_options")
 
@@ -131,10 +129,10 @@ def test_agent_execution_options_include_parallel_tool_call_options() -> None:
     options = _collect_config_options(AgentExecutionOptions)
     assert options["TOOL_CALL_ASYNC"].get_key() == "tool-call.async"
     assert options["TOOL_CALL_ASYNC"].get_default_value() is True
-    assert options["TOOL_CALL_PARALLELISM"].get_key() == "tool-call.parallelism"
-    assert options["TOOL_CALL_PARALLELISM"].get_default_value() == os.cpu_count()
-    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_key() == "tool-call.batch.timeout.ms"
-    assert options["TOOL_CALL_BATCH_TIMEOUT_MS"].get_default_value() == -1
+    assert options["ASYNC_BATCH_PARALLELISM"].get_key() == "async.batch.parallelism"
+    assert options["ASYNC_BATCH_PARALLELISM"].get_default_value() == os.cpu_count()
+    assert options["ASYNC_BATCH_TIMEOUT_MS"].get_key() == "async.batch.timeout.ms"
+    assert options["ASYNC_BATCH_TIMEOUT_MS"].get_default_value() == -1
 
 
 def test_unknown_agent_config_option_raises_attribute_error() -> None:

@@ -53,8 +53,8 @@ public class ActionStateTest {
         List<org.apache.flink.agents.api.Event> outputEvents = new ArrayList<>();
         outputEvents.add(new OutputEvent("output"));
         List<CallResult> callResults = new ArrayList<>();
-        callResults.add(new CallResult("func1", "digest1", "result1".getBytes()));
-        callResults.add(new CallResult("func2", "digest2", "result2".getBytes()));
+        callResults.add(new CallResult("func1", "result1".getBytes()));
+        callResults.add(new CallResult("func2", "result2".getBytes()));
         boolean completed = true;
 
         ActionState state =
@@ -78,8 +78,8 @@ public class ActionStateTest {
     public void testAddCallResult() {
         ActionState state = new ActionState(new InputEvent("test"));
 
-        CallResult result1 = new CallResult("func1", "digest1", "result1".getBytes());
-        CallResult result2 = new CallResult("func2", "digest2", "result2".getBytes());
+        CallResult result1 = new CallResult("func1", "result1".getBytes());
+        CallResult result2 = new CallResult("func2", "result2".getBytes());
 
         state.addCallResult(result1);
         assertEquals(1, state.getCallResultCount());
@@ -93,8 +93,8 @@ public class ActionStateTest {
     @Test
     public void testReplaceCallResult() {
         ActionState state = new ActionState(new InputEvent("test"));
-        CallResult original = new CallResult("func1", "digest1", "result1".getBytes());
-        CallResult replacement = CallResult.pending("func1", "digest1");
+        CallResult original = new CallResult("func1", "result1".getBytes());
+        CallResult replacement = CallResult.pending("func1");
 
         state.addCallResult(original);
         state.replaceCallResult(0, replacement);
@@ -112,7 +112,7 @@ public class ActionStateTest {
         assertNull(state.getCallResult(0));
         assertNull(state.getCallResult(100));
 
-        state.addCallResult(new CallResult("func", "digest", "result".getBytes()));
+        state.addCallResult(new CallResult("func", "result".getBytes()));
         assertNull(state.getCallResult(1));
         assertNotNull(state.getCallResult(0));
     }
@@ -120,8 +120,8 @@ public class ActionStateTest {
     @Test
     public void testClearCallResults() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        state.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
+        state.addCallResult(new CallResult("func1", "result1".getBytes()));
+        state.addCallResult(new CallResult("func2", "result2".getBytes()));
         assertEquals(2, state.getCallResultCount());
 
         state.clearCallResults();
@@ -132,10 +132,10 @@ public class ActionStateTest {
     @Test
     public void testClearCallResultsFrom() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func0", "digest0", "result0".getBytes()));
-        state.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        state.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
-        state.addCallResult(new CallResult("func3", "digest3", "result3".getBytes()));
+        state.addCallResult(new CallResult("func0", "result0".getBytes()));
+        state.addCallResult(new CallResult("func1", "result1".getBytes()));
+        state.addCallResult(new CallResult("func2", "result2".getBytes()));
+        state.addCallResult(new CallResult("func3", "result3".getBytes()));
         assertEquals(4, state.getCallResultCount());
 
         // Clear from index 2 onwards (keep func0, func1)
@@ -149,7 +149,7 @@ public class ActionStateTest {
     @Test
     public void testClearCallResultsFromInvalidIndex() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func", "digest", "result".getBytes()));
+        state.addCallResult(new CallResult("func", "result".getBytes()));
 
         // Negative index - should do nothing
         state.clearCallResultsFrom(-1);
@@ -163,8 +163,8 @@ public class ActionStateTest {
     @Test
     public void testClearCallResultsFromZero() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        state.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
+        state.addCallResult(new CallResult("func1", "result1".getBytes()));
+        state.addCallResult(new CallResult("func2", "result2".getBytes()));
 
         // Clear from index 0 - should clear all
         state.clearCallResultsFrom(0);
@@ -174,8 +174,8 @@ public class ActionStateTest {
     @Test
     public void testMarkCompleted() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        state.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
+        state.addCallResult(new CallResult("func1", "result1".getBytes()));
+        state.addCallResult(new CallResult("func2", "result2".getBytes()));
 
         assertFalse(state.isCompleted());
         assertEquals(2, state.getCallResultCount());
@@ -190,10 +190,10 @@ public class ActionStateTest {
     public void testEqualsWithCallResultsAndCompleted() {
         InputEvent event = new InputEvent("test");
         List<CallResult> callResults1 = new ArrayList<>();
-        callResults1.add(new CallResult("func", "digest", "result".getBytes()));
+        callResults1.add(new CallResult("func", "result".getBytes()));
 
         List<CallResult> callResults2 = new ArrayList<>();
-        callResults2.add(new CallResult("func", "digest", "result".getBytes()));
+        callResults2.add(new CallResult("func", "result".getBytes()));
 
         ActionState state1 = new ActionState(event, null, null, null, callResults1, true);
         ActionState state2 = new ActionState(event, null, null, null, callResults2, true);
@@ -207,7 +207,7 @@ public class ActionStateTest {
     public void testHashCodeWithCallResultsAndCompleted() {
         InputEvent event = new InputEvent("test");
         List<CallResult> callResults = new ArrayList<>();
-        callResults.add(new CallResult("func", "digest", "result".getBytes()));
+        callResults.add(new CallResult("func", "result".getBytes()));
 
         ActionState state1 = new ActionState(event, null, null, null, callResults, true);
         ActionState state2 =
@@ -219,7 +219,7 @@ public class ActionStateTest {
     @Test
     public void testToStringIncludesNewFields() {
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func", "digest", "result".getBytes()));
+        state.addCallResult(new CallResult("func", "result".getBytes()));
         state.markCompleted();
 
         String str = state.toString();
@@ -253,13 +253,13 @@ public class ActionStateTest {
         assertEquals(0, state.getCallResultCount());
 
         // 2. First code block completes
-        CallResult result1 = new CallResult("llm.call", "hash1", "response1".getBytes());
+        CallResult result1 = new CallResult("llm.call", "response1".getBytes());
         state.addCallResult(result1);
         assertEquals(1, state.getCallResultCount());
         assertFalse(state.isCompleted());
 
         // 3. Second code block completes
-        CallResult result2 = new CallResult("db.query", "hash2", "data".getBytes());
+        CallResult result2 = new CallResult("db.query", "data".getBytes());
         state.addCallResult(result2);
         assertEquals(2, state.getCallResultCount());
 
@@ -282,19 +282,19 @@ public class ActionStateTest {
 
         // State from before failure (with 2 completed code blocks)
         ActionState recoveredState = new ActionState(new InputEvent("test"));
-        recoveredState.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        recoveredState.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
+        recoveredState.addCallResult(new CallResult("func1", "result1".getBytes()));
+        recoveredState.addCallResult(new CallResult("func2", "result2".getBytes()));
 
         // Check if action is completed
         assertFalse(recoveredState.isCompleted());
 
         // During re-execution, check if call result matches
         CallResult result0 = recoveredState.getCallResult(0);
-        assertTrue(result0.matches("func1", "digest1"));
+        assertTrue(result0.matches("func1"));
         assertTrue(result0.isSuccess());
 
         CallResult result1 = recoveredState.getCallResult(1);
-        assertTrue(result1.matches("func2", "digest2"));
+        assertTrue(result1.matches("func2"));
 
         // Third call is new (not in results)
         assertNull(recoveredState.getCallResult(2));
@@ -304,17 +304,17 @@ public class ActionStateTest {
     public void testNonDeterministicRecovery() {
         // Simulate detection of non-deterministic call order
         ActionState state = new ActionState(new InputEvent("test"));
-        state.addCallResult(new CallResult("func1", "digest1", "result1".getBytes()));
-        state.addCallResult(new CallResult("func2", "digest2", "result2".getBytes()));
-        state.addCallResult(new CallResult("func3", "digest3", "result3".getBytes()));
+        state.addCallResult(new CallResult("func1", "result1".getBytes()));
+        state.addCallResult(new CallResult("func2", "result2".getBytes()));
+        state.addCallResult(new CallResult("func3", "result3".getBytes()));
 
         // During recovery, call 1 matches
         CallResult result0 = state.getCallResult(0);
-        assertTrue(result0.matches("func1", "digest1"));
+        assertTrue(result0.matches("func1"));
 
         // Call 2 doesn't match (different function called)
         CallResult result1 = state.getCallResult(1);
-        assertFalse(result1.matches("different_func", "digest2"));
+        assertFalse(result1.matches("different_func"));
 
         // Clear results from index 1 onwards
         state.clearCallResultsFrom(1);

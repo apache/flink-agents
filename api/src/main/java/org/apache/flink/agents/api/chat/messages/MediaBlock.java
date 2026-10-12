@@ -32,17 +32,17 @@ import java.util.Objects;
  * (RFC 6838; historically called a MIME type), and the payload location is a typed {@link
  * MediaSource}.
  *
- * <p>Media blocks are immutable, and every construction path — the {@code fromBase64}/{@code
- * fromUrl} factories, the full constructors, and Jackson deserialization — runs the same
- * validation. Which kind of source a block carries is structural: there is exactly one {@code
- * source}, and its {@code type} discriminator says whether it is an inline {@link Base64Source} or
- * an externally managed {@link UrlSource}.
+ * <p>Media blocks are immutable, and every construction path — the {@code fromBytes}/{@code
+ * fromBase64}/{@code fromUrl} factories, the full constructors, and Jackson deserialization — runs
+ * the same validation. Which kind of source a block carries is structural: there is exactly one
+ * {@code source}, and its {@code type} discriminator says whether it is an inline {@link
+ * Base64Source} or an externally managed {@link UrlSource}.
  *
  * <p>The optional {@code name}/{@code sizeBytes}/{@code sha256} metadata also serves the Event Log,
  * which records media metadata instead of payload bytes — see {@link #sanitize()}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public abstract class MediaBlock extends ContentBlock {
+public abstract class MediaBlock extends DataContentBlock {
 
     @JsonProperty("media_type")
     private final String mediaType;

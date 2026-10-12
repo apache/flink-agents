@@ -25,7 +25,17 @@ from uuid import UUID
 
 import pytest
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    AudioBlock,
+    ChatMessage,
+    DocumentBlock,
+    ImageBlock,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+    VideoBlock,
+)
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
@@ -37,6 +47,7 @@ from flink_agents.api.events.run_event import AgentRunBeginEvent
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
 from flink_agents.api.memory_object import MemoryType
 from flink_agents.api.memory_reference import MemoryRef
+from flink_agents.api.tools.tool_response import ToolResponse
 from flink_agents.api.vector_stores.vector_store import Document
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -47,6 +58,9 @@ _FIXED_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000002")
 _FIXED_TOOL_CALL_ID = "call_aaaa"
 _FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb"
 _FIXED_TOOL_CALL_ID_BOOL = "call_cccc"
+_FIXED_TOOL_CALL_ID_FAILED = "call_dddd"
+_FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed."
+_FIXED_TOOL_ERROR = "ValueError: boom"
 
 
 def _regenerate_enabled() -> bool:
@@ -138,6 +152,47 @@ def test_python_can_deserialize_output_event_from_java_snapshot() -> None:
 # ── ChatRequestEvent ────────────────────────────────────────────────────
 
 
+def _build_raw_media_chat_request_event() -> ChatRequestEvent:
+    data = b"\xff\x00\x80\xfb"
+    event = ChatRequestEvent(
+        model="test-model",
+        messages=[
+            ChatMessage.user(
+                [
+                    ImageBlock.from_bytes("image/png", data),
+                    AudioBlock.from_bytes("audio/wav", data),
+                    VideoBlock.from_bytes("video/mp4", data),
+                    DocumentBlock.from_bytes("application/pdf", data),
+                ]
+            )
+        ],
+    )
+    return _force_id(event, _FIXED_EVENT_ID)
+
+
+def test_regenerate_raw_media_chat_request_event_python_snapshot() -> None:
+    if not _regenerate_enabled():
+        pytest.skip("Set REGENERATE_SNAPSHOTS=1 to refresh.")
+    _write_python_snapshot(
+        "raw_media_chat_request_event.json", _build_raw_media_chat_request_event()
+    )
+
+
+def test_raw_media_chat_request_event_python_snapshot_is_stable() -> None:
+    _assert_python_snapshot_stable(
+        "raw_media_chat_request_event.json", _build_raw_media_chat_request_event()
+    )
+
+
+def test_python_can_deserialize_raw_media_chat_request_event_from_java_snapshot() -> (
+    None
+):
+    event = ChatRequestEvent.from_event(
+        _read_java_snapshot("raw_media_chat_request_event.json")
+    )
+    assert event.messages == _build_raw_media_chat_request_event().messages
+
+
 def _build_chat_request_event() -> ChatRequestEvent:
     event = ChatRequestEvent(
         model="test-model",
@@ -206,7 +261,9 @@ def test_chat_request_row_type_info_output_schema_is_not_portable_across_languag
 def _build_chat_response_event() -> ChatResponseEvent:
     event = ChatResponseEvent.success(
         request_id=_FIXED_REQUEST_ID,
-        response=ChatMessage.of(MessageRole.ASSISTANT, "hi there"),
+        response=ChatResult(
+            message=ChatMessage.assistant([TextBlock(text="hi there")])
+        ),
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -267,9 +324,7 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
     )
     assert actual_request_id == expected_request_id, "request_id mismatch."
     assert typed.response is not None, "response is None."
-    assert typed.response.role == MessageRole.ASSISTANT, (
-        f"Response role mismatch: got {typed.response.role!r}"
-    )
+    assert typed.response.message.blocks == (TextBlock(text="hi there"),)
     assert typed.response.text == "hi there"
 
 
@@ -277,11 +332,9 @@ def test_python_can_deserialize_chat_response_event_from_java_snapshot() -> None
 
 
 def _build_tool_request_event() -> ToolRequestEvent:
-    tool_call = {
-        "id": _FIXED_TOOL_CALL_ID,
-        "name": "echo",
-        "arguments": {"value": "ping"},
-    }
+    tool_call = ToolCallBlock(
+        call_id=_FIXED_TOOL_CALL_ID, name="echo", input={"value": "ping"}
+    )
     event = ToolRequestEvent(model="test-model", tool_calls=[tool_call])
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -303,28 +356,30 @@ def test_python_can_deserialize_tool_request_event_from_java_snapshot() -> None:
     typed = ToolRequestEvent.from_event(base)
     assert typed.model == "test-model"
     assert len(typed.tool_calls) == 1
-    assert typed.tool_calls[0]["id"] == _FIXED_TOOL_CALL_ID
+    assert typed.tool_calls[0].call_id == _FIXED_TOOL_CALL_ID
 
 
 # ── ToolResponseEvent ───────────────────────────────────────────────────
 
 
 def _build_tool_response_event() -> ToolResponseEvent:
-    # Mixed scalar value types pin the Python -> Java round-trip on the Java
-    # ToolResponseEvent.fromEvent fall-through that wraps non-ToolResponse/Map
-    # values via ToolResponse.success(v).
+    # Scalars become text blocks before serialization; Java restores the same
+    # typed responses and preserves failure status and diagnostic details.
     event = ToolResponseEvent(
         request_id=_FIXED_REQUEST_ID,
         responses={
             _FIXED_TOOL_CALL_ID: "pong",
             _FIXED_TOOL_CALL_ID_NUMERIC: 42,
             _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_FAILURE_TEXT,
         },
-        external_ids={
-            _FIXED_TOOL_CALL_ID: None,
-            _FIXED_TOOL_CALL_ID_NUMERIC: None,
-            _FIXED_TOOL_CALL_ID_BOOL: None,
+        success={
+            _FIXED_TOOL_CALL_ID: True,
+            _FIXED_TOOL_CALL_ID_NUMERIC: True,
+            _FIXED_TOOL_CALL_ID_BOOL: True,
+            _FIXED_TOOL_CALL_ID_FAILED: False,
         },
+        error={_FIXED_TOOL_CALL_ID_FAILED: _FIXED_TOOL_ERROR},
     )
     return _force_id(event, _FIXED_EVENT_ID)
 
@@ -350,8 +405,8 @@ def test_python_can_deserialize_java_tool_response_event_status_fields() -> None
     assert typed.error == {}
 
     response_value = typed.responses[_FIXED_TOOL_CALL_ID]
-    assert isinstance(response_value, dict)
-    assert "result" in response_value
+    assert isinstance(response_value, ToolResponse)
+    assert response_value.get_text() == "pong"
 
     assert "timestamp" not in typed.attributes
 

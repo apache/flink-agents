@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentFutures;
@@ -67,6 +69,18 @@ public class BaseSubagentSetupTest {
 
     /** Captures every assigned {@code (sessionId, callId)} pair like a collecting setup. */
     public static class AllocatingCaptureSetup extends BaseSubagentSetup {
+
+        public AllocatingCaptureSetup() {
+            this(
+                    ResourceDescriptor.Builder.newBuilder(AllocatingCaptureSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
+        public AllocatingCaptureSetup(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
 
         private static final List<String[]> CAPTURES =
                 Collections.synchronizedList(new ArrayList<>());
@@ -231,6 +245,16 @@ public class BaseSubagentSetupTest {
     /** Capture setup exposing the current task's registry for direct tracking. */
     public static class RegistryExposingSetup extends AllocatingCaptureSetup {
 
+        // Names its own type in the descriptor: SubagentSetup's construction check requires the
+        // descriptor clazz to match the concrete type, which the inherited convenience constructor
+        // would otherwise name as the superclass.
+        public RegistryExposingSetup() {
+            super(
+                    ResourceDescriptor.Builder.newBuilder(RegistryExposingSetup.class.getName())
+                            .build(),
+                    null);
+        }
+
         PendingSubagentCallRegistry exposedRegistry() {
             return currentTaskRegistry();
         }
@@ -261,6 +285,19 @@ public class BaseSubagentSetupTest {
         BaseSubagentSetup rootSetup =
                 (BaseSubagentSetup) rootCache.getResource("root-setup", ResourceType.AGENT);
         assertThat(rootSetup.getSubagentName()).isEqualTo("root-setup");
+
+        // A child cache injects the local resource name as resolved in the child plan: the
+        // enclosing scope is routing-level context the setup never sees.
+        Agent childAgent = new Agent();
+        childAgent.addResource("nested", ResourceType.AGENT, new AllocatingCaptureSetup());
+        ResourceCache childCache =
+                new ResourceCache(
+                        new AgentPlan(childAgent).getResourceProviders(),
+                        Thread.currentThread().getContextClassLoader(),
+                        rootCache);
+        BaseSubagentSetup nestedSetup =
+                (BaseSubagentSetup) childCache.getResource("nested", ResourceType.AGENT);
+        assertThat(nestedSetup.getSubagentName()).isEqualTo("nested");
     }
 
     @SuppressWarnings("unchecked")

@@ -32,7 +32,7 @@ provider choices to Python implementations merely because the Agent, custom Acti
 or entry point are Python.
 
 After the user selects a Java implementation, build the target-version documented
-descriptor with the corresponding Python-side Java wrapper and `java_clazz` set to
+`JavaResourceDescriptor` with `clazz` set to
 the selected Java implementation FQN. Add the matching Java integration artifact to
 the job/runtime classpath as well as the Python bridge dependencies. Do not translate
 the provider into a Python implementation or ask for a separate cross-language
@@ -169,7 +169,7 @@ complete the example.
 - Exercise provider integrations only when their services and credentials are
   available; label skipped integration checks.
 - For a Java chat-model, embedding-model, or vector-store implementation, verify the
-  Python descriptor wrapper, `java_clazz`, selected Java integration JAR, and Java
+  `JavaResourceDescriptor` target, selected Java integration JAR, and Java
   resource adapter path. Do not reject it because the application code is Python.
 - Only after the user fills a runtime Skill source: for bundled Skills, inspect the
   built wheel or installed package and load the configured package-data resource;

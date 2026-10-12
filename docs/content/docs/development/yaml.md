@@ -329,7 +329,7 @@ actions:
   - name: action2
     function: my_pkg.actions:action2
     trigger_conditions:
-      - "type == EventType.ChatResponseEvent && size(response.blocks) > 0"
+      - "type == EventType.ChatResponseEvent && size(response.message.blocks) > 0"
     type: python
   - action3                       # shared action reference (declared at file level)
 ```
@@ -576,7 +576,7 @@ Common chat-model aliases:
 | `gemini`             | —                           | Gemini (Java)               |
 | `azure_openai`       | Azure OpenAI (Python)       | Azure OpenAI (Java)         |
 | `bedrock`            | —                           | Bedrock (Java)              |
-| `tongyi`             | Tongyi (Python)             | —                           |
+| `dashscope`          | Alibaba Cloud Model Studio (DashScope, Python) | —                           |
 | `vllm`               | vLLM (Python)               | vLLM (Java)                 |
 | `watsonx`            | IBM watsonx.ai (Python)     | IBM watsonx.ai (Java)       |
 
@@ -586,7 +586,7 @@ Embedding-model aliases (apply to both `embedding_model_connections` and `embedd
 | --------- | -------------- | -------------- |
 | `ollama`  | Ollama         | Ollama         |
 | `openai`  | OpenAI         | OpenAI (Java)  |
-| `tongyi`  | Tongyi         | —              |
+| `dashscope` | Alibaba Cloud Model Studio (DashScope) | —              |
 | `bedrock` | —              | Bedrock (Java) |
 
 Vector-store aliases:

@@ -30,7 +30,7 @@ filter Resource provider choices to Java implementations merely because the Agen
 custom Actions, or entry point are Java.
 
 After the user selects a Python implementation, build the target-version documented
-descriptor with the corresponding Java-side Python wrapper and `pythonClazz` set to
+`PythonResourceDescriptor` with its builder's class name set to
 the selected Python implementation FQN. Install the matching Python integration
 package in the TaskManager Python environment and include the Python bridge runtime.
 Do not translate the provider into a Java implementation or ask for a separate
@@ -122,8 +122,7 @@ arguments.
 
 That rule refers to the selected Resource implementation language, not the Java
 application language. For a Python Resource selected by a Java application, use the
-Python alias/class and Python argument contract together with the Java-side wrapper
-and `pythonClazz` metadata.
+Python alias/class and Python argument contract in a `PythonResourceDescriptor`.
 
 ### MCP Limitation
 
@@ -169,7 +168,7 @@ do not introduce a provider, model, Prompt, or Tool solely to complete the examp
 - Check each Tool's `parameter_types` count and order against reflection.
 - Check every Action uses the framework's fixed Event/`RunnerContext` contract.
 - For a Python chat-model, embedding-model, or vector-store implementation, verify
-  the Java descriptor wrapper, `pythonClazz`, installed Python integration package,
+  the `PythonResourceDescriptor` target, installed Python integration package,
   and Python resource adapter path. Do not reject it because the application code is
   Java.
 - Resolve every generated framework method and constructor in target source, then

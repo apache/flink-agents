@@ -144,11 +144,28 @@ Each factory method creates a source with a different scheme:
 | `Skills.from_url_with_sha256(url, digest)` / `Skills.fromUrlWithSha256(url, digest)` | `url` | An HTTPS URL pinned to the expected lowercase or uppercase SHA-256 digest of the downloaded archive. The digest is verified before extraction. |
 | `Skills.from_url_unsafe(*urls)` / `Skills.fromUrlUnsafe(String...)` | `url` | Explicitly permits plain HTTP for compatibility on trusted development networks. |
 | `Skills.from_url_unsafe_with_sha256(url, digest)` / `Skills.fromUrlUnsafeWithSha256(url, digest)` | `url` | Pins an archive digest while explicitly permitting plain HTTP transport. |
-| `Skills.from_package(*pairs)` | `package` | **Python only.** One or more `(package, resource)` tuples locating skills inside an installed Python package. |
-| `Skills.fromClasspath(String...)` | `classpath` | **Java only.** One or more classpath resource paths (e.g. under `src/main/resources/skills`). When packaged into a jar, the resource is materialized to a temp directory at runtime. |
+| `Skills.from_package(*pairs)` / `Skills.fromPackage(String, String)` | `package` | One or more `(package, resource)` tuples locating skills inside an installed Python package. |
+| `Skills.from_classpath(*resources)` / `Skills.fromClasspath(String...)` | `classpath` | One or more classpath resource paths (e.g. under `src/main/resources/skills`). When packaged into a jar, the resource is materialized to a temp directory at runtime. |
 
 {{< hint info >}}
-The `package` scheme is Python-only and the `classpath` scheme is Java-only. A plan written in one language using the other language's scheme deserializes fine, but fails fast at load time. Use `local` or `url` for cross-language skill sources.
+Both schemes work from Java and Python agents running in Flink. Cross-language use requires the Java/Python runtime environment described in [Deployment]({{< ref "docs/operations/deployment#run-in-flink" >}}), plus the corresponding skill dependencies:
+
+- For Python agents using `Skills.from_classpath("skills")`, make the JARs containing the skills available on the job's classpath.
+- For Java agents using `Skills.fromPackage("my_skills_pkg", "skills")`, make the Python package containing the skills available in the job's Python environment.
+
+YAML supports the same combinations regardless of the declaring language:
+
+```yaml
+skills:
+  - name: jar_skills
+    classpath: [skills]
+  - name: python_skills
+    package:
+      - package: my_skills_pkg
+        resource: skills
+```
+
+Missing classpath resources, Python packages/resources, or runtime bridges fail loading with source context. These sources retain the existing discovery and duplicate-Skill precedence rules.
 {{< /hint >}}
 
 URL source hosts must use DNS-compatible ASCII syntax. Hostnames containing underscores, such as `skill_server`, are rejected; use a DNS-compatible name such as `skill-server`. Internationalized hostnames must be supplied in IDNA/Punycode form rather than as raw Unicode, and scoped IPv6 literals with zone identifiers are rejected. Redirect locations must also be valid URLs, so raw spaces must be percent-encoded as `%20`. These checks are stricter than the URL handling in earlier releases.

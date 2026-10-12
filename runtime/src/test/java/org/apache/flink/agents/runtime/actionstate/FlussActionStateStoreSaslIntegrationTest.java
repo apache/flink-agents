@@ -96,7 +96,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
 
         // A durable call has completed, but its enclosing action is still pending at checkpoint.
         ActionState pending = new ActionState(testEvent);
-        pending.addCallResult(new CallResult("durable-call", "", new byte[] {1, 2, 3}));
+        pending.addCallResult(new CallResult("durable-call", new byte[] {1, 2, 3}));
         store.put(TEST_KEY, 1L, testAction, testEvent, pending);
         Object marker = store.getRecoveryMarker();
 
@@ -121,7 +121,7 @@ public class FlussActionStateStoreSaslIntegrationTest {
                     .singleElement()
                     .satisfies(
                             result -> {
-                                assertThat(result.matches("durable-call", "")).isTrue();
+                                assertThat(result.matches("durable-call")).isTrue();
                                 assertThat(result.isSuccess()).isTrue();
                                 assertThat(result.getResultPayload())
                                         .containsExactly((byte) 1, (byte) 2, (byte) 3);

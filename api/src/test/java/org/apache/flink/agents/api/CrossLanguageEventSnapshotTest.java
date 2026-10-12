@@ -21,8 +21,14 @@ package org.apache.flink.agents.api;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.agents.OutputSchema;
+import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.DocumentBlock;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
@@ -52,6 +58,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -71,7 +78,12 @@ class CrossLanguageEventSnapshotTest {
     private static final String FIXED_TOOL_CALL_ID = "call_aaaa";
     private static final String FIXED_TOOL_CALL_ID_NUMERIC = "call_bbbb";
     private static final String FIXED_TOOL_CALL_ID_BOOL = "call_cccc";
+    private static final String FIXED_TOOL_CALL_ID_FAILED = "call_dddd";
+    private static final String FIXED_TOOL_FAILURE_TEXT = "Tool `get_weather` execute failed.";
+    private static final String FIXED_TOOL_ERROR = "ValueError: boom";
     private static final String MEMORY_REF_ATTACHMENT_EVENT_TYPE = "_memory_ref_attachment_event";
+    private static final String GENERIC_EVENT_TYPE = "_my_custom_event";
+
     private static final long FIXED_TIMESTAMP = 1_700_000_000_000L;
 
     private static Path snapshotDir;
@@ -191,6 +203,43 @@ class CrossLanguageEventSnapshotTest {
 
     // ── ChatRequestEvent ───────────────────────────────────────────────────
 
+    private static ChatRequestEvent buildRawMediaChatRequestEvent() {
+        byte[] data = {(byte) 0xff, 0, (byte) 0x80, (byte) 0xfb};
+        Map<String, Object> attrs = new LinkedHashMap<>();
+        attrs.put("model", "test-model");
+        attrs.put(
+                "messages",
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        ImageBlock.fromBytes("image/png", data),
+                                        AudioBlock.fromBytes("audio/wav", data),
+                                        VideoBlock.fromBytes("video/mp4", data),
+                                        DocumentBlock.fromBytes("application/pdf", data)))));
+        return new ChatRequestEvent(FIXED_EVENT_ID, attrs);
+    }
+
+    @Test
+    void regenerateRawMediaChatRequestEventJavaSnapshot() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        writeJavaSnapshot("raw_media_chat_request_event.json", buildRawMediaChatRequestEvent());
+    }
+
+    @Test
+    void rawMediaChatRequestEventJavaSnapshotIsStable() throws Exception {
+        assertJavaSnapshotStable(
+                "raw_media_chat_request_event.json", buildRawMediaChatRequestEvent());
+    }
+
+    @Test
+    void javaCanDeserializeRawMediaChatRequestEventFromPythonSnapshot() throws Exception {
+        ChatRequestEvent event =
+                ChatRequestEvent.fromEvent(readPythonSnapshot("raw_media_chat_request_event.json"));
+        assertEquals(
+                buildRawMediaChatRequestEvent().getMessages().get(0).getBlocks(),
+                event.getMessages().get(0).getBlocks());
+    }
+
     private static ChatRequestEvent buildChatRequestEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("model", "test-model");
@@ -259,7 +308,9 @@ class CrossLanguageEventSnapshotTest {
         attrs.put("status", ChatResponseEvent.SUCCESS);
         attrs.put("error", null);
         attrs.put("request_id", FIXED_REQUEST_ID);
-        attrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
+        attrs.put(
+                "response",
+                new ChatResult(ChatMessage.assistant(List.of(new TextBlock("hi there")))));
         attrs.put("retry_count", 0);
         attrs.put("total_retry_wait_sec", 0);
         return new ChatResponseEvent(FIXED_EVENT_ID, attrs);
@@ -313,9 +364,9 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals(ChatResponseEvent.EVENT_TYPE, typed.getType());
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId(), "request_id mismatch.");
-        ChatMessage response = typed.getResponse();
+        ChatResult response = typed.getResponse();
         assertNotNull(response, "response field is null.");
-        assertEquals(MessageRole.ASSISTANT, response.getRole(), "Role mismatch on response.");
+        assertFalse(response.getMessage().getBlocks().isEmpty(), "Response blocks are empty.");
         assertEquals("hi there", response.getText());
     }
 
@@ -323,9 +374,11 @@ class CrossLanguageEventSnapshotTest {
 
     private static ToolRequestEvent buildToolRequestEvent() {
         Map<String, Object> toolCall = new LinkedHashMap<>();
-        toolCall.put("id", FIXED_TOOL_CALL_ID);
+        toolCall.put("type", "tool_call");
+        toolCall.put("metadata", Map.of());
+        toolCall.put("call_id", FIXED_TOOL_CALL_ID);
         toolCall.put("name", "echo");
-        toolCall.put("arguments", Map.of("value", "ping"));
+        toolCall.put("input", Map.of("value", "ping"));
 
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("model", "test-model");
@@ -352,10 +405,11 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_EVENT_ID, typed.getId());
         assertEquals(ToolRequestEvent.EVENT_TYPE, typed.getType());
         assertEquals("test-model", typed.getModel());
-        List<Map<String, Object>> toolCalls = typed.getToolCalls();
+        List<org.apache.flink.agents.api.chat.messages.ToolCallBlock> toolCalls =
+                typed.getToolCalls();
         assertNotNull(toolCalls);
         assertEquals(1, toolCalls.size());
-        assertEquals(FIXED_TOOL_CALL_ID, toolCalls.get(0).get("id"));
+        assertEquals(FIXED_TOOL_CALL_ID, toolCalls.get(0).getCallId());
     }
 
     // ── ToolResponseEvent ──────────────────────────────────────────────────
@@ -363,10 +417,9 @@ class CrossLanguageEventSnapshotTest {
     private static ToolResponseEvent buildToolResponseEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();
         attrs.put("request_id", FIXED_REQUEST_ID);
-        attrs.put("responses", Map.of(FIXED_TOOL_CALL_ID, ToolResponse.success("pong")));
+        attrs.put("responses", Map.of(FIXED_TOOL_CALL_ID, ToolResponse.text("pong")));
         attrs.put("success", Map.of(FIXED_TOOL_CALL_ID, true));
         attrs.put("error", new HashMap<String, String>());
-        attrs.put("external_ids", new HashMap<String, String>());
         attrs.put("timestamp", FIXED_TIMESTAMP);
         return new ToolResponseEvent(FIXED_EVENT_ID, attrs);
     }
@@ -390,24 +443,62 @@ class CrossLanguageEventSnapshotTest {
         assertEquals(FIXED_REQUEST_ID, typed.getRequestId());
 
         ToolResponse stringResp = typed.getResponses().get(FIXED_TOOL_CALL_ID);
-        assertNotNull(stringResp, "String response should be wrapped as ToolResponse.success.");
-        assertEquals("pong", stringResp.getResult());
+        assertNotNull(stringResp, "String response should be represented by text blocks.");
+        assertEquals("pong", stringResp.getText());
         assertTrue(stringResp.isSuccess());
 
         ToolResponse numericResp = typed.getResponses().get(FIXED_TOOL_CALL_ID_NUMERIC);
-        assertNotNull(numericResp, "Number response should be wrapped as ToolResponse.success.");
-        assertEquals(42, ((Number) numericResp.getResult()).intValue());
+        assertNotNull(numericResp, "Number response should be represented by text blocks.");
+        assertEquals("42", numericResp.getText());
         assertTrue(numericResp.isSuccess());
 
         ToolResponse boolResp = typed.getResponses().get(FIXED_TOOL_CALL_ID_BOOL);
-        assertNotNull(boolResp, "Boolean response should be wrapped as ToolResponse.success.");
-        assertEquals(Boolean.TRUE, boolResp.getResult());
+        assertNotNull(boolResp, "Boolean response should be represented by text blocks.");
+        assertEquals("true", boolResp.getText());
         assertTrue(boolResp.isSuccess());
 
         Map<String, Object> attrs = typed.getAttributes();
         assertEquals(Boolean.TRUE, typed.getSuccess().get(FIXED_TOOL_CALL_ID));
-        assertTrue(typed.getError().isEmpty());
+        assertEquals(Map.of(FIXED_TOOL_CALL_ID_FAILED, FIXED_TOOL_ERROR), typed.getError());
         assertFalse(attrs.containsKey("timestamp"));
+    }
+
+    @Test
+    void pythonToolResponseEventKeepsFailedCallsAsErrors() throws Exception {
+        Event base = readPythonSnapshot("tool_response_event.json");
+        ToolResponseEvent typed = ToolResponseEvent.fromEvent(base);
+
+        ToolResponse failed = typed.getResponses().get(FIXED_TOOL_CALL_ID_FAILED);
+        assertNotNull(failed);
+        assertTrue(failed.isError(), "A call Python marked as failed must not read as a success.");
+        // The response keeps the text Python shows the model; the diagnostic stays in getError().
+        assertEquals(FIXED_TOOL_FAILURE_TEXT, failed.getError());
+        assertEquals(FIXED_TOOL_ERROR, typed.getError().get(FIXED_TOOL_CALL_ID_FAILED));
+        assertEquals(Boolean.FALSE, typed.getSuccess().get(FIXED_TOOL_CALL_ID_FAILED));
+
+        String printed = assertDoesNotThrow(typed::toString);
+        assertTrue(printed.contains(FIXED_TOOL_CALL_ID_FAILED + "=false"), printed);
+    }
+
+    @Test
+    void javaTransitOfPythonToolResponseEventPreservesTypedResponses() throws Exception {
+        // Both languages use the same typed blocks and execution metadata on the wire.
+        Event transited = readPythonSnapshot("tool_response_event.json");
+        JsonNode responses =
+                MAPPER.readTree(MAPPER.writeValueAsString(transited))
+                        .path("attributes")
+                        .path("responses");
+        assertEquals("pong", responses.path(FIXED_TOOL_CALL_ID).at("/blocks/0/text").asText());
+        assertEquals(
+                "42", responses.path(FIXED_TOOL_CALL_ID_NUMERIC).at("/blocks/0/text").asText());
+        assertEquals("true", responses.path(FIXED_TOOL_CALL_ID_BOOL).at("/blocks/0/text").asText());
+        assertFalse(responses.path(FIXED_TOOL_CALL_ID_FAILED).get("success").asBoolean());
+        assertEquals(
+                FIXED_TOOL_FAILURE_TEXT,
+                responses.path(FIXED_TOOL_CALL_ID_FAILED).get("error").asText());
+        ToolResponseEvent restored =
+                (ToolResponseEvent) Event.fromJson(MAPPER.writeValueAsString(transited));
+        assertEquals(((ToolResponseEvent) transited).getResponses(), restored.getResponses());
     }
 
     // ── ContextRetrievalRequestEvent ───────────────────────────────────────
@@ -555,8 +646,6 @@ class CrossLanguageEventSnapshotTest {
     }
 
     // ── Generic Event with primitive attributes (user-authored axis) ───────
-
-    private static final String GENERIC_EVENT_TYPE = "_my_custom_event";
 
     private static Event buildGenericEvent() {
         Map<String, Object> attrs = new LinkedHashMap<>();

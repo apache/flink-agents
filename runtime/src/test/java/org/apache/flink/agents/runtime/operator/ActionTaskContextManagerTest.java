@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.operator;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentPlan;
@@ -57,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
@@ -70,7 +72,7 @@ class ActionTaskContextManagerTest {
      */
     @Test
     void closeClosesContinuationExecutorWhenRunnerContextFails() throws Exception {
-        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        ActionTaskContextManager mgr = newManager();
         RunnerContextImpl failingContext = mock(RunnerContextImpl.class);
         ContinuationActionExecutor continuationExecutor = mock(ContinuationActionExecutor.class);
         doThrow(new IllegalStateException("runner context close failed"))
@@ -86,13 +88,15 @@ class ActionTaskContextManagerTest {
                 // Contract 3: a lone failure arrives with nothing attached to it.
                 .satisfies(thrown -> assertThat(thrown.getSuppressed()).isEmpty());
 
-        verify(continuationExecutor).close();
+        org.mockito.InOrder order = inOrder(continuationExecutor, failingContext);
+        order.verify(continuationExecutor).close();
+        order.verify(failingContext).close();
     }
 
     /** The first failure is rethrown and the later one is attached as suppressed, never dropped. */
     @Test
     void closeReportsFirstFailureWithLaterOneSuppressed() throws Exception {
-        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        ActionTaskContextManager mgr = newManager();
         RunnerContextImpl failingContext = mock(RunnerContextImpl.class);
         ContinuationActionExecutor failingExecutor = mock(ContinuationActionExecutor.class);
         doThrow(new IllegalStateException("runner context close failed"))
@@ -107,12 +111,12 @@ class ActionTaskContextManagerTest {
 
         assertThatThrownBy(mgr::close)
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("runner context close failed")
+                .hasMessage("continuation executor close failed")
                 .satisfies(
                         thrown ->
                                 assertThat(thrown.getSuppressed())
                                         .extracting(Throwable::getMessage)
-                                        .containsExactly("continuation executor close failed"));
+                                        .containsExactly("runner context close failed"));
     }
 
     private static void setField(ActionTaskContextManager mgr, String name, Object value)
@@ -124,7 +128,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void perTaskContextsAreIsolatedAcrossPutGetRemove() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask t1 = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask t2 = new JavaActionTask("k", new InputEvent(2L), action, 1L);
@@ -156,7 +160,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void createOrGetRunnerContextThrowsWhenPythonContextRequestedButNull() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             assertThatThrownBy(
                             () ->
                                     mgr.createOrGetRunnerContext(
@@ -175,7 +179,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void createAndSetRunnerContextBuildsFreshMemoryContextOnFirstCall() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             ActionTask t =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
             invokeCreateAndSetRunnerContext(mgr, t);
@@ -187,8 +191,78 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
+    void createAndSetRunnerContextPinsFreshContextsAndRestoresTaskSpecificContexts()
+            throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask taskA = new JavaActionTask("a", new InputEvent(1L), action, 1L);
+            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+
+            invokeCreateAndSetRunnerContext(mgr, taskA);
+            RunnerContextImpl.MemoryContext memoryA = taskA.getRunnerContext().getMemoryContext();
+            ContinuationContext continuationA =
+                    ((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext();
+
+            invokeCreateAndSetRunnerContext(mgr, taskB);
+            RunnerContextImpl.MemoryContext memoryB = taskB.getRunnerContext().getMemoryContext();
+            ContinuationContext continuationB =
+                    ((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext();
+
+            mgr.restore("a", taskA);
+            assertThat(taskA.getRunnerContext().getMemoryContext()).isSameAs(memoryA);
+            assertThat(((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext())
+                    .isSameAs(continuationA);
+
+            mgr.restore("b", taskB);
+            assertThat(taskB.getRunnerContext().getMemoryContext()).isSameAs(memoryB);
+            assertThat(((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext())
+                    .isSameAs(continuationB);
+        }
+    }
+
+    @Test
+    void restoreRestoresOrClearsDurableContext() throws Exception {
+        DurableExecutionManager durableManager =
+                new DurableExecutionManager(new InMemoryActionStateStore(false));
+        try (ActionTaskContextManager mgr = newManager(durableManager)) {
+            Action action = TestActions.noopAction();
+            InputEvent event = new InputEvent(1L);
+            ActionTask taskA = new JavaActionTask("a", event, action, 1L);
+            ActionTask taskB = new JavaActionTask("b", new InputEvent(2L), action, 2L);
+
+            invokeCreateAndSetRunnerContext(mgr, taskA);
+            ActionState actionState = new ActionState(event);
+            durableManager.setupDurableExecutionContext(taskA, actionState, 0L);
+            RunnerContextImpl.DurableExecutionContext durableContext =
+                    taskA.getRunnerContext().getDurableExecutionContext();
+
+            invokeCreateAndSetRunnerContext(mgr, taskB);
+            mgr.restore("b", taskB);
+            assertThat(taskB.getRunnerContext().getDurableExecutionContext()).isNull();
+
+            mgr.restore("a", taskA);
+            assertThat(taskA.getRunnerContext().getDurableExecutionContext())
+                    .isSameAs(durableContext);
+        }
+    }
+
+    @Test
+    void restoreReestablishesRunnerContextFromKeyAndActionTask() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            ActionTask task =
+                    new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
+            invokeCreateAndSetRunnerContext(mgr, task);
+
+            // The continuation executor extracts key and action task from its continuation context
+            // and hands them to the restorer directly; the manager never reads the context itself.
+            mgr.restore("k", task);
+            assertThat(task.getRunnerContext().getMemoryContext()).isNotNull();
+        }
+    }
+
+    @Test
     void createAndSetRunnerContextReusesExistingMemoryContext() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
@@ -217,7 +291,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void sameKeyTasksSwitchLtmWithDistinctObservationIds() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask suspended = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask sibling = new JavaActionTask("k", new InputEvent(1L), action, 1L);
@@ -234,7 +308,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void transferContextsCopiesMemoryAndContinuationToNewTask() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask to = new JavaActionTask("k", new InputEvent(2L), action, 1L);
@@ -275,7 +349,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void componentListenersFollowActionExecutionAcrossContinuationTasks() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
             ActionTask to =
@@ -309,7 +383,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void removingContextsDropsComponentListeners() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
             List<RecordingComponentListener> created = new ArrayList<>();
@@ -340,7 +414,7 @@ class ActionTaskContextManagerTest {
 
     @Test
     void activeExecutionReportsDoNotEnterActionTaskState() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
             invokeCreateAndSetRunnerContext(
@@ -367,8 +441,69 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
+    void transferContextsSharesPendingEventsBufferWithGeneratedTask() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask from = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            ActionTask to = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+
+            invokeCreateAndSetRunnerContext(mgr, from);
+            OutputEvent bufferedBeforeYield = new OutputEvent("before-yield");
+            from.getRunnerContext().sendEvent(bufferedBeforeYield);
+            List<Event> liveBuffer = from.getRunnerContext().getPendingEvents();
+
+            mgr.transferContexts(from, to, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, to);
+
+            assertThat(to.getRunnerContext().getPendingEvents()).isSameAs(liveBuffer);
+            assertThat(to.getRunnerContext().drainEventsAtActionYield(null)).isEmpty();
+            assertThat(liveBuffer).containsExactly(bufferedBeforeYield);
+            assertThat(to.getRunnerContext().drainEventsAtActionFinish(null))
+                    .containsExactly(bufferedBeforeYield);
+            assertThat(liveBuffer).isEmpty();
+        }
+    }
+
+    @Test
+    void transferContextsRecreatesIdentityContinuationContextsAfterCleanup() throws Exception {
+        DurableExecutionManager durableManager =
+                new DurableExecutionManager(new InMemoryActionStateStore(false));
+        try (ActionTaskContextManager mgr = newManager(durableManager)) {
+            Action action = TestActions.noopAction();
+            InputEvent event = new InputEvent(1L);
+            ActionTask task = new JavaActionTask("k", event, action, 1L);
+
+            invokeCreateAndSetRunnerContext(mgr, task);
+            RunnerContextImpl.MemoryContext memoryContext =
+                    task.getRunnerContext().getMemoryContext();
+            ContinuationContext continuationContext =
+                    ((JavaRunnerContextImpl) task.getRunnerContext()).getContinuationContext();
+            List<Event> pendingEvents = task.getRunnerContext().getPendingEvents();
+
+            durableManager.setupDurableExecutionContext(task, new ActionState(event), 0L);
+            RunnerContextImpl.DurableExecutionContext durableContext =
+                    task.getRunnerContext().getDurableExecutionContext();
+
+            // Python generator continuations return `this` as the generated task, so from==to.
+            // Verify the remove-then-transfer-to-self cycle preserves all context instances.
+            mgr.removeContexts(task);
+            durableManager.removeDurableContext(task);
+            mgr.transferContexts(task, task, durableManager);
+            invokeCreateAndSetRunnerContext(mgr, task);
+
+            assertThat(task.getRunnerContext().getMemoryContext()).isSameAs(memoryContext);
+            assertThat(((JavaRunnerContextImpl) task.getRunnerContext()).getContinuationContext())
+                    .isSameAs(continuationContext);
+            assertThat(task.getRunnerContext().getPendingEvents()).isSameAs(pendingEvents);
+            assertThat(durableManager.getDurableContext(task)).isSameAs(durableContext);
+            assertThat(task.getRunnerContext().getDurableExecutionContext())
+                    .isSameAs(durableContext);
+        }
+    }
+
+    @Test
     void transferContextsRoutesDurableContextThroughManager() throws Exception {
-        try (ActionTaskContextManager mgr = new ActionTaskContextManager(1)) {
+        try (ActionTaskContextManager mgr = newManager()) {
             Action action = TestActions.noopAction();
             InputEvent event = new InputEvent(1L);
             ActionTask from = new JavaActionTask("k", event, action, 1L);
@@ -406,7 +541,7 @@ class ActionTaskContextManagerTest {
     @Test
     void closeIsIdempotent() throws Exception {
         // Not using try-with-resources here because we want to call close() explicitly twice.
-        ActionTaskContextManager mgr = new ActionTaskContextManager(1);
+        ActionTaskContextManager mgr = newManager();
         ActionTask t = new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
         invokeCreateAndSetRunnerContext(mgr, t);
 
@@ -465,6 +600,7 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
+                /* subagentScope */ null,
                 componentListenerFactory);
     }
 
@@ -490,5 +626,17 @@ class ActionTaskContextManagerTest {
 
     private static AgentPlan newEmptyAgentPlan() {
         return new AgentPlan(new HashMap<>(), new HashMap<>());
+    }
+
+    private static ActionTaskContextManager newManager() {
+        return newManager(new DurableExecutionManager(null));
+    }
+
+    private static ActionTaskContextManager newManager(DurableExecutionManager durableExecManager) {
+        // The operator is only touched to re-establish the current key during a restore; a mock is
+        // sufficient for these contract tests. The continuation executor runs synchronously here
+        // (null mailbox lock), so the parallel-MVP hand-off is exercised elsewhere.
+        return new ActionTaskContextManager(
+                mock(ActionExecutionOperator.class), durableExecManager, 1);
     }
 }

@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -44,6 +45,14 @@ public final class Base64Source extends MediaSource {
 
     public String getData() {
         return data;
+    }
+
+    /** Encodes raw bytes immediately, without retaining the caller's array. */
+    static Base64Source fromBytes(byte[] data) {
+        if (data == null || data.length == 0) {
+            throw new IllegalArgumentException("A raw media payload requires non-empty bytes.");
+        }
+        return new Base64Source(Base64.getEncoder().encodeToString(data));
     }
 
     @Override

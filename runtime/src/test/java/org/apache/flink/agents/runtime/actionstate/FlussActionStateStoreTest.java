@@ -107,7 +107,7 @@ public class FlussActionStateStoreTest {
     @Test
     void testCheckpointRefreshesLatestStatesAfterCapturingOffsets() throws Exception {
         store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
-        testActionState.addCallResult(new CallResult("call", "", new byte[] {1, 2}));
+        testActionState.addCallResult(new CallResult("call", new byte[] {1, 2}));
         store.put(TEST_KEY, 1L, testAction, testEvent, testActionState);
         // A completed action may belong to an input whose other actions are still pending.
         ActionState completed = new ActionState(testEvent);

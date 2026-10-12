@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, ClassVar, Dict, List
+from typing import Any, ClassVar, Dict, List, Tuple
 
 try:
     from typing import override
@@ -25,7 +25,8 @@ from uuid import UUID
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
-from flink_agents.api.events.event import Event
+from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.events.event import BuiltInAttribute, Event
 
 
 class ChatRequestEvent(Event):
@@ -45,6 +46,15 @@ class ChatRequestEvent(Event):
     """
 
     EVENT_TYPE: ClassVar[str] = "_chat_request_event"
+
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required("model", str),
+        BuiltInAttribute.required_list(
+            "messages", "a ChatMessage or its serialized dict", (ChatMessage, dict)
+        ),
+        BuiltInAttribute.optional("prompt_args", dict),
+        BuiltInAttribute.optional_untyped("output_schema"),
+    )
 
     def __init__(
         self,
@@ -67,20 +77,21 @@ class ChatRequestEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ChatRequestEvent":
-        assert "model" in event.attributes
-        assert "messages" in event.attributes
-        messages_raw = event.attributes["messages"]
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
         messages = [
             ChatMessage.model_validate(m) if isinstance(m, dict) else m
-            for m in messages_raw
+            for m in attributes["messages"]
         ]
-        output_schema_raw = event.attributes.get("output_schema")
+        output_schema_raw = attributes.get("output_schema")
         if isinstance(output_schema_raw, dict):
             output_schema_raw = OutputSchema.model_validate(output_schema_raw)
         result = ChatRequestEvent(
-            model=event.attributes["model"],
+            model=attributes["model"],
             messages=messages,
-            prompt_args=event.attributes.get("prompt_args"),
+            prompt_args=attributes.get("prompt_args"),
             output_schema=output_schema_raw,
         )
         return result.reconstruct_from(event)
@@ -123,7 +134,7 @@ class ChatResponseEvent(Event):
     ----------
     request_id : UUID
         The id of the request event.
-    response : ChatMessage
+    response : ChatResult
         The response from the chat model.
     retry_count : int
         The total number of retries across all tool call rounds.
@@ -141,12 +152,25 @@ class ChatResponseEvent(Event):
     _ERROR: ClassVar[str] = "error"
     _RETRY_COUNT: ClassVar[str] = "retry_count"
     _TOTAL_RETRY_WAIT_SEC: ClassVar[str] = "total_retry_wait_sec"
+    _STRUCTURED_OUTPUT: ClassVar[str] = "structured_output"
+    _MODEL_ROUTING: ClassVar[str] = "model_routing"
+
+    _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
+        BuiltInAttribute.required_untyped(_REQUEST_ID),
+        BuiltInAttribute.required_untyped(_STATUS),
+        BuiltInAttribute.optional_untyped(_RESPONSE),
+        BuiltInAttribute.optional_untyped(_ERROR),
+        BuiltInAttribute.optional(_RETRY_COUNT, int),
+        BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
+        BuiltInAttribute.optional_untyped(_STRUCTURED_OUTPUT),
+        BuiltInAttribute.optional(_MODEL_ROUTING, dict),
+    )
 
     def __init__(
         self,
         request_id: UUID,
         status: str,
-        response: ChatMessage | None = None,
+        response: ChatResult | None = None,
         error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
@@ -155,7 +179,7 @@ class ChatResponseEvent(Event):
         if not (
             (
                 status == self.SUCCESS
-                and isinstance(response, ChatMessage)
+                and isinstance(response, ChatResult)
                 and error is None
             )
             or (
@@ -187,7 +211,7 @@ class ChatResponseEvent(Event):
     def success(
         cls,
         request_id: UUID,
-        response: ChatMessage,
+        response: ChatResult,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
     ) -> "ChatResponseEvent":
@@ -220,21 +244,29 @@ class ChatResponseEvent(Event):
     @classmethod
     @override
     def from_event(cls, event: Event) -> "ChatResponseEvent":
-        assert cls._REQUEST_ID in event.attributes
-        response_raw = event.attributes.get(cls._RESPONSE)
+        attributes = event.attributes
+        cls._validate_attribute_schema(
+            cls.EVENT_TYPE, attributes, cls._ATTRIBUTE_SCHEMA
+        )
+        response_raw = attributes.get(cls._RESPONSE)
         response = (
-            ChatMessage.model_validate(response_raw)
+            ChatResult.model_validate(response_raw)
             if isinstance(response_raw, dict)
             else response_raw
         )
         result = ChatResponseEvent(
-            request_id=event.attributes[cls._REQUEST_ID],
-            status=event.attributes[cls._STATUS],
+            request_id=attributes[cls._REQUEST_ID],
+            status=attributes[cls._STATUS],
             response=response,
-            error=event.attributes.get(cls._ERROR),
-            retry_count=event.attributes.get(cls._RETRY_COUNT, 0),
-            total_retry_wait_sec=event.attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
+            error=attributes.get(cls._ERROR),
+            retry_count=attributes.get(cls._RETRY_COUNT, 0),
+            total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
         )
+        result.attributes[cls._STRUCTURED_OUTPUT] = event.attributes.get(
+            cls._STRUCTURED_OUTPUT
+        )
+        if cls._MODEL_ROUTING in event.attributes:
+            result.attributes[cls._MODEL_ROUTING] = event.attributes[cls._MODEL_ROUTING]
         return result.reconstruct_from(event)
 
     @property
@@ -244,11 +276,16 @@ class ChatResponseEvent(Event):
         return UUID(val) if isinstance(val, str) else val
 
     @property
-    def response(self) -> ChatMessage:
+    def response(self) -> ChatResult:
         """Return the chat model response."""
         if self.is_failed:
             raise ChatResponseError(self.request_id, self.error)
         return self.get_attr(self._RESPONSE)
+
+    @property
+    def structured_output(self) -> Any:
+        """Parsed final output, separate from the provider response."""
+        return self.attributes.get(self._STRUCTURED_OUTPUT)
 
     @property
     def status(self) -> str:

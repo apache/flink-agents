@@ -17,19 +17,25 @@
  */
 package org.apache.flink.agents.plan.resourceprovider;
 
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import pemja.core.object.PyObject;
 
+import java.lang.reflect.InvocationTargetException;
 import java.util.Map;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -48,7 +54,7 @@ class PythonResourceProviderTest {
         PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
         PyObject pythonResource = mock(PyObject.class);
         ResourceDescriptor descriptor =
-                new ResourceDescriptor("example.module", "ExampleModel", Map.of());
+                new PythonResourceDescriptor("example.module", "ExampleModel", Map.of());
         PythonResourceProvider provider = new PythonResourceProvider("model", type, descriptor);
         provider.setPythonResourceAdapter(adapter);
         when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
@@ -61,5 +67,59 @@ class PythonResourceProviderTest {
         resource.close();
         verify(adapter).callMethod(pythonResource, "close", Map.of());
         verify(pythonResource).close();
+    }
+
+    @Test
+    void closesPythonHandleWhenWrapperConstructionFails() throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResource = mock(PyObject.class);
+        PythonResourceProvider provider = createProviderWithInvalidWrapperArgument(adapter);
+        when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
+                .thenReturn(pythonResource);
+
+        Throwable failure = catchThrowable(() -> provider.provide(mock(ResourceContext.class)));
+
+        assertThat(failure)
+                .isInstanceOf(InvocationTargetException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+        assertThat(failure.getCause())
+                .hasMessage(
+                        "Unknown structured output strategy 'invalid'. Expected one of: AUTO, NATIVE, PROMPT.");
+        verify(pythonResource).close();
+    }
+
+    @Test
+    void preservesWrapperConstructionFailureWhenPythonHandleCloseFails() throws Exception {
+        PythonResourceAdapter adapter = mock(PythonResourceAdapter.class);
+        PyObject pythonResource = mock(PyObject.class);
+        RuntimeException closeFailure = new RuntimeException("close failed");
+        PythonResourceProvider provider = createProviderWithInvalidWrapperArgument(adapter);
+        when(adapter.initPythonResource(anyString(), anyString(), anyMap()))
+                .thenReturn(pythonResource);
+        doThrow(closeFailure).when(pythonResource).close();
+
+        Throwable failure = catchThrowable(() -> provider.provide(mock(ResourceContext.class)));
+
+        assertThat(failure)
+                .isInstanceOf(InvocationTargetException.class)
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+        assertThat(failure.getCause())
+                .hasMessage(
+                        "Unknown structured output strategy 'invalid'. Expected one of: AUTO, NATIVE, PROMPT.");
+        assertThat(failure.getSuppressed()).containsExactly(closeFailure);
+        verify(pythonResource).close();
+    }
+
+    private static PythonResourceProvider createProviderWithInvalidWrapperArgument(
+            PythonResourceAdapter adapter) {
+        ResourceDescriptor descriptor =
+                new PythonResourceDescriptor(
+                        "example.module",
+                        "ExampleModel",
+                        Map.of("structured_output_strategy", "invalid"));
+        PythonResourceProvider provider =
+                new PythonResourceProvider("model", ResourceType.CHAT_MODEL, descriptor);
+        provider.setPythonResourceAdapter(adapter);
+        return provider;
     }
 }

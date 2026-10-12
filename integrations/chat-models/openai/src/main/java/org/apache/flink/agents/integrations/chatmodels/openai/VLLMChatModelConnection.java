@@ -78,7 +78,7 @@ public class VLLMChatModelConnection extends OpenAICompletionsConnection {
      * outputs</a>.
      */
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
+    protected boolean modelSupportsNativeStructuredOutput(String effectiveModel) {
         return effectiveModel != null && !effectiveModel.isBlank();
     }
 

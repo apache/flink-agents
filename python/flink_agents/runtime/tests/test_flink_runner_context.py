@@ -16,8 +16,11 @@
 # limitations under the License.
 #################################################################################
 from typing import Any
+from uuid import UUID
 
-from flink_agents.api.events.event import Event
+import pytest
+
+from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
 
@@ -51,10 +54,15 @@ class _FakeJavaRunnerContext:
         self.sent_event_json = event_json
 
 
-def test_send_event_offloads_attachments_before_forwarding() -> None:
+def _send_event_context() -> tuple[FlinkRunnerContext, _FakeJavaRunnerContext]:
     java_context = _FakeJavaRunnerContext()
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = java_context
+    return ctx, java_context
+
+
+def test_send_event_offloads_attachments_before_forwarding() -> None:
+    ctx, java_context = _send_event_context()
     payload = {"value": "original"}
     event = Event(type="AttachmentStep", attachments={"payload": payload})
 
@@ -66,3 +74,51 @@ def test_send_event_offloads_attachments_before_forwarding() -> None:
     assert java_context.sent_event_json is not None
     forwarded_event = Event.from_json(java_context.sent_event_json)
     assert forwarded_event.get_attachment("payload") == attachment
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("upstream_event_id", UUID("00000000-0000-0000-0000-000000000001")),
+        ("upstream_action_name", "user_action"),
+    ],
+)
+def test_send_event_rejects_preset_lineage(field: str, value: Any) -> None:
+    ctx, java_context = _send_event_context()
+    event = Event(type="result", **{field: value})
+
+    with pytest.raises(ValueError, match=f"carries {field}=") as raised:
+        ctx.send_event(event)
+
+    other = ({"upstream_event_id", "upstream_action_name"} - {field}).pop()
+    assert f"{other}=" not in str(raised.value)
+
+    assert java_context.sent_event_json is None
+
+
+def test_send_event_rejects_reconstructed_event_with_lineage() -> None:
+    ctx, java_context = _send_event_context()
+    received = Event(
+        type="generic",
+        attributes={"input": 1},
+        upstream_event_id=UUID("00000000-0000-0000-0000-000000000002"),
+        upstream_action_name="upstream_action",
+    )
+    reconstructed = InputEvent(input=1).reconstruct_from(received)
+
+    with pytest.raises(ValueError, match="new Event"):
+        ctx.send_event(reconstructed)
+
+    assert java_context.sent_event_json is None
+
+
+def test_send_event_forwards_fresh_event_without_lineage() -> None:
+    ctx, java_context = _send_event_context()
+
+    ctx.send_event(Event(type="result", attributes={"source": "user"}))
+
+    assert java_context.sent_event_json is not None
+    forwarded = Event.from_json(java_context.sent_event_json)
+    assert forwarded.upstream_event_id is None
+    assert forwarded.upstream_action_name is None
+    assert forwarded.get_attr("source") == "user"

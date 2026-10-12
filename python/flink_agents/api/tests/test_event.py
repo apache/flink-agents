@@ -124,8 +124,10 @@ def test_event_id_does_not_change_with_event_content() -> None:
 def test_event_id_cannot_be_reassigned() -> None:
     event = Event(type="test")
 
-    with pytest.raises(ValidationError, match="Field is frozen"):
+    with pytest.raises(ValidationError, match="Field is frozen") as raised:
         event.id = uuid4()
+
+    assert "reconstruct_from" in str(raised.value)
 
 
 def test_explicit_none_id_generates_uuid() -> None:
@@ -344,7 +346,9 @@ def test_unified_event_serialization_roundtrip_with_memory_ref_attachment() -> N
     parsed = json.loads(original.model_dump_json())
     restored = Event.model_validate(parsed)
 
-    assert parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    assert (
+        parsed["attachments"]["payload"][MemoryRef.TYPE_FIELD] == MemoryRef.TYPE_VALUE
+    )
     assert restored.get_attachment("payload") == reference
     assert isinstance(restored.get_attachment("payload"), MemoryRef)
 

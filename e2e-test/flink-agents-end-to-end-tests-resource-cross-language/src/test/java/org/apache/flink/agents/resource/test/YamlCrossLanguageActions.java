@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -57,7 +58,7 @@ public final class YamlCrossLanguageActions {
 
     public static void processChatResponse(Event event, RunnerContext ctx) {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        ChatMessage response = chatResponse.getResponse();
+        ChatResult response = chatResponse.getResponse();
         if (response == null || response.getText() == null) {
             return;
         }

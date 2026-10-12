@@ -31,17 +31,15 @@ public class JavaResourceProvider extends ResourceProvider {
 
     public JavaResourceProvider(String name, ResourceType type, ResourceDescriptor descriptor) {
         super(name, type);
+        if (!"java".equals(descriptor.getLanguage())) {
+            throw new IllegalArgumentException("JavaResourceProvider requires a Java descriptor.");
+        }
         this.descriptor = descriptor;
     }
 
     @Override
     public Resource provide(ResourceContext resourceContext) throws Exception {
-        String clazzName;
-        if (descriptor.getModule() == null || descriptor.getModule().isEmpty()) {
-            clazzName = descriptor.getClazz();
-        } else {
-            clazzName = descriptor.getInitialArguments().remove("java_clazz").toString();
-        }
+        String clazzName = descriptor.getClazz();
         Class<?> clazz =
                 Class.forName(clazzName, true, Thread.currentThread().getContextClassLoader());
         Constructor<?> constructor =

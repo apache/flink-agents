@@ -31,8 +31,13 @@ import com.google.genai.types.FunctionDeclaration;
 import com.google.genai.types.GenerateContentConfig;
 import com.google.genai.types.Part;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -47,6 +52,7 @@ import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
@@ -69,6 +75,9 @@ class GeminiChatModelConnectionTest {
     /** A model Google documents native structured-output support for. */
     private static final String CAPABLE_MODEL = "gemini-2.5-flash";
 
+    /** A model on the same endpoint that is outside the Gemini family. */
+    private static final String INCAPABLE_MODEL = "gemma-4-31b-it";
+
     private static ResourceDescriptor descriptor(String apiKey, String baseUrl, String model) {
         ResourceDescriptor.Builder b =
                 ResourceDescriptor.Builder.newBuilder(GeminiChatModelConnection.class.getName());
@@ -90,8 +99,7 @@ class GeminiChatModelConnectionTest {
     }
 
     /**
-     * buildConfig consumes the keys it recognizes via {@code arguments.remove(...)}, so the map
-     * handed to it must be mutable.
+     * Model parameters for one request; mutable so a test can add keys before handing them over.
      */
     private static Map<String, Object> params() {
         return new HashMap<>();
@@ -309,7 +317,7 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertToContent maps USER role to a Gemini user turn")
     void testConvertUserMessage() {
         Content content =
-                connection().convertToContent(ChatMessage.user("hello"), Collections.emptyMap());
+                GeminiChatUtils.convertToContent(ChatMessage.user("hello"), Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hello");
     }
@@ -318,20 +326,22 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertToContent maps ASSISTANT role to a Gemini model turn")
     void testConvertAssistantMessage() {
         Content content =
-                connection()
-                        .convertToContent(
-                                ChatMessage.assistant("hi there"), Collections.emptyMap());
+                GeminiChatUtils.convertToContent(
+                        ChatMessage.assistant("hi there"), Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow().get(0).text()).hasValue("hi there");
     }
 
     @Test
-    @DisplayName("convertToContent uses explicit `name` in extraArgs when supplied")
+    @DisplayName("convertToContent uses explicit `name` in metadata when supplied")
     void testConvertToolMessageWithExplicitName() {
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("name", "get_weather");
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_abc", List.of(new TextBlock("sunny, 22C")), false));
+        tool.getMetadata().put("name", "get_weather");
 
-        Content content = connection().convertToContent(tool, Collections.emptyMap());
+        Content content = GeminiChatUtils.convertToContent(tool, Collections.emptyMap());
         assertThat(content.role()).hasValue("user");
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -340,18 +350,18 @@ class GeminiChatModelConnectionTest {
 
     @Test
     @DisplayName(
-            "convertToContent resolves the function name from `externalId` when the runtime omits "
+            "convertToContent resolves the function name from `callId` when the runtime omits "
                     + "`name` (matches ChatModelAction's emission shape)")
     void testRuntimeShapeToolMessageResolvesNameFromExternalId() {
-        // Runtime contract: ChatModelAction emits TOOL messages with only `externalId` in
-        // extraArgs, matching how Anthropic/OpenAI siblings work. The name must be recovered from
-        // the prior ASSISTANT turn's tool-call map.
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("externalId", "call_abc");
+        // The tool result refers to the assistant tool call by its call ID.
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_abc", List.of(new TextBlock("sunny, 22C")), false));
 
         Map<String, String> idToName = Map.of("call_abc", "get_weather");
 
-        Content content = connection().convertToContent(tool, idToName);
+        Content content = GeminiChatUtils.convertToContent(tool, idToName);
         assertThat(content.role()).hasValue("user");
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -361,14 +371,16 @@ class GeminiChatModelConnectionTest {
     @Test
     @DisplayName(
             "convertToContent throws only when the function name truly cannot be resolved (no "
-                    + "`name`, no matching `externalId`)")
+                    + "`name`, no matching `callId`)")
     void testConvertToolMessageThrowsWhenUnresolvable() {
-        ChatMessage tool = ChatMessage.tool("result");
-        tool.getExtraArgs().put("externalId", "call_unknown");
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_unknown", List.of(new TextBlock("result")), false));
 
-        assertThatThrownBy(() -> connection().convertToContent(tool, Collections.emptyMap()))
+        assertThatThrownBy(() -> GeminiChatUtils.convertToContent(tool, Collections.emptyMap()))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("function name");
+                .hasMessageContaining("tool call name");
     }
 
     @Test
@@ -382,15 +394,12 @@ class GeminiChatModelConnectionTest {
                         .build();
         byte[] signature = new byte[] {1, 2, 3, 4};
 
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, signature);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, signature);
 
-        assertThat(toolCall).containsEntry("id", "call_1").containsEntry("original_id", "call_1");
-        assertThat(toolCall).containsEntry("type", "function");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-        assertThat(function).containsEntry("name", "get_weather");
-        assertThat(function.get("arguments")).isEqualTo(Map.of("city", "Tokyo"));
-        assertThat(toolCall.get("thought_signature"))
+        assertThat(toolCall.getCallId()).isEqualTo("call_1");
+        assertThat(toolCall.getName()).isEqualTo("get_weather");
+        assertThat(toolCall.getInput()).isEqualTo(Map.of("city", "Tokyo"));
+        assertThat(toolCall.getMetadata().get("thought_signature"))
                 .isEqualTo(Base64.getEncoder().encodeToString(signature));
     }
 
@@ -398,8 +407,8 @@ class GeminiChatModelConnectionTest {
     @DisplayName("convertFunctionCall omits thought_signature when absent")
     void testConvertFunctionCallNoSignature() {
         FunctionCall fc = FunctionCall.builder().name("noop").args(Map.of()).build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        assertThat(toolCall).doesNotContainKey("thought_signature");
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        assertThat(toolCall.getMetadata()).doesNotContainKey("thought_signature");
     }
 
     @Test
@@ -411,16 +420,14 @@ class GeminiChatModelConnectionTest {
         FunctionCall first = FunctionCall.builder().name("get_weather").args(Map.of()).build();
         FunctionCall second = FunctionCall.builder().name("get_time").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> firstCall = conn.convertFunctionCall(first, null);
-        Map<String, Object> secondCall = conn.convertFunctionCall(second, null);
+        ToolCallBlock firstCall = GeminiChatUtils.convertFunctionCall(first, null);
+        ToolCallBlock secondCall = GeminiChatUtils.convertFunctionCall(second, null);
 
-        assertThat(firstCall.get("id")).isNotNull();
-        assertThat(firstCall.get("original_id")).isEqualTo(firstCall.get("id"));
-        assertThat(firstCall).containsEntry("synthetic_id", Boolean.TRUE);
+        assertThat(firstCall.getCallId()).isNotNull();
+        assertThat(firstCall.getMetadata()).containsEntry("synthetic_id", Boolean.TRUE);
         // ToolCallAction keys success/responses/error on `id`; distinct ids are what prevent two
         // parallel id-less calls from overwriting each other.
-        assertThat(firstCall.get("id")).isNotEqualTo(secondCall.get("id"));
+        assertThat(firstCall.getCallId()).isNotEqualTo(secondCall.getCallId());
     }
 
     @Test
@@ -428,9 +435,8 @@ class GeminiChatModelConnectionTest {
     void testSyntheticIdNotEchoedToGemini() {
         FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
-        Part part = conn.convertToolCallToPart(toolCall);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        Part part = GeminiChatUtils.convertToolCallToPart(toolCall);
 
         FunctionCall replayed = part.functionCall().orElseThrow();
         assertThat(replayed.id()).isEmpty();
@@ -444,23 +450,21 @@ class GeminiChatModelConnectionTest {
     void testSyntheticIdResolvesFunctionNameOnSecondTurn() {
         FunctionCall fc = FunctionCall.builder().name("get_weather").args(Map.of()).build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, null);
-        String syntheticId = (String) toolCall.get("original_id");
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        String syntheticId = toolCall.getCallId();
 
         // Assistant turn carrying the id-less tool call, exactly as convertResponse builds it.
-        ChatMessage assistant = ChatMessage.assistant("");
-        assistant.setToolCalls(List.of(toolCall));
+        ChatMessage assistant = ChatMessage.assistant(List.of(toolCall));
 
-        // Runtime contract: ToolCallAction copies `original_id` into the TOOL message's
-        // `externalId`. Before the fix, no id existed, externalId was never set, and this
-        // second-turn conversion threw "Tool message must carry the function name".
-        ChatMessage tool = ChatMessage.tool("sunny, 22C");
-        tool.getExtraArgs().put("externalId", syntheticId);
+        // The tool result refers to the assistant tool call by its call ID.
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                syntheticId, List.of(new TextBlock("sunny, 22C")), false));
 
         Map<String, String> idToName =
-                GeminiChatModelConnection.buildToolCallIdToNameMap(List.of(assistant, tool));
-        Content content = conn.convertToContent(tool, idToName);
+                GeminiChatUtils.buildToolCallIdToNameMap(List.of(assistant, tool));
+        Content content = GeminiChatUtils.convertToContent(tool, idToName);
 
         Part part = content.parts().orElseThrow().get(0);
         assertThat(part.functionResponse()).isPresent();
@@ -478,9 +482,8 @@ class GeminiChatModelConnectionTest {
                         .args(Map.of("city", "Osaka"))
                         .build();
 
-        GeminiChatModelConnection conn = connection();
-        Map<String, Object> toolCall = conn.convertFunctionCall(fc, signature);
-        Part part = conn.convertToolCallToPart(toolCall);
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, signature);
+        Part part = GeminiChatUtils.convertToolCallToPart(toolCall);
 
         assertThat(part.functionCall()).isPresent();
         FunctionCall rebuilt = part.functionCall().orElseThrow();
@@ -499,10 +502,10 @@ class GeminiChatModelConnectionTest {
                         .name("get_weather")
                         .args(Map.of("city", "Kyoto"))
                         .build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        ChatMessage assistant = ChatMessage.assistant("", List.of(toolCall));
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        ChatMessage assistant = ChatMessage.assistant(List.of(toolCall));
 
-        Content content = connection().convertToContent(assistant, Collections.emptyMap());
+        Content content = GeminiChatUtils.convertToContent(assistant, Collections.emptyMap());
         assertThat(content.role()).hasValue("model");
         assertThat(content.parts().orElseThrow())
                 .anySatisfy(p -> assertThat(p.functionCall()).isPresent());
@@ -511,7 +514,7 @@ class GeminiChatModelConnectionTest {
     @Test
     @DisplayName(
             "buildToolCallIdToNameMap mirrors what ChatModelAction emits: ASSISTANT turn carries "
-                    + "tool-call map, follow-up TOOL turn carries only externalId")
+                    + "tool-call block, follow-up TOOL turn carries only callId")
     void testRuntimeShapeMultiTurn() {
         // Step 1: simulate the assistant's tool-call turn produced by convertFunctionCall.
         FunctionCall fc =
@@ -520,23 +523,23 @@ class GeminiChatModelConnectionTest {
                         .name("get_weather")
                         .args(Map.of("city", "Tokyo"))
                         .build();
-        Map<String, Object> toolCall = connection().convertFunctionCall(fc, null);
-        ChatMessage assistantTurn = ChatMessage.assistant("", List.of(toolCall));
+        ToolCallBlock toolCall = GeminiChatUtils.convertFunctionCall(fc, null);
+        ChatMessage assistantTurn = ChatMessage.assistant(List.of(toolCall));
 
-        // Step 2: the runtime emits a TOOL message with only externalId (no name).
-        Map<String, Object> toolExtras = new HashMap<>();
-        toolExtras.put("externalId", "call_xyz");
-        ChatMessage toolTurn = new ChatMessage(MessageRole.TOOL, "sunny, 22C", toolExtras);
+        // Step 2: the runtime emits a TOOL message with only callId (no name).
+        ChatMessage toolTurn =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call_xyz", List.of(new TextBlock("sunny, 22C")), false));
 
         List<ChatMessage> conversation =
                 List.of(ChatMessage.user("weather in Tokyo?"), assistantTurn, toolTurn);
 
-        Map<String, String> idToName =
-                GeminiChatModelConnection.buildToolCallIdToNameMap(conversation);
+        Map<String, String> idToName = GeminiChatUtils.buildToolCallIdToNameMap(conversation);
         assertThat(idToName).containsEntry("call_xyz", "get_weather");
 
         // Round-trip: TOOL message converts to a functionResponse with the recovered name.
-        Content content = connection().convertToContent(toolTurn, idToName);
+        Content content = GeminiChatUtils.convertToContent(toolTurn, idToName);
         assertThat(content.parts().orElseThrow().get(0).functionResponse().orElseThrow().name())
                 .hasValue("get_weather");
     }
@@ -661,9 +664,9 @@ class GeminiChatModelConnectionTest {
                 "gemini-2.5-flash",
                 "gemini-robotics-er-1.6-preview"
             })
-    @DisplayName("Every live Gemini text model reports native structured-output support")
-    void supportsNativeStructuredOutputForTextModels(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isTrue();
+    @DisplayName("Every live Gemini text model is recommended native")
+    void queryRecommendsNativeForTextModels(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
     }
 
     @ParameterizedTest
@@ -678,19 +681,20 @@ class GeminiChatModelConnectionTest {
                 "gemini-embedding-001",
                 "gemini-omni-flash"
             })
-    @DisplayName("A non-text output modality is rejected even though it carries the family prefix")
-    void supportsNativeStructuredOutputRejectsNonTextModalities(String model) {
+    @DisplayName(
+            "A non-text output modality is not recommended though it carries the family prefix")
+    void queryReportsNonTextModalitiesFeasibleOnly(String model) {
         // gemini-2.5-flash-image is the case the marker exists for: its published capability row
         // claims support, and the service answers 400 "JSON mode is not enabled for this model".
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
     @NullAndEmptySource
     @ValueSource(strings = {"   ", "gemini-"})
-    @DisplayName("A null, blank or bare-prefix model reports not-capable")
-    void supportsNativeStructuredOutputRejectsNullBlankAndBarePrefix(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    @DisplayName("A null, blank or bare-prefix model is feasible but not recommended")
+    void queryReportsNullBlankAndBarePrefixFeasibleOnly(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
     @ParameterizedTest
@@ -702,9 +706,18 @@ class GeminiChatModelConnectionTest {
                 "gemini",
                 "imagen-4.0-generate-001"
             })
-    @DisplayName("A name outside the family reports not-capable and keeps the prompt fallback")
-    void supportsNativeStructuredOutputRejectsOutsideFamily(String model) {
-        assertThat(connection().supportsNativeStructuredOutput(model)).isFalse();
+    @DisplayName("A name outside the family is not recommended and keeps the prompt fallback")
+    void queryReportsOutsideFamilyFeasibleOnly(String model) {
+        assertThat(supportFor(model)).isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+    }
+
+    /** The query's answer for a POJO and no tools, on a connection with no configured default. */
+    private static NativeStructuredOutputSupport supportFor(String model) {
+        // Without a default, a null or blank model reaches the capability check unresolved.
+        GeminiChatModelConnection connection =
+                new GeminiChatModelConnection(descriptor("test-key", null, null), NOOP);
+        return connection.supportsNativeStructuredOutput(
+                Report.class, List.of(), paramsWithModel(model));
     }
 
     @Test
@@ -923,21 +936,20 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The effective model falls back to the configured default")
-    void effectiveModelForFallsBackToTheConfiguredDefault() {
-        // chat resolves the model the same way before feeding the capability predicate, and
-        // connection() is configured with gemini-3-pro-preview.
-        Map<String, Object> modelParams = params();
-
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
-
-        modelParams.put("model", CAPABLE_MODEL);
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo(CAPABLE_MODEL);
-
-        // A blank model is not a model. The request path substitutes the default for it, so the
-        // hook has to as well or the two disagree on exactly this input.
-        modelParams.put("model", "   ");
-        assertThat(connection().effectiveModelFor(modelParams)).isEqualTo("gemini-3-pro-preview");
+    @DisplayName("The query judges the configured default when the model parameter is unset")
+    void queryFallsBackToTheConfiguredDefault() {
+        // chat resolves the model the same way before judging capability. The configured default
+        // is capable, so an unresolved model would answer differently. A blank model is not a
+        // model either: the request path substitutes the default for it, so the query has to as
+        // well or the two disagree on exactly this input.
+        for (Map<String, Object> modelParams :
+                List.<Map<String, Object>>of(params(), paramsWithModel("   "))) {
+            assertThat(
+                            connection()
+                                    .supportsNativeStructuredOutput(
+                                            Report.class, List.of(), modelParams))
+                    .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        }
     }
 
     /** Stops the request after the config is assembled, so no call reaches the provider. */
@@ -950,44 +962,159 @@ class GeminiChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The model the request builder judges is the one the hook names")
-    void effectiveModelForNamesTheModelTheBuilderJudges() {
-        // chat resolves the model and hands it to buildConfig, which is where the predicate is fed.
-        // Overriding buildConfig to stop once it has run binds the hook to the request without
-        // reaching the provider. Asserting each side against a literal would let the two drift in
-        // step, which is the one failure this has to catch.
-        AtomicReference<String> judged = new AtomicReference<>();
-        GeminiChatModelConnection connection =
-                new GeminiChatModelConnection(
-                        descriptor("test-key", null, "gemini-3-pro-preview"), NOOP) {
-                    @Override
-                    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-                        judged.set(effectiveModel);
-                        return super.supportsNativeStructuredOutput(effectiveModel);
-                    }
+    @DisplayName("The query judges the model the request path resolves")
+    void queryJudgesTheModelTheRequestPathResolves() {
+        // chat resolves the model and hands it to buildConfig, which is where the native branch
+        // runs. Overriding buildConfig to stop once it has run binds the query to the request
+        // without reaching the provider. Asserting each side against a literal would let the two
+        // drift in step, which is the one failure this has to catch.
+        for (String configured : List.of(CAPABLE_MODEL, INCAPABLE_MODEL)) {
+            AtomicReference<GenerateContentConfig> built = new AtomicReference<>();
+            GeminiChatModelConnection connection =
+                    new GeminiChatModelConnection(descriptor("test-key", null, configured), NOOP) {
+                        @Override
+                        GenerateContentConfig buildConfig(
+                                List<ChatMessage> messages,
+                                List<Tool> tools,
+                                Map<String, Object> arguments,
+                                String modelName,
+                                Object outputSchema) {
+                            built.set(
+                                    super.buildConfig(
+                                            messages, tools, arguments, modelName, outputSchema));
+                            throw new StopBeforeRequest();
+                        }
+                    };
 
-                    @Override
-                    GenerateContentConfig buildConfig(
-                            List<ChatMessage> messages,
-                            List<Tool> tools,
-                            Map<String, Object> arguments,
-                            String modelName,
-                            Object outputSchema) {
-                        super.buildConfig(messages, tools, arguments, modelName, outputSchema);
-                        throw new StopBeforeRequest();
-                    }
-                };
+            for (Map<String, Object> modelParams :
+                    List.<Map<String, Object>>of(
+                            paramsWithModel(CAPABLE_MODEL),
+                            paramsWithModel(INCAPABLE_MODEL),
+                            paramsWithModel("   "),
+                            params())) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                Report.class, List.of(), modelParams);
 
-        for (Map<String, Object> modelParams :
-                List.<Map<String, Object>>of(
-                        paramsWithModel(CAPABLE_MODEL), paramsWithModel("   "), params())) {
-            String named = connection.effectiveModelFor(modelParams);
+                assertThatThrownBy(
+                                () ->
+                                        connection.chat(
+                                                userMessage(), null, modelParams, Report.class))
+                        .hasRootCauseInstanceOf(StopBeforeRequest.class);
 
-            assertThatThrownBy(
-                            () -> connection.chat(userMessage(), null, modelParams, Report.class))
-                    .hasRootCauseInstanceOf(StopBeforeRequest.class);
-
-            assertThat(judged.get()).isEqualTo(named);
+                // A POJO with no tools is feasible throughout, so only capability moves.
+                assertThat(answer)
+                        .as("configured %s, params %s", configured, modelParams)
+                        .isEqualTo(
+                                built.get().responseJsonSchema().isPresent()
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.FEASIBLE);
+            }
         }
+    }
+
+    @Test
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
+    void queryAgreesWithTheNativeBranch() {
+        // Comparing the answer against what the config ends up carrying, rather than against a
+        // literal, is what keeps the query and the branch from drifting in step. The model is
+        // capable throughout, so the schema form and the bound tools are what move.
+        GeminiChatModelConnection connection = connection();
+
+        for (Object schema : Arrays.asList(Report.class, "row<name STRING>", null)) {
+            for (List<Tool> tools :
+                    Arrays.asList(List.<Tool>of(), List.<Tool>of(new SchemaOnlyTool()), null)) {
+                NativeStructuredOutputSupport answer =
+                        connection.supportsNativeStructuredOutput(
+                                schema, tools, paramsWithModel(CAPABLE_MODEL));
+
+                GenerateContentConfig config =
+                        connection.buildConfig(
+                                userMessage(), tools, params(), CAPABLE_MODEL, schema);
+
+                assertThat(answer)
+                        .as("schema %s, tools %s", schema, tools)
+                        .isEqualTo(
+                                config.responseJsonSchema().isPresent()
+                                        ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                                        : NativeStructuredOutputSupport.INFEASIBLE);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("Bound tools make a POJO schema infeasible, an empty or absent list does not")
+    void queryFollowsBoundTools() {
+        // Pinning the answer itself, not just its agreement with the branch: dropping this
+        // conjunct from both would leave the two in agreement. Gemini is the only connection
+        // whose answer tools can move.
+        GeminiChatModelConnection connection = connection();
+
+        assertThat(connection.supportsNativeStructuredOutput(Report.class, List.of(), params()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(connection.supportsNativeStructuredOutput(Report.class, null, params()))
+                .isEqualTo(NativeStructuredOutputSupport.NATIVE_RECOMMENDED);
+        assertThat(
+                        connection.supportsNativeStructuredOutput(
+                                Report.class, List.of(new SchemaOnlyTool()), params()))
+                .isEqualTo(NativeStructuredOutputSupport.INFEASIBLE);
+    }
+
+    @Test
+    @DisplayName("An undocumented model leaves the request feasible rather than infeasible")
+    void querySeparatesCapabilityFromFeasibility() {
+        // A POJO with no tools bound is feasible here whatever the model is named, and the
+        // branch's own capability conjunct is what keeps an undocumented model's config
+        // unconstrained. Folding capability into feasibility would report INFEASIBLE, which a
+        // NATIVE policy cannot overrule.
+        assertThat(
+                        connection()
+                                .supportsNativeStructuredOutput(
+                                        Report.class,
+                                        List.of(),
+                                        paramsWithModel("gemini-2.5-flash-image")))
+                .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
+        assertThat(
+                        connection()
+                                .buildConfig(
+                                        userMessage(),
+                                        List.of(),
+                                        params(),
+                                        "gemini-2.5-flash-image",
+                                        Report.class)
+                                .responseJsonSchema())
+                .isEmpty();
+    }
+
+    @Test
+    @DisplayName("The query reads its tools and parameters without consuming them")
+    void queryDoesNotConsumeItsInputs() {
+        // buildConfig consumes the keys it recognizes, so a query copying that idiom would leave
+        // the builder without them. Both inputs are immutable, so a consuming implementation
+        // raises rather than silently differing.
+        List<Tool> tools = List.of(new SchemaOnlyTool());
+        Map<String, Object> arguments = Map.of("model", CAPABLE_MODEL, "temperature", 0.5);
+
+        connection().supportsNativeStructuredOutput(Report.class, tools, arguments);
+
+        assertThat(tools).hasSize(1);
+        assertThat(arguments).isEqualTo(Map.of("model", CAPABLE_MODEL, "temperature", 0.5));
+    }
+
+    @Test
+    @DisplayName("Media blocks fail explicitly instead of being dropped")
+    void testMediaBlocksFailExplicitly() {
+        List<ChatMessage> messages =
+                List.of(
+                        ChatMessage.user(
+                                List.of(
+                                        TextBlock.of("Describe this"),
+                                        ImageBlock.fromBase64("image/png", "aGVsbG8="))));
+
+        assertThatThrownBy(() -> connection().chat(messages, List.of(), new HashMap<>(), null))
+                .isInstanceOf(UnsupportedContentBlockException.class)
+                .hasMessage(
+                        "Gemini cannot send an image block (image/png, base64 source): this"
+                                + " integration sends text only.");
     }
 }

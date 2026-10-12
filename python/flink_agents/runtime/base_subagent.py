@@ -164,7 +164,19 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
 
     def on_action_prepared(self, task: Any) -> None:
         """Record the task whose execution is currently issuing calls."""
-        namespace = Namespace.from_task(task)
+        self.adopt_prepared_namespace(Namespace.from_task(task))
+
+    def adopt_prepared_namespace(self, namespace: Namespace) -> None:
+        """Record an already-extracted task namespace as the id-assignment source.
+
+        Split from :meth:`on_action_prepared` so the runtime context can replay
+        the prepared namespace onto a handle materialized *after* the operator's
+        notification fanned out. A Python-compiled internal sub-agent is
+        Java-owned (its child plan dispatches on the Java side), so its
+        caller-facing handle is built lazily during the action body rather than
+        eagerly at open; replaying the namespace here lets a no-id :meth:`submit`
+        mint identities exactly as an eagerly registered external setup does.
+        """
         self._current_namespace = replace(
             namespace, subagent_name=self._subagent_name or ""
         )
@@ -178,9 +190,7 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
             self._per_task_allocators[to_identity] = allocator
         registry = self._per_task_registries.pop(from_identity, None)
         if registry is not None:
-            registry.set_action_name(
-                Namespace.from_task(to_task).action_name
-            )
+            registry.set_action_name(Namespace.from_task(to_task).action_name)
             self._per_task_registries[to_identity] = registry
 
     def on_action_finishing(self, task: Any) -> None:
@@ -272,9 +282,7 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
         identity = self._current_namespace.task_identity
         registry = self._per_task_registries.get(identity)
         if registry is None:
-            registry = PendingSubagentCallRegistry(
-                self._current_namespace.action_name
-            )
+            registry = PendingSubagentCallRegistry(self._current_namespace.action_name)
             self._per_task_registries[identity] = registry
         return registry
 

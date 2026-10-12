@@ -26,16 +26,23 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.logger.EventLogger;
 import org.apache.flink.agents.api.logger.EventLoggerConfig;
 import org.apache.flink.agents.api.logger.EventLoggerOpenParams;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionTraceContext;
 import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.JobInfo;
@@ -56,9 +63,24 @@ import java.util.Map;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 class FileEventLoggerTest {
+
+    /** An inline base64 payload that must never survive into the Event Log. */
+    private static final String PAYLOAD = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+
+    /** A pre-signed URL whose credentials and query must never survive into the Event Log. */
+    private static final String SIGNED_URL =
+            "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+
+    /** The credential-free, query-free form the Event Log is allowed to keep. */
+    private static final String STRIPPED_URL = "https://example.org/media/cat.png";
 
     @TempDir Path tempDir;
 
@@ -437,34 +459,99 @@ class FileEventLoggerTest {
     }
 
     private void assertMediaPayloadsSanitizedAt(String level) throws Exception {
+        openLoggerAt(level);
+
+        // A natively typed Java event: its messages are already ChatMessage instances, so the
+        // Event Log's ChatMessage serializer engages directly.
+        append(logger, multimodalChatRequest(), null);
+        logger.flush();
+
+        assertSanitizedMediaLogLine();
+    }
+
+    @Test
+    void testCrossLanguageMediaPayloadsNeverReachTheLogAtStandard() throws Exception {
+        assertCrossLanguageMediaSanitizedAt("STANDARD");
+    }
+
+    @Test
+    void testCrossLanguageMediaPayloadsNeverReachTheLogAtVerbose() throws Exception {
+        // VERBOSE lifts truncation, not sanitization, on the cross-language path either.
+        assertCrossLanguageMediaSanitizedAt("VERBOSE");
+    }
+
+    /**
+     * Runtime-layer unit test for the cross-language Event Log path: a multimodal chat request that
+     * originates in Python arrives as generic wire JSON, and its inline payload and signed URL must
+     * still be sanitized before they reach the log.
+     *
+     * <p>{@code Event.fromJson} restores the concrete {@link ChatRequestEvent}, so its messages
+     * become typed {@link ChatMessage} instances rather than generic maps. Only a typed message
+     * engages the Event Log's {@code ChatMessage} serializer; had the event stayed generic, its
+     * messages would be logged verbatim and the payload and URL credentials would leak.
+     *
+     * <p>This drives the deserialization seam directly, so it is a focused unit test rather than a
+     * public-API end-to-end test: {@code Event.fromJson} is an internal bridge entry point, not a
+     * documented user-facing API. The end-to-end counterpart, which emits the multimodal request
+     * from a real Python agent through {@code ctx.send_event} and reads the resulting Event Log on
+     * a MiniCluster, lives in the Python suite at {@code
+     * e2e_tests/e2e_tests_integration/event_log_media_sanitization_test.py}.
+     */
+    private void assertCrossLanguageMediaSanitizedAt(String level) throws Exception {
+        openLoggerAt(level);
+
+        // The wire format is not sanitized: it carries the payload and the signed URL verbatim,
+        // exactly as ChatMessage.model_dump_json() emits them on the Python side.
+        String wireJson = objectMapper.writeValueAsString(multimodalChatRequest());
+        assertTrue(wireJson.contains(PAYLOAD), "the wire format must carry the inline payload");
+        assertTrue(
+                wireJson.contains("X-Amz-Signature"),
+                "the wire format must carry the signed URL query");
+
+        Event restored = Event.fromJson(wireJson);
+        assertTrue(
+                restored instanceof ChatRequestEvent,
+                "a cross-language chat request must restore to its concrete type");
+        assertTrue(
+                ((ChatRequestEvent) restored).getMessages().get(0) instanceof ChatMessage,
+                "restored messages must be typed ChatMessage instances, not generic maps");
+
+        append(logger, restored, null);
+        logger.flush();
+
+        assertSanitizedMediaLogLine();
+    }
+
+    /** Rebuilds the logger at a single per-test level so each case writes a fresh log file. */
+    private void openLoggerAt(String level) throws Exception {
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("event-log.level", level);
-
         config = buildConfig(agentConfig);
         logger = new FileEventLogger(config);
         logger.open(openParams);
+    }
 
-        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
-        String signedUrl = "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+    /** A user message mixing text, an inline base64 image, and a signed-URL document. */
+    private static ChatRequestEvent multimodalChatRequest() {
         ChatMessage message =
                 ChatMessage.user(
                         List.of(
                                 TextBlock.of("what is in this picture?"),
-                                ImageBlock.fromBase64("image/png", payload),
+                                ImageBlock.fromBase64("image/png", PAYLOAD),
                                 new DocumentBlock(
                                         "application/pdf",
-                                        new UrlSource(signedUrl),
+                                        new UrlSource(SIGNED_URL),
                                         "cat.pdf",
                                         42L,
                                         null)));
-        ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
+        return new ChatRequestEvent("test-model", List.of(message));
+    }
 
-        append(logger, event, null);
-        logger.flush();
-
+    /** Asserts the single logged line kept media metadata but dropped every payload/credential. */
+    private void assertSanitizedMediaLogLine() throws Exception {
         Path logFile = getExpectedLogFilePath();
         String line = Files.readAllLines(logFile).get(0);
-        assertFalse(line.contains(payload), "Inline payload bytes must never be logged");
+        assertFalse(line.contains(PAYLOAD), "Inline payload bytes must never be logged");
         assertFalse(line.contains("secret"), "URL credentials must never be logged");
         assertFalse(line.contains("X-Amz-Signature"), "URL query strings must never be logged");
 
@@ -476,8 +563,7 @@ class FileEventLoggerTest {
         assertFalse(image.get("source").has("data"), "Inline data is dropped, not masked");
         assertTrue(image.get("size_bytes").isNumber(), "Derived size metadata should be logged");
         JsonNode document = logged.get("blocks").get(2);
-        assertEquals(
-                "https://example.org/media/cat.png", document.get("source").get("url").asText());
+        assertEquals(STRIPPED_URL, document.get("source").get("url").asText());
         assertEquals("cat.pdf", document.get("name").asText());
         assertEquals(42L, document.get("size_bytes").asLong());
     }
@@ -675,5 +761,158 @@ class FileEventLoggerTest {
             super(EVENT_TYPE);
             setAttr("payload", payload);
         }
+    }
+
+    @Test
+    void testTypedChatAndToolMediaAtStandard() throws Exception {
+        assertTypedMediaPayloadsSanitizedAt("STANDARD");
+    }
+
+    @Test
+    void testTypedChatAndToolMediaAtVerbose() throws Exception {
+        assertTypedMediaPayloadsSanitizedAt("VERBOSE");
+    }
+
+    private void assertTypedMediaPayloadsSanitizedAt(String level) throws Exception {
+        Map<String, Object> agentConfig = new HashMap<>();
+        agentConfig.put("event-log.level", level);
+
+        config = buildConfig(agentConfig);
+        logger = new FileEventLogger(config);
+        logger.open(openParams);
+
+        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+        String signedUrl = "https://user:secret@example.org/media/cat.png?X-Amz-Signature=abc123";
+        ChatMessage message =
+                ChatMessage.user(
+                        List.of(
+                                TextBlock.of("what is in this picture?"),
+                                ImageBlock.fromBase64("image/png", payload),
+                                new DocumentBlock(
+                                        "application/pdf",
+                                        new UrlSource(signedUrl),
+                                        "cat.pdf",
+                                        42L,
+                                        null)));
+        ChatRequestEvent event = new ChatRequestEvent("test-model", List.of(message));
+
+        append(logger, event, null);
+        append(
+                logger,
+                ChatResponseEvent.success(
+                        UUID.randomUUID(),
+                        new ChatResult(
+                                ChatMessage.assistant(message.getBlocks()),
+                                "local",
+                                "response-id",
+                                null,
+                                "stop",
+                                Map.of("provider", "ollama"))),
+                null);
+        ChatMessage assistant =
+                ChatMessage.assistant(
+                                List.of(
+                                        new ReasoningBlock(
+                                                "check the weather", Map.of("signature", "sig")),
+                                        new ToolCallBlock(
+                                                "call-1",
+                                                "weather",
+                                                Map.of("city", "Berlin"),
+                                                Map.of("provider", "ollama"))))
+                        .withMetadata(Map.of("turn", 1));
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call-1",
+                                List.of(
+                                        new TextBlock("sunny"),
+                                        ImageBlock.fromBase64("image/png", payload),
+                                        new DocumentBlock(
+                                                "application/pdf",
+                                                new UrlSource(signedUrl),
+                                                "cat.pdf",
+                                                42L,
+                                                null)),
+                                false,
+                                Map.of("source", "weather")));
+        append(logger, new ChatRequestEvent("test-model", List.of(assistant, tool)), null);
+        ToolResponse toolResponse =
+                ToolResponse.success(
+                                ((ToolResultBlock) tool.getBlocks().get(0)).getBlocks(),
+                                12L,
+                                "weather")
+                        .withMetadata(Map.of("source", "weather"));
+        append(
+                logger,
+                new ToolResponseEvent(
+                        UUID.randomUUID(),
+                        Map.of("call-1", toolResponse),
+                        Map.of("call-1", true),
+                        Map.of()),
+                null);
+        logger.flush();
+
+        Path logFile = getExpectedLogFilePath();
+        String line = Files.readAllLines(logFile).get(0);
+        assertFalse(line.contains(payload), "Inline payload bytes must never be logged");
+        assertFalse(line.contains("secret"), "URL credentials must never be logged");
+        assertFalse(line.contains("X-Amz-Signature"), "URL query strings must never be logged");
+
+        JsonNode logged = objectMapper.readTree(line).get("eventAttributes").get("messages").get(0);
+        assertEquals("what is in this picture?", logged.get("blocks").get(0).get("text").asText());
+        JsonNode image = logged.get("blocks").get(1);
+        assertEquals("image/png", image.get("media_type").asText());
+        assertEquals("base64", image.get("source").get("type").asText());
+        assertFalse(image.get("source").has("data"), "Inline data is dropped, not masked");
+        assertTrue(image.get("size_bytes").isNumber(), "Derived size metadata should be logged");
+        JsonNode document = logged.get("blocks").get(2);
+        assertEquals(
+                "https://example.org/media/cat.png", document.get("source").get("url").asText());
+        assertEquals("cat.pdf", document.get("name").asText());
+        assertEquals(42L, document.get("size_bytes").asLong());
+
+        String responseLine = Files.readAllLines(logFile).get(1);
+        assertFalse(responseLine.contains(payload), "Response inline payload must never be logged");
+        assertFalse(
+                responseLine.contains("secret"), "Response URL credentials must never be logged");
+        assertFalse(
+                responseLine.contains("X-Amz-Signature"),
+                "Response URL query must never be logged");
+        JsonNode response =
+                objectMapper.readTree(responseLine).get("eventAttributes").get("response");
+        assertEquals("assistant", response.at("/message/role").asText());
+        assertEquals("ollama", response.at("/metadata/provider").asText());
+        assertEquals(logged.get("blocks"), response.at("/message/blocks"));
+        assertEquals("response-id", response.get("response_id").asText());
+        String toolLine = Files.readAllLines(logFile).get(2);
+        JsonNode messages = objectMapper.readTree(toolLine).at("/eventAttributes/messages");
+        assertEquals(1, messages.at("/0/metadata/turn").asInt());
+        assertEquals("check the weather", messages.at("/0/blocks/0/text").asText());
+        assertEquals("sig", messages.at("/0/blocks/0/metadata/signature").asText());
+        assertEquals("Berlin", messages.at("/0/blocks/1/input/city").asText());
+        assertEquals("ollama", messages.at("/0/blocks/1/metadata/provider").asText());
+        assertEquals("call-1", messages.at("/1/blocks/0/call_id").asText());
+        assertEquals("sunny", messages.at("/1/blocks/0/blocks/0/text").asText());
+        assertEquals("weather", messages.at("/1/blocks/0/metadata/source").asText());
+        assertFalse(toolLine.contains(payload));
+        assertFalse(toolLine.contains("secret"));
+        assertFalse(toolLine.contains("X-Amz-Signature"));
+        String toolResponseLine = Files.readAllLines(logFile).get(3);
+        assertFalse(toolResponseLine.contains(payload));
+        assertFalse(toolResponseLine.contains("secret"));
+        assertFalse(toolResponseLine.contains("X-Amz-Signature"));
+        JsonNode loggedToolResponse =
+                objectMapper.readTree(toolResponseLine).at("/eventAttributes/responses/call-1");
+        assertEquals(messages.at("/1/blocks/0/blocks"), loggedToolResponse.get("blocks"));
+        assertTrue(loggedToolResponse.get("success").asBoolean());
+        assertEquals(12L, loggedToolResponse.get("execution_time_ms").asLong());
+        assertEquals("weather", loggedToolResponse.get("tool_name").asText());
+        assertEquals("weather", loggedToolResponse.at("/metadata/source").asText());
+
+        // The normal wire mapper must retain the payload, even after logging the same object.
+        String wire = objectMapper.writeValueAsString(toolResponse);
+        assertTrue(wire.contains(payload));
+        assertTrue(wire.contains(signedUrl));
+        assertEquals(toolResponse, objectMapper.readValue(wire, ToolResponse.class));
     }
 }

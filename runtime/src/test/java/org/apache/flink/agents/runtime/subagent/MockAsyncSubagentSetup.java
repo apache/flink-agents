@@ -19,12 +19,15 @@
 package org.apache.flink.agents.runtime.subagent;
 
 import org.apache.flink.agents.api.context.DurableCallable;
+import org.apache.flink.agents.api.resource.ResourceContext;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 
 import javax.annotation.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Example integration of {@link BaseAsyncSubagentSetup}: an in-memory asynchronous agent service.
@@ -34,6 +37,9 @@ import java.util.Map;
  * assert how many times each endpoint was hit.
  */
 public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
+
+    private static final String FIELD_QUERIES_UNTIL_COMPLETE = "queries_until_complete";
+    private static final String FIELD_FAIL_ON_POST = "fail_on_post";
 
     /** One recorded remote run, keyed by {@code sessionId#callId}. */
     private static final class Run {
@@ -52,10 +58,22 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
     private final int queriesUntilComplete;
     private final boolean failOnPost;
 
-    private int postCount;
-    private int statusQueryCount;
-    private int fetchCount;
-    private int cancelCount;
+    // Counters are static because the operator materializes a rebuilt instance from the
+    // descriptor, so the registered setup a test holds is not the one that runs; call reset()
+    // before each independent scenario. They are atomic because the framework bumps them on
+    // async pool threads, where batched calls run concurrently.
+    private static final AtomicInteger POST_COUNT = new AtomicInteger();
+    private static final AtomicInteger STATUS_QUERY_COUNT = new AtomicInteger();
+    private static final AtomicInteger FETCH_COUNT = new AtomicInteger();
+    private static final AtomicInteger CANCEL_COUNT = new AtomicInteger();
+
+    /** Clears every endpoint counter. Call before each independent scenario. */
+    public static void reset() {
+        POST_COUNT.set(0);
+        STATUS_QUERY_COUNT.set(0);
+        FETCH_COUNT.set(0);
+        CANCEL_COUNT.set(0);
+    }
 
     public MockAsyncSubagentSetup() {
         this(2, false);
@@ -66,16 +84,28 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
      * terminal; {@code failOnPost} makes every submission fail.
      */
     public MockAsyncSubagentSetup(int queriesUntilComplete, boolean failOnPost) {
-        this.queriesUntilComplete = queriesUntilComplete;
-        this.failOnPost = failOnPost;
-        // Runs turn terminal after a fixed number of probes rather than after elapsed time, so
-        // probing without a delay keeps the counts identical and the tests fast.
-        this.statusPollIntervalMillis = 0;
+        this(
+                ResourceDescriptor.Builder.newBuilder(MockAsyncSubagentSetup.class.getName())
+                        .addInitialArgument(FIELD_QUERIES_UNTIL_COMPLETE, queriesUntilComplete)
+                        .addInitialArgument(FIELD_FAIL_ON_POST, failOnPost)
+                        // Runs turn terminal after a fixed number of probes rather than after
+                        // elapsed time, so probing without a delay keeps the counts identical and
+                        // the tests fast.
+                        .addInitialArgument(FIELD_STATUS_POLL_INTERVAL_MILLIS, 0L)
+                        .build(),
+                null);
+    }
+
+    /** Descriptor-based construction, reading the config the convenience constructor captured. */
+    public MockAsyncSubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
+        this.queriesUntilComplete = descriptor.getArgument(FIELD_QUERIES_UNTIL_COMPLETE, 2);
+        this.failOnPost = descriptor.getArgument(FIELD_FAIL_ON_POST, false);
     }
 
     @Override
     protected void callSubmitRequest(String sessionId, String callId, Object prompt) {
-        postCount++;
+        POST_COUNT.incrementAndGet();
         if (failOnPost) {
             throw new IllegalStateException("post failed");
         }
@@ -84,7 +114,7 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     @Override
     protected RunStatus callQueryStatus(String sessionId, String callId) {
-        statusQueryCount++;
+        STATUS_QUERY_COUNT.incrementAndGet();
         Run run = runs.get(sessionId + "#" + callId);
         if (run == null) {
             return RunStatus.notStarted();
@@ -98,7 +128,7 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     @Override
     protected SubagentResult callFetchResult(String sessionId, String callId) {
-        fetchCount++;
+        FETCH_COUNT.incrementAndGet();
         Run run = runs.get(sessionId + "#" + callId);
         if (run == null) {
             return SubagentResult.error("no run on record");
@@ -108,7 +138,7 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     @Override
     protected void callCancelRequest(String sessionId, String callId) {
-        cancelCount++;
+        CANCEL_COUNT.incrementAndGet();
     }
 
     /** Test hook: injects a run that already exists remotely, exercising reconciler reuse. */
@@ -123,22 +153,22 @@ public class MockAsyncSubagentSetup extends BaseAsyncSubagentSetup {
 
     /** Number of times the POST endpoint has been hit. */
     public int postCount() {
-        return postCount;
+        return POST_COUNT.get();
     }
 
     /** Number of times the status endpoint has been probed. */
     public int statusQueryCount() {
-        return statusQueryCount;
+        return STATUS_QUERY_COUNT.get();
     }
 
     /** Number of times the result endpoint has been fetched. */
     public int fetchCount() {
-        return fetchCount;
+        return FETCH_COUNT.get();
     }
 
     /** Number of times the cancel hook has been invoked. */
     public int cancelCount() {
-        return cancelCount;
+        return CANCEL_COUNT.get();
     }
 
     /** Exposes the pub durable call for unit-style POST and reconciler assertions. */

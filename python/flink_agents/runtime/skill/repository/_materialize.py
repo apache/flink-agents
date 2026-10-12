@@ -175,18 +175,27 @@ def extract_zip_safely(zip_path: Path) -> Materialized:
     Raises:
         ValueError: if any zip entry resolves outside the extraction directory.
     """
-    extract_dir = Path(tempfile.mkdtemp(prefix=_TEMP_DIR_PREFIX)).resolve()
-    # Construct the handle before validation so the (empty) tempdir is always reclaimed,
-    # even if validation raises.
-    materialized = Materialized(extract_dir)
+    materialized = Materialized(
+        Path(tempfile.mkdtemp(prefix=_TEMP_DIR_PREFIX)).resolve()
+    )
+    try:
+        extract_zip_into(zip_path, materialized.dir)
+    except BaseException:
+        materialized.close()
+        raise
+    return materialized
+
+
+def extract_zip_into(zip_path: Path, target_dir: Path) -> None:
+    """Extract into a caller-owned directory, retaining the zip-slip checks."""
+    target_dir = target_dir.resolve()
     with zipfile.ZipFile(zip_path) as zf:
         for member in zf.infolist():
-            target = (extract_dir / member.filename).resolve()
-            if not target.is_relative_to(extract_dir):
+            target = (target_dir / member.filename).resolve()
+            if not target.is_relative_to(target_dir):
                 msg = f"Unsafe zip entry: {member.filename}"
                 raise ValueError(msg)
-        zf.extractall(extract_dir)
-    return materialized
+        zf.extractall(target_dir)
 
 
 def download_to_tempfile(

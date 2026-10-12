@@ -17,31 +17,58 @@
  */
 package org.apache.flink.agents.runtime.async;
 
-import org.apache.flink.agents.api.context.Outcome;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionContextRestorer;
+import org.apache.flink.agents.runtime.operator.parallel.ParallelExecutionLock;
+
+import javax.annotation.Nullable;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 /**
- * Executor for Java actions that supports asynchronous execution.
+ * Executor for Java actions that supports asynchronous execution (JDK 11 version; JDK 21+ uses a
+ * multi-release variant backed by the Continuation API).
  *
- * <p>This is the JDK 11 version that falls back to synchronous execution. On JDK 21+, the
- * Multi-release JAR will use a version that leverages Continuation API for true async execution.
+ * <p>On the parallel path a {@link ParallelExecutionLock} and {@link
+ * ParallelExecutionContextRestorer} are wired in: {@link #executeAsync} releases the lock while the
+ * blocking work runs inline, then re-acquires worker ownership and restores the runner context.
+ * Without a lock it runs synchronously.
  */
 public class ContinuationActionExecutor {
 
-    /** Creates a new ContinuationActionExecutor. */
-    public ContinuationActionExecutor(int numAsyncThreads) {}
+    private final AsyncBatchExecutor batchExecutor;
 
-    /** JDK 11 fallback has no worker threads, so the cleanup hook is never needed. */
-    public ContinuationActionExecutor(int numAsyncThreads, Runnable threadCleanup) {}
+    @Nullable private final ParallelExecutionLock parallelExecutionLock;
+    @Nullable private final ParallelExecutionContextRestorer contextRestorer;
+
+    /** Creates a new ContinuationActionExecutor. */
+    public ContinuationActionExecutor(int numAsyncThreads) {
+        this(numAsyncThreads, () -> {}, null, null);
+    }
 
     /**
-     * Executes the action. In JDK 11, this simply runs the action synchronously.
+     * Creates a new ContinuationActionExecutor. On the JDK&lt;21 parallel MVP path both {@code
+     * parallelExecutionLock} and {@code contextRestorer} are supplied; otherwise they are {@code
+     * null} and {@link #executeAsync} runs synchronously.
+     *
+     * <p>Batches use a separate managed pool so action workers waiting for their children cannot
+     * exhaust the batch pool.
+     */
+    public ContinuationActionExecutor(
+            int numAsyncThreads,
+            Runnable threadCleanup,
+            @Nullable ParallelExecutionLock parallelExecutionLock,
+            @Nullable ParallelExecutionContextRestorer contextRestorer) {
+        this.batchExecutor = new AsyncBatchExecutor(numAsyncThreads, threadCleanup);
+        this.parallelExecutionLock = parallelExecutionLock;
+        this.contextRestorer = contextRestorer;
+    }
+
+    /**
+     * Executes the action inline on its calling thread. With the JDK &lt; 21 parallel engine, this
+     * is an action worker; async calls release the shared execution lock while doing work.
      *
      * @param context the continuation context
      * @param action the action to execute
@@ -53,26 +80,39 @@ public class ContinuationActionExecutor {
     }
 
     /**
-     * Asynchronously executes the provided supplier. In JDK 11, this falls back to synchronous
-     * execution.
+     * Executes the supplier inline, releasing the shared execution lock when running on the
+     * parallel engine's action worker. Other actions and the mailbox can progress while this worker
+     * executes the supplier. Without the parallel engine, execution is synchronous.
      *
      * @param context the continuation context
      * @param supplier the supplier to execute
      * @param <T> the result type
      * @return the result of the supplier
      */
-    public <T> T executeAsync(ContinuationContext context, Supplier<T> supplier) {
-        // JDK 11: Fall back to synchronous execution
-        return supplier.get();
+    public <T> T executeAsync(ContinuationContext context, Supplier<T> supplier) throws Exception {
+        if (parallelExecutionLock == null) {
+            // No mailbox lock wired in: fall back to synchronous execution.
+            return supplier.get();
+        }
+
+        parallelExecutionLock.checkReentrant();
+        parallelExecutionLock.release();
+        try {
+            return supplier.get();
+        } finally {
+            parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
+            contextRestorer.restore(context.getKey(), context.getActionTask());
+        }
     }
 
     /**
-     * Executes all suppliers as one batch. In JDK 11, this falls back to serial execution and
-     * captures each supplier's success or failure as an {@link Outcome}.
+     * Executes a batch concurrently on managed workers. The calling action waits without the shared
+     * operator lock; its context is restored after worker ownership is re-acquired.
      *
      * @param context the continuation context
      * @param suppliers the suppliers to execute
-     * @param timeout ignored in the JDK 11 fallback
+     * @param timeout whole-batch timeout, or null/negative for no timeout
+     * @param maxParallelism maximum in-flight calls in this batch
      * @param <T> the result type
      * @return outcomes in supplier order
      */
@@ -80,24 +120,30 @@ public class ContinuationActionExecutor {
             ContinuationContext context,
             List<Callable<T>> suppliers,
             Duration timeout,
-            int maxParallelism) {
-        List<Outcome<T>> outcomes =
-                suppliers.stream()
-                        .map(
-                                supplier -> {
-                                    try {
-                                        return Outcome.success(supplier.call());
-                                    } catch (Exception e) {
-                                        return Outcome.<T>failure(e);
-                                    }
-                                })
-                        .collect(Collectors.toList());
-        boolean[] started = new boolean[suppliers.size()];
-        Arrays.fill(started, true);
-        return new BatchExecutionResult<>(outcomes, started);
+            int maxParallelism)
+            throws Exception {
+        if (parallelExecutionLock == null || suppliers.isEmpty()) {
+            return batchExecutor.execute(suppliers, timeout, maxParallelism);
+        }
+
+        parallelExecutionLock.checkReentrant();
+        parallelExecutionLock.release();
+        try {
+            return batchExecutor.execute(suppliers, timeout, maxParallelism);
+        } finally {
+            parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
+            contextRestorer.restore(context.getKey(), context.getActionTask());
+        }
     }
 
-    public void close() {}
+    /** Stops async work without waiting for worker exit cleanup. */
+    public void shutdown() {
+        batchExecutor.shutdown();
+    }
+
+    public void close() {
+        batchExecutor.close();
+    }
 
     /**
      * Returns whether continuation-based async execution is supported.

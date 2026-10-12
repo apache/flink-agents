@@ -20,10 +20,11 @@
 from typing import Any, Dict, Sequence
 from unittest.mock import MagicMock
 
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.metric_group import Counter, MetricGroup
 from flink_agents.api.resource import ResourceType
 
@@ -41,9 +42,9 @@ class TestChatModelSetup(BaseChatModelSetup):
         """Return resource type of class."""
         return ResourceType.CHAT_MODEL
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Simple test implementation."""
-        return ChatMessage.of(MessageRole.ASSISTANT, "Test response")
+        return ChatResult(message=ChatMessage.assistant("Test response"))
 
     def test_record_token_metrics(
         self,

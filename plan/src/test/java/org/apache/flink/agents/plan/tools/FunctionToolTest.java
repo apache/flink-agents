@@ -56,7 +56,7 @@ public class FunctionToolTest {
         Method method =
                 FunctionToolTest.class.getMethod(
                         "calculate", Double.class, Double.class, String.class);
-        ToolMetadata origin = ToolMetadataFactory.fromStaticMethod(method);
+        ToolMetadata origin = FunctionTool.fromStaticMethod(method).getMetadata();
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(origin);
         ToolMetadata deserialize = mapper.readValue(json, ToolMetadata.class);
@@ -68,7 +68,6 @@ public class FunctionToolTest {
         Method method =
                 FunctionToolTest.class.getMethod(
                         "calculate", Double.class, Double.class, String.class);
-        ToolMetadata metadata = ToolMetadataFactory.fromStaticMethod(method);
         JavaFunction javaFunction =
                 new JavaFunction(
                         method.getDeclaringClass(),
@@ -76,10 +75,10 @@ public class FunctionToolTest {
                         new Class[] {Double.class, Double.class, String.class});
         FunctionTool tool =
                 new FunctionTool(
-                        metadata,
+                        null,
                         javaFunction,
                         Map.of(
-                                "tenant_id",
+                                "operation",
                                 ToolParameterInjection.fromSensoryMemory("request.tenant_id")));
         ObjectMapper mapper = new ObjectMapper();
         String json = mapper.writeValueAsString(tool);
@@ -87,5 +86,54 @@ public class FunctionToolTest {
         Assertions.assertEquals(tool.getMetadata(), deserialize.getMetadata());
         Assertions.assertEquals(tool.getFunction(), deserialize.getFunction());
         Assertions.assertEquals(tool.getInjectedArgs(), deserialize.getInjectedArgs());
+    }
+
+    @Test
+    void cancellationEscapesToolResponseConversionAndPreservesCause() throws Exception {
+        FunctionTool tool =
+                FunctionTool.fromStaticMethod(
+                        FunctionToolTest.class.getMethod("failingTool", String.class));
+        for (String kind : java.util.List.of("interrupt", "nio", "wrapped", "cancel")) {
+            try {
+                RuntimeException failure =
+                        Assertions.assertThrows(
+                                RuntimeException.class,
+                                () ->
+                                        tool.call(
+                                                new org.apache.flink.agents.api.tools
+                                                        .ToolParameters(Map.of("kind", kind))));
+                Assertions.assertTrue(
+                        org.apache.flink.agents.plan.utils.CancellationUtils.isCancellation(
+                                failure));
+                if (kind.equals("interrupt") || kind.equals("nio")) {
+                    Assertions.assertInstanceOf(
+                            java.util.concurrent.CancellationException.class, failure);
+                    Assertions.assertNotNull(failure.getCause());
+                }
+                Assertions.assertEquals(!kind.equals("cancel"), Thread.interrupted());
+            } finally {
+                Thread.interrupted();
+            }
+        }
+        Assertions.assertFalse(
+                tool.call(
+                                new org.apache.flink.agents.api.tools.ToolParameters(
+                                        Map.of("kind", "timeout")))
+                        .isSuccess());
+    }
+
+    public static String failingTool(@ToolParam(name = "kind") String kind) throws Exception {
+        switch (kind) {
+            case "interrupt":
+                throw new InterruptedException();
+            case "nio":
+                throw new java.nio.channels.ClosedByInterruptException();
+            case "wrapped":
+                throw new RuntimeException(new InterruptedException());
+            case "cancel":
+                throw new java.util.concurrent.CancellationException();
+            default:
+                throw new java.net.SocketTimeoutException("timeout");
+        }
     }
 }

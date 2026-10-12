@@ -34,13 +34,12 @@ import java.util.List;
  *   <li>{@code url_sources} — {@code url} scheme: archive configurations with optional digest and
  *       transport policy
  *   <li>{@code classpath} — {@code classpath} scheme: resource paths on the Java classpath
- *   <li>{@code package} — {@code package} scheme (Python-only at runtime): {@code (package,
- *       resource)} pairs pointing at resources inside an installed Python package
+ *   <li>{@code package} — {@code package} scheme: {@code (package, resource)} pairs pointing at
+ *       resources inside an installed Python package
  * </ul>
  *
- * <p>At least one source list must be non-empty. {@code package} is exposed on Java for YAML schema
- * parity with Python — it deserializes successfully but {@code SkillManager} on Java will fail at
- * load time because Java does not register a {@code package} handler.
+ * <p>At least one source list must be non-empty. Cross-language sources require the corresponding
+ * Java or Python runtime bridge at execution time.
  */
 @JsonIgnoreProperties(ignoreUnknown = false)
 public final class SkillsSpec {

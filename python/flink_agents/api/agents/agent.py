@@ -16,7 +16,7 @@
 # limitations under the License.
 #################################################################################
 from abc import ABC
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Tuple, Union
 
 from flink_agents.api.function import Function, PythonFunction
 from flink_agents.api.resource import (
@@ -148,7 +148,7 @@ class Agent(ABC):
         self,
         name: str,
         resource_type: ResourceType,
-        instance: SerializableResource | ResourceDescriptor,
+        instance: Union[SerializableResource, ResourceDescriptor, "Agent"],
     ) -> "Agent":
         """Add resource to agent instance.
 
@@ -158,8 +158,10 @@ class Agent(ABC):
             The name of the prompt, should be unique in the same Agent.
         resource_type: ResourceType
             The type of the resource.
-        instance: SerializableResource | ResourceDescriptor
-            The serializable resource instance, or the descriptor of resource.
+        instance: SerializableResource | ResourceDescriptor | Agent
+            The serializable resource instance, the descriptor of resource,
+            or an Agent instance. For the AGENT resource type an ``Agent`` is
+            compiled into an internal sub-agent during plan construction.
 
         Returns:
         -------

@@ -23,6 +23,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import org.apache.flink.agents.api.Event;
 
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -40,6 +41,11 @@ public class AgentRunBeginEvent extends Event {
 
     public static final String EVENT_TYPE = "_agent_run_begin_event";
 
+    private static final List<BuiltInAttribute> ATTRIBUTE_SCHEMA =
+            List.of(
+                    BuiltInAttribute.requiredUntyped("key"),
+                    BuiltInAttribute.requiredUntyped("value"));
+
     public AgentRunBeginEvent(String key, Map<String, Object> value) {
         super(EVENT_TYPE, MemoryEvent.normalizeAttributes(key, value));
     }
@@ -52,8 +58,17 @@ public class AgentRunBeginEvent extends Event {
         super(id, EVENT_TYPE, MemoryEvent.normalizeAttributes(attributes));
     }
 
-    /** Converts a generic {@link Event} of this type into the typed view. */
+    /**
+     * Converts a generic {@link Event} of this type into the typed view.
+     *
+     * <p>Enforces the fixed cross-language schema: {@code key} and {@code value} are required and
+     * no other attribute is allowed. Their string / map types are enforced by {@link
+     * MemoryEvent#normalizeAttributes(Map)} in the constructor invoked below.
+     *
+     * @throws IllegalArgumentException if the event violates the schema
+     */
     public static AgentRunBeginEvent fromEvent(Event event) {
+        validateAttributeSchema(EVENT_TYPE, event.getAttributes(), ATTRIBUTE_SCHEMA);
         return reconstructFrom(event, AgentRunBeginEvent::new);
     }
 

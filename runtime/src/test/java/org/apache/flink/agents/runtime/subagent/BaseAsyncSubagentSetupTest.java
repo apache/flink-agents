@@ -38,6 +38,7 @@ import org.apache.flink.api.java.functions.KeySelector;
 import org.apache.flink.api.java.typeutils.TypeExtractor;
 import org.apache.flink.streaming.runtime.streamrecord.StreamRecord;
 import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -56,6 +57,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class BaseAsyncSubagentSetupTest {
 
     private static final String RESOURCE_NAME = "ext-agent";
+
+    @BeforeEach
+    void resetCounters() {
+        MockAsyncSubagentSetup.reset();
+    }
 
     // ------------------------------------------------------------------------------------------
     // The pub: one durable POST, issued immediately
@@ -181,7 +187,9 @@ public class BaseAsyncSubagentSetupTest {
         assertThat(original.statusQueryCount()).isEqualTo(3);
 
         // Replay: the run has already reached a terminal state, so the same await takes a
-        // shorter path — fewer probes — to the same result.
+        // shorter path — fewer probes — to the same result. The endpoint counters are shared
+        // with the mock service, so restart them to measure the replay on its own.
+        MockAsyncSubagentSetup.reset();
         MockAsyncSubagentSetup replay = new MockAsyncSubagentSetup(2, false);
         replay.seedRun("sid-1", "call-1", "done:ping", null, 0);
         SubagentResult after = replay.awaitResultForTest("sid-1", "call-1").call();
@@ -467,6 +475,9 @@ public class BaseAsyncSubagentSetupTest {
 
     @Test
     void descriptorArgumentSetsTheStatusPollInterval() {
+        // The key is spelled out rather than referencing the base's protected constant on purpose:
+        // this asserts the wire contract (the exact argument name a descriptor-built setup reads),
+        // so it stays a literal to catch any change to that name.
         DescriptorAsyncSetup setup =
                 new DescriptorAsyncSetup(
                         new ResourceDescriptor(

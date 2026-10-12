@@ -1,21 +1,29 @@
 {
-  "id" : "00000000-0000-0000-0000-000000000001",
-  "attributes" : {
-    "response" : {
-      "role" : "assistant",
-      "blocks" : [ {
-        "type" : "text",
-        "text" : "hi there"
-      } ],
-      "tool_calls" : [ ],
-      "extra_args" : { }
+  "id": "00000000-0000-0000-0000-000000000001",
+  "attributes": {
+    "response": {
+      "model": null,
+      "response_id": null,
+      "usage": null,
+      "finish_reason": null,
+      "metadata": {},
+      "message": {
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "hi there"
+          }
+        ],
+        "metadata": {}
+      }
     },
-    "total_retry_wait_sec" : 0,
-    "retry_count" : 0,
-    "error" : null,
-    "request_id" : "00000000-0000-0000-0000-000000000002",
-    "status" : "SUCCESS"
+    "total_retry_wait_sec": 0,
+    "retry_count": 0,
+    "error": null,
+    "request_id": "00000000-0000-0000-0000-000000000002",
+    "status": "SUCCESS"
   },
-  "attachments" : { },
-  "type" : "_chat_response_event"
+  "attachments": {},
+  "type": "_chat_response_event"
 }

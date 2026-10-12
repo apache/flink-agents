@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.math.BigInteger;
 import java.util.Arrays;
 import java.util.Base64;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
@@ -44,25 +46,17 @@ class ChatMessageSerializationTest {
 
     @Test
     void nullBlocksFailAtEveryEntryPoint() throws Exception {
-        assertThat(MAPPER.readValue("{}", ChatMessage.class).getBlocks()).isEmpty();
         for (String blocks : List.of("null", "[null]")) {
             assertThatThrownBy(
                             () ->
                                     MAPPER.readValue(
-                                            "{\"blocks\":" + blocks + "}", ChatMessage.class))
+                                            "{\"role\":\"user\",\"blocks\":" + blocks + "}",
+                                            ChatMessage.class))
                     .isInstanceOf(JsonMappingException.class);
         }
         ChatMessage message = ChatMessage.user("original");
-        assertThatThrownBy(() -> message.setBlocks(null)).isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> message.setBlocks(Arrays.asList((ContentBlock) null)))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(
-                        () -> new ChatMessage(MessageRole.USER, Arrays.asList((ContentBlock) null)))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(() -> message.setBlocksFromMaps(null))
-                .isInstanceOf(NullPointerException.class);
-        assertThatThrownBy(
-                        () -> message.setBlocksFromMaps(Arrays.asList((Map<String, Object>) null)))
+        assertThatThrownBy(() -> message.withBlocks(null)).isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> message.withBlocks(Arrays.asList((ContentBlock) null)))
                 .isInstanceOf(NullPointerException.class);
         assertThat(message.getText()).isEqualTo("original");
     }
@@ -144,10 +138,11 @@ class ChatMessageSerializationTest {
     }
 
     private static void assertRejectedBlock(Map<String, Object> block) throws Exception {
-        String json = MAPPER.writeValueAsString(Map.of("blocks", List.of(block)));
+        String json = MAPPER.writeValueAsString(Map.of("role", "user", "blocks", List.of(block)));
         assertThatThrownBy(() -> MAPPER.readValue(json, ChatMessage.class))
                 .isInstanceOf(JsonMappingException.class);
-        assertThatThrownBy(() -> new ChatMessage().setBlocksFromMaps(List.of(block)))
+        assertThatThrownBy(
+                        () -> ChatMessage.fromMap(Map.of("role", "user", "blocks", List.of(block))))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -160,16 +155,20 @@ class ChatMessageSerializationTest {
             assertThat(source.getSizeBytes()).isNotNegative();
             assertThat(MAPPER.readValue(MAPPER.writeValueAsString(source), MediaSource.class))
                     .isEqualTo(source);
-            ChatMessage message = new ChatMessage();
-            message.setBlocksFromMaps(
-                    List.of(
+            ChatMessage message =
+                    ChatMessage.fromMap(
                             Map.of(
-                                    "type",
-                                    "image",
-                                    "media_type",
-                                    "image/png",
-                                    "source",
-                                    Map.of("type", "base64", "data", data))));
+                                    "role",
+                                    "user",
+                                    "blocks",
+                                    List.of(
+                                            Map.of(
+                                                    "type",
+                                                    "image",
+                                                    "media_type",
+                                                    "image/png",
+                                                    "source",
+                                                    Map.of("type", "base64", "data", data)))));
             assertThat(((ImageBlock) message.getBlocks().get(0)).getSource()).isEqualTo(source);
         }
         for (String data : List.of("YQ==", "YQ", "aGk=", "aGk", "YWJj")) {
@@ -195,8 +194,8 @@ class ChatMessageSerializationTest {
         assertThat(json.get("blocks")).hasSize(1);
         assertThat(json.get("blocks").get(0).get("type").asText()).isEqualTo("text");
         assertThat(json.get("blocks").get(0).get("text").asText()).isEqualTo("hello world");
-        assertThat(json.get("tool_calls")).isEmpty();
-        assertThat(json.get("extra_args")).isEmpty();
+        assertThat(json.has("tool_calls")).isFalse();
+        assertThat(json.get("metadata")).isEmpty();
         assertThat(json.has("content")).isFalse();
     }
 
@@ -240,7 +239,7 @@ class ChatMessageSerializationTest {
                         null);
         ChatMessage original =
                 new ChatMessage(
-                        MessageRole.TOOL,
+                        MessageRole.USER,
                         List.of(
                                 TextBlock.of("before"),
                                 image,
@@ -351,6 +350,34 @@ class ChatMessageSerializationTest {
     @DisplayName("A message's block list is an unmodifiable snapshot")
     void testBlockListIsSnapshot() {
         ChatMessage message = ChatMessage.user("hello");
+        assertThatThrownBy(() -> message.getBlocks().add(TextBlock.of("injected")))
+                .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    @DisplayName("A message stores its blocks in a list Flink 1.20's Kryo can rebuild")
+    void testStoredBlocksAreKryoRebuildable() throws Exception {
+        // The runtime keeps action-task events (and their ChatMessages) in operator state that
+        // Flink serializes with Kryo. Flink 1.20's Kryo rebuilds a stored collection by
+        // allocating it and calling add() per element, which the immutable lists returned by
+        // List.of and List.copyOf reject, so such state cannot be restored. Flink 2.x's Kryo
+        // ships immutable-collection serializers, which is why only the it-python [flink-1.20]
+        // suite catches this. The stored block list must therefore stay structurally modifiable,
+        // while getBlocks() still hands callers an unmodifiable view.
+        ChatMessage message =
+                ChatMessage.user(
+                        List.of(
+                                TextBlock.of("What's in this picture?"),
+                                ImageBlock.fromBase64("image/png", "aGk=")));
+
+        Field stored = ChatMessage.class.getDeclaredField("blocks");
+        stored.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<ContentBlock> backing = (List<ContentBlock>) stored.get(message);
+
+        // The exact operation Flink 1.20's Kryo performs while rebuilding the list from state.
+        assertThatCode(() -> backing.add(TextBlock.of("probe"))).doesNotThrowAnyException();
+        // Callers still cannot mutate the message through the public view.
         assertThatThrownBy(() -> message.getBlocks().add(TextBlock.of("injected")))
                 .isInstanceOf(UnsupportedOperationException.class);
     }

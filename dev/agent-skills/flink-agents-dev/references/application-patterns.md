@@ -241,9 +241,9 @@ OpenAI, Ollama, a model name, or a provider alias from the application domain.
 
 Generate the corresponding bridge form instead of rewriting the provider into the
 application language. In YAML, set each descriptor's `type` from that Resource's
-implementation language. In direct Python, use the documented Java wrapper and
-`java_clazz` metadata for a Java implementation. In direct Java, use the documented
-Python wrapper and `pythonClazz` metadata for a Python implementation. Add the
+implementation language. In direct Python, use `JavaResourceDescriptor` for a Java
+implementation. In direct Java, use `PythonResourceDescriptor` for a Python
+implementation. Both name the actual implementation class. Add the
 selected implementation artifact and bridge runtime requirements to the generated
 project. Keep connection and setup implementations compatible with one another.
 

@@ -292,6 +292,26 @@ class AgentExecutionOptions:
         default=os.cpu_count() * 2,
     )
 
+    # Experimental fallback switch for the Java JDK<21 parallel execution engine.
+    # Only consulted for pure-Java agents without coroutine support; plans
+    # containing Python actions never use the parallel engine regardless of
+    # this value.
+    PARALLEL_EXECUTION_ENABLED = ConfigOption(
+        key="parallel-execution.enabled",
+        config_type=bool,
+        default=True,
+    )
+
+    # Maximum number of input records that may be in flight concurrently. Only
+    # enforced by the Java JDK<21 parallel execution engine for pure-Java
+    # agents; the JDK 21 coroutine engine and plans containing Python actions
+    # ignore it.
+    MAX_IN_FLIGHT_INPUT_RECORDS = ConfigOption(
+        key="max-in-flight-input-records",
+        config_type=int,
+        default=100,
+    )
+
     CHAT_ASYNC = ConfigOption(
         key="chat.async",
         config_type=bool,
@@ -308,32 +328,21 @@ class AgentExecutionOptions:
         default=True,
     )
 
-    # Default is os.cpu_count(), so multi-tool batches run in parallel on most hosts.
-    # Uses the same num-async-threads pool as chat/RAG (one pool per operator subtask,
-    # shared across keys). Built-in actions for one key run sequentially, so chat and
-    # tool batches on the same key do not overlap in the usual chat->tool flow;
-    # contention is mainly across keys on the same subtask. Defaults:
-    # pool=2xcores, parallelism=cores -> one batch can use up to half the pool.
-    # Lower tool-call.parallelism or raise
-    # num-async-threads when hot subtasks mix heavy tool batches with chat/RAG.
-    TOOL_CALL_PARALLELISM = ConfigOption(
-        key="tool-call.parallelism",
+    # Maximum in-flight calls per ctx.gather batch, including ordinary, durable,
+    # and built-in tool calls. The shared num-async-threads pool also limits actual
+    # concurrency. Lower this limit to leave capacity for other calls on the subtask.
+    ASYNC_BATCH_PARALLELISM = ConfigOption(
+        key="async.batch.parallelism",
         config_type=int,
         default=os.cpu_count() or 1,
     )
 
-    # Non-positive disables the batch timeout; positive values are milliseconds.
-    #
-    # Thread reclamation: the timeout unblocks the action but does not interrupt a
-    # tool that is already running. A running future cannot be cancelled, so a hung
-    # tool keeps its worker thread in the shared num-async-threads pool until it
-    # returns on its own. That thread is not reclaimed by the timeout and stays
-    # unavailable to other keys on the same subtask, so a tool that never returns
-    # permanently reduces pool capacity. Bound blocking work inside the tool itself
-    # (for example an HTTP client read timeout) instead of relying on this batch
-    # timeout to free the thread.
-    TOOL_CALL_BATCH_TIMEOUT_MS = ConfigOption(
-        key="tool-call.batch.timeout.ms",
+    # Overall timeout per ctx.gather batch, in milliseconds; non-positive disables
+    # it. Applies to ordinary, durable, and built-in tool calls. Running callbacks
+    # may continue after timeout and occupy their worker until they return, so
+    # blocking operations should also set their own timeouts.
+    ASYNC_BATCH_TIMEOUT_MS = ConfigOption(
+        key="async.batch.timeout.ms",
         config_type=int,
         default=-1,
     )

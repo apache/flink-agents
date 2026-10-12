@@ -56,9 +56,7 @@ def main() -> None:
 
     # Use the ParallelChatAgent to analyze the review with parallel LLM calls.
     output_stream = (
-        agents_env.from_datastream(
-            input=input_stream, key_selector=lambda x: x["id"]
-        )
+        agents_env.from_datastream(input=input_stream, key_selector=lambda x: x["id"])
         .apply(ParallelChatAgent())
         .to_datastream()
     )

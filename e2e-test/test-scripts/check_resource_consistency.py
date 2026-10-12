@@ -204,24 +204,6 @@ def _parse_python_resource_name(python_path: Path) -> dict:
     return python_map
 
 
-_JAVA_ONLY_NAMES = frozenset(
-    {
-        "PYTHON_WRAPPER_CONNECTION",
-        "PYTHON_WRAPPER_SETUP",
-        "PYTHON_WRAPPER_VECTOR_STORE",
-        "PYTHON_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE",
-    }
-)
-_PYTHON_ONLY_NAMES = frozenset(
-    {
-        "JAVA_WRAPPER_CONNECTION",
-        "JAVA_WRAPPER_SETUP",
-        "JAVA_WRAPPER_VECTOR_STORE",
-        "JAVA_WRAPPER_COLLECTION_MANAGEABLE_VECTOR_STORE",
-    }
-)
-
-
 def _find_python_name_for_value(impls: dict, value: str, java_name: str) -> str | None:
     return java_name if impls.get(java_name) == value else None
 
@@ -246,8 +228,6 @@ def check_consistency(java_map: dict, python_map: dict) -> tuple[list[str], list
         python_impls = python_map.get((resource_type, "Python"), {})
 
         for name, value in java_impls.items():
-            if name in _JAVA_ONLY_NAMES:
-                continue
             if name in python_java_impls:
                 if python_java_impls[name] != value:
                     errors.append(
@@ -279,8 +259,6 @@ def check_consistency(java_map: dict, python_map: dict) -> tuple[list[str], list
                 )
 
         for name, value in python_impls.items():
-            if name in _PYTHON_ONLY_NAMES or name.startswith("JAVA_"):
-                continue
             if not _find_python_name_for_value(java_python_impls, value, name):
                 if value.startswith("flink_agents."):
                     warnings.append(

@@ -142,11 +142,13 @@ def main() -> None:
     )
 
     # Use the TableReviewAnalysisAgent (LLM) to analyze each review.
-    # The agent extracts the review score and unsatisfied reasons.
+    # The agent extracts the review score and unsatisfied reasons. Declaring the
+    # output type with to_datastream(ProductReviewAnalysisRes) yields a typed
+    # stream, so downstream operators receive validated instances.
     review_analysis_res_stream = (
         agents_env.from_table(input=input_table, key_selector=TableKeySelector())
         .apply(TableReviewAnalysisAgent())
-        .to_datastream()
+        .to_datastream(ProductReviewAnalysisRes)
     )
 
     # Aggregate the analysis results in 1-minute tumbling windows.

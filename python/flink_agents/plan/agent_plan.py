@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, cast
 from pydantic import BaseModel, field_serializer, model_validator
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.decorators import ActionDeclaration
 from flink_agents.api.function import Function as ApiFunction
 from flink_agents.api.function import JavaFunction as ApiJavaFunction
 from flink_agents.api.function import PythonFunction as ApiPythonFunction
@@ -36,6 +37,7 @@ from flink_agents.api.skills import (
 from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
+from flink_agents.plan import subagent as _subagent
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
@@ -78,9 +80,11 @@ class AgentPlan(BaseModel):
 
     @field_serializer("resource_providers")
     def __serialize_resource_providers(
-        self, providers: Dict[ResourceType, Dict[str, ResourceProvider]]
-    ) -> dict:
+        self, providers: Dict[ResourceType, Dict[str, ResourceProvider]] | None
+    ) -> dict | None:
         # append meta info to help deserialize resource providers
+        if providers is None:
+            return None
         data = {}
         for type in providers:
             data[type] = {}
@@ -134,6 +138,31 @@ class AgentPlan(BaseModel):
                                         provider
                                     )
                                 )
+                            elif provider_type == "InternalSubagentProvider":
+                                # Java compiles a directly-registered child Agent
+                                # into an InternalSubagentProvider that nests the
+                                # child plan. Python models the same internal
+                                # sub-agent as a PythonSerializableResourceProvider
+                                # pointing at InternalSubagentSetup, so convert to
+                                # that shape and rebuild the nested child plan
+                                # recursively.
+                                child_plan = AgentPlan.model_validate(
+                                    provider["childPlan"]
+                                )
+                                self["resource_providers"][type][name] = (
+                                    PythonSerializableResourceProvider(
+                                        name=provider["name"],
+                                        type=ResourceType(provider["type"]),
+                                        module=(
+                                            "flink_agents.runtime.internal_subagent"
+                                        ),
+                                        clazz="InternalSubagentSetup",
+                                        serialized={
+                                            "child_plan": child_plan,
+                                            "scope": provider["scope"],
+                                        },
+                                    )
+                                )
         return self
 
     @staticmethod
@@ -141,27 +170,44 @@ class AgentPlan(BaseModel):
         agent: Agent, config: AgentConfiguration, agent_name: str | None = None
     ) -> "AgentPlan":
         """Build a AgentPlan from user defined agent."""
-        actions = {}
-        for action in _get_actions(agent) + BUILT_IN_ACTIONS:
-            assert action.name not in actions, f"Duplicate action name: {action.name}"
-            actions[action.name] = action
+        # Track visited agents for sub-agent cycle detection and plan reuse.
+        # The root owns the thread-local state and is responsible for
+        # clearing it; registering the root as being compiled makes a cycle
+        # running through it fail like any other.
+        owner = _subagent.begin(agent)
+        try:
+            plan = AgentPlan(actions={})
 
-        resource_providers = {}
-        for provider in _get_resource_providers(agent, config):
-            type = provider.type
-            if type not in resource_providers:
-                resource_providers[type] = {}
-            name = provider.name
-            assert name not in resource_providers[type], (
-                f"Duplicate resource name: {name}"
+            actions = {}
+            for action in _get_actions(agent) + BUILT_IN_ACTIONS:
+                if action.name in actions:
+                    msg = f"Duplicate action name: {action.name}"
+                    raise RuntimeError(msg)
+                actions[action.name] = action
+
+            resource_providers = {}
+            for provider in _get_resource_providers(agent, config):
+                type = provider.type
+                if type not in resource_providers:
+                    resource_providers[type] = {}
+                name = provider.name
+                assert name not in resource_providers[type], (
+                    f"Duplicate resource name: {name}"
+                )
+                resource_providers[type][name] = provider
+
+            # Populate the placeholder in place so any references handed to
+            # child plans during the walk above see the finished plan.
+            plan.actions = actions
+            plan.resource_providers = resource_providers
+            plan.agent_name = (
+                agent_name if agent_name is not None else agent.__class__.__name__
             )
-            resource_providers[type][name] = provider
-        return AgentPlan(
-            actions=actions,
-            resource_providers=resource_providers,
-            agent_name=agent_name if agent_name is not None else agent.__class__.__name__,
-            config=config,
-        )
+            plan.config = config
+            return plan
+        finally:
+            if owner:
+                _subagent.end()
 
     def get_action_config(self, action_name: str) -> Dict[str, Any]:
         """Get config of the action.
@@ -196,9 +242,10 @@ class AgentPlan(BaseModel):
         return self.actions[action_name].config.get(key, None)
 
 
-def _action_marker(value: Any) -> tuple | None:
-    """Return ``(inner_callable, trigger_conditions, target)`` if ``value`` is @action.
+def _native_action_marker(value: Any) -> tuple | None:
+    """Return the native ``@action`` marker as a 3-tuple, or ``None``.
 
+    The tuple is ``(inner_callable, trigger_conditions, name_override)``.
     ``@action`` may set ``_trigger_conditions`` on the outer wrapper (when ``@action``
     is the outer decorator) or on ``__func__`` (when ``@staticmethod`` is outer
     and ``@action`` inner). Accept either by checking both candidates.
@@ -215,7 +262,14 @@ def _action_marker(value: Any) -> tuple | None:
     )
     if marker is None:
         return None
-    return inner, marker._trigger_conditions, getattr(marker, "_target", None)
+    return inner, marker._trigger_conditions, getattr(marker, "_action_name", None)
+
+
+def _is_action_attr(value: Any) -> bool:
+    """True if ``value`` is an @action member: a declaration or a tagged callable."""
+    return (
+        isinstance(value, ActionDeclaration) or _native_action_marker(value) is not None
+    )
 
 
 def _get_actions(agent: Agent) -> List[Action]:
@@ -231,13 +285,13 @@ def _get_actions(agent: Agent) -> List[Action]:
     List[Action]
         List of Action defined in the agent.
     """
-    # __dict__ skips inherited @action methods; reject loudly.
+    # __dict__ skips inherited @action members; reject loudly.
     agent_class = agent.__class__
     for parent in agent_class.__mro__[1:]:
         if parent is Agent or parent is object:
             break
         for parent_name, parent_value in parent.__dict__.items():
-            if _action_marker(parent_value) is not None:
+            if _is_action_attr(parent_value):
                 msg = (
                     f"Inherited @action '{parent.__qualname__}.{parent_name}' is "
                     f"not supported; declare on the concrete agent."
@@ -246,19 +300,25 @@ def _get_actions(agent: Agent) -> List[Action]:
 
     actions = []
     for name, value in agent_class.__dict__.items():
-        marker = _action_marker(value)
+        if isinstance(value, ActionDeclaration):
+            # Cross-language: the attribute holds an immutable declaration that
+            # wraps the executable descriptor.
+            actions.append(
+                Action(
+                    name=value.name if value.name is not None else name,
+                    exec=_to_plan_function(value.func),
+                    trigger_conditions=list(value.trigger_conditions),
+                )
+            )
+            continue
+        marker = _native_action_marker(value)
         if marker is None:
             continue
-        inner, trigger_conditions, target = marker
-        exec_ = (
-            _to_plan_function(target)
-            if target is not None
-            else PythonFunction.from_callable(inner)
-        )
+        inner, trigger_conditions, name_override = marker
         actions.append(
             Action(
-                name=name,
-                exec=exec_,
+                name=name_override if name_override is not None else name,
+                exec=PythonFunction.from_callable(inner),
                 trigger_conditions=list(trigger_conditions),
             )
         )
@@ -328,14 +388,24 @@ def _get_resource_providers(
 
             if callable(value):
                 descriptor = value()
-                if hasattr(descriptor.clazz, "_is_java_resource"):
-                    resource_providers.append(
-                        JavaResourceProvider.get(name=name, descriptor=value())
-                    )
-                else:
-                    resource_providers.append(
-                        PythonResourceProvider.get(name=name, descriptor=value())
-                    )
+                resource_type = next(
+                    resource_type
+                    for marker, resource_type in {
+                        "_is_chat_model_setup": ResourceType.CHAT_MODEL,
+                        "_is_chat_model_connection": ResourceType.CHAT_MODEL_CONNECTION,
+                        "_is_embedding_model_setup": ResourceType.EMBEDDING_MODEL,
+                        "_is_embedding_model_connection": ResourceType.EMBEDDING_MODEL_CONNECTION,
+                        "_is_vector_store": ResourceType.VECTOR_STORE,
+                    }.items()
+                    if hasattr(value, marker)
+                    or hasattr(agent.__class__.__dict__[name], marker)
+                )
+                provider = (
+                    JavaResourceProvider
+                    if descriptor.language == "java"
+                    else PythonResourceProvider
+                )
+                resource_providers.append(provider.get(name, descriptor, resource_type))
 
         elif hasattr(value, "_is_tool"):
             _check_tool_name_not_reserved(name)
@@ -409,23 +479,52 @@ def _get_resource_providers(
 
     for name, value in agent.resources[ResourceType.AGENT].items():
         if isinstance(value, SubagentSetup):
-            resource_providers.append(
-                PythonSerializableResourceProvider.from_resource(
-                    name=name, resource=value
-                )
+            # A live setup travels as its descriptor, so a remote task rebuilds
+            # it from the class name and configuration.
+            descriptor = ResourceDescriptor(
+                clazz=f"{value.__class__.__module__}.{value.__class__.__name__}",
+                arguments=value.model_dump(),
             )
         elif isinstance(value, ResourceDescriptor):
             # Declared via YAML: the descriptor names a SubagentSetup subclass
             # that is instantiated when the resource is first resolved.
-            resource_providers.append(
-                PythonResourceProvider.get(name=name, descriptor=value)
+            descriptor = value
+        elif isinstance(value, Agent):
+            # Compile a directly-registered child Agent into an internal
+            # sub-agent. The child's compiled plan is reused across names and
+            # cycles are rejected by the compilation helper. The resource
+            # name doubles as the sub-agent scope used for runtime resolution.
+            child_plan = _subagent.get_or_compile(
+                value,
+                name,
+                lambda child: AgentPlan.from_agent(child, config),
             )
+            # Reference the runtime setup by name to keep the plan -> runtime
+            # dependency direction; the provider materializes
+            # flink_agents.runtime.internal_subagent.InternalSubagentSetup at
+            # runtime. The live child plan rides in the serialized map and is
+            # dumped lazily. This branch carries the child plan itself, so it
+            # appends its own provider instead of the shared descriptor one.
+            resource_providers.append(
+                PythonSerializableResourceProvider(
+                    name=name,
+                    type=ResourceType.AGENT,
+                    module="flink_agents.runtime.internal_subagent",
+                    clazz="InternalSubagentSetup",
+                    serialized={"child_plan": child_plan, "scope": name},
+                )
+            )
+            continue
         else:
             msg = (
-                f"AGENT resource '{name}' must be a SubagentSetup or a "
-                f"ResourceDescriptor, but got {type(value).__name__}."
+                f"AGENT resource '{name}' must be a SubagentSetup, a "
+                f"ResourceDescriptor, or an Agent, but got "
+                f"{type(value).__name__}."
             )
             raise TypeError(msg)
+        resource_providers.append(
+            PythonResourceProvider.get(name=name, descriptor=descriptor)
+        )
 
     for resource_type in [
         ResourceType.CHAT_MODEL,
@@ -435,14 +534,12 @@ def _get_resource_providers(
         ResourceType.VECTOR_STORE,
     ]:
         for name, descriptor in agent.resources[resource_type].items():
-            if hasattr(descriptor.clazz, "_is_java_resource"):
-                resource_providers.append(
-                    JavaResourceProvider.get(name=name, descriptor=descriptor)
-                )
-            else:
-                resource_providers.append(
-                    PythonResourceProvider.get(name=name, descriptor=descriptor)
-                )
+            provider = (
+                JavaResourceProvider
+                if descriptor.language == "java"
+                else PythonResourceProvider
+            )
+            resource_providers.append(provider.get(name, descriptor, resource_type))
 
     return resource_providers
 

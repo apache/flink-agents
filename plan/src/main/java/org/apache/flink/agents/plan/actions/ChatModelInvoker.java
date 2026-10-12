@@ -19,8 +19,8 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
-import org.apache.flink.agents.api.chat.model.python.PythonChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
@@ -28,7 +28,9 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ExecutionReporters;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.routing.ModelRoutingResolver;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,12 +57,12 @@ public final class ChatModelInvoker {
 
     /** JSON-serializable result of provider execution, including ordinary failures. */
     public static final class InvocationOutcome {
-        public ChatMessage response;
+        public ChatResult response;
         public String error;
 
         public InvocationOutcome() {}
 
-        InvocationOutcome(ChatMessage response, String error) {
+        InvocationOutcome(ChatResult response, String error) {
             this.response = response;
             this.error = error;
         }
@@ -89,14 +91,15 @@ public final class ChatModelInvoker {
     public static final class ChatAttemptResult {
         public final String model;
         public final BaseChatModelSetup chatModel;
-        public final ChatMessage response;
+        public final ChatResult response;
+        public Object structuredOutput;
         public final int retryCount;
         public final int totalRetryWaitSec;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
-                ChatMessage response,
+                ChatResult response,
                 int retryCount,
                 int totalRetryWaitSec) {
             this.model = model;
@@ -154,8 +157,8 @@ public final class ChatModelInvoker {
         try {
             chatModel = (BaseChatModelSetup) ctx.getResource(model, ResourceType.CHAT_MODEL);
         } catch (Exception e) {
-            if (ModelRoutingResolver.isCancellation(e)) {
-                if (e instanceof InterruptedException) {
+            if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
                     Thread.currentThread().interrupt();
                 }
                 throw e;
@@ -176,7 +179,7 @@ public final class ChatModelInvoker {
 
         int actualRetryCount = 0;
         int totalWaitTimeSec = 0;
-        ChatMessage response;
+        ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
@@ -196,8 +199,9 @@ public final class ChatModelInvoker {
                             return new InvocationOutcome(
                                     chatModel.chat(messages, promptArgs, Map.of()), null);
                         } catch (Exception e) {
-                            if (ModelRoutingResolver.isCancellation(e)) {
-                                if (e instanceof InterruptedException) {
+                            if (Thread.currentThread().isInterrupted()
+                                    || CancellationUtils.isCancellation(e)) {
+                                if (CancellationUtils.isInterruption(e)) {
                                     Thread.currentThread().interrupt();
                                 }
                                 throw e;
@@ -247,14 +251,17 @@ public final class ChatModelInvoker {
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
-                // only generate structured output for final response.
+                Object structuredOutput = null;
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response =
+                    structuredOutput =
                             ChatModelAction.generateStructuredOutputWithReport(
                                     ctx, response, outputSchema);
                 }
-                return new ChatAttemptResult(
-                        model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                ChatAttemptResult result =
+                        new ChatAttemptResult(
+                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                result.structuredOutput = structuredOutput;
+                return result;
             } catch (InterruptedException e) {
                 // A cancellation signal, not a model failure: restore the interrupt status and
                 // propagate immediately so task shutdown isn't delayed by retry backoff or an
@@ -265,7 +272,10 @@ public final class ChatModelInvoker {
                 if (Thread.currentThread().isInterrupted()) {
                     throw new InterruptedException("Chat execution interrupted");
                 }
-                if (ModelRoutingResolver.isCancellation(e)) {
+                if (CancellationUtils.isCancellation(e)) {
+                    if (CancellationUtils.isInterruption(e)) {
+                        Thread.currentThread().interrupt();
+                    }
                     throw e;
                 }
                 if (attempt < numRetries) {

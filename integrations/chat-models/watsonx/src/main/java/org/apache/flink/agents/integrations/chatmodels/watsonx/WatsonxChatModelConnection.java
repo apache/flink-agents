@@ -26,8 +26,17 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ContentBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
+import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.tools.Tool;
@@ -45,13 +54,13 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /** Chat model connection for the IBM watsonx.ai text chat REST API. */
 public class WatsonxChatModelConnection extends BaseChatModelConnection {
@@ -239,37 +248,67 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
-     * Whether watsonx.ai can constrain generation to a schema for {@code effectiveModel}.
+     * Answers {@link NativeStructuredOutputSupport#NATIVE_RECOMMENDED} whenever the request can
+     * carry the schema, whatever the model.
      *
-     * <p>Always {@code true}, and deliberately independent of the argument. The constraint is
-     * applied by the serving runtime, through vLLM guided decoding, rather than by a per-model
-     * capability. IBM states that chat API support requires the vLLM runtime, on its pages about
-     * inferencing <i>custom</i> foundation models; it does not state in so many words that its own
-     * provided models are served the same way. That last step rests instead on the chat request
-     * body exposing vLLM's guided-decoding parameters verbatim.
+     * <p>Capability is deliberately independent of the model. The constraint is applied by the
+     * serving runtime, through vLLM guided decoding, rather than by a per-model capability. IBM
+     * states that chat API support requires the vLLM runtime, on its pages about inferencing
+     * <i>custom</i> foundation models; it does not state in so many words that its own provided
+     * models are served the same way. That last step rests instead on the chat request body
+     * exposing vLLM's guided-decoding parameters verbatim.
      *
      * <p>There is no allowlist because IBM publishes no per-model structured-output signal to key
      * on: the foundation-model comparison table has columns for chat and tool interaction and none
      * for structured output, and the model-specs API exposes no such flag. A list written here
      * would encode a gate nobody documents and would report not-capable for models that do work.
      *
-     * <p>This diverges from the base contract, which describes capability as model-dependent and
-     * requires an unrecognized model to report {@code false}. That rule guards against failing at
-     * the provider for a model whose capability is unknown; here capability is a property of the
-     * endpoint rather than of the model, so there is no unknown to guard against.
-     *
-     * <p>Reads no instance state, so capability stays answerable independently of how the
-     * connection was configured.
+     * <p>An unrecognized model is therefore not reported {@code FEASIBLE}, as it is on a connection
+     * that classifies by name: capability is a property of the endpoint rather than of the model,
+     * so there is no unknown model to degrade for.
      */
     @Override
-    protected boolean supportsNativeStructuredOutput(String effectiveModel) {
-        return true;
+    protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return canApplyNativeStructuredOutput(outputSchema, tools, modelParams)
+                ? NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                : NativeStructuredOutputSupport.INFEASIBLE;
+    }
+
+    /**
+     * Whether {@code outputSchema} is a form this connection could translate into a native {@code
+     * response_format}, the effective model's capability aside.
+     *
+     * <p>Only a POJO {@link Class} has a native translation here; a {@code RowTypeInfo} wrapped in
+     * {@code OutputSchema}, or any other form, has none and keeps the prompt-engineering fallback.
+     * Since this connection's capability does not depend on the model, the schema form is the whole
+     * of what it can report infeasible.
+     *
+     * <p>A {@code true} answer is about the schema form alone, and is not a promise that a payload
+     * gets built. A caller-supplied {@code response_format} is deliberately not a condition here,
+     * and the native branch answers that conflict by raising rather than by skipping, so a request
+     * the structured-output query reports feasible can still be met with an exception. Reporting
+     * the conflict infeasible instead would turn a documented error into a silently unconstrained
+     * request.
+     *
+     * <p>Neither the tools nor the parameters are read; this connection sends a native schema
+     * alongside bound tools.
+     *
+     * @param outputSchema the schema the request would carry, or null for an unconstrained request
+     * @param tools not read; bound tools do not stop this connection sending a native schema
+     * @param modelParams not read
+     * @return true if {@code outputSchema} is a POJO {@link Class}; a caller-supplied {@code
+     *     response_format} does not make it false, and the native branch raises on that conflict
+     */
+    private boolean canApplyNativeStructuredOutput(
+            Object outputSchema, List<Tool> tools, Map<String, Object> modelParams) {
+        return outputSchema instanceof Class;
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
-        return doChat(messages, tools, modelParams, null);
+        return chat(messages, tools, modelParams, null);
     }
 
     /**
@@ -279,15 +318,17 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
      * so that the prompt-engineering fallback still governs the response.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
             Object outputSchema) {
+        // Media blocks are not sent yet; fail rather than drop them (#1059).
+        UnsupportedContentBlockException.rejectMedia("IBM watsonx.ai", messages);
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -323,16 +364,26 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                                 response.statusCode(), response.body()));
             }
 
-            final ChatMessage chatMessage =
-                    parseResponse(MAPPER.readTree(response.body()), modelName);
+            ChatResult result = parseResponse(MAPPER.readTree(response.body()), modelName);
             if (extractReasoning) {
-                final String[] parts = extractReasoning(chatMessage.getText());
-                chatMessage.setText(parts[0]);
+                String[] parts = extractReasoning(result.getText());
                 if (parts[1] != null) {
-                    chatMessage.getExtraArgs().put("reasoning", parts[1]);
+                    List<ContentBlock> blocks = new java.util.ArrayList<>();
+                    blocks.add(new ReasoningBlock(parts[1]));
+                    if (!parts[0].isEmpty()) {
+                        blocks.add(new TextBlock(parts[0]));
+                    }
+                    blocks.addAll(result.getToolCalls());
+                    return new ChatResult(
+                            result.getMessage().withBlocks(blocks),
+                            result.getModel(),
+                            result.getResponseId(),
+                            result.getUsage(),
+                            result.getFinishReason(),
+                            result.getMetadata());
                 }
             }
-            return chatMessage;
+            return result;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new RuntimeException("Interrupted while calling watsonx.ai.", e);
@@ -482,13 +533,9 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         // written at the payload root. When no native translation applies the key stays absent
         // rather than being written as a null, which would still be a present field on the wire.
         //
-        // TODO(#912): the requested strategy is not visible here, so a request that explicitly
-        // asked for NATIVE cannot be told apart from one that merely resolved to it. Capability is
-        // unconditional on this connection, so the schema form is the only way through to an
-        // unconstrained response: a caller who asked for NATIVE and passed a schema this branch
-        // cannot translate gets one silently. Once strategy resolution is wired up, NATIVE must
-        // either bypass this re-check or fail explicitly.
-        if (outputSchema instanceof Class && supportsNativeStructuredOutput(modelName)) {
+        // The feasibility check is asked rather than restated, so a caller asking the same question
+        // gets the answer this branch acts on.
+        if (canApplyNativeStructuredOutput(outputSchema, tools, modelParams)) {
             // A caller reaches the same payload field through either channel. Only the branch that
             // actually sends a derived schema may reject the caller's value; every path that skips
             // it leaves that value untouched. A null is not a conflict, because both write loops
@@ -584,8 +631,8 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
      * <ul>
      *   <li>SYSTEM/USER messages carry {@code role} and {@code content}.
      *   <li>ASSISTANT messages may carry {@code tool_calls} with JSON string arguments.
-     *   <li>TOOL messages carry {@code tool_call_id} referencing the original call, taken from the
-     *       {@code externalId} entry of the message extra args.
+     *   <li>TOOL messages carry {@code tool_call_id} referencing {@link
+     *       ToolResultBlock#getCallId()}.
      * </ul>
      */
     @VisibleForTesting
@@ -594,6 +641,13 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         for (ChatMessage message : messages) {
             final ObjectNode node = MAPPER.createObjectNode();
             final MessageRole role = message.getRole();
+            for (org.apache.flink.agents.api.chat.messages.ContentBlock block :
+                    message.getBlocks()) {
+                if (block instanceof org.apache.flink.agents.api.chat.messages.MediaBlock) {
+                    throw new IllegalArgumentException(
+                            "watsonx cannot send block " + block.getType());
+                }
+            }
             switch (role) {
                 case SYSTEM:
                 case USER:
@@ -605,20 +659,28 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
                     if (message.getText() != null && !message.getText().isEmpty()) {
                         node.put("content", message.getText());
                     }
-                    final List<Map<String, Object>> toolCalls = message.getToolCalls();
-                    if (toolCalls != null && !toolCalls.isEmpty()) {
+                    final List<ToolCallBlock> toolCalls = message.getToolCalls();
+                    if (!toolCalls.isEmpty()) {
                         node.set("tool_calls", convertToolCalls(toolCalls));
                     }
                     break;
                 case TOOL:
-                    final Object externalId = message.getExtraArgs().get("externalId");
-                    if (externalId == null) {
-                        throw new IllegalArgumentException(
-                                "Tool message must have 'externalId' in extra args.");
-                    }
+                    ToolResultBlock toolResult = (ToolResultBlock) message.getBlocks().get(0);
                     node.put("role", "tool");
-                    node.put("content", message.getText());
-                    node.put("tool_call_id", externalId.toString());
+                    node.put(
+                            "content",
+                            toolResult.getBlocks().stream()
+                                    .map(
+                                            block -> {
+                                                if (!(block instanceof TextBlock)) {
+                                                    throw new IllegalArgumentException(
+                                                            "watsonx cannot send tool result block "
+                                                                    + block.getType());
+                                                }
+                                                return ((TextBlock) block).getText();
+                                            })
+                                    .collect(Collectors.joining()));
+                    node.put("tool_call_id", toolResult.getCallId());
                     break;
                 default:
                     throw new IllegalArgumentException("Unsupported role: " + role);
@@ -628,36 +690,19 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         return result;
     }
 
-    private static ArrayNode convertToolCalls(List<Map<String, Object>> toolCalls) {
-        final ArrayNode result = MAPPER.createArrayNode();
-        for (Map<String, Object> toolCall : toolCalls) {
-            final Object originalId = toolCall.get("original_id");
-            final Object id = originalId != null ? originalId : toolCall.get("id");
-            if (id == null) {
-                throw new IllegalArgumentException(
-                        "Tool call must have either 'original_id' or 'id' field.");
-            }
-
-            @SuppressWarnings("unchecked")
-            final Map<String, Object> function = (Map<String, Object>) toolCall.get("function");
-            final Object arguments = function.get("arguments");
-            final String argumentsJson;
-            try {
-                argumentsJson =
-                        arguments instanceof String
-                                ? (String) arguments
-                                : MAPPER.writeValueAsString(arguments);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-
-            final ObjectNode node = MAPPER.createObjectNode();
-            node.put("id", id.toString());
+    private static ArrayNode convertToolCalls(List<ToolCallBlock> calls) {
+        ArrayNode result = MAPPER.createArrayNode();
+        for (ToolCallBlock call : calls) {
+            ObjectNode node = result.addObject();
+            node.put("id", call.getCallId());
             node.put("type", "function");
-            final ObjectNode functionNode = node.putObject("function");
-            functionNode.put("name", (String) function.get("name"));
-            functionNode.put("arguments", argumentsJson);
-            result.add(node);
+            ObjectNode function = node.putObject("function");
+            function.put("name", call.getName());
+            try {
+                function.put("arguments", MAPPER.writeValueAsString(call.getInput()));
+            } catch (Exception e) {
+                throw new IllegalArgumentException("Cannot serialize tool arguments", e);
+            }
         }
         return result;
     }
@@ -684,11 +729,11 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Parses the watsonx.ai chat response. When the provider reports a finish reason it is carried
-     * verbatim in {@code extraArgs} under {@code finish_reason}, including values outside the
-     * documented set, and the entry is absent when the provider reports none.
+     * verbatim in {@link ChatResult#getFinishReason()}, including values outside the documented
+     * set, and is null when the provider reports none.
      */
     @VisibleForTesting
-    static ChatMessage parseResponse(JsonNode response, String modelName) {
+    static ChatResult parseResponse(JsonNode response, String modelName) {
         final JsonNode choice = response.required("choices").get(0);
         final JsonNode responseMessage = choice.required("message");
 
@@ -708,51 +753,37 @@ public class WatsonxChatModelConnection extends BaseChatModelConnection {
         final JsonNode contentNode = responseMessage.get("content");
         final String content =
                 contentNode != null && !contentNode.isNull() ? contentNode.asText() : "";
-        final ChatMessage chatMessage = ChatMessage.assistant(content);
-
-        final JsonNode toolCallsNode = responseMessage.get("tool_calls");
-        if (toolCallsNode != null && toolCallsNode.isArray() && !toolCallsNode.isEmpty()) {
-            final List<Map<String, Object>> toolCalls = new java.util.ArrayList<>();
-            for (JsonNode toolCallNode : toolCallsNode) {
-                final String id = toolCallNode.required("id").asText();
-                final JsonNode functionNode = toolCallNode.required("function");
-                final Map<String, Object> arguments =
-                        parseToolArguments(functionNode.get("arguments"));
-                toolCalls.add(
-                        Map.of(
-                                "id",
-                                id,
-                                "original_id",
-                                id,
-                                "type",
-                                "function",
-                                "function",
-                                Map.of(
-                                        "name",
-                                        functionNode.required("name").asText(),
-                                        "arguments",
-                                        arguments)));
-            }
-            chatMessage.setToolCalls(toolCalls);
+        List<ContentBlock> blocks = new java.util.ArrayList<>();
+        if (!content.isEmpty()) {
+            blocks.add(new TextBlock(content));
         }
-
-        final JsonNode usage = response.get("usage");
-        final boolean hasUsageMetadata =
-                modelName != null && !modelName.isBlank() && usage != null && !usage.isNull();
-        if (hasUsageMetadata || finishReason != null) {
-            final Map<String, Object> extraArgs = new HashMap<>(chatMessage.getExtraArgs());
-            if (hasUsageMetadata) {
-                extraArgs.put("model_name", modelName);
-                extraArgs.put("promptTokens", usage.path("prompt_tokens").asLong(0));
-                extraArgs.put("completionTokens", usage.path("completion_tokens").asLong(0));
+        JsonNode calls = responseMessage.get("tool_calls");
+        if (calls != null && calls.isArray()) {
+            for (JsonNode call : calls) {
+                JsonNode function = call.required("function");
+                blocks.add(
+                        new ToolCallBlock(
+                                call.required("id").asText(),
+                                function.required("name").asText(),
+                                parseToolArguments(function.get("arguments"))));
             }
-            if (finishReason != null) {
-                extraArgs.put("finish_reason", finishReason);
-            }
-            chatMessage.setExtraArgs(extraArgs);
         }
-
-        return chatMessage;
+        JsonNode usage = response.get("usage");
+        return new ChatResult(
+                ChatMessage.assistant(blocks),
+                modelName,
+                response.hasNonNull("id") ? response.get("id").asText() : null,
+                usage == null || usage.isNull()
+                        ? null
+                        : new TokenUsage(
+                                usage.hasNonNull("prompt_tokens")
+                                        ? usage.get("prompt_tokens").longValue()
+                                        : null,
+                                usage.hasNonNull("completion_tokens")
+                                        ? usage.get("completion_tokens").longValue()
+                                        : null),
+                finishReason,
+                null);
     }
 
     /**

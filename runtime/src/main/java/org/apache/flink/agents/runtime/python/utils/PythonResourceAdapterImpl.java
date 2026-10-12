@@ -18,19 +18,19 @@
 package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.python.PythonObjectScope;
-import org.apache.flink.agents.api.resource.python.PythonResourceAdapter;
-import org.apache.flink.agents.api.resource.python.PythonResourceWrapper;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.Document;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQuery;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
+import org.apache.flink.agents.plan.resource.python.PythonObjectScope;
+import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
+import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
 import pemja.core.object.PyObject;
 
 import java.util.ArrayList;
@@ -141,7 +141,10 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
-        return (PyObject) interpreterManager.invoke(CREATE_RESOURCE, module, clazz, kwargs);
+        // Resource wrappers live in the operator-level cache and may outlive the managed worker
+        // that observes the cache miss. Bind their root handles to the owner interpreter instead of
+        // that worker's disposable interpreter.
+        return (PyObject) interpreterManager.invokeOnOwner(CREATE_RESOURCE, module, clazz, kwargs);
     }
 
     @Override
@@ -151,15 +154,15 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
 
     @Override
     public ChatMessage fromPythonChatMessage(Object pythonChatMessage) {
-        // TODO: Update this method after the pemja findClass method is fixed.
-        ChatMessage chatMessage = new ChatMessage();
+        return ChatMessage.fromMap(
+                (Map<String, Object>)
+                        interpreterManager.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage));
+    }
 
-        String roleValue =
-                (String)
-                        interpreterManager.invoke(
-                                TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
-        chatMessage.setRole(MessageRole.fromValue(roleValue));
-        return chatMessage;
+    @Override
+    public ChatResult fromPythonChatResult(Object response) {
+        return ChatResult.fromMap(
+                (Map<String, Object>) interpreterManager.invoke(TO_JAVA_CHAT_MESSAGE, response));
     }
 
     @Override

@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,9 +59,11 @@ public class LongTermUpdateEvent extends MemoryEvent {
         Map<String, Object> attributes = new LinkedHashMap<>();
         attributes.put("key", key);
         attributes.put("value", value);
+        // Store cleared_sets in a mutable list: the runtime keeps events in operator state that
+        // Flink 1.20's Kryo rebuilds by calling add() per element, which immutable copies reject.
         attributes.put(
                 "cleared_sets",
-                clearedSets == null ? Collections.emptyList() : List.copyOf(clearedSets));
+                clearedSets == null ? new ArrayList<>() : new ArrayList<>(clearedSets));
         return attributes;
     }
 
@@ -68,10 +71,10 @@ public class LongTermUpdateEvent extends MemoryEvent {
         Map<String, Object> normalized = new LinkedHashMap<>(attributes);
         Object clearedSets = normalized.get("cleared_sets");
         if (clearedSets == null) {
-            normalized.put("cleared_sets", Collections.emptyList());
+            normalized.put("cleared_sets", new ArrayList<>());
         } else if (clearedSets instanceof List
                 && ((List<?>) clearedSets).stream().allMatch(String.class::isInstance)) {
-            normalized.put("cleared_sets", List.copyOf((List<?>) clearedSets));
+            normalized.put("cleared_sets", new ArrayList<>((List<?>) clearedSets));
         } else {
             throw new IllegalArgumentException(
                     "Long-term update attribute 'cleared_sets' must be a list of strings.");
@@ -83,6 +86,11 @@ public class LongTermUpdateEvent extends MemoryEvent {
     @JsonIgnore
     public List<String> getClearedSets() {
         Object clearedSets = getAttr("cleared_sets");
-        return clearedSets instanceof List ? (List<String>) clearedSets : Collections.emptyList();
+        // clearedSets is the mutable list stored in the attributes (kept mutable for Flink 1.20's
+        // Kryo; see attributes() above). Wrap it in a read-only view so callers cannot mutate the
+        // event's stored state through the returned list.
+        return clearedSets instanceof List
+                ? Collections.unmodifiableList((List<String>) clearedSets)
+                : Collections.emptyList();
     }
 }

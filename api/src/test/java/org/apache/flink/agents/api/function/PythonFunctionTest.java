@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PythonFunctionTest {
 
@@ -47,5 +48,25 @@ class PythonFunctionTest {
         String json = m.writeValueAsString(fn);
         PythonFunction back = m.readValue(json, PythonFunction.class);
         assertThat(back).isEqualTo(fn);
+    }
+
+    @Test
+    void rejectsEmptyModule() {
+        assertThatThrownBy(() -> new PythonFunction("", "MyClass.method"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("module");
+    }
+
+    @Test
+    void rejectsEmptyQualName() {
+        assertThatThrownBy(() -> new PythonFunction("pkg.mod", ""))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("qualName");
+    }
+
+    @Test
+    void factoryRejectsEmptyIdentifiers() {
+        assertThatThrownBy(() -> PythonFunction.of("", ""))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 }

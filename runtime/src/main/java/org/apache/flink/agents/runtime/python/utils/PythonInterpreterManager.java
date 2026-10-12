@@ -43,11 +43,13 @@ import java.util.function.Supplier;
  * Owns the Pemja interpreters used by one operator subtask.
  *
  * <p>A {@link PythonInterpreter} is never shared by concurrently executing threads. The owner
- * mailbox thread and Flink Agents' managed Java async workers bind an interpreter to themselves.
- * Calls from every other thread are routed to a bounded set of Java callback workers, each of which
- * owns its interpreter. This distinction is required for threads created by CPython (for example
- * Mem0 or Python's async executor): creating a Pemja interpreter there would attach a second {@code
- * PyThreadState} to the same native thread.
+ * mailbox thread and Flink Agents' managed Java async workers bind an interpreter to themselves for
+ * ordinary calls. A managed worker may also use the owner interpreter to create a handle that must
+ * survive that worker, but only while the operator's execution-access checker guarantees exclusive
+ * access. Calls from every other thread are routed to a bounded set of Java callback workers, each
+ * of which owns its interpreter. This distinction is required for threads created by CPython (for
+ * example Mem0 or Python's async executor): creating a Pemja interpreter there would attach a
+ * second {@code PyThreadState} to the same native thread.
  *
  * <p>Pemja's {@code MULTI_THREAD} interpreters share the same CPython main interpreter, so Python
  * resource objects can still be initialized once and passed as opaque handles to calls made by any
@@ -68,7 +70,9 @@ public final class PythonInterpreterManager implements AutoCloseable {
 
     private final Supplier<PythonInterpreter> interpreterFactory;
     private final Consumer<PythonInterpreter> interpreterInitializer;
+    private final PythonInterpreter ownerInterpreter;
     private final Thread ownerThread;
+    private final Runnable ownerInterpreterAccessChecker;
     private final Map<Thread, PythonInterpreter> interpreters = new ConcurrentHashMap<>();
     private final ThreadLocal<PythonInterpreter> threadInterpreter = new ThreadLocal<>();
     private final ThreadLocal<Integer> callbackLane;
@@ -85,7 +89,8 @@ public final class PythonInterpreterManager implements AutoCloseable {
                 ownerInterpreter,
                 interpreterFactory,
                 PythonInterpreterManager::initializeInterpreter,
-                DEFAULT_CALLBACK_WORKERS);
+                DEFAULT_CALLBACK_WORKERS,
+                PythonInterpreterManager::rejectNonOwnerInterpreterAccess);
     }
 
     public PythonInterpreterManager(
@@ -96,7 +101,21 @@ public final class PythonInterpreterManager implements AutoCloseable {
                 ownerInterpreter,
                 interpreterFactory,
                 PythonInterpreterManager::initializeInterpreter,
-                callbackWorkerCount);
+                callbackWorkerCount,
+                PythonInterpreterManager::rejectNonOwnerInterpreterAccess);
+    }
+
+    public PythonInterpreterManager(
+            PythonInterpreter ownerInterpreter,
+            Supplier<PythonInterpreter> interpreterFactory,
+            int callbackWorkerCount,
+            Runnable ownerInterpreterAccessChecker) {
+        this(
+                ownerInterpreter,
+                interpreterFactory,
+                PythonInterpreterManager::initializeInterpreter,
+                callbackWorkerCount,
+                ownerInterpreterAccessChecker);
     }
 
     PythonInterpreterManager(
@@ -107,7 +126,8 @@ public final class PythonInterpreterManager implements AutoCloseable {
                 ownerInterpreter,
                 interpreterFactory,
                 interpreterInitializer,
-                DEFAULT_CALLBACK_WORKERS);
+                DEFAULT_CALLBACK_WORKERS,
+                PythonInterpreterManager::rejectNonOwnerInterpreterAccess);
     }
 
     PythonInterpreterManager(
@@ -115,14 +135,30 @@ public final class PythonInterpreterManager implements AutoCloseable {
             Supplier<PythonInterpreter> interpreterFactory,
             Consumer<PythonInterpreter> interpreterInitializer,
             int callbackWorkerCount) {
+        this(
+                ownerInterpreter,
+                interpreterFactory,
+                interpreterInitializer,
+                callbackWorkerCount,
+                PythonInterpreterManager::rejectNonOwnerInterpreterAccess);
+    }
+
+    PythonInterpreterManager(
+            PythonInterpreter ownerInterpreter,
+            Supplier<PythonInterpreter> interpreterFactory,
+            Consumer<PythonInterpreter> interpreterInitializer,
+            int callbackWorkerCount,
+            Runnable ownerInterpreterAccessChecker) {
         if (callbackWorkerCount <= 0) {
             throw new IllegalArgumentException("Callback worker count must be greater than zero.");
         }
         this.interpreterFactory = Objects.requireNonNull(interpreterFactory);
         this.interpreterInitializer = Objects.requireNonNull(interpreterInitializer);
+        this.ownerInterpreterAccessChecker = Objects.requireNonNull(ownerInterpreterAccessChecker);
         this.ownerThread = Thread.currentThread();
 
         PythonInterpreter initializedOwner = initialize(Objects.requireNonNull(ownerInterpreter));
+        this.ownerInterpreter = initializedOwner;
         interpreters.put(ownerThread, initializedOwner);
         threadInterpreter.set(initializedOwner);
         callbackExecutors = createCallbackExecutors(callbackWorkerCount);
@@ -162,6 +198,29 @@ public final class PythonInterpreterManager implements AutoCloseable {
         }
     }
 
+    /**
+     * Executes an operation using the owner interpreter without changing the calling Java thread.
+     *
+     * <p>The owner thread may call this method directly. Any other caller must satisfy the supplied
+     * execution-access checker, which requires a managed worker to own the parallel execution lock
+     * in the JDK &lt; 21 execution path. The caller is responsible for that serialization because
+     * Pemja does not synchronize calls to one interpreter.
+     */
+    public <T> T withOwnerInterpreter(Function<PythonInterpreter, T> operation) {
+        lifecycleLock.readLock().lock();
+        try {
+            if (closed) {
+                throw new IllegalStateException("Python interpreter manager is already closed.");
+            }
+            if (Thread.currentThread() != ownerThread) {
+                ownerInterpreterAccessChecker.run();
+            }
+            return Objects.requireNonNull(operation).apply(ownerInterpreter);
+        } finally {
+            lifecycleLock.readLock().unlock();
+        }
+    }
+
     public void exec(String code) {
         withInterpreter(
                 interpreter -> {
@@ -172,6 +231,10 @@ public final class PythonInterpreterManager implements AutoCloseable {
 
     public Object invoke(String name, Object... args) {
         return withInterpreter(interpreter -> interpreter.invoke(name, args));
+    }
+
+    public Object invokeOnOwner(String name, Object... args) {
+        return withOwnerInterpreter(interpreter -> interpreter.invoke(name, args));
     }
 
     public Object get(String name) {
@@ -244,6 +307,11 @@ public final class PythonInterpreterManager implements AutoCloseable {
 
     private static void initializeInterpreter(PythonInterpreter interpreter) {
         interpreter.exec(PYTHON_IMPORTS);
+    }
+
+    private static void rejectNonOwnerInterpreterAccess() {
+        throw new IllegalStateException(
+                "Owner interpreter access from a non-owner thread requires an execution checker.");
     }
 
     /** Releases the interpreter owned by the current managed Java worker. */
