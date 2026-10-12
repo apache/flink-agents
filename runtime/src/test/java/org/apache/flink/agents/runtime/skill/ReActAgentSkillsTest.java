@@ -20,6 +20,7 @@ package org.apache.flink.agents.runtime.skill;
 
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -60,7 +61,7 @@ class ReActAgentSkillsTest {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             throw new UnsupportedOperationException("These tests only open the setup.");
         }
@@ -95,7 +96,7 @@ class ReActAgentSkillsTest {
             Object loaded =
                     toolNamed(setup, Skills.LOAD_SKILL_TOOL)
                             .call(new ToolParameters(Map.of("name", "github")))
-                            .getResult();
+                            .getText();
             assertThat((String) loaded).startsWith("<skill_content name=\"github\">");
         }
     }
