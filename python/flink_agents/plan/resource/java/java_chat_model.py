@@ -167,6 +167,8 @@ class JavaChatModelSetup(BaseChatModelSetup):
     def open(self) -> None:
         """Open the java resource."""
         self._j_resource.open()
+        resolved = self._j_resource.getSkills()
+        self.skills = list(resolved) if resolved else None
 
     @override
     def chat(

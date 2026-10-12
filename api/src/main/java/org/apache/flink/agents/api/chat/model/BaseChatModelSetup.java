@@ -113,20 +113,9 @@ public abstract class BaseChatModelSetup extends Resource {
                     this.resourceContext.getResource((String) this.prompt, ResourceType.PROMPT);
         }
 
-        // Resolve skills_sources marker (plan-time source declarations) into skill names,
-        // then merge with the descriptor's explicit "skills" list. Explicit names come first;
-        // resolved names are appended, de-duplicated while preserving order.
-        List<SkillSourceSpec> skillsSources =
-                toSkillSourceSpecs(descriptor.getArgument("skills_sources"));
-        if (!skillsSources.isEmpty()) {
-            List<String> resolved = this.resourceContext.resolveSkillNamesForSources(skillsSources);
-            Set<String> merged = new LinkedHashSet<>();
-            if (this.skills != null) {
-                merged.addAll(this.skills);
-            }
-            merged.addAll(resolved);
-            this.skills = new ArrayList<>(merged);
-        }
+        // Resolve the skills_sources marker (plan-time source declarations) into skill names and
+        // merge them with the descriptor's explicit "skills" list. See resolveSkillsFromSources.
+        resolveSkillsFromSources();
 
         if (this.skills != null) {
             this.skillDiscoveryPrompt =
@@ -187,6 +176,32 @@ public abstract class BaseChatModelSetup extends Resource {
     @Nullable
     private static String nullIfEmpty(@Nullable String value) {
         return value == null || value.isEmpty() ? null : value;
+    }
+
+    /**
+     * Resolve the {@code skills_sources} descriptor marker into concrete skill names and merge them
+     * into {@link #skills}: the descriptor's explicit names come first, resolved names are
+     * appended, and duplicates collapse while preserving order.
+     *
+     * <p>Separate from {@link #open()} because a cross-language wrapper overrides {@code open()} to
+     * delegate to the other language, so the base implementation never runs for that instance and
+     * its own {@code skills} field would stay at its construction-time value. The wrapper shares
+     * this setup's {@link ResourceContext}, so resolving here yields the same list the delegated
+     * setup computed — with no bridge round trip.
+     */
+    protected void resolveSkillsFromSources() throws Exception {
+        List<SkillSourceSpec> skillsSources =
+                toSkillSourceSpecs(descriptor.getArgument("skills_sources"));
+        if (skillsSources.isEmpty()) {
+            return;
+        }
+        List<String> resolved = this.resourceContext.resolveSkillNamesForSources(skillsSources);
+        Set<String> merged = new LinkedHashSet<>();
+        if (this.skills != null) {
+            merged.addAll(this.skills);
+        }
+        merged.addAll(resolved);
+        this.skills = new ArrayList<>(merged);
     }
 
     /**

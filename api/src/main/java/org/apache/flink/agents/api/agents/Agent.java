@@ -104,6 +104,13 @@ public class Agent {
      * Merge environment-level resources into this agent. Entries already present at the agent level
      * are kept (agent wins on duplicates). Environment entries are placed before agent entries in
      * iteration order, so downstream merging sees env-then-agent precedence.
+     *
+     * <p>Order is load-bearing, not cosmetic: downstream consumers derive precedence from it.
+     * {@code AgentPlan} flattens these entries into an ordered source list, and later entries win
+     * on duplicate names. Overwriting an environment entry in place would leave the agent's
+     * replacement in the environment's slot, so an unrelated environment entry could end up last
+     * and win instead — the opposite of the contract above. Environment entries the agent overrides
+     * are therefore dropped, and the agent's own entries are appended as a block.
      */
     public void addResourcesIfAbsent(Map<ResourceType, Map<String, Object>> resources) {
         for (ResourceType type : resources.keySet()) {
@@ -112,8 +119,13 @@ public class Agent {
                 continue;
             }
             Map<String, Object> existing = this.resources.get(type);
-            // Rebuild to establish env-before-agent iteration order.
-            Map<String, Object> merged = new LinkedHashMap<>(envTyped);
+            Map<String, Object> merged = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> envEntry : envTyped.entrySet()) {
+                if (!existing.containsKey(envEntry.getKey())) {
+                    merged.put(envEntry.getKey(), envEntry.getValue());
+                }
+            }
+            // Appended as a block so agent entries stay last and keep winning on duplicates.
             merged.putAll(existing);
             this.resources.put(type, merged);
         }

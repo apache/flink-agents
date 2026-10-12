@@ -645,6 +645,10 @@ public class AgentPlan implements Serializable {
             } else if (type == ResourceType.SKILLS) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     if (kv.getValue() instanceof Skills) {
+                        // Re-insert instead of overwriting in place: a name already seeded from a
+                        // @Skills method would otherwise keep its annotation-time slot, and the
+                        // flattened source order decides which declaration wins.
+                        skillsObjects.remove(kv.getKey());
                         skillsObjects.put(kv.getKey(), (Skills) kv.getValue());
                     }
                 }

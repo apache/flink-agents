@@ -471,10 +471,13 @@ def _get_resource_providers(
     for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
         _add_mcp_server(name, resource_providers, descriptor, config)
 
-    # Merge decorator-based and programmatic skills
-    all_skills: Dict[str, Skills] = dict(
-        {**skills_descriptors, **agent.resources[ResourceType.SKILLS]}.items()
-    )
+    # Merge decorator-based and programmatic skills. A name declared both ways resolves
+    # to the programmatic declaration and moves to the end: the flattened source order
+    # decides which declaration wins, and decorator declarations are the lowest level.
+    all_skills: Dict[str, Skills] = dict(skills_descriptors)
+    for name, skills in agent.resources[ResourceType.SKILLS].items():
+        all_skills.pop(name, None)
+        all_skills[name] = skills
     _add_skills(all_skills, resource_providers)
 
     for name, value in agent.resources[ResourceType.AGENT].items():

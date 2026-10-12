@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.vectorstores.VectorStoreQueryResult;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
@@ -29,6 +30,7 @@ import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import pemja.core.PythonInterpreter;
@@ -245,5 +247,53 @@ public class PythonResourceAdapterImplTest {
 
         assertThat(result).isEqualTo(expectedResult);
         verify(mockInterpreter).invoke(name, args);
+    }
+
+    /**
+     * A Python chat model running inside a Java agent reaches the agent's skill manager through
+     * this adapter — it is the object handed to {@code python_java_utils.get_resource_context}. The
+     * bridge therefore has to expose the skill methods the Python wrapper forwards to, and the
+     * specs have to reach the Java context retyped rather than as raw wire maps.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void resolveSkillNamesForSourcesDelegatesThroughRealJavaResourceAdapter() throws Exception {
+        when(resourceContext.resolveSkillNamesForSources(anyList())).thenReturn(List.of("demo"));
+
+        List<String> resolved =
+                adapterWithJavaResourceAdapter()
+                        .resolveSkillNamesForSources(
+                                List.of(
+                                        Map.<String, Object>of(
+                                                "scheme",
+                                                "Local",
+                                                "params",
+                                                Map.of("path", "/data"))));
+
+        assertThat(resolved).containsExactly("demo");
+        ArgumentCaptor<List<SkillSourceSpec>> captor = ArgumentCaptor.forClass(List.class);
+        verify(resourceContext).resolveSkillNamesForSources(captor.capture());
+        assertThat(captor.getValue())
+                .containsExactly(new SkillSourceSpec("local", Map.of("path", "/data")));
+    }
+
+    @Test
+    void generateAvailableSkillsPromptAndGetSkillDirsDelegateThroughBridge() throws Exception {
+        when(resourceContext.generateAvailableSkillsPrompt(List.of("demo")))
+                .thenReturn("<available_skills>demo</available_skills>");
+        when(resourceContext.getSkillDirs(List.of("demo"))).thenReturn(List.of("/tmp/demo"));
+
+        PythonResourceAdapterImpl adapter = adapterWithJavaResourceAdapter();
+
+        assertThat(adapter.generateAvailableSkillsPrompt(List.of("demo")))
+                .isEqualTo("<available_skills>demo</available_skills>");
+        assertThat(adapter.getSkillDirs(List.of("demo"))).containsExactly("/tmp/demo");
+    }
+
+    private PythonResourceAdapterImpl adapterWithJavaResourceAdapter() {
+        return new PythonResourceAdapterImpl(
+                resourceContext,
+                interpreterManager,
+                new JavaResourceAdapter(resourceContext, null));
     }
 }

@@ -22,6 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -224,5 +225,66 @@ public class PythonChatModelSetupTest {
         pythonChatModelSetup.setMetricGroup(metricGroup);
 
         verify(mockAdapter).setMetricGroup(mockChatModelSetup, metricGroup);
+    }
+
+    /**
+     * The wrapper's {@code open()} only delegates to Python, so the base implementation — the only
+     * place that expands the {@code skills_sources} marker — never runs for this instance. The
+     * resolved names still have to land on the wrapper, because the Java-side reader ({@code
+     * ChatModelAction.injectBashToolArgs}) builds the bash tool's {@code allowed_script_dirs} from
+     * {@code getSkills()} and a source-only declaration carries no explicit {@code skills}
+     * argument.
+     */
+    @Test
+    void openResolvesSkillsSourcesMarkerOntoTheWrapper() throws Exception {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        "flink_agents.integrations.chat_models.ollama.OllamaChatModelSetup",
+                        Map.of(
+                                "skills_sources",
+                                List.of(
+                                        new SkillSourceSpec(
+                                                "local", Map.of("path", "/data/skills")))));
+        when(mockGetResource.resolveSkillNamesForSources(anyList()))
+                .thenReturn(List.of("demo", "extra"));
+        PythonChatModelSetup setup =
+                new PythonChatModelSetup(
+                        mockAdapter, mockChatModelSetup, descriptor, mockGetResource);
+
+        setup.open();
+
+        assertThat(setup.getSkills()).containsExactly("demo", "extra");
+        verify(mockAdapter).callMethod(eq(mockChatModelSetup), eq("open"), anyMap());
+    }
+
+    @Test
+    void openKeepsExplicitSkillsFirstAndAppendsResolvedSources() throws Exception {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        "flink_agents.integrations.chat_models.ollama.OllamaChatModelSetup",
+                        Map.of(
+                                "skills",
+                                List.of("explicit"),
+                                "skills_sources",
+                                List.of(
+                                        new SkillSourceSpec(
+                                                "local", Map.of("path", "/data/skills")))));
+        when(mockGetResource.resolveSkillNamesForSources(anyList()))
+                .thenReturn(List.of("explicit", "demo"));
+        PythonChatModelSetup setup =
+                new PythonChatModelSetup(
+                        mockAdapter, mockChatModelSetup, descriptor, mockGetResource);
+
+        setup.open();
+
+        assertThat(setup.getSkills()).containsExactly("explicit", "demo");
+    }
+
+    @Test
+    void openLeavesSkillsNullWhenNoSourcesAreDeclared() throws Exception {
+        pythonChatModelSetup.open();
+
+        assertThat(pythonChatModelSetup.getSkills()).isNull();
+        verify(mockAdapter).callMethod(eq(mockChatModelSetup), eq("open"), anyMap());
     }
 }

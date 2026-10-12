@@ -22,6 +22,11 @@ through :class:`JavaResourceContextWrapper`, so expanding the marker written by 
 Java-side ``Skills`` object has to cross the bridge. Before the forwarding
 existed the wrapper inherited the empty default and the marker resolved to no
 skills without any error.
+
+The same wrapper builds the skill discovery prompt and the bash skill
+directories, so all three calls are covered here: the Java object behind the
+bridge (``PythonResourceAdapterImpl``) has to expose a matching method for each
+one, or the call fails with an ``AttributeError`` instead of resolving.
 """
 
 from typing import Any
@@ -36,13 +41,30 @@ from flink_agents.runtime.java_resource_adapter import JavaResourceAdapterImpl
 class _FakeJavaBridge:
     """Stand-in for the Java adapter object reached through pemja."""
 
-    def __init__(self, names: list[str] | None) -> None:
+    def __init__(
+        self,
+        names: list[str] | None,
+        prompt: str | None = None,
+        dirs: list[str] | None = None,
+    ) -> None:
         self._names = names
+        self._prompt = prompt
+        self._dirs = dirs
         self.received: Any = None
+        self.prompt_argument: Any = None
+        self.dirs_argument: Any = None
 
     def resolveSkillNamesForSources(self, sources: list[dict]) -> list[str] | None:
         self.received = sources
         return self._names
+
+    def generateAvailableSkillsPrompt(self, skill_names: list[str]) -> str | None:
+        self.prompt_argument = skill_names
+        return self._prompt
+
+    def getSkillDirs(self, skill_names: list[str]) -> list[str] | None:
+        self.dirs_argument = skill_names
+        return self._dirs
 
 
 def _wrapper(bridge: _FakeJavaBridge) -> JavaResourceContextWrapper:
@@ -83,3 +105,41 @@ def test_adapter_impl_normalizes_missing_bridge_result():
     bridge = _FakeJavaBridge(None)
 
     assert JavaResourceAdapterImpl(bridge).resolveSkillNamesForSources([]) == []
+
+
+def test_skill_prompt_and_dirs_forward_through_the_wrapper():
+    """The wrapper forwards all three skill calls, not just name resolution.
+
+    A Python chat model running inside a Java agent builds its discovery prompt and its
+    bash ``allowed_script_dirs`` through this context, so the Java object behind the
+    bridge has to expose the matching methods.
+    """
+    bridge = _FakeJavaBridge(None, prompt="<available_skills/>", dirs=["/tmp/demo"])
+
+    wrapper = _wrapper(bridge)
+
+    assert wrapper.generate_available_skills_prompt("demo") == "<available_skills/>"
+    assert wrapper.get_skill_dirs("demo") == ["/tmp/demo"]
+    assert bridge.prompt_argument == ["demo"]
+    assert bridge.dirs_argument == ["demo"]
+
+
+def test_missing_bridge_skill_prompt_and_dirs_resolve_to_empty():
+    bridge = _FakeJavaBridge(None)
+
+    assert _wrapper(bridge).generate_available_skills_prompt("demo") == ""
+    assert _wrapper(bridge).get_skill_dirs("demo") == []
+
+
+def test_adapter_impl_forwards_skill_prompt_and_dirs():
+    bridge = _FakeJavaBridge(None, prompt="prompt", dirs=["/tmp/a"])
+    adapter = JavaResourceAdapterImpl(bridge)
+
+    assert adapter.generateAvailableSkillsPrompt(["demo"]) == "prompt"
+    assert adapter.getSkillDirs(["demo"]) == ["/tmp/a"]
+
+
+def test_adapter_impl_normalizes_missing_skill_prompt_and_dirs():
+    adapter = JavaResourceAdapterImpl(_FakeJavaBridge(None))
+
+    assert adapter.getSkillDirs(["demo"]) == []

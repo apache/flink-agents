@@ -62,8 +62,9 @@ public class PythonChatModelSetup extends BaseChatModelSetup implements PythonRe
     }
 
     @Override
-    public void open() {
+    public void open() throws Exception {
         this.adapter.callMethod(chatModelSetup, "open", Collections.emptyMap());
+        resolveSkillsFromSources();
     }
 
     @Override

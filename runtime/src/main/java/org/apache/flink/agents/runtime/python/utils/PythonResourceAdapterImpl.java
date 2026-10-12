@@ -138,6 +138,21 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         return interpreterManager.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
+    public List<String> resolveSkillNamesForSources(List<Map<String, Object>> sources)
+            throws Exception {
+        return javaResourceAdapter.resolveSkillNamesForSources(sources);
+    }
+
+    /** Build the {@code <available_skills>} discovery prompt for the given skill names. */
+    public String generateAvailableSkillsPrompt(List<String> skillNames) throws Exception {
+        return javaResourceAdapter.generateAvailableSkillsPrompt(skillNames);
+    }
+
+    /** Return the absolute directory paths backing the given skill names. */
+    public List<String> getSkillDirs(List<String> skillNames) throws Exception {
+        return javaResourceAdapter.getSkillDirs(skillNames);
+    }
+
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);

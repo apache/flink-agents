@@ -333,7 +333,9 @@ RowTypeInfo myRowTypeInfo =
 {{< /tabs >}}
 
 ### Skills
-User can pass the names of [skills]({{< ref "docs/development/skills" >}}) the agent may use directly to the constructor, instead of adding a `skills` argument to the chat model descriptor.
+User can pass [skills]({{< ref "docs/development/skills" >}}) to the constructor instead of adding a `skills` argument to the chat model descriptor. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
+
+**Skill names.** Pass the names of skills that are already declared to the agent:
 
 {{< tabs "Skills" >}}
 
@@ -362,6 +364,36 @@ The constructor skills are combined with any `skills` already set on the chat mo
 - Passing no skills, or an empty list, adds nothing: the descriptor is used exactly as given.
 - The descriptor you pass in is not modified; the agent uses a copy with the combined skills.
 - Only skill names are combined. The command policy of the built-in `bash` tool, such as `allowed_commands`, is always taken from the chat model descriptor, so set it there.
+- The sources behind those names have to be declared somewhere the agent can see them: a `@Skills`/`@skills` method, the execution environment, or the agent itself.
 
-The skill sources must still be registered on the execution environment with `add_resource(..., ResourceType.SKILLS, ...)`.
+**Skill sources.** Pass a `Skills` object to declare the sources and let the framework resolve the skill names at runtime:
+
+{{< tabs "Skill Sources" >}}
+
+{{< tab "Python" >}}
+```python
+my_react_agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    prompt=my_prompt,
+    skills=Skills.from_local_dir("./skills"),
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+ReActAgent myReActAgent =
+        new ReActAgent(
+                chatModelDescriptor,
+                myPrompt,
+                null,
+                Skills.fromLocalDir("./skills"));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The constructor registers those sources on the agent, so they do not also need `add_resource(..., ResourceType.SKILLS, ...)` on the execution environment. Every skill found in the sources becomes available, and the resolved names are appended after any explicitly named ones. A single `Skills` object may declare several sources; to combine sources held in separate objects, gather them into one `Skills`, declare further `@Skills`/`@skills` methods, or register them on the agent with `addResource(..., ResourceType.SKILLS, ...)`.
+
+**Which declaration wins.** Sources reach the agent from three levels. `@Skills`/`@skills` methods are merged first, then the execution environment's `SKILLS` resources, then the agent's own. A declaration from a later level wins when two of them resolve to the same skill name.
 

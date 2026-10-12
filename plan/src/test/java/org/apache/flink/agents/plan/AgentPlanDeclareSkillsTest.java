@@ -252,6 +252,57 @@ class AgentPlanDeclareSkillsTest {
                 merged.getSources());
     }
 
+    @Test
+    void environmentEntriesKeepTheirOrderWhenTheAgentOverridesOneOfThem() throws Exception {
+        // The agent wins on duplicates, and its entry has to stay last: overwriting the
+        // environment entry in place would leave the agent's source early in the flattened order,
+        // so the environment's "a" declaration would end up last and win instead.
+        Agent agent = new NoSkillsAgent();
+        agent.addResource("z", ResourceType.SKILLS, Skills.fromLocalDir("/tmp/z-agent"));
+        Map<ResourceType, Map<String, Object>> envResources = new HashMap<>();
+        Map<String, Object> envSkills = new LinkedHashMap<>();
+        envSkills.put("z", Skills.fromLocalDir("/tmp/z-env"));
+        envSkills.put("a", Skills.fromLocalDir("/tmp/a-env"));
+        envResources.put(ResourceType.SKILLS, envSkills);
+
+        agent.addResourcesIfAbsent(envResources);
+
+        Skills merged = mergedSkillsOf(agent);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/a-env")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/z-agent"))),
+                merged.getSources());
+    }
+
+    @Test
+    void agentAddResourceSkillsOverrideAnnotationSkillsByNameAndMoveLast() throws Exception {
+        // @Skills methods are seeded first, sorted by method name. A programmatic SKILLS resource
+        // reusing one of those names has to move behind the remaining annotation entries, because
+        // the flattened source order decides which declaration wins.
+        Agent agent = new AnnotationCollisionAgent();
+        agent.addResource("alpha", ResourceType.SKILLS, Skills.fromLocalDir("/tmp/prog-alpha"));
+
+        Skills merged = mergedSkillsOf(agent);
+        assertEquals(
+                List.of(
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/ann-beta")),
+                        new SkillSourceSpec("local", Map.of("path", "/tmp/prog-alpha"))),
+                merged.getSources());
+    }
+
+    public static class AnnotationCollisionAgent extends Agent {
+        @org.apache.flink.agents.api.annotation.Skills
+        public static Skills alpha() {
+            return Skills.fromLocalDir("/tmp/ann-alpha");
+        }
+
+        @org.apache.flink.agents.api.annotation.Skills
+        public static Skills beta() {
+            return Skills.fromLocalDir("/tmp/ann-beta");
+        }
+    }
+
     public static class AnnotationOrderAgent extends Agent {
         @org.apache.flink.agents.api.annotation.Skills
         public static Skills zSkills() {
