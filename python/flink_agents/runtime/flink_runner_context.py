@@ -407,11 +407,38 @@ class _BatchAsyncExecutionResult:
             executed = _collect_sliding_window_outcomes_on_timeout(
                 batch_futures, exception
             )
+        # An ordinary interruption must not be cached as a business failure either.
+        # Durable children before it in input order are still finalized, as in a
+        # durable-only batch, so recovery does not run a call whose outcome is known.
+        interrupted = next(
+            (
+                position
+                for position, (index, outcome) in enumerate(
+                    zip(execution_indexes, executed, strict=True)
+                )
+                if isinstance(self._futures[index], _SingleAsyncFuture)
+                and is_java_interruption(outcome.error)
+            ),
+            None,
+        )
+        if interrupted is not None:
+            if plan is not None:
+                prefix = [
+                    position
+                    for position in durable_execution_indexes
+                    if position < interrupted
+                ]
+                # The call index stays at the batch base, so re-awaiting rereads
+                # the saved prefix.
+                self._ctx._finalize_batch_execution(
+                    durable_calls,
+                    plan,
+                    [started[position] for position in prefix],
+                    [executed[position] for position in prefix],
+                    advance_call_index=False,
+                )
+            raise executed[interrupted].error
         for index, outcome in zip(execution_indexes, executed, strict=True):
-            if isinstance(self._futures[index], _SingleAsyncFuture) and is_java_interruption(
-                outcome.error
-            ):
-                raise outcome.error
             outcomes[index] = outcome
         if plan is not None:
             durable_outcomes = self._ctx._finalize_batch_execution(
@@ -1492,11 +1519,15 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         plan: _BatchExecutionPlan,
         started: list[bool],
         executed: list[Outcome],
+        *,
+        advance_call_index: bool = True,
     ) -> list[Outcome]:
+        # ``executed`` may be a prefix of ``plan.suppliers`` when an ordinary
+        # child in the same batch was interrupted.
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes = list(plan.outcomes)
         for i, ((call_index, _), outcome) in enumerate(
-            zip(plan.suppliers, executed, strict=True)
+            zip(plan.suppliers[: len(executed)], executed, strict=True)
         ):
             call = calls[call_index]
             function_id = self._durable_identity(call)
@@ -1522,7 +1553,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             except Exception as e:
                 outcome = Outcome.failure(e)
             outcomes[call_index] = outcome
-        self._j_runner_context.advanceCallIndexBy(len(calls))
+        if advance_call_index:
+            self._j_runner_context.advanceCallIndexBy(len(calls))
         return outcomes
 
     @override

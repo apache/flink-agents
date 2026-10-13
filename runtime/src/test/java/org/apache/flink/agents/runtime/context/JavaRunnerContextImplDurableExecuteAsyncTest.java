@@ -817,6 +817,58 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testMixedGatherOrdinaryInterruptionKeepsEarlierDurableOutcomes() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        AtomicInteger chargeCalls = new AtomicInteger();
+        AtomicInteger ordinaryCalls = new AtomicInteger();
+        InterruptedException interruption = new InterruptedException("cancelled");
+        TestDurableCallable<String> charge =
+                new TestDurableCallable<>(
+                        "charge",
+                        String.class,
+                        () -> {
+                            chargeCalls.incrementAndGet();
+                            return "charged";
+                        });
+        TestDurableCallable<String> later =
+                new TestDurableCallable<>("later", String.class, () -> "later");
+        AsyncFuture<String> ordinary =
+                context.executeAsync(
+                        () -> {
+                            if (ordinaryCalls.incrementAndGet() == 1) {
+                                throw interruption;
+                            }
+                            return "retried";
+                        });
+        AsyncFuture<List<Outcome<String>>> gathered =
+                context.gather(
+                        List.of(
+                                context.durableExecuteAsync(charge),
+                                ordinary,
+                                context.durableExecuteAsync(later)));
+        Thread.interrupted(); // clear any stray interrupt flag left over from another test
+
+        assertSame(interruption, assertThrows(InterruptedException.class, gathered::await));
+
+        assertTrue(Thread.interrupted());
+        List<CallResult> persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults();
+        assertTrue(persisted.get(0).isSuccess());
+        assertTrue(persisted.get(1).isPending());
+        assertEquals(0, context.getDurableExecutionContext().getCurrentCallIndex());
+
+        List<Outcome<String>> outcomes = gathered.await();
+
+        assertEquals("charged", outcomes.get(0).getValue());
+        assertEquals("retried", outcomes.get(1).getValue());
+        assertEquals("later", outcomes.get(2).getValue());
+        assertEquals(1, chargeCalls.get());
+        assertEquals(2, ordinaryCalls.get());
+        assertEquals(2, context.getDurableExecutionContext().getCurrentCallIndex());
+    }
+
+    @Test
     void testGatherWithoutDurableStateInterruptionPropagates() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         JavaRunnerContextImpl context =

@@ -144,26 +144,39 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         }
 
         BatchExecutionResult<T> executed = executeOutcomeSuppliers(suppliers);
+        // An ordinary cancellation must not be cached as a business failure either. Durable
+        // children before it in input order are still finalized, as in a durable-only batch, so
+        // recovery does not run a call whose outcome is already known.
+        int ordinaryCancellation = executed.getOutcomes().size();
         for (int i = 0; i < executed.getOutcomes().size(); i++) {
-            Outcome<T> outcome = executed.getOutcomes().get(i);
-            // An ordinary cancellation must not be cached as a business failure either.
-            if (futures.get(executableIndexes.get(i)).getDurableCallable() == null) {
-                rethrowCancellation(outcome.getError());
+            if (futures.get(executableIndexes.get(i)).getDurableCallable() == null
+                    && CancellationUtils.isCancellation(executed.getOutcomes().get(i).getError())) {
+                ordinaryCancellation = i;
+                break;
             }
-            outcomes.set(executableIndexes.get(i), outcome);
         }
         List<Outcome<T>> durableOutcomes = new ArrayList<>();
-        boolean[] durableStarted = new boolean[durableExecutionIndexes.size()];
-        for (int i = 0; i < durableExecutionIndexes.size(); i++) {
-            int executionIndex = durableExecutionIndexes.get(i);
+        List<Boolean> durableStarted = new ArrayList<>();
+        for (int executionIndex : durableExecutionIndexes) {
+            if (executionIndex >= ordinaryCancellation) {
+                break;
+            }
             durableOutcomes.add(executed.getOutcomes().get(executionIndex));
-            durableStarted[i] = executed.wasStarted(executionIndex);
+            durableStarted.add(executed.wasStarted(executionIndex));
+        }
+        boolean[] started = new boolean[durableStarted.size()];
+        for (int i = 0; i < started.length; i++) {
+            started[i] = durableStarted.get(i);
         }
         finalizeExecutedOutcomes(
-                durableCalls,
-                base,
-                plan,
-                new BatchExecutionResult<>(durableOutcomes, durableStarted));
+                durableCalls, base, plan, new BatchExecutionResult<>(durableOutcomes, started));
+        if (ordinaryCancellation < executed.getOutcomes().size()) {
+            // The call index stays at the batch base, so re-awaiting rereads the saved prefix.
+            rethrowCancellation(executed.getOutcomes().get(ordinaryCancellation).getError());
+        }
+        for (int i = 0; i < executed.getOutcomes().size(); i++) {
+            outcomes.set(executableIndexes.get(i), executed.getOutcomes().get(i));
+        }
         durableIndex = 0;
         for (int i = 0; i < futures.size(); i++) {
             if (futures.get(i).getDurableCallable() != null) {
