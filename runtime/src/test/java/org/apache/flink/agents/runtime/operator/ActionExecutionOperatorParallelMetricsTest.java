@@ -271,7 +271,7 @@ class ActionExecutionOperatorParallelMetricsTest {
 
     @Test
     @Timeout(20)
-    void preparationFailureDoesNotHideOriginalException() throws Exception {
+    void preparationFailureKeepsCauseAndMarksInputRunFailed() throws Exception {
         assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
 
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
@@ -280,12 +280,13 @@ class ActionExecutionOperatorParallelMetricsTest {
             ActionExecutionOperator<Long, Object> operator = operator(testHarness);
 
             // A preparation-time listener failure must surface as the original exception,
-            // not as a NullPointerException from commit() dereferencing a null actionTask.
+            // not as a NullPointerException from commit() dereferencing a null actionTask,
+            // and must still close the input run so the failure is counted.
             operator.addTaskLifecycleListener(
                     new TaskLifecycleListener() {
                         @Override
                         public void onActionPrepared(ActionTask task) {
-                            throw new IllegalStateException("listener boom");
+                            throw new IllegalStateException("prepare boom");
                         }
                     });
 
@@ -294,11 +295,12 @@ class ActionExecutionOperatorParallelMetricsTest {
                                 testHarness.processElement(new StreamRecord<>(0L));
                                 operator.waitInFlightEventsFinished();
                             })
+                    .hasStackTraceContaining("prepare boom");
+
+            assertThat(metricGroup(operator).getCounter("numOfInputRunsFailed").getCount())
                     .as(
-                            "a preparation failure must surface as the original listener exception, "
-                                    + "not an NPE masking it")
-                    .isNotInstanceOf(NullPointerException.class)
-                    .hasStackTraceContaining("listener boom");
+                            "a preparation failure propagated through commit() must close the input run")
+                    .isEqualTo(1L);
         }
     }
 
