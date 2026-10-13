@@ -32,6 +32,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.ActionStateStore;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperatorFactory;
 import org.apache.flink.agents.runtime.operator.ActionTask;
@@ -45,6 +46,7 @@ import org.apache.flink.streaming.util.KeyedOneInputStreamOperatorTestHarness;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -412,6 +414,51 @@ public class TaskLifecycleListenerNotificationTest {
                             "finishing:handleInput",
                             "finished:handleInput",
                             "recordFinished:7");
+        }
+    }
+
+    @Test
+    void resumedInFlightRecordCountsAsOneActiveInputRun() throws Exception {
+        AgentConfiguration serialConfig = new AgentConfiguration();
+        serialConfig.set(AgentExecutionOptions.PARALLEL_EXECUTION_ENABLED, false);
+        AgentPlan plan = new AgentPlan(new SyncAgent(), serialConfig);
+        OperatorSubtaskState snapshot;
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.open();
+            testHarness.processElement(new StreamRecord<>(7L));
+            snapshot = testHarness.snapshot(1L, 1L);
+        }
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                new KeyedOneInputStreamOperatorTestHarness<>(
+                        new ActionExecutionOperatorFactory<>(plan, true),
+                        (KeySelector<Long, Long>) value -> value,
+                        TypeInformation.of(Long.class))) {
+            testHarness.initializeState(snapshot);
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator =
+                    (ActionExecutionOperator<Long, Object>) testHarness.getOperator();
+            Field metricGroupField = ActionExecutionOperator.class.getDeclaredField("metricGroup");
+            metricGroupField.setAccessible(true);
+            FlinkAgentsMetricGroupImpl metricGroup =
+                    (FlinkAgentsMetricGroupImpl) metricGroupField.get(operator);
+
+            assertThat(
+                            ((Number) metricGroup.getGauge("numOfActiveInputRuns").getValue())
+                                    .longValue())
+                    .isEqualTo(1L);
+
+            operator.waitInFlightEventsFinished();
+
+            assertThat(
+                            ((Number) metricGroup.getGauge("numOfActiveInputRuns").getValue())
+                                    .longValue())
+                    .isZero();
         }
     }
 

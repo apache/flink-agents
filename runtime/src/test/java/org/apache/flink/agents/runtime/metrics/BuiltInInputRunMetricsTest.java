@@ -104,6 +104,23 @@ class BuiltInInputRunMetricsTest {
     }
 
     @Test
+    void restoredRunIdentifiedBeforeCountIsNotCountedTwice() {
+        setTimeMillis(300L);
+        ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");
+
+        // The operator restores action tasks, identifying their runs, before it counts the
+        // restored processing keys.
+        metrics.identifyRestoredActiveInputRun(inputRun.getInputRunId());
+        metrics.restoreActiveInputRuns(1L);
+        assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isEqualTo(1L);
+
+        setTimeMillis(375L);
+        metrics.inputRunCompleted(inputRun.getInputRunId());
+
+        assertThat(gauge(BuiltInInputRunMetrics.NUM_ACTIVE_INPUT_RUNS)).isZero();
+    }
+
+    @Test
     void restoredPendingInputRecordsLocallyObservedOutcomeAndProcessingLatency() {
         Event inputEvent = new InputEvent("restored-pending");
         ExecutionTraceContext inputRun = ExecutionTraceContext.forInputRun("key", "agent");

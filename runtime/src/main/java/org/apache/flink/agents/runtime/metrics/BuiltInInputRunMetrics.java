@@ -129,7 +129,9 @@ final class BuiltInInputRunMetrics {
     }
 
     void restoreActiveInputRuns(long count) {
-        unidentifiedRestoredActiveRuns = Math.max(0L, count);
+        // The operator identifies runs from restored action tasks before it knows the count, so
+        // the already identified runs are part of count rather than in addition to it.
+        unidentifiedRestoredActiveRuns = Math.max(0L, count - activeInputRunIds.size());
         activeInputRuns.set(unidentifiedRestoredActiveRuns + activeInputRunIds.size());
     }
 
