@@ -23,7 +23,6 @@ class ToolExecutionMetadataKeys:
 
     TOOL_REQUEST_EVENT_ID = "toolRequestEventId"
     TOOL_CALL_ID = "toolCallId"
-    EXTERNAL_ID = "externalId"
     TOOL_TYPE = "toolType"
     MCP_SERVER = "mcpServer"
     SKILL_NAME = "skillName"

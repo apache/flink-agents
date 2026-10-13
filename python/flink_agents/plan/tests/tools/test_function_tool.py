@@ -192,9 +192,7 @@ def test_java_function_tool_merges_adapter_injected_args() -> None:
         "name": "add",
         "description": "Add two ints.",
         "inputSchema": _FAKE_JAVA_SCHEMA,
-        "injectedArgs": (
-            '{"tenant_id": {"source": "config", "key": "tenant.id"}}'
-        ),
+        "injectedArgs": ('{"tenant_id": {"source": "config", "key": "tenant.id"}}'),
     }
 
     tool.set_java_resource_adapter(adapter)
@@ -215,7 +213,6 @@ def test_java_function_tool_merges_adapter_injected_args() -> None:
     )
 
 
-
 def test_java_function_tool_metadata_is_none_without_adapter() -> None:
     # Before the runtime injects the adapter, the metadata is intentionally
     # absent — this is the only legal window where ``Tool.metadata`` is
@@ -229,7 +226,7 @@ def test_java_function_tool_call_dispatches_through_adapter() -> None:
     adapter = _fake_adapter()
     adapter.invokeJavaTool.return_value = {
         "__flink_agents_tool_result__": "response",
-        "result": 1065,
+        "blocks": [{"type": "text", "text": "1065"}],
         "success": True,
         "error": None,
         "execution_time_ms": 7,
@@ -239,7 +236,7 @@ def test_java_function_tool_call_dispatches_through_adapter() -> None:
 
     result = tool.call(a=377, b=688)
 
-    assert result == ToolResponse.success(1065, execution_time_ms=7, tool_name="add")
+    assert result == ToolResponse.text("1065", execution_time_ms=7, tool_name="add")
     adapter.invokeJavaTool.assert_called_once_with(
         "com.example.Tools",
         "add",
@@ -253,7 +250,7 @@ def test_java_function_tool_preserves_error_response() -> None:
     adapter = _fake_adapter()
     adapter.invokeJavaTool.return_value = {
         "__flink_agents_tool_result__": "response",
-        "result": None,
+        "blocks": [],
         "success": False,
         "error": "calculation rejected",
         "execution_time_ms": 9,

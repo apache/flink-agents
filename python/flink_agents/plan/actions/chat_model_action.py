@@ -21,7 +21,7 @@ import re
 import time
 from concurrent.futures import CancelledError
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Sequence, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -30,7 +30,8 @@ from pyflink.common.typeinfo import RowTypeInfo
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, ToolCallBlock
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -82,8 +83,8 @@ class _InvocationFailure(Exception):
 
 
 def _require_invocation_response(
-    response: ChatMessage | None, error: str | None
-) -> ChatMessage:
+    response: ChatResult | None, error: str | None
+) -> ChatResult:
     if error is not None:
         raise _InvocationFailure(error)
     return _require_model_response(response)
@@ -99,7 +100,7 @@ def _error_text(error: Exception) -> str:
 
 def _invoke_chat(
     chat_model: "BaseChatModelSetup", messages: List[ChatMessage], prompt_args: Dict
-) -> tuple[ChatMessage | None, str | None]:
+) -> tuple[ChatResult | None, str | None]:
     try:
         return chat_model.chat(messages, prompt_args=prompt_args), None
     except (CancelledError, InterruptedError):
@@ -113,12 +114,12 @@ def _invoke_finalization(
     chat_model: "BaseChatModelSetup",
     answer_text: str,
     output_schema: OutputSchema,
-) -> tuple[ChatMessage | None, str | None]:
+) -> tuple[ChatResult | None, str | None]:
     # A fresh user message rather than resending the response object: it carries
     # no provider-specific fields of the loop response, and a single user turn
     # avoids provider rules on turn order and on empty assistant content.
     try:
-        request = [ChatMessage.of(MessageRole.USER, _FINALIZE_DIRECTIVE + answer_text)]
+        request = [ChatMessage.user(_FINALIZE_DIRECTIVE + answer_text)]
         return chat_model.chat(request, tools=[], output_schema=output_schema), None
     except (CancelledError, InterruptedError):
         raise
@@ -129,11 +130,11 @@ def _invoke_finalization(
 
 async def _durable_invoke(
     ctx: RunnerContext,
-    func: Callable[..., tuple[ChatMessage | None, str | None]],
+    func: Callable[..., tuple[ChatResult | None, str | None]],
     *args: Any,
     chat_async: bool,
     **kwargs: Any,
-) -> tuple[ChatMessage | None, str | None]:
+) -> tuple[ChatResult | None, str | None]:
     if chat_async:
         return await ctx.durable_execute_async(func, *args, **kwargs)
     return ctx.durable_execute(func, *args, **kwargs)
@@ -299,9 +300,9 @@ def _record_retry_metrics(
 
 
 def _inject_bash_tool_args(
-    tool_calls: List[Dict],
+    tool_calls: Sequence[ToolCallBlock],
     chat_model: "BaseChatModelSetup",
-) -> None:
+) -> List[ToolCallBlock]:
     """Inject framework-controlled args (allowed_commands, allowed_script_dirs)
     into bash tool calls so they remain hidden from the LLM.
     """
@@ -313,16 +314,27 @@ def _inject_bash_tool_args(
             chat_model.resource_context.get_skill_dirs(*chat_model.skills)
         )
 
+    result = []
     for tool_call in tool_calls:
-        if tool_call["function"]["name"] != BASH_TOOL:
+        if tool_call.name != BASH_TOOL:
+            result.append(tool_call)
             continue
-        args = tool_call["function"]["arguments"]
+        args = dict(tool_call.input)
         args["allowed_commands"] = list(chat_model.allowed_commands)
         args["allowed_script_dirs"] = script_dirs
+        result.append(
+            ToolCallBlock(
+                call_id=tool_call.call_id,
+                name=tool_call.name,
+                input=args,
+                metadata=tool_call.metadata,
+            )
+        )
+    return result
 
 
 def _handle_tool_calls(
-    response: ChatMessage,
+    response: ChatResult,
     initial_request_id: UUID,
     model: str,
     chat_model: "BaseChatModelSetup",
@@ -333,14 +345,15 @@ def _handle_tool_calls(
 ) -> None:
     """Handle tool calls in chat response."""
     _update_tool_call_context(
-        ctx.sensory_memory, initial_request_id, messages, [response]
+        ctx.sensory_memory,
+        initial_request_id,
+        messages,
+        [response.message],
     )
-
-    _inject_bash_tool_args(response.tool_calls, chat_model)
 
     tool_request_event = ToolRequestEvent(
         model=model,
-        tool_calls=response.tool_calls,
+        tool_calls=_inject_bash_tool_args(response.tool_calls, chat_model),
     )
 
     # save tool request event context
@@ -357,8 +370,8 @@ def _handle_tool_calls(
 
 
 def _generate_structured_output(
-    response: ChatMessage, output_schema: OutputSchema
-) -> ChatMessage:
+    response: ChatResult, output_schema: OutputSchema
+) -> Any:
     """Deserialize output to expected output schema."""
     output_schema = output_schema.output_schema
     output = json.loads(_clean_llm_response(response.text))
@@ -371,12 +384,10 @@ def _generate_structured_output(
         for field_name in field_names:
             values[field_name] = output[field_name]
         output = Row(**values)
-    response.extra_args[STRUCTURED_OUTPUT] = output
-
-    return response
+    return output
 
 
-def _reject_incomplete_response(response: ChatMessage) -> None:
+def _reject_incomplete_response(response: ChatResult) -> None:
     """Reject a response the provider did not finish emitting.
 
     Evaluated once per chat response, before it is dispatched as text,
@@ -390,7 +401,7 @@ def _reject_incomplete_response(response: ChatMessage) -> None:
         ValueError: If the finish reason reports the response as cut off by the
             token budget or withheld by content filtering.
     """
-    finish_reason = response.extra_args.get(_FINISH_REASON)
+    finish_reason = response.finish_reason
     if finish_reason == _TRUNCATED_FINISH_REASON:
         error_message = (
             f"ChatModel response is truncated (finish_reason={finish_reason!r}): "
@@ -409,8 +420,8 @@ def _reject_incomplete_response(response: ChatMessage) -> None:
 
 
 def _generate_structured_output_with_report(
-    ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
-) -> ChatMessage:
+    ctx: RunnerContext, response: ChatResult, output_schema: OutputSchema
+) -> Any:
     ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
     try:
         structured_response = _generate_structured_output(response, output_schema)
@@ -438,10 +449,13 @@ def _clean_llm_response(raw_response: str) -> str:
     return trimmed
 
 
-def _require_model_response(response: ChatMessage | None) -> ChatMessage:
+def _require_model_response(response: ChatResult | None) -> ChatResult:
     if response is None:
         error_message = "ChatModel returned a null response."
         raise ValueError(error_message)
+    if not isinstance(response, ChatResult):
+        msg = "Chat model provider must return ChatResult; this provider has not been migrated."
+        raise TypeError(msg)
     return response
 
 
@@ -450,10 +464,10 @@ def _accept_model_response(
     chat_model: "BaseChatModelSetup",
     model: str,
     llm_metadata: Dict,
-    response: ChatMessage | None,
+    response: ChatResult | None,
     error: str | None,
     request_metric_group: "MetricGroup | None",
-) -> ChatMessage:
+) -> ChatResult:
     """Close the LLM span of one model call and vet its response.
 
     Raises:
@@ -476,14 +490,15 @@ def _accept_model_response(
 
     if (
         request_metric_group is not None
-        and response.extra_args.get("model_name")
-        and response.extra_args.get("promptTokens")
-        and response.extra_args.get("completionTokens")
+        and response.model is not None
+        and response.usage is not None
+        and response.usage.prompt_tokens is not None
+        and response.usage.completion_tokens is not None
     ):
         chat_model._record_token_metrics(
-            response.extra_args["model_name"],
-            response.extra_args["promptTokens"],
-            response.extra_args["completionTokens"],
+            response.model,
+            response.usage.prompt_tokens,
+            response.usage.completion_tokens,
             request_metric_group,
         )
     # A truncated response consumed its full token budget, so the token metrics
@@ -551,6 +566,7 @@ async def chat(
     )
 
     response = None
+    structured_output = None
     actual_retry_count = 0
     total_wait_time_sec = 0
     llm_metadata = {LLMExecutionMetadataKeys.MODEL: chat_model.model}
@@ -559,12 +575,12 @@ async def chat(
     @wraps(chat_model.chat)
     def invoke(
         messages: List[ChatMessage], prompt_args: Dict
-    ) -> tuple[ChatMessage | None, str | None]:
+    ) -> tuple[ChatResult | None, str | None]:
         return _invoke_chat(chat_model, messages, prompt_args)
 
     def invoke_structured(
         answer_text: str, output_schema: OutputSchema
-    ) -> tuple[ChatMessage | None, str | None]:
+    ) -> tuple[ChatResult | None, str | None]:
         return _invoke_finalization(chat_model, answer_text, output_schema)
 
     def retry_after(attempt: int, error: Exception) -> bool:
@@ -613,7 +629,7 @@ async def chat(
                 final_answer = output_schema is not None and not response.tool_calls
                 finalize = final_answer and apply_native_schema
                 if final_answer and not finalize:
-                    response = _generate_structured_output_with_report(
+                    structured_output = _generate_structured_output_with_report(
                         ctx, response, output_schema
                     )
             except (CancelledError, InterruptedError):
@@ -645,9 +661,10 @@ async def chat(
                         failure,
                         request_metric_group,
                     )
-                    response = _generate_structured_output_with_report(
+                    structured_output = _generate_structured_output_with_report(
                         ctx, structured, output_schema
                     )
+                    response = structured
                 except (CancelledError, InterruptedError):
                     raise
                 except Exception as e:
@@ -688,14 +705,14 @@ async def chat(
         total_retry_count = retry_stats["total_retry_count"]
         total_retry_wait_sec = retry_stats["total_retry_wait_sec"]
         _clear_request_context(ctx.sensory_memory, initial_request_id)
-        ctx.send_event(
-            ChatResponseEvent.success(
-                request_id=initial_request_id,
-                response=response,
-                retry_count=total_retry_count,
-                total_retry_wait_sec=total_retry_wait_sec,
-            )
+        completed = ChatResponseEvent.success(
+            request_id=initial_request_id,
+            response=response,
+            retry_count=total_retry_count,
+            total_retry_wait_sec=total_retry_wait_sec,
         )
+        completed.attributes["structured_output"] = structured_output
+        ctx.send_event(completed)
 
 
 async def _process_chat_request(event: ChatRequestEvent, ctx: RunnerContext) -> None:
@@ -727,13 +744,7 @@ async def _process_tool_response(event: ToolResponseEvent, ctx: RunnerContext) -
         initial_request_id,
         None,
         [
-            ChatMessage.of(
-                MessageRole.TOOL,
-                str(response),
-                extra_args={"external_id": event.external_ids.get(tool_id)}
-                if event.external_ids and event.external_ids.get(tool_id)
-                else {},
-            )
+            ChatMessage.tool(response.to_result_block(str(tool_id)))
             for tool_id, response in event.responses.items()
         ],
     )

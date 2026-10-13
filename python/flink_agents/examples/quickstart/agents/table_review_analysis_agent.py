@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.decorators import (
     action,
     chat_model_setup,
@@ -131,7 +131,7 @@ class TableReviewAnalysisAgent(Agent):
             "id": {product_id},
             "review": {review_text}
         """
-        msg = ChatMessage(role=MessageRole.USER)
+        msg = ChatMessage.user("")
         ctx.send_event(
             ChatRequestEvent(
                 model="review_analysis_model",

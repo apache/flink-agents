@@ -5,15 +5,21 @@
     "request_id": "00000000-0000-0000-0000-000000000002",
     "status": "SUCCESS",
     "response": {
-      "role": "assistant",
-      "blocks": [
-        {
-          "type": "text",
-          "text": "hi there"
-        }
-      ],
-      "tool_calls": [],
-      "extra_args": {}
+      "model": null,
+      "response_id": null,
+      "usage": null,
+      "finish_reason": null,
+      "metadata": {},
+      "message": {
+        "role": "assistant",
+        "blocks": [
+          {
+            "type": "text",
+            "text": "hi there"
+          }
+        ],
+        "metadata": {}
+      }
     },
     "error": null,
     "retry_count": 0,

@@ -77,7 +77,9 @@ def test_add_action_accepts_java_function_descriptor_and_stores_as_is() -> None:
 def test_add_action_wraps_raw_callable_as_python_function() -> None:
     """Bare callables get auto-wrapped into a PythonFunction descriptor."""
     agent = Agent()
-    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action)
+    agent.add_action(
+        name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action
+    )
 
     _, stored, _ = agent.actions["act"]
     assert isinstance(stored, PythonFunction)
@@ -90,7 +92,9 @@ def test_add_action_wraps_raw_callable_as_python_function() -> None:
 
 def test_add_action_duplicate_name_rejected_python_function() -> None:
     agent = Agent()
-    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action)
+    agent.add_action(
+        name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action
+    )
     with pytest.raises(ValueError, match="act"):
         agent.add_action(
             name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action
@@ -101,11 +105,15 @@ def test_add_action_duplicate_name_rejected_java_function() -> None:
     """Duplicate-name rejection applies uniformly regardless of descriptor type."""
     agent = Agent()
     agent.add_action(
-        name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_make_java_function()
+        name="act",
+        trigger_conditions=[InputEvent.EVENT_TYPE],
+        func=_make_java_function(),
     )
     with pytest.raises(ValueError, match="act"):
         agent.add_action(
-            name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_make_java_function()
+            name="act",
+            trigger_conditions=[InputEvent.EVENT_TYPE],
+            func=_make_java_function(),
         )
 
 
@@ -128,7 +136,9 @@ def test_add_action_captures_config_kwargs() -> None:
 
 def test_add_action_config_is_none_when_no_kwargs() -> None:
     agent = Agent()
-    agent.add_action(name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action)
+    agent.add_action(
+        name="act", trigger_conditions=[InputEvent.EVENT_TYPE], func=_dummy_action
+    )
 
     _, _, config = agent.actions["act"]
     assert config is None

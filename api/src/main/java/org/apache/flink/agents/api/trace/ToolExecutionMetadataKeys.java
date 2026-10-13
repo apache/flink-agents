@@ -22,7 +22,6 @@ public final class ToolExecutionMetadataKeys {
 
     public static final String TOOL_REQUEST_EVENT_ID = "toolRequestEventId";
     public static final String TOOL_CALL_ID = "toolCallId";
-    public static final String EXTERNAL_ID = "externalId";
     public static final String TOOL_TYPE = "toolType";
     public static final String MCP_SERVER = "mcpServer";
     public static final String SKILL_NAME = "skillName";

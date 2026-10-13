@@ -121,7 +121,7 @@ def test_azure_openai_chat_with_tools() -> None:
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
-    assert add(**tool_call["function"]["arguments"]) == 1065
+    assert add(**tool_call.input) == 1065
 
 
 def test_model_field_roundtrip() -> None:

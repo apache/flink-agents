@@ -1214,9 +1214,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void snapshotStateInternal(StateSnapshotContext context) throws Exception {
-        durableExecManager.snapshotRecoveryMarker();
-        durableExecManager.snapshotLastCompletedSequenceNumbers(
-                getKeyedStateBackend(), context.getCheckpointId());
+        Map<Object, Long> lastCompletedSequenceNumbers =
+                durableExecManager.snapshotLastCompletedSequenceNumbers(
+                        getKeyedStateBackend(), context.getCheckpointId());
+        durableExecManager.snapshotRecoveryMarker(lastCompletedSequenceNumbers);
 
         super.snapshotState(context);
     }

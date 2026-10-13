@@ -20,6 +20,7 @@ from unittest.mock import MagicMock
 from openai.types.chat import ChatCompletion
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.integrations.chat_models.azure.azure_openai_chat_model import (
     AzureOpenAIChatModelConnection,
 )
@@ -83,7 +84,7 @@ def _connection(
     return conn
 
 
-def _chat(conn: AzureOpenAIChatModelConnection, **kwargs: object) -> ChatMessage:
+def _chat(conn: AzureOpenAIChatModelConnection, **kwargs: object) -> ChatResult:
     return conn.chat(
         [ChatMessage.of(role=MessageRole.USER, content="hi")],
         model=DEPLOYMENT,
@@ -91,14 +92,14 @@ def _chat(conn: AzureOpenAIChatModelConnection, **kwargs: object) -> ChatMessage
     )
 
 
-def test_chat_records_finish_reason_in_extra_args() -> None:
+def test_chat_records_finish_reason() -> None:
     """The finish reason survives alongside the token metrics."""
     result = _chat(
         _connection("length", usage=USAGE), model_of_azure_deployment="gpt-4o"
     )
 
-    assert result.extra_args["promptTokens"] == 1
-    assert result.extra_args["finish_reason"] == "length"
+    assert result.usage.prompt_tokens == 1
+    assert result.finish_reason == "length"
 
 
 def test_chat_records_finish_reason_without_usage_or_deployment_model() -> None:
@@ -110,8 +111,8 @@ def test_chat_records_finish_reason_without_usage_or_deployment_model() -> None:
     """
     result = _chat(_connection("tool_calls"))
 
-    assert "promptTokens" not in result.extra_args
-    assert result.extra_args["finish_reason"] == "tool_calls"
+    assert result.usage is None
+    assert result.finish_reason == "tool_calls"
 
 
 def test_chat_records_unrecognized_finish_reason_verbatim() -> None:
@@ -121,16 +122,16 @@ def test_chat_records_unrecognized_finish_reason_verbatim() -> None:
         model_of_azure_deployment="gpt-4o",
     )
 
-    assert result.extra_args["finish_reason"] == "some_vendor_reason"
+    assert result.finish_reason == "some_vendor_reason"
 
 
 def test_chat_records_empty_finish_reason() -> None:
     """An empty finish reason is recorded rather than discarded."""
     # The capture turns on the value being present, not on it being non-empty,
-    # so an empty reason reaches extra_args like any other string.
+    # so an empty reason reaches finish_reason like any other string.
     result = _chat(_connection("", usage=USAGE), model_of_azure_deployment="gpt-4o")
 
-    assert result.extra_args["finish_reason"] == ""
+    assert result.finish_reason == ""
 
 
 def test_chat_omits_finish_reason_when_response_has_none() -> None:
@@ -139,4 +140,4 @@ def test_chat_omits_finish_reason_when_response_has_none() -> None:
         _connection(OMITTED, usage=USAGE), model_of_azure_deployment="gpt-4o"
     )
 
-    assert "finish_reason" not in result.extra_args
+    assert result.finish_reason is None

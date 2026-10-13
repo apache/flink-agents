@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -128,7 +129,7 @@ public final class YamlChatActions {
     /** Emit the model's text response, tagged with the original input id. */
     public static void processChatResponse(Event event, RunnerContext ctx) throws Exception {
         ChatResponseEvent chatResponse = ChatResponseEvent.fromEvent(event);
-        ChatMessage response = chatResponse.getResponse();
+        ChatResult response = chatResponse.getResponse();
         if (response == null || response.getText() == null) {
             return;
         }

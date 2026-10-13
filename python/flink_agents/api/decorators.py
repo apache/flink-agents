@@ -68,7 +68,8 @@ def action(
       attribute is the executable target, so no placeholder body is needed::
 
           handle = action(EventType.InputEvent)(
-              JavaFunction.for_action("com.example.Handlers", "handle"))
+              JavaFunction.for_action("com.example.Handlers", "handle")
+          )
 
     Each trigger condition is an event-type name or Boolean condition
     expression. Multiple conditions combine with OR semantics. To combine an

@@ -43,6 +43,8 @@ import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MediaBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -79,6 +81,9 @@ final class OpenAIChatCompletionsUtils {
 
     /** Default max retries for OpenAI API requests (aligned with Python SDK). */
     static final int DEFAULT_MAX_RETRIES = 3;
+
+    private static final ObjectMapper mapper = new ObjectMapper();
+    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
 
     private OpenAIChatCompletionsUtils() {}
 
@@ -170,9 +175,6 @@ final class OpenAIChatCompletionsUtils {
         }
     }
 
-    private static final ObjectMapper mapper = new ObjectMapper();
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-
     /** Convert a list of Flink Agents ChatMessages to OpenAI ChatCompletionMessageParams. */
     public static List<ChatCompletionMessageParam> convertToOpenAIMessages(
             List<ChatMessage> messages) {
@@ -206,11 +208,11 @@ final class OpenAIChatCompletionsUtils {
                 if (!content.isEmpty()) {
                     assistantBuilder.content(content);
                 }
-                List<Map<String, Object>> toolCalls = message.getToolCalls();
-                if (toolCalls != null && !toolCalls.isEmpty()) {
+                List<ToolCallBlock> toolCalls = message.getToolCalls();
+                if (!toolCalls.isEmpty()) {
                     assistantBuilder.toolCalls(convertAssistantToolCalls(toolCalls));
                 }
-                Object refusal = message.getExtraArgs().get("refusal");
+                Object refusal = message.getMetadata().get("refusal");
                 if (refusal instanceof String) {
                     assistantBuilder.refusal((String) refusal);
                 }
@@ -218,12 +220,13 @@ final class OpenAIChatCompletionsUtils {
             case TOOL:
                 ChatCompletionToolMessageParam.Builder toolBuilder =
                         ChatCompletionToolMessageParam.builder().content(content);
-                Object toolCallId = message.getExtraArgs().get("externalId");
-                if (toolCallId == null) {
-                    throw new IllegalArgumentException(
-                            "Tool message must have an externalId in extraArgs.");
-                }
-                toolBuilder.toolCallId(toolCallId.toString());
+                ToolResultBlock toolResult = (ToolResultBlock) message.getBlocks().get(0);
+                toolBuilder.toolCallId(toolResult.getCallId());
+                toolBuilder.content(
+                        toolResult.getBlocks().stream()
+                                .filter(b -> b instanceof TextBlock)
+                                .map(b -> ((TextBlock) b).getText())
+                                .collect(Collectors.joining()));
                 return ChatCompletionMessageParam.ofTool(toolBuilder.build());
             default:
                 throw new IllegalArgumentException("Unsupported role: " + role);
@@ -309,7 +312,11 @@ final class OpenAIChatCompletionsUtils {
     }
 
     private static void requireTextOnly(ChatMessage message) {
-        for (ContentBlock block : message.getBlocks()) {
+        List<? extends ContentBlock> blocks =
+                message.getRole() == MessageRole.TOOL
+                        ? ((ToolResultBlock) message.getBlocks().get(0)).getBlocks()
+                        : message.getBlocks();
+        for (ContentBlock block : blocks) {
             if (block instanceof MediaBlock) {
                 throw unsupported(
                         block,
@@ -351,85 +358,45 @@ final class OpenAIChatCompletionsUtils {
 
     /**
      * Convert an OpenAI {@link ChatCompletionMessage} to a Flink Agents {@link ChatMessage}. {@code
-     * message.refusal()} is written as {@code extraArgs["refusal"]} on the returned ChatMessage
-     * when present, preserving prior Java behavior.
+     * message.refusal()} is written as {@code metadata["refusal"]} on the returned ChatMessage when
+     * present, preserving prior Java behavior.
      */
     public static ChatMessage convertFromOpenAIMessage(ChatCompletionMessage message) {
-        String content = message.content().orElse("");
-        ChatMessage response = ChatMessage.assistant(content);
-
-        message.refusal().ifPresent(refusal -> response.getExtraArgs().put("refusal", refusal));
-
-        List<ChatCompletionMessageToolCall> toolCalls = message.toolCalls().orElse(List.of());
-        if (!toolCalls.isEmpty()) {
-            response.setToolCalls(convertResponseToolCalls(toolCalls));
+        List<ContentBlock> blocks = new ArrayList<>();
+        message.content()
+                .filter(text -> !text.isEmpty())
+                .ifPresent(text -> blocks.add(new TextBlock(text)));
+        for (ChatCompletionMessageToolCall call : message.toolCalls().orElse(List.of())) {
+            if (!call.isFunction()) {
+                throw new IllegalArgumentException("Unsupported OpenAI tool call type");
+            }
+            ChatCompletionMessageFunctionToolCall functionCall = call.asFunction();
+            blocks.add(
+                    new ToolCallBlock(
+                            functionCall.id(),
+                            functionCall.function().name(),
+                            parseArguments(functionCall.function().arguments())));
         }
-        return response;
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        message.refusal().ifPresent(refusal -> metadata.put("refusal", refusal));
+        return ChatMessage.assistant(blocks).withMetadata(metadata);
     }
 
     private static List<ChatCompletionMessageToolCall> convertAssistantToolCalls(
-            List<Map<String, Object>> toolCalls) {
-        List<ChatCompletionMessageToolCall> result = new ArrayList<>(toolCalls.size());
-        for (Map<String, Object> call : toolCalls) {
-            Object type = call.getOrDefault("type", "function");
-            if (!"function".equals(String.valueOf(type))) {
-                continue;
-            }
-
-            Map<String, Object> functionPayload = toMap(call.get("function"));
-            ChatCompletionMessageFunctionToolCall.Function.Builder functionBuilder =
-                    ChatCompletionMessageFunctionToolCall.Function.builder();
-
-            Object functionName = functionPayload.get("name");
-            if (functionName != null) {
-                functionBuilder.name(functionName.toString());
-            }
-
-            Object arguments = functionPayload.get("arguments");
-            functionBuilder.arguments(serializeArguments(arguments));
-
-            Object idObj = call.get("id");
-            if (idObj == null) {
-                throw new IllegalArgumentException("Tool call must have an id.");
-            }
-            String toolCallId = idObj.toString();
-
-            ChatCompletionMessageFunctionToolCall.Builder toolCallBuilder =
-                    ChatCompletionMessageFunctionToolCall.builder()
-                            .id(toolCallId)
-                            .function(functionBuilder.build())
-                            .type(JsonValue.from(String.valueOf(type)));
-
-            result.add(ChatCompletionMessageToolCall.ofFunction(toolCallBuilder.build()));
-        }
-        return result;
-    }
-
-    private static List<Map<String, Object>> convertResponseToolCalls(
-            List<ChatCompletionMessageToolCall> toolCalls) {
-        List<Map<String, Object>> result = new ArrayList<>(toolCalls.size());
-        for (ChatCompletionMessageToolCall toolCall : toolCalls) {
-            if (!toolCall.isFunction()) {
-                continue;
-            }
-
-            ChatCompletionMessageFunctionToolCall functionToolCall = toolCall.asFunction();
-            Map<String, Object> callMap = new LinkedHashMap<>();
-            String toolCallId = functionToolCall.id();
-            if (toolCallId == null || toolCallId.isBlank()) {
-                throw new IllegalStateException("OpenAI tool call ID is null or empty.");
-            }
-
-            callMap.put("id", toolCallId);
-            callMap.put("type", "function");
-
-            ChatCompletionMessageFunctionToolCall.Function function = functionToolCall.function();
-            Map<String, Object> functionMap = new LinkedHashMap<>();
-            functionMap.put("name", function.name());
-            functionMap.put("arguments", parseArguments(function.arguments()));
-            callMap.put("function", functionMap);
-            callMap.put("original_id", toolCallId);
-            result.add(callMap);
+            List<ToolCallBlock> calls) {
+        List<ChatCompletionMessageToolCall> result = new ArrayList<>();
+        for (ToolCallBlock call : calls) {
+            result.add(
+                    ChatCompletionMessageToolCall.ofFunction(
+                            ChatCompletionMessageFunctionToolCall.builder()
+                                    .id(call.getCallId())
+                                    .function(
+                                            ChatCompletionMessageFunctionToolCall.Function.builder()
+                                                    .name(call.getName())
+                                                    .arguments(serializeArguments(call.getInput()))
+                                                    .build())
+                                    .type(JsonValue.from("function"))
+                                    .build()));
         }
         return result;
     }
@@ -445,29 +412,11 @@ final class OpenAIChatCompletionsUtils {
         }
     }
 
-    private static String serializeArguments(Object arguments) {
-        if (arguments == null) {
-            return "{}";
-        }
-        if (arguments instanceof String) {
-            return (String) arguments;
-        }
+    private static String serializeArguments(Map<String, Object> arguments) {
         try {
             return mapper.writeValueAsString(arguments);
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize tool call arguments.", e);
         }
-    }
-
-    private static Map<String, Object> toMap(Object value) {
-        if (value instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> casted = (Map<String, Object>) value;
-            return new LinkedHashMap<>(casted);
-        }
-        if (value == null) {
-            return new LinkedHashMap<>();
-        }
-        return mapper.convertValue(value, MAP_TYPE);
     }
 }

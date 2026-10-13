@@ -126,6 +126,29 @@ class JavaRunnerContextImplDurableExecuteAsyncTest {
     }
 
     @Test
+    void testDurableExecuteAsyncContinuationNativeReconcilableRunsInline() throws Exception {
+        InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
+        JavaRunnerContextImpl context = createContext(new ActionState(null), executor);
+        TestContinuationNativeReconcilableCallable<String> callable =
+                new TestContinuationNativeReconcilableCallable<>(
+                        "recon-inline",
+                        String.class,
+                        () -> "ok",
+                        () -> fail("reconcile should not be called on initial async execution"));
+
+        String result = context.durableExecuteAsync(callable).await();
+
+        assertEquals("ok", result);
+        assertEquals(1, callable.getCallCount());
+        assertEquals(0, callable.getReconcileCount());
+        assertEquals(0, executor.getExecuteAsyncCallCount());
+        assertEquals(2, persistCallCount.get());
+        CallResult persisted =
+                context.getDurableExecutionContext().getActionState().getCallResults().get(0);
+        assertTrue(persisted.isSuccess());
+    }
+
+    @Test
     void testDurableExecuteAsyncReconcilableReplaySuccess() throws Exception {
         InspectingContinuationActionExecutor executor = new InspectingContinuationActionExecutor();
         ActionState actionState = new ActionState(null);

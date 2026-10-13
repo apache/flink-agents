@@ -20,6 +20,7 @@ package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
@@ -233,11 +234,11 @@ public abstract class BaseChatModelSetup extends Resource {
         return messages;
     }
 
-    public ChatMessage chat(List<ChatMessage> messages) {
+    public ChatResult chat(List<ChatMessage> messages) {
         return this.chat(messages, Collections.emptyMap(), Collections.emptyMap());
     }
 
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             Map<String, Object> promptArgs,
             Map<String, Object> modelParams) {
@@ -262,10 +263,10 @@ public abstract class BaseChatModelSetup extends Resource {
      *     null
      * @param outputSchema the schema the provider applies natively, or null for an unconstrained
      *     request
-     * @return the connection's response
+     * @return the connection's result for this request
      * @throws NullPointerException if {@link #open()} has not bound the connection yet
      */
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             @Nullable Map<String, Object> modelParams,

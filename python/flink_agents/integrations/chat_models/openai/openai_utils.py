@@ -18,7 +18,7 @@
 import json
 import os
 import uuid
-from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple
+from typing import TYPE_CHECKING, List, Sequence, Tuple
 
 import openai
 from openai.types.chat import (
@@ -35,7 +35,6 @@ if TYPE_CHECKING:
         ChatCompletionToolMessageParam,
         ChatCompletionUserMessageParam,
     )
-    from openai.types.chat.chat_completion_message_tool_call_param import Function
 
 from flink_agents.api.chat_message import (
     AudioBlock,
@@ -47,6 +46,7 @@ from flink_agents.api.chat_message import (
     MediaBlock,
     MessageRole,
     TextBlock,
+    ToolCallBlock,
     UnsupportedContentBlockError,
     UrlSource,
 )
@@ -107,31 +107,15 @@ def _get_from_param_or_env(
         raise ValueError(msg)
 
 
-def _convert_to_openai_tool_call(tool_call: dict) -> ChatCompletionMessageToolCallParam:
-    """Convert framework tool call format to OpenAI tool call format."""
-    # Use original_id if available, otherwise use id (and convert to string)
-    openai_tool_call_id = tool_call.get("original_id")
-    if openai_tool_call_id is None:
-        tool_call_id = tool_call.get("id")
-        if tool_call_id is None:
-            msg = "Tool call must have either 'original_id' or 'id' field"
-            raise ValueError(msg)
-        openai_tool_call_id = str(tool_call_id)
-
-    function: Function = {
-        "name": tool_call["function"]["name"],
-        # OpenAI expects arguments as JSON string, but our format has it as dict
-        "arguments": json.dumps(tool_call["function"]["arguments"])
-        if isinstance(tool_call["function"]["arguments"], dict)
-        else tool_call["function"]["arguments"],
-    }
-
-    openai_tool_call: ChatCompletionMessageToolCallParam = {
-        "id": openai_tool_call_id,
+def _convert_to_openai_tool_call(
+    tool_call: ToolCallBlock,
+) -> ChatCompletionMessageToolCallParam:
+    """Convert a typed call using its provider-visible ID."""
+    return {
+        "id": tool_call.call_id,
         "type": "function",
-        "function": function,
+        "function": {"name": tool_call.name, "arguments": json.dumps(tool_call.input)},
     }
-    return openai_tool_call
 
 
 _AUDIO_FORMATS = {
@@ -199,7 +183,10 @@ def _user_content(message: ChatMessage) -> str | List[ChatCompletionContentPartP
 
 
 def _require_text_only(message: ChatMessage) -> None:
-    for block in message.blocks:
+    blocks = (
+        message.blocks[0].blocks if message.role == MessageRole.TOOL else message.blocks
+    )
+    for block in blocks:
         if isinstance(block, MediaBlock):
             reason = (
                 f"only user messages can carry media, not {message.role.value} messages"
@@ -224,9 +211,8 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
     - SYSTEM role -> ChatCompletionSystemMessageParam
 
     Only the fields OpenAI defines for each role are sent. Entries in
-    extra_args are not forwarded as message fields, except that a tool
-    message takes its tool_call_id from extra_args["external_id"], and an
-    assistant message carries extra_args["refusal"] when that value is a str.
+    metadata are not forwarded as message fields, except for an assistant refusal.
+    Tool messages use the call ID and content from their ToolResultBlock.
 
     Only user messages can carry media. A media block in any other role, or
     one the Chat Completions API has no content part for, raises
@@ -267,21 +253,20 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
             ]
             assistant_message["tool_calls"] = openai_tool_calls
 
-        refusal = message.extra_args.get("refusal")
+        refusal = message.metadata.get("refusal")
         if isinstance(refusal, str):
             assistant_message["refusal"] = refusal
         return assistant_message
 
     # Handle TOOL role messages
     elif role == MessageRole.TOOL:
-        tool_call_id = message.extra_args.get("external_id")
-        if not tool_call_id or not isinstance(tool_call_id, str):
-            msg = "Tool message must have 'external_id' as a string in extra_args"
-            raise ValueError(msg)
+        result = message.blocks[0]
         tool_message: ChatCompletionToolMessageParam = {
             "role": "tool",
-            "content": message.text,
-            "tool_call_id": tool_call_id,
+            "content": "".join(
+                block.text for block in result.blocks if isinstance(block, TextBlock)
+            ),
+            "tool_call_id": result.call_id,
         }
         return tool_message
 
@@ -290,36 +275,18 @@ def convert_to_openai_message(message: ChatMessage) -> ChatCompletionMessagePara
         raise ValueError(msg)
 
 
-def convert_from_openai_message(
-    message: ChatCompletionMessage, extra_args: Dict[str, Any]
-) -> ChatMessage:
-    """Convert an OpenAI message to a chat message.
-
-    A provider refusal is surfaced under extra_args["refusal"], including when
-    the refusal reason is an empty string.
-    """
-    tool_calls = []
-    if message.tool_calls:
-        # Generate internal UUID for each tool call while preserving
-        # OpenAI's original ID in the original_id field for later
-        # conversion back to OpenAI format
-        tool_calls = [
-            {
-                "id": uuid.uuid4(),
-                "type": tool_call.type,
-                "function": {
-                    "name": tool_call.function.name,
-                    "arguments": json.loads(tool_call.function.arguments),
-                },
-                "original_id": tool_call.id,
-            }
-            for tool_call in message.tool_calls
-        ]
-    if message.refusal is not None:
-        extra_args = {**extra_args, "refusal": message.refusal}
-    return ChatMessage.of(
-        MessageRole(message.role),
-        message.content or "",
-        tool_calls=tool_calls,
-        extra_args=extra_args,
+def convert_from_openai_message(message: ChatCompletionMessage) -> ChatMessage:
+    """Convert generated text and tool calls, retaining refusal metadata."""
+    blocks = []
+    if message.content:
+        blocks.append(TextBlock(text=message.content))
+    blocks.extend(
+        ToolCallBlock(
+            call_id=call.id or str(uuid.uuid4()),
+            name=call.function.name,
+            input=json.loads(call.function.arguments),
+        )
+        for call in message.tool_calls or []
     )
+    metadata = {} if message.refusal is None else {"refusal": message.refusal}
+    return ChatMessage(role=MessageRole.ASSISTANT, blocks=blocks, metadata=metadata)

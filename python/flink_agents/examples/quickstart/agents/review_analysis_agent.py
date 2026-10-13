@@ -19,7 +19,7 @@ import json
 from typing import TYPE_CHECKING, cast
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.decorators import (
     action,
     chat_model_setup,
@@ -100,7 +100,7 @@ class ReviewAnalysisAgent(Agent):
             "id": {input.id},
             "review": {input.review}
         """
-        msg = ChatMessage(role=MessageRole.USER)
+        msg = ChatMessage.user("")
         ctx.send_event(
             ChatRequestEvent(
                 model="review_analysis_model",

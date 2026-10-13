@@ -227,8 +227,12 @@ class TestSkillManagerMixedSources:
         assert secret not in str(exc_info.value.__cause__)
 
     def test_url_origin_description_omits_credentials_and_query(self) -> None:
-        description = SkillManager(Skills(sources=[]))._get_handler("url").describe_location(
-            {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
+        description = (
+            SkillManager(Skills(sources=[]))
+            ._get_handler("url")
+            .describe_location(
+                {"url": ("https://user:password@example.com/x.zip?token=secret#part")}
+            )
         )
 
         assert description == "https://example.com/x.zip"
@@ -345,7 +349,8 @@ class TestSkillManagerMixedSources:
             return FakeRepo(counter["n"])
 
         monkeypatch.setattr(
-            SkillManager, "_create_handlers",
+            SkillManager,
+            "_create_handlers",
             lambda self, bridge: {"test-dup-close": SkillSourceHandler(opener)},
         )
 
@@ -362,7 +367,9 @@ class TestSkillManagerMixedSources:
             "duplicate-name registration must not orphan the displaced repo"
         )
 
-    def test_partial_load_failure_closes_already_opened_repos(self, monkeypatch) -> None:
+    def test_partial_load_failure_closes_already_opened_repos(
+        self, monkeypatch
+    ) -> None:
         from typing import Dict, List
 
         from flink_agents.runtime.skill.agent_skill import AgentSkill
@@ -400,7 +407,8 @@ class TestSkillManagerMixedSources:
             return FakeRepo(f"skill-{counter['n']}")
 
         monkeypatch.setattr(
-            SkillManager, "_create_handlers",
+            SkillManager,
+            "_create_handlers",
             lambda self, bridge: {"test-partial-load": SkillSourceHandler(opener)},
         )
 
@@ -452,7 +460,8 @@ class TestSkillManagerMixedSources:
             return FakeRepo()
 
         monkeypatch.setattr(
-            SkillManager, "_create_handlers",
+            SkillManager,
+            "_create_handlers",
             lambda self, bridge: {"test-badzip-close": SkillSourceHandler(opener)},
         )
 
@@ -509,7 +518,8 @@ class TestSkillManagerMixedSources:
             return FakeRepo(f"skill-{counter['n']}", boom=counter["n"] == 2)
 
         monkeypatch.setattr(
-            SkillManager, "_create_handlers",
+            SkillManager,
+            "_create_handlers",
             lambda self, bridge: {"test-register-boom": SkillSourceHandler(opener)},
         )
 

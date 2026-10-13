@@ -20,6 +20,7 @@ package org.apache.flink.agents.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
@@ -194,9 +195,10 @@ class BuiltInEventsTest {
     @Test
     void restoreReconstructsEveryBuiltInCategoryToItsConcreteType() throws Exception {
         Map<String, Object> toolCall = new LinkedHashMap<>();
-        toolCall.put("id", "call_aaaa");
+        toolCall.put("type", "tool_call");
+        toolCall.put("call_id", "call_aaaa");
         toolCall.put("name", "echo");
-        toolCall.put("arguments", Map.of("value", "ping"));
+        toolCall.put("input", Map.of("value", "ping"));
 
         Map<String, Object> toolAttrs = new LinkedHashMap<>();
         toolAttrs.put("model", "test-model");
@@ -205,7 +207,7 @@ class BuiltInEventsTest {
         Map<String, Object> responseAttrs = new LinkedHashMap<>();
         responseAttrs.put("request_id", REQUEST_ID);
         responseAttrs.put("status", ChatResponseEvent.SUCCESS);
-        responseAttrs.put("response", new ChatMessage(MessageRole.ASSISTANT, "hi there"));
+        responseAttrs.put("response", new ChatResult(ChatMessage.assistant("hi there")));
         responseAttrs.put("retry_count", 0);
         responseAttrs.put("total_retry_wait_sec", 0);
 
@@ -601,7 +603,7 @@ class BuiltInEventsTest {
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "responses", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "success", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "error", "not-a-map"),
-                Arguments.of(ToolResponseEvent.EVENT_TYPE, "external_ids", "not-a-map"),
+                Arguments.of(ChatResponseEvent.EVENT_TYPE, "model_routing", "not-a-map"),
                 Arguments.of(ToolResponseEvent.EVENT_TYPE, "timestamp", "not-a-number"),
                 // ContextRetrievalRequestEvent
                 Arguments.of(ContextRetrievalRequestEvent.EVENT_TYPE, "query", 0),

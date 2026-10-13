@@ -27,6 +27,7 @@ import org.apache.flink.agents.runtime.actionstate.CallResult;
 import org.apache.flink.agents.runtime.async.BatchExecutionResult;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 
 import java.time.Duration;
@@ -35,6 +36,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
@@ -71,19 +73,29 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
 
     @Override
     protected <T> T resolveDurableAsync(DurableCallable<T> callable) throws Exception {
+        Callable<T> boundary = executionBoundary(callable);
         if (durableExecutionContext != null) {
             Callable<T> reconcileCallable = callable.reconciler();
             if (reconcileCallable != null) {
-                return durableExecuteAsyncWithReconcile(callable, reconcileCallable);
+                return durableExecuteWithReconcile(callable, reconcileCallable, boundary);
             }
         }
-        return durableExecuteCompletionOnly(callable, () -> resolveAsync(callable::call));
+        return durableExecuteCompletionOnly(callable, boundary);
     }
 
-    private <T> T durableExecuteAsyncWithReconcile(
-            DurableCallable<T> callable, Callable<T> reconcileCallable) throws Exception {
-        return durableExecuteWithReconcile(
-                callable, reconcileCallable, () -> resolveAsync(callable::call));
+    /**
+     * Chooses where one durable async call executes, on both the completion-only and the reconcile
+     * path. A {@link ContinuationNativeCallable} suspends by yielding the caller's continuation, so
+     * it runs inline on the mailbox thread; handing it to an async-pool worker would make the
+     * waiting caller hold a worker its own callee needs to progress (issue #1213), and the yield
+     * itself would fail off the mailbox thread. Any other callable is offloaded to the pool, which
+     * lets the continuation yield while it runs.
+     */
+    private <T> Callable<T> executionBoundary(DurableCallable<T> callable) {
+        if (callable instanceof ContinuationNativeCallable) {
+            return callable::call;
+        }
+        return () -> resolveAsync(callable::call);
     }
 
     @Override
@@ -348,6 +360,17 @@ public class JavaRunnerContextImpl extends RunnerContextImpl {
         } catch (DurableExecutionRuntimeException e) {
             throw (Exception) e.getCause();
         }
+    }
+
+    /**
+     * Awaits a {@link CompletableFuture} by yielding the continuation, without occupying an
+     * async-pool worker. Falls back to blocking {@code get()} when continuations are unavailable.
+     */
+    public <T> T awaitCompletableFuture(CompletableFuture<T> future) throws Exception {
+        if (continuationExecutor != null && continuationContext != null) {
+            return continuationExecutor.awaitFuture(continuationContext, future);
+        }
+        return future.get();
     }
 
     @Override

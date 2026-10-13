@@ -12,8 +12,7 @@
             "text": "hello world"
           }
         ],
-        "tool_calls": [],
-        "extra_args": {}
+        "metadata": {}
       }
     ],
     "prompt_args": {},

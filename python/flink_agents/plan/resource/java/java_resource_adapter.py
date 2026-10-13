@@ -25,9 +25,7 @@ class JavaResourceAdapter(Protocol):
         """Resolve a resource through its owning runtime."""
         ...
 
-    def fromPythonChatMessage(
-        self, role: str, blocks: list[dict], tool_calls: list, extra_args: dict
-    ) -> Any:
+    def fromPythonChatMessage(self, message: dict) -> Any:
         """Create a Java message from Python values."""
         ...
 

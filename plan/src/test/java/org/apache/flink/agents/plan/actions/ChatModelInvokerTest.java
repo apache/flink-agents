@@ -18,7 +18,6 @@
 package org.apache.flink.agents.plan.actions;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
@@ -27,6 +26,7 @@ import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -307,7 +307,7 @@ class ChatModelInvokerTest {
         BaseChatModelSetup model = mock(BaseChatModelSetup.class);
         RunnerContext ctx = syncContext(model);
         when(model.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
-        when(model.chat(any(), any(), any())).thenReturn(ChatMessage.assistant("the answer"));
+        when(model.chat(any(), any(), any())).thenReturn(ChatFixtures.response("the answer"));
         IllegalStateException failure = new IllegalStateException("state persistence failed");
         when(ctx.durableExecute(any()))
                 .thenAnswer(
@@ -347,11 +347,11 @@ class ChatModelInvokerTest {
         BaseChatModelSetup model = mock(BaseChatModelSetup.class);
         RunnerContext ctx = syncContext(model);
         when(model.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
-        when(model.chat(any(), any(), any())).thenReturn(ChatMessage.assistant("the answer is 42"));
+        when(model.chat(any(), any(), any())).thenReturn(ChatFixtures.response("the answer is 42"));
         when(model.chat(any(), any(), any(), any()))
                 .thenReturn(
-                        ChatMessage.assistant("not-json"),
-                        ChatMessage.assistant("{\"answer\":\"42\"}"));
+                        ChatFixtures.response("not-json"),
+                        ChatFixtures.response("{\"answer\":\"42\"}"));
         ObjectMapper mapper = new ObjectMapper();
         List<String> recordedIds = new ArrayList<>();
         List<byte[]> recordedResults = new ArrayList<>();
@@ -405,9 +405,8 @@ class ChatModelInvokerTest {
         verify(model, times(2)).chat(any(), any(), any(), any());
         assertEquals(1, replayed.retryCount);
         assertEquals(first.response.getText(), replayed.response.getText());
-        assertEquals(
-                first.response.getExtraArgs().get(Agent.STRUCTURED_OUTPUT),
-                replayed.response.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
+        assertEquals(Map.of("answer", "42"), replayed.structuredOutput);
+        assertEquals(first.structuredOutput, replayed.structuredOutput);
     }
 
     @Test

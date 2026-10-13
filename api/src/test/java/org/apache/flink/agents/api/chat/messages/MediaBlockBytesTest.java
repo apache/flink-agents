@@ -81,8 +81,8 @@ class MediaBlockBytesTest {
                             MAPPER.readValue(MAPPER.writeValueAsString(message), ChatMessage.class)
                                     .getBlocks())
                     .containsExactly(block);
-            ChatMessage fromMap = new ChatMessage();
-            fromMap.setBlocksFromMaps(List.of(expected));
+            ChatMessage fromMap =
+                    ChatMessage.fromMap(Map.of("role", "user", "blocks", List.of(expected)));
             assertThat(fromMap.getBlocks()).containsExactly(block);
             assertThat(block.toString()).doesNotContain(encoded);
             assertThat(MAPPER.writeValueAsString(block.sanitize())).doesNotContain(encoded);

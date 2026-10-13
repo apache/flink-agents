@@ -23,6 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.annotation.Tool;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.tools.ToolParameterSource;
@@ -34,6 +35,60 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class JavaResourceAdapterTest {
+
+    @Test
+    void buildsJavaChatResultFromPythonAssistantMessage() {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, Thread.currentThread().getContextClassLoader());
+        ChatResult response =
+                adapter.fromPythonChatResult(
+                        Map.of(
+                                "message",
+                                        Map.of(
+                                                "role",
+                                                "assistant",
+                                                "metadata",
+                                                Map.of("turn", 1),
+                                                "blocks",
+                                                List.of(
+                                                        Map.of(
+                                                                "type",
+                                                                "reasoning",
+                                                                "text",
+                                                                "private"),
+                                                        Map.of("type", "text", "text", "answer"),
+                                                        Map.of(
+                                                                "type",
+                                                                "tool_call",
+                                                                "call_id",
+                                                                "provider-id",
+                                                                "name",
+                                                                "tool",
+                                                                "input",
+                                                                Map.of("x", 1)),
+                                                        Map.of(
+                                                                "type",
+                                                                "image",
+                                                                "media_type",
+                                                                "image/png",
+                                                                "source",
+                                                                Map.of(
+                                                                        "type", "base64", "data",
+                                                                        "aGk=")))),
+                                "response_id", "response-id",
+                                "usage", Map.of("prompt_tokens", 0),
+                                "finish_reason", "tool_calls",
+                                "metadata", Map.of("opaque", List.of(1))));
+        assertThat(response.getText()).isEqualTo("answer");
+        assertThat(response.getMessage().getBlocks()).hasSize(4);
+        assertThat(response.getMessage().getBlocks().get(3)).isInstanceOf(ImageBlock.class);
+        assertThat(response.getToolCalls().get(0).getCallId()).isEqualTo("provider-id");
+        assertThat(response.getUsage().getPromptTokens()).isZero();
+        assertThat(response.getUsage().getCompletionTokens()).isNull();
+        assertThat(response.getMetadata()).isEqualTo(Map.of("opaque", List.of(1)));
+        assertThat(response.getResponseId()).isEqualTo("response-id");
+        assertThat(response.toMap()).containsKey("message").doesNotContainKeys("blocks", "role");
+    }
 
     @Test
     void buildsJavaChatMessageFromExtractedPythonFields() {
@@ -52,14 +107,16 @@ public class JavaResourceAdapterTest {
                                 "image/png",
                                 "source",
                                 Map.of("type", "base64", "data", "aGk=")));
-        ChatMessage converted = adapter.fromPythonChatMessage("user", blocks, toolCalls, extraArgs);
+        ChatMessage converted =
+                adapter.fromPythonChatMessage(
+                        Map.of("role", "user", "blocks", blocks, "metadata", extraArgs));
 
         assertThat(converted.getRole()).isEqualTo(MessageRole.USER);
         assertThat(converted.getText()).isEqualTo("hello");
         assertThat(converted.getBlocks()).hasSize(2);
         assertThat(converted.getBlocks().get(1)).isInstanceOf(ImageBlock.class);
-        assertThat(converted.getToolCalls()).isEqualTo(toolCalls);
-        assertThat(converted.getExtraArgs()).isEqualTo(extraArgs);
+        assertThat(converted.getToolCalls()).isEmpty();
+        assertThat(converted.getMetadata()).isEqualTo(extraArgs);
     }
 
     @Test
@@ -112,7 +169,9 @@ public class JavaResourceAdapterTest {
         assertThat(result)
                 .containsEntry("__flink_agents_tool_result__", "response")
                 .containsEntry("success", true)
-                .containsEntry("result", "tenant-1:request-1:order-1")
+                .containsEntry(
+                        "blocks",
+                        List.of(Map.of("type", "text", "text", "tenant-1:request-1:order-1")))
                 .containsEntry("execution_time_ms", 0L);
         assertThat(result.get("error")).isNull();
     }
@@ -134,7 +193,7 @@ public class JavaResourceAdapterTest {
                 .containsEntry("success", false)
                 .containsEntry("error", "tool rejected input")
                 .containsEntry("execution_time_ms", 0L);
-        assertThat(result.get("result")).isNull();
+        assertThat(result).doesNotContainKey("result");
     }
 
     @Tool(description = "Query order.")
@@ -153,5 +212,34 @@ public class JavaResourceAdapterTest {
     @Tool(description = "Fail a tool call.")
     public static String failingTool(@ToolParam(name = "value") String value) {
         throw new IllegalStateException("tool rejected " + value);
+    }
+
+    @Test
+    void toolBridgePreservesTypedResultBlocks() throws Exception {
+        JavaResourceAdapter adapter =
+                new JavaResourceAdapter(null, Thread.currentThread().getContextClassLoader());
+        Map<String, Object> wire =
+                adapter.invokeJavaTool(
+                        JavaResourceAdapterTest.class.getName(),
+                        "mediaResultTool",
+                        List.of(),
+                        Map.of());
+        org.apache.flink.agents.api.tools.ToolResponse restored =
+                org.apache.flink.agents.plan.resource.python.PythonToolResultConverter
+                        .fromBridgeResult(wire);
+        assertThat(restored.getBlocks()).hasSize(2);
+        assertThat((byte[]) restored.getMetadata().get("internal")).containsExactly((byte) 0xff);
+        assertThat(restored.toResultBlock("id").getMetadata()).isEmpty();
+        assertThat(restored.getBlocks().get(1)).isInstanceOf(ImageBlock.class);
+        assertThat(restored.toResultBlock("id").getText()).isEqualTo("visible");
+    }
+
+    @Tool(description = "Return explicit media content.")
+    public static org.apache.flink.agents.api.tools.ToolResponse mediaResultTool() {
+        return org.apache.flink.agents.api.tools.ToolResponse.success(
+                        List.of(
+                                new org.apache.flink.agents.api.chat.messages.TextBlock("visible"),
+                                ImageBlock.fromBase64("image/png", "aGk=")))
+                .withMetadata(Map.of("internal", new byte[] {(byte) 0xff}));
     }
 }

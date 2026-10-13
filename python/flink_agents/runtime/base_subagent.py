@@ -190,9 +190,7 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
             self._per_task_allocators[to_identity] = allocator
         registry = self._per_task_registries.pop(from_identity, None)
         if registry is not None:
-            registry.set_action_name(
-                Namespace.from_task(to_task).action_name
-            )
+            registry.set_action_name(Namespace.from_task(to_task).action_name)
             self._per_task_registries[to_identity] = registry
 
     def on_action_finishing(self, task: Any) -> None:
@@ -284,9 +282,7 @@ class BaseSubagentSetup(SubagentSetup, TaskLifecycleListener, ABC):
         identity = self._current_namespace.task_identity
         registry = self._per_task_registries.get(identity)
         if registry is None:
-            registry = PendingSubagentCallRegistry(
-                self._current_namespace.action_name
-            )
+            registry = PendingSubagentCallRegistry(self._current_namespace.action_name)
             self._per_task_registries[identity] = registry
         return registry
 

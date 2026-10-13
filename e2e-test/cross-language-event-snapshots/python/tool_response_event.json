@@ -4,10 +4,53 @@
   "attributes": {
     "request_id": "00000000-0000-0000-0000-000000000002",
     "responses": {
-      "call_aaaa": "pong",
-      "call_bbbb": 42,
-      "call_cccc": true,
-      "call_dddd": "Tool `get_weather` execute failed."
+      "call_aaaa": {
+        "success": true,
+        "error": null,
+        "execution_time_ms": 0,
+        "tool_name": null,
+        "blocks": [
+          {
+            "type": "text",
+            "text": "pong"
+          }
+        ],
+        "metadata": {}
+      },
+      "call_bbbb": {
+        "success": true,
+        "error": null,
+        "execution_time_ms": 0,
+        "tool_name": null,
+        "blocks": [
+          {
+            "type": "text",
+            "text": "42"
+          }
+        ],
+        "metadata": {}
+      },
+      "call_cccc": {
+        "success": true,
+        "error": null,
+        "execution_time_ms": 0,
+        "tool_name": null,
+        "blocks": [
+          {
+            "type": "text",
+            "text": "true"
+          }
+        ],
+        "metadata": {}
+      },
+      "call_dddd": {
+        "success": false,
+        "error": "Tool `get_weather` execute failed.",
+        "execution_time_ms": 0,
+        "tool_name": null,
+        "blocks": [],
+        "metadata": {}
+      }
     },
     "success": {
       "call_aaaa": true,
@@ -17,12 +60,6 @@
     },
     "error": {
       "call_dddd": "ValueError: boom"
-    },
-    "external_ids": {
-      "call_aaaa": null,
-      "call_bbbb": null,
-      "call_cccc": null,
-      "call_dddd": null
     }
   },
   "attachments": {}

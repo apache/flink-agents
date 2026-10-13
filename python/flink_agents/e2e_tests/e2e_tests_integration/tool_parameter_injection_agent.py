@@ -19,11 +19,17 @@ from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import (
     action,
     chat_model_connection,
@@ -116,7 +122,7 @@ class MockToolChatConnection(BaseChatModelConnection):
         tools: list[BaseTool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: object,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Return a tool call for user input, or echo the tool response.
 
         A non-``None`` ``output_schema`` is rejected: this connection has no native
@@ -126,7 +132,9 @@ class MockToolChatConnection(BaseChatModelConnection):
         self._reject_unsupported_output_schema(output_schema)
         last_message = messages[-1]
         if last_message.role == MessageRole.TOOL:
-            return ChatMessage.of(MessageRole.ASSISTANT, last_message.text)
+            return ChatResult(
+                message=ChatMessage.assistant(last_message.blocks[0].blocks)
+            )
 
         for candidate_tool in tools or []:
             if "tenant_id" in str(candidate_tool.metadata.get_parameters_dict()):
@@ -134,19 +142,29 @@ class MockToolChatConnection(BaseChatModelConnection):
                 raise RuntimeError(msg)
 
         order_id = str(last_message.text)
-        return ChatMessage.of(
-            MessageRole.ASSISTANT,
-            "",
-            tool_calls=[
-                {
-                    "id": f"call-{order_id}",
-                    "type": "function",
-                    "function": {
-                        "name": "query_order",
-                        "arguments": {"order_id": order_id},
-                    },
-                }
-            ],
+        return ChatResult(
+            message=ChatMessage.assistant(
+                [
+                    TextBlock(text=""),
+                    *(
+                        ToolCallBlock(
+                            call_id=str(c["id"]),
+                            name=c["function"]["name"],
+                            input=c["function"]["arguments"],
+                        )
+                        for c in [
+                            {
+                                "id": f"call-{order_id}",
+                                "type": "function",
+                                "function": {
+                                    "name": "query_order",
+                                    "arguments": {"order_id": order_id},
+                                },
+                            }
+                        ]
+                    ),
+                ]
+            )
         )
 
 

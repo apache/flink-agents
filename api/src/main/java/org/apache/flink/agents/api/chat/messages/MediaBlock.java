@@ -42,7 +42,7 @@ import java.util.Objects;
  * which records media metadata instead of payload bytes — see {@link #sanitize()}.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public abstract class MediaBlock extends ContentBlock {
+public abstract class MediaBlock extends DataContentBlock {
 
     @JsonProperty("media_type")
     private final String mediaType;

@@ -42,6 +42,7 @@ import org.apache.flink.agents.api.tools.ToolParameters;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
@@ -303,7 +304,7 @@ public class ToolCallActionTest {
         Map<String, Object> arguments =
                 new HashMap<>(Map.of("orderId", "order-1", "tenant_id", "model-tenant"));
         ToolRequestEvent event =
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 Map.of(
@@ -318,7 +319,7 @@ public class ToolCallActionTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getResponses().get("call-1").isSuccess()).isTrue();
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
         assertThat(response.getError()).isEmpty();
         assertThat(arguments)
                 .containsOnly(
@@ -336,7 +337,7 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("tenant-sensory:order-1");
     }
 
@@ -351,7 +352,7 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(toolRequest("queryOrder"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("tenant-short:order-1");
     }
 
@@ -364,7 +365,7 @@ public class ToolCallActionTest {
                         .withSensoryMemory(Map.of());
 
         ToolRequestEvent request =
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 Map.of(
@@ -492,8 +493,8 @@ public class ToolCallActionTest {
                 .containsExactly("tool-call:call-1", "tool-call:call-2");
         assertThat(ctx.durableExecuteIds).isEmpty();
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
-        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("tenant-1:order-2");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("tenant-1:order-2");
     }
 
     @Test
@@ -544,7 +545,7 @@ public class ToolCallActionTest {
                 };
 
         ToolCallAction.processToolRequest(
-                new ToolRequestEvent(
+                ChatFixtures.request(
                         "model",
                         List.of(
                                 toolCall("missingTool", "missing-call", "order-0"),
@@ -564,14 +565,14 @@ public class ToolCallActionTest {
                 new FakeRunnerContext()
                         .withGatherOutcomes(
                                 List.of(
-                                        Outcome.success(ToolResponse.success("ok")),
+                                        Outcome.success(ToolResponse.text("ok")),
                                         Outcome.failure(new RuntimeException("boom"))));
 
         ToolCallAction.processToolRequest(toolRequest("queryOrder", "call-1", "call-2"), ctx);
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("ok");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("ok");
         assertThat(response.getSuccess()).containsEntry("call-2", false);
         assertThat(response.getResponses().get("call-2").getError())
                 .isEqualTo("Tool queryOrder execute failed.");
@@ -743,11 +744,11 @@ public class ToolCallActionTest {
         ToolCallAction.processToolRequest(restored, ctx);
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getResponses().get("call-1").isSuccess()).isTrue();
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("tenant-1:order-1");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("tenant-1:order-1");
     }
 
     private static ToolRequestEvent toolRequest(String toolName) {
-        return new ToolRequestEvent("model", List.of(toolCall(toolName, "call-1", "order-1")));
+        return ChatFixtures.request("model", List.of(toolCall(toolName, "call-1", "order-1")));
     }
 
     private static ToolRequestEvent toolRequest(String toolName, String... ids) {
@@ -755,7 +756,7 @@ public class ToolCallActionTest {
         for (int i = 0; i < ids.length; i++) {
             toolCalls.add(toolCall(toolName, ids[i], "order-" + (i + 1)));
         }
-        return new ToolRequestEvent("model", toolCalls);
+        return ChatFixtures.request("model", toolCalls);
     }
 
     private static Map<String, Object> toolCall(String toolName, String id, String orderId) {

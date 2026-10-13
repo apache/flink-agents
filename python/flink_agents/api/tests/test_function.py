@@ -22,6 +22,7 @@ an empty identifier can never resolve. Rejecting it at construction makes every
 declaration path fail fast -- ``action()``, ``add_action``, direct construction
 and deserialization alike -- instead of deferring the failure to runtime.
 """
+
 import pytest
 
 from flink_agents.api.function import JavaFunction, PythonFunction

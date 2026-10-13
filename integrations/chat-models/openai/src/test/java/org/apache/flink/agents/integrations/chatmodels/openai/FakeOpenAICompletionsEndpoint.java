@@ -41,6 +41,7 @@ final class FakeOpenAICompletionsEndpoint implements AutoCloseable {
             ",\"usage\":{\"prompt_tokens\":11,\"completion_tokens\":7,\"total_tokens\":18}";
 
     private final HttpServer server;
+    private volatile String lastRequestBody;
 
     private FakeOpenAICompletionsEndpoint(HttpServer server) {
         this.server = server;
@@ -82,9 +83,14 @@ final class FakeOpenAICompletionsEndpoint implements AutoCloseable {
 
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         byte[] body = completion.getBytes(StandardCharsets.UTF_8);
+        FakeOpenAICompletionsEndpoint endpoint = new FakeOpenAICompletionsEndpoint(server);
         server.createContext(
                 "/",
                 exchange -> {
+                    endpoint.lastRequestBody =
+                            new String(
+                                    exchange.getRequestBody().readAllBytes(),
+                                    StandardCharsets.UTF_8);
                     exchange.getResponseHeaders().add("Content-Type", "application/json");
                     exchange.sendResponseHeaders(200, body.length);
                     exchange.getResponseBody().write(body);
@@ -92,7 +98,11 @@ final class FakeOpenAICompletionsEndpoint implements AutoCloseable {
                 });
         server.setExecutor(null);
         server.start();
-        return new FakeOpenAICompletionsEndpoint(server);
+        return endpoint;
+    }
+
+    String lastRequestBody() {
+        return lastRequestBody;
     }
 
     String baseUrl() {

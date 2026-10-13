@@ -17,32 +17,26 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.Reasoning;
 import com.openai.models.ReasoningEffort;
-import com.openai.models.responses.*;
+import com.openai.models.responses.Response;
+import com.openai.models.responses.ResponseCreateParams;
+import com.openai.models.responses.ResponseInputItem;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.tools.ToolMetadata;
 
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * A <b>dedicated</b> OpenAI chat model integration using the Responses API.
@@ -84,9 +78,6 @@ import java.util.Optional;
  */
 public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
 
-    private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    private static final ObjectMapper mapper = new ObjectMapper();
-
     private final OpenAIClient client;
     private final String defaultModel;
     private final Duration timeout;
@@ -126,7 +117,7 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
     }
 
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<org.apache.flink.agents.api.tools.Tool> tools,
             Map<String, Object> modelParams) {
@@ -134,22 +125,28 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
         UnsupportedContentBlockException.rejectMedia("OpenAI Responses", messages);
         ResponseCreateParams params = buildRequest(messages, tools, modelParams);
         Response response = client.responses().create(params);
-        ChatMessage result = convertResponse(response);
+        ChatMessage result = OpenAIResponsesUtils.convertResponse(response);
 
-        if (response.usage().isPresent()) {
-            String modelName = modelParams != null ? (String) modelParams.get("model") : null;
-            if (modelName == null || modelName.isBlank()) {
-                modelName = this.defaultModel;
-            }
-            if (modelName != null && !modelName.isBlank()) {
-                result.getExtraArgs().put("model_name", modelName);
-                result.getExtraArgs().put("promptTokens", response.usage().get().inputTokens());
-                result.getExtraArgs()
-                        .put("completionTokens", response.usage().get().outputTokens());
-            }
+        String modelName = modelParams != null ? (String) modelParams.get("model") : null;
+        if (modelName == null || modelName.isBlank()) {
+            modelName = this.defaultModel;
         }
-
-        return result;
+        return new ChatResult(
+                result,
+                modelName,
+                response.id(),
+                response.usage()
+                        .map(usage -> new TokenUsage(usage.inputTokens(), usage.outputTokens()))
+                        .orElse(null),
+                response.incompleteDetails()
+                        .flatMap(details -> details.reason())
+                        .map(
+                                reason ->
+                                        "max_output_tokens".equals(reason.asString())
+                                                ? "length"
+                                                : reason.asString())
+                        .orElse(null),
+                null);
     }
 
     private ResponseCreateParams buildRequest(
@@ -165,7 +162,7 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
             modelName = this.defaultModel;
         }
 
-        List<ResponseInputItem> inputItems = convertInputItems(messages);
+        List<ResponseInputItem> inputItems = OpenAIResponsesUtils.convertInputItems(messages);
 
         ResponseCreateParams.Builder builder =
                 ResponseCreateParams.builder()
@@ -173,7 +170,7 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
                         .inputOfResponse(inputItems);
 
         if (tools != null && !tools.isEmpty()) {
-            builder.tools(convertTools(tools, strictMode));
+            builder.tools(OpenAIResponsesUtils.convertTools(tools, strictMode));
         }
 
         Object temperature = modelParams.remove("temperature");
@@ -209,247 +206,12 @@ public class OpenAIResponsesModelConnection extends BaseChatModelConnection {
                 (Map<String, Object>) modelParams.remove("additional_kwargs");
         if (additionalKwargs != null) {
             additionalKwargs.forEach(
-                    (key, value) -> builder.putAdditionalBodyProperty(key, toJsonValue(value)));
+                    (key, value) ->
+                            builder.putAdditionalBodyProperty(
+                                    key, OpenAIResponsesUtils.toJsonValue(value)));
         }
 
         return builder.build();
-    }
-
-    private List<ResponseInputItem> convertInputItems(List<ChatMessage> messages) {
-        List<ResponseInputItem> items = new ArrayList<>();
-        for (ChatMessage message : messages) {
-            items.addAll(convertSingleMessage(message));
-        }
-        return items;
-    }
-
-    private List<ResponseInputItem> convertSingleMessage(ChatMessage message) {
-        List<ResponseInputItem> items = new ArrayList<>();
-        MessageRole role = message.getRole();
-        String content = Optional.ofNullable(message.getText()).orElse("");
-
-        switch (role) {
-            case SYSTEM:
-                items.add(
-                        ResponseInputItem.ofMessage(
-                                ResponseInputItem.Message.builder()
-                                        .role(ResponseInputItem.Message.Role.SYSTEM)
-                                        .addInputTextContent(content)
-                                        .build()));
-                break;
-
-            case USER:
-                items.add(
-                        ResponseInputItem.ofMessage(
-                                ResponseInputItem.Message.builder()
-                                        .role(ResponseInputItem.Message.Role.USER)
-                                        .addInputTextContent(content)
-                                        .build()));
-                break;
-
-            case ASSISTANT:
-                List<Map<String, Object>> toolCalls = message.getToolCalls();
-                if (toolCalls != null && !toolCalls.isEmpty()) {
-                    for (Map<String, Object> call : toolCalls) {
-                        Map<String, Object> functionPayload = toMap(call.get("function"));
-                        String responseId = String.valueOf(call.get("id"));
-                        String callId = String.valueOf(call.get("original_id"));
-                        String name = String.valueOf(functionPayload.get("name"));
-                        String args = serializeArguments(functionPayload.get("arguments"));
-
-                        items.add(
-                                ResponseInputItem.ofFunctionCall(
-                                        ResponseFunctionToolCall.builder()
-                                                .id(responseId)
-                                                .callId(callId)
-                                                .name(name)
-                                                .arguments(args)
-                                                .status(ResponseFunctionToolCall.Status.COMPLETED)
-                                                .build()));
-                    }
-                }
-                if (!content.isEmpty()) {
-                    items.add(
-                            ResponseInputItem.ofEasyInputMessage(
-                                    EasyInputMessage.builder()
-                                            .role(EasyInputMessage.Role.ASSISTANT)
-                                            .content(content)
-                                            .build()));
-                }
-                break;
-
-            case TOOL:
-                Object toolCallId = message.getExtraArgs().get("externalId");
-                if (toolCallId == null) {
-                    throw new IllegalArgumentException(
-                            "Tool message must have an externalId in extraArgs.");
-                }
-                items.add(
-                        ResponseInputItem.ofFunctionCallOutput(
-                                ResponseInputItem.FunctionCallOutput.builder()
-                                        .callId(toolCallId.toString())
-                                        .output(content)
-                                        .build()));
-                break;
-
-            default:
-                throw new IllegalArgumentException("Unsupported role: " + role);
-        }
-        return items;
-    }
-
-    private List<Tool> convertTools(
-            List<org.apache.flink.agents.api.tools.Tool> tools, boolean strictMode) {
-        List<Tool> responsesTools = new ArrayList<>(tools.size());
-        for (org.apache.flink.agents.api.tools.Tool tool : tools) {
-            ToolMetadata metadata = tool.getMetadata();
-            FunctionTool.Builder functionBuilder =
-                    FunctionTool.builder()
-                            .name(metadata.getName())
-                            .description(metadata.getDescription());
-
-            String schema = metadata.getInputSchema();
-            if (schema != null && !schema.isBlank()) {
-                functionBuilder.parameters(parseToolParameters(schema));
-            }
-
-            functionBuilder.strict(strictMode);
-
-            responsesTools.add(Tool.ofFunction(functionBuilder.build()));
-        }
-        return responsesTools;
-    }
-
-    private ChatMessage convertResponse(Response response) {
-        List<ResponseOutputItem> output = response.output();
-        if (output == null || output.isEmpty()) {
-            throw new IllegalStateException("OpenAI Responses API did not return any output.");
-        }
-
-        StringBuilder textContent = new StringBuilder();
-        StringBuilder refusalContent = new StringBuilder();
-        List<Map<String, Object>> toolCalls = new ArrayList<>();
-
-        for (ResponseOutputItem item : output) {
-            if (item.isMessage()) {
-                ResponseOutputMessage msg = item.asMessage();
-                for (ResponseOutputMessage.Content contentBlock : msg.content()) {
-                    if (contentBlock.isOutputText()) {
-                        textContent.append(contentBlock.asOutputText().text());
-                    } else if (contentBlock.isRefusal()) {
-                        refusalContent.append(contentBlock.asRefusal().refusal());
-                    }
-                }
-            } else if (item.isFunctionCall()) {
-                ResponseFunctionToolCall fc = item.asFunctionCall();
-                Map<String, Object> callMap = new LinkedHashMap<>();
-
-                String callId = fc.callId();
-                if (callId == null || callId.isBlank()) {
-                    throw new IllegalStateException(
-                            "OpenAI Responses API returned a function call without a call_id.");
-                }
-
-                callMap.put(
-                        "id",
-                        fc.id()
-                                .orElseThrow(
-                                        () ->
-                                                new IllegalStateException(
-                                                        "OpenAI Responses API returned a function call without an id.")));
-                callMap.put("type", "function");
-
-                Map<String, Object> functionMap = new LinkedHashMap<>();
-                functionMap.put("name", fc.name());
-                functionMap.put("arguments", parseArguments(fc.arguments()));
-                callMap.put("function", functionMap);
-                callMap.put("original_id", callId);
-
-                toolCalls.add(callMap);
-            }
-        }
-
-        ChatMessage result = ChatMessage.assistant(textContent.toString());
-        if (!toolCalls.isEmpty()) {
-            result.setToolCalls(toolCalls);
-        }
-
-        if (refusalContent.length() > 0) {
-            result.getExtraArgs().put("refusal", refusalContent.toString());
-        }
-
-        result.getExtraArgs().put("response_id", response.id());
-
-        return result;
-    }
-
-    private FunctionTool.Parameters parseToolParameters(String schemaJson) {
-        try {
-            JsonNode root = mapper.readTree(schemaJson);
-            if (root == null || !root.isObject()) {
-                return FunctionTool.Parameters.builder().build();
-            }
-            FunctionTool.Parameters.Builder builder = FunctionTool.Parameters.builder();
-            root.fields()
-                    .forEachRemaining(
-                            entry ->
-                                    builder.putAdditionalProperty(
-                                            entry.getKey(),
-                                            JsonValue.fromJsonNode(entry.getValue())));
-            return builder.build();
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to parse tool schema JSON.", e);
-        }
-    }
-
-    private Map<String, Object> parseArguments(String arguments) {
-        if (arguments == null || arguments.isBlank()) {
-            return Map.of();
-        }
-        try {
-            return mapper.readValue(arguments, MAP_TYPE);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to parse tool arguments: " + arguments, e);
-        }
-    }
-
-    private JsonValue toJsonValue(Object value) {
-        if (value instanceof JsonValue) {
-            return (JsonValue) value;
-        }
-        if (value instanceof String
-                || value instanceof Number
-                || value instanceof Boolean
-                || value == null) {
-            return JsonValue.from(value);
-        }
-        return JsonValue.fromJsonNode(mapper.valueToTree(value));
-    }
-
-    private String serializeArguments(Object arguments) {
-        if (arguments == null) {
-            return "{}";
-        }
-        if (arguments instanceof String) {
-            return (String) arguments;
-        }
-        try {
-            return mapper.writeValueAsString(arguments);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize tool call arguments.", e);
-        }
-    }
-
-    private Map<String, Object> toMap(Object value) {
-        if (value instanceof Map) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> casted = (Map<String, Object>) value;
-            return new LinkedHashMap<>(casted);
-        }
-        if (value == null) {
-            return new LinkedHashMap<>();
-        }
-        return mapper.convertValue(value, MAP_TYPE);
     }
 
     Duration getTimeout() {

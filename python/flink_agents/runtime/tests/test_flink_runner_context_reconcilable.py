@@ -28,13 +28,13 @@ import cloudpickle
 import pytest
 from pydantic import BaseModel
 
-from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.runner_context import AsyncFuture, DurableFuture
 from flink_agents.api.tools.tool import Tool
@@ -126,7 +126,6 @@ class _FakeJavaRunnerContext:
         self.call_results.append(
             _StoredCallResult(
                 function_id=function_id,
-
                 status=status,
                 result_payload=result_payload,
                 exception_payload=exception_payload,
@@ -139,7 +138,6 @@ class _FakeJavaRunnerContext:
         self.call_results.append(
             _StoredCallResult(
                 function_id=function_id,
-
                 status="PENDING",
             )
         )
@@ -156,7 +154,6 @@ class _FakeJavaRunnerContext:
         assert current.function_id == function_id
         self.call_results[self.current_call_index] = _StoredCallResult(
             function_id=function_id,
-
             status="FAILED" if exception_payload is not None else "SUCCEEDED",
             result_payload=result_payload,
             exception_payload=exception_payload,
@@ -167,15 +164,12 @@ class _FakeJavaRunnerContext:
         self.operations.append("clear")
         self.call_results = self.call_results[: self.current_call_index]
 
-    def reservePendingBatch(
-        self, function_ids: list[str]
-    ) -> None:
+    def reservePendingBatch(self, function_ids: list[str]) -> None:
         self.operations.append(f"reserve:{len(function_ids)}")
         for function_id in function_ids:
             self.call_results.append(
                 _StoredCallResult(
                     function_id=function_id,
-
                     status="PENDING",
                 )
             )
@@ -193,7 +187,6 @@ class _FakeJavaRunnerContext:
         assert current.function_id == function_id
         self.call_results[index] = _StoredCallResult(
             function_id=function_id,
-
             status="FAILED" if exception_payload is not None else "SUCCEEDED",
             result_payload=result_payload,
             exception_payload=exception_payload,
@@ -259,15 +252,45 @@ def test_chat_failure_outcome_replays_without_provider_call(asynchronous: bool) 
     assert store.call_results[0].exception_payload is None
 
 
-def _run_async(result: Any) -> object:
-    iterator = result.__await__()
-    value = None
+def _drain(iterator: Any) -> object:
     while True:
         try:
-            iterator.send(value)
-            value = None
+            iterator.send(None)
         except StopIteration as e:  # noqa: PERF203
             return e.value
+
+
+def _run_async(result: Any) -> object:
+    return _drain(result.__await__())
+
+
+_WORKER_START_TIMEOUT_SECONDS = 30.0
+
+
+def _await_workers(started: list[threading.Event]) -> None:
+    deadline = time.monotonic() + _WORKER_START_TIMEOUT_SECONDS
+    for index, event in enumerate(started):
+        remaining = max(deadline - time.monotonic(), 0.0)
+        assert event.wait(remaining), f"async worker {index} never started"
+
+
+def _run_async_after_workers_started(
+    result: Any, started: list[threading.Event]
+) -> object:
+    """Run a batch, pausing after submission until its workers have begun.
+
+    A batch deadline is wall-clock from the first submission, so a test asserting
+    that a slot was *started* when the timeout hits cannot leave thread startup
+    racing that deadline: under CI load the worker has not begun yet and the slot
+    is persisted as PENDING instead of FAILED. One generator step submits the
+    batch; waiting there until every worker reports it began makes "started but
+    unfinished" hold by construction, and the deadline has certainly passed by the
+    time driving resumes.
+    """
+    iterator = result.__await__()
+    iterator.send(None)
+    _await_workers(started)
+    return _drain(iterator)
 
 
 class _ReplayAnswer(BaseModel):
@@ -290,15 +313,15 @@ class _CountingConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         if output_schema is None:
             self.unconstrained_calls += 1
-            return ChatMessage.of(MessageRole.ASSISTANT, "the answer is 42")
+            return ChatResult(message=ChatMessage.assistant("the answer is 42"))
         self.schema_carrying_calls += 1
         if self.schema_carrying_calls <= self.failing_schema_calls:
             msg = "conversion call failed"
             raise RuntimeError(msg)
-        return ChatMessage.of(MessageRole.ASSISTANT, '{"result": 42}')
+        return ChatResult(message=ChatMessage.assistant('{"result": 42}'))
 
 
 class _NativeSetup(BaseChatModelSetup):
@@ -380,7 +403,7 @@ def test_native_finalization_replays_both_calls_without_provider_calls(
     assert store.current_call_index == len(journal)
     assert len(sent_events) == 2
     for event in sent_events:
-        assert event.response.extra_args[STRUCTURED_OUTPUT] == _ReplayAnswer(result=42)
+        assert event.structured_output == _ReplayAnswer(result=42)
 
 
 def _preload_pending(
@@ -392,7 +415,6 @@ def _preload_pending(
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=durable_identity_for_call(func, args, kwargs or None),
-
             status="PENDING",
         )
     )
@@ -496,7 +518,6 @@ def test_flink_runner_context_sync_reconciler_mismatch_clears_and_executes() -> 
         [
             _StoredCallResult(
                 function_id="wrong.expected.function_id",
-
                 status="PENDING",
             ),
             _StoredCallResult(
@@ -557,12 +578,10 @@ def test_flink_runner_context_durable_execute_reexecutes_pending_after_batch_res
     j_runner_context.call_results = [
         _StoredCallResult(
             function_id=first_id,
-
             status="PENDING",
         ),
         _StoredCallResult(
             function_id=second_id,
-
             status="PENDING",
         ),
     ]
@@ -600,7 +619,6 @@ def test_flink_runner_context_durable_execute_async_reexecutes_pending_after_bat
     j_runner_context.call_results = [
         _StoredCallResult(
             function_id=function_id,
-
             status="PENDING",
         ),
     ]
@@ -1088,14 +1106,11 @@ def test_flink_runner_context_gather_recovers_partial_batch() -> None:
         call_count += 1
         return _call_value(value)
 
-    cached_function_id = durable_identity_for_call(
-        tracked_call, ("one",), None
-    )
+    cached_function_id = durable_identity_for_call(tracked_call, ("one",), None)
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
                 function_id=cached_function_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
             ),
@@ -1122,13 +1137,10 @@ def test_flink_runner_context_gather_recovers_partial_batch() -> None:
 
 def test_flink_runner_context_gather_returns_cached_failure() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    cached_function_id = durable_identity_for_call(
-        _call_value, ("one",), None
-    )
+    cached_function_id = durable_identity_for_call(_call_value, ("one",), None)
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=cached_function_id,
-
             status="FAILED",
             exception_payload=cloudpickle.dumps(ValueError("cached failure")),
         )
@@ -1136,9 +1148,7 @@ def test_flink_runner_context_gather_returns_cached_failure() -> None:
     ctx = _create_runner_context(j_runner_context)
 
     try:
-        outcomes = _run_async(
-            ctx.gather(ctx.durable_execute_async(_call_value, "one"))
-        )
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(_call_value, "one")))
     finally:
         _close_runner_context(ctx)
 
@@ -1178,27 +1188,32 @@ def test_flink_runner_context_gather_collects_failures() -> None:
 
 def test_flink_runner_context_gather_timeout_keeps_completed_results() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    config = AgentConfiguration({"async.batch.timeout.ms": 100})
+    config = AgentConfiguration(
+        {"async.batch.timeout.ms": 100, "async.batch.parallelism": 2}
+    )
     ctx = _create_runner_context(j_runner_context, config=config)
 
     # The slow worker blocks on an event instead of racing a sleep against the
-    # deadline. Once its worker thread starts, _mark_started_on_run has already
-    # flipped the started flag, so the timeout must record it as FAILED (started
-    # but unfinished) rather than PENDING. The event guarantees it never
-    # finishes before the deadline, and the finally block releases it so the
-    # pool can shut down.
+    # deadline, and announces itself so the driver can wait for it. Once its worker
+    # thread starts, _mark_started_on_run has already flipped the started flag, so
+    # the timeout must record it as FAILED (started but unfinished) rather than
+    # PENDING. The event guarantees it never finishes before the deadline, and the
+    # finally block releases it so the pool can shut down.
     release = threading.Event()
+    slow_started = threading.Event()
 
     def slow_call() -> str:
+        slow_started.set()
         release.wait(5)
         return "slow"
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(lambda: "fast"),
                 ctx.durable_execute_async(slow_call),
-            )
+            ),
+            [slow_started],
         )
     finally:
         release.set()
@@ -1222,22 +1237,26 @@ def test_flink_runner_context_gather_timeout_leaves_unsubmitted_slots_pending() 
     # The two blocking calls saturate the parallelism budget and hold their
     # worker threads (started flag flipped) until the deadline, so they fail; the
     # remaining two suppliers are never submitted and stay pending. Blocking on an
-    # event instead of sleeping makes "started" deterministic rather than racing
-    # thread startup against a short wall-clock timeout.
+    # event instead of sleeping, and waiting for both workers to announce
+    # themselves, makes "started" deterministic rather than racing thread startup
+    # against a short wall-clock timeout.
     release = threading.Event()
+    started_events = {"one": threading.Event(), "two": threading.Event()}
 
     def blocking_call(value: str) -> str:
+        started_events[value].set()
         release.wait(5)
         return value
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(blocking_call, "one"),
                 ctx.durable_execute_async(blocking_call, "two"),
                 ctx.durable_execute_async(_call_value, "three"),
                 ctx.durable_execute_async(_call_value, "four"),
-            )
+            ),
+            [started_events["one"], started_events["two"]],
         )
     finally:
         release.set()
@@ -1267,12 +1286,15 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
 
     # Blocking on an event (rather than sleeping) keeps the two running workers
     # deterministically "started but unfinished" until the deadline, while the two
-    # queued suppliers never begin.
+    # queued suppliers never begin. Waiting for both workers to announce themselves
+    # removes the race between thread startup and the wall-clock deadline.
     release = threading.Event()
+    started_events = {"one": threading.Event(), "two": threading.Event()}
     executions: list[str] = []
 
     def blocking_call(value: str) -> str:
         executions.append(value)
+        started_events[value].set()
         release.wait(5)
         return value
 
@@ -1281,13 +1303,14 @@ def test_flink_runner_context_gather_timeout_leaves_queued_slots_pending() -> No
         return value
 
     try:
-        outcomes = _run_async(
+        outcomes = _run_async_after_workers_started(
             ctx.gather(
                 ctx.durable_execute_async(blocking_call, "one"),
                 ctx.durable_execute_async(blocking_call, "two"),
                 ctx.durable_execute_async(queued_call, "three"),
                 ctx.durable_execute_async(queued_call, "four"),
-            )
+            ),
+            [started_events["one"], started_events["two"]],
         )
     finally:
         release.set()
@@ -1320,7 +1343,6 @@ def test_flink_runner_context_gather_returns_deserialize_failure_as_outcome() ->
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
-
             status="SUCCEEDED",
             result_payload=b"not-valid-pickle",
         )
@@ -1355,16 +1377,13 @@ def test_flink_runner_context_gather_reconciles_pending_slot() -> None:
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
-
             status="PENDING",
         )
     )
     ctx = _create_runner_context(j_runner_context)
     try:
         outcomes = _run_async(
-            ctx.gather(
-                ctx.durable_execute_async(tracked_call, reconciler=reconciler)
-            )
+            ctx.gather(ctx.durable_execute_async(tracked_call, reconciler=reconciler))
         )
     finally:
         _close_runner_context(ctx)
@@ -1387,26 +1406,21 @@ def test_flink_runner_context_gather_recovers_three_slot_partial_batch() -> None
 
     first_id = durable_identity_for_call(tracked_call, ("one",), None)
     second_id = durable_identity_for_call(tracked_call, ("two",), None)
-    third_id = durable_identity_for_call(
-        tracked_call, ("three",), None
-    )
+    third_id = durable_identity_for_call(tracked_call, ("three",), None)
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
                 function_id=first_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
             ),
             _StoredCallResult(
                 function_id=second_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-two"),
             ),
             _StoredCallResult(
                 function_id=third_id,
-
                 status="PENDING",
             ),
         ]
@@ -1551,7 +1565,8 @@ def test_mixed_async_recovery_reexecutes_ordinary_calls_and_preserves_slots() ->
             durable = ctx.durable_execute_async(query, "durable", durable_id="durable")
             outcomes = _run_async(ctx.gather(ordinary, durable))
             assert [outcome.value for outcome in outcomes] == [
-                f"ordinary-{attempt + 1}", "durable-1"
+                f"ordinary-{attempt + 1}",
+                "durable-1",
             ]
             assert ctx.durable_execute(query, "after", durable_id="after") == "after-1"
             assert len(j_ctx.call_results) == 3
@@ -1633,7 +1648,6 @@ def test_async_gather_rejects_invalid_handles_before_running_callbacks() -> None
         _close_runner_context(other)
 
 
-
 def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> None:
     j_ctx = _FakeJavaRunnerContext()
     ctx = _create_runner_context(
@@ -1658,20 +1672,25 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
 
     try:
         # The cached durable child takes no worker; the ordinary child occupies the
-        # only worker, leaving the new durable child queued until the timeout.
+        # only worker, leaving the new durable child queued until the timeout. The
+        # driver waits for that worker to announce itself, so "the only worker is
+        # occupied when the deadline trips" does not race thread startup.
         assert ctx.durable_execute(lambda: "cached", durable_id="cached") == "cached"
         j_ctx.current_call_index = 0
-        outcomes = _run_async(ctx.gather(
-            ctx.durable_execute_async(lambda: "cached", durable_id="cached"),
-            ctx.execute_async(ordinary),
-            ctx.durable_execute_async(durable, durable_id="pending"),
-        ))
-        assert started.is_set()
+        outcomes = _run_async_after_workers_started(
+            ctx.gather(
+                ctx.durable_execute_async(lambda: "cached", durable_id="cached"),
+                ctx.execute_async(ordinary),
+                ctx.durable_execute_async(durable, durable_id="pending"),
+            ),
+            [started],
+        )
         assert outcomes[0].value == "cached"
         assert isinstance(outcomes[1].error, TimeoutError)
         assert isinstance(outcomes[2].error, TimeoutError)
         assert [result.status for result in j_ctx.call_results] == [
-            "SUCCEEDED", "PENDING"
+            "SUCCEEDED",
+            "PENDING",
         ]
         assert j_ctx.current_call_index == 2
         assert durable_calls == []
@@ -1682,16 +1701,21 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
     recovered = _create_runner_context(j_ctx)
     j_ctx.current_call_index = 0
     try:
-        outcomes = _run_async(recovered.gather(
-            recovered.durable_execute_async(lambda: "cached", durable_id="cached"),
-            recovered.execute_async(lambda: "ordinary-new"),
-            recovered.durable_execute_async(durable, durable_id="pending"),
-        ))
+        outcomes = _run_async(
+            recovered.gather(
+                recovered.durable_execute_async(lambda: "cached", durable_id="cached"),
+                recovered.execute_async(lambda: "ordinary-new"),
+                recovered.durable_execute_async(durable, durable_id="pending"),
+            )
+        )
         assert [outcome.value for outcome in outcomes] == [
-            "cached", "ordinary-new", "durable"
+            "cached",
+            "ordinary-new",
+            "durable",
         ]
         assert [result.status for result in j_ctx.call_results] == [
-            "SUCCEEDED", "SUCCEEDED"
+            "SUCCEEDED",
+            "SUCCEEDED",
         ]
         assert durable_calls == ["durable"]
         assert j_ctx.current_call_index == 2

@@ -31,6 +31,7 @@ import pytest
 
 from flink_agents.api import events
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.built_in_events import REGISTRY, restore
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
@@ -72,14 +73,19 @@ def _chat_request() -> ChatRequestEvent:
 
 def _category_fixtures() -> list[Event]:
     """One typed fixture per built-in category restored by the registry."""
-    tool_call = {"id": "call_aaaa", "name": "echo", "arguments": {"value": "ping"}}
+    tool_call = {
+        "type": "tool_call",
+        "call_id": "call_aaaa",
+        "name": "echo",
+        "input": {"value": "ping"},
+    }
     return [
         InputEvent(input="hello"),
         OutputEvent(output="world"),
         _chat_request(),
         ChatResponseEvent.success(
             request_id=uuid4(),
-            response=ChatMessage.assistant("hi there"),
+            response=ChatResult(message=ChatMessage.assistant("hi there")),
         ),
         ToolRequestEvent(model="test-model", tool_calls=[tool_call]),
         ContextRetrievalRequestEvent(
@@ -521,7 +527,7 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
         (ToolResponseEvent.EVENT_TYPE, "responses", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "success", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "error", "not-a-dict"),
-        (ToolResponseEvent.EVENT_TYPE, "external_ids", "not-a-dict"),
+        (ChatResponseEvent.EVENT_TYPE, "model_routing", "not-a-dict"),
         (ToolResponseEvent.EVENT_TYPE, "timestamp", "not-a-number"),
         # ContextRetrievalRequestEvent
         (ContextRetrievalRequestEvent.EVENT_TYPE, "query", 0),

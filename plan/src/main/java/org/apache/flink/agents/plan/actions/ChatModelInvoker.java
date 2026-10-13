@@ -19,6 +19,7 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -66,12 +67,12 @@ public final class ChatModelInvoker {
 
     /** JSON-serializable result of provider execution, including ordinary failures. */
     public static final class InvocationOutcome {
-        public ChatMessage response;
+        public ChatResult response;
         public String error;
 
         public InvocationOutcome() {}
 
-        InvocationOutcome(ChatMessage response, String error) {
+        InvocationOutcome(ChatResult response, String error) {
             this.response = response;
             this.error = error;
         }
@@ -110,14 +111,15 @@ public final class ChatModelInvoker {
     public static final class ChatAttemptResult {
         public final String model;
         public final BaseChatModelSetup chatModel;
-        public final ChatMessage response;
+        public final ChatResult response;
+        public Object structuredOutput;
         public final int retryCount;
         public final int totalRetryWaitSec;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
-                ChatMessage response,
+                ChatResult response,
                 int retryCount,
                 int totalRetryWaitSec) {
             this.model = model;
@@ -215,7 +217,7 @@ public final class ChatModelInvoker {
 
         int actualRetryCount = 0;
         int totalWaitTimeSec = 0;
-        ChatMessage response;
+        ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
@@ -287,7 +289,7 @@ public final class ChatModelInvoker {
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
-                // only generate structured output for final response.
+                Object structuredOutput = null;
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
                     if (nativeSchema) {
                         response =
@@ -302,12 +304,15 @@ public final class ChatModelInvoker {
                                         chatAsync,
                                         requestMetricGroup);
                     }
-                    response =
+                    structuredOutput =
                             ChatModelAction.generateStructuredOutputWithReport(
                                     ctx, response, outputSchema);
                 }
-                return new ChatAttemptResult(
-                        model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                ChatAttemptResult result =
+                        new ChatAttemptResult(
+                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                result.structuredOutput = structuredOutput;
+                return result;
             } catch (DurableExecutionFailure e) {
                 throw e.failure;
             } catch (InterruptedException e) {
@@ -362,11 +367,11 @@ public final class ChatModelInvoker {
      *
      * <p>It holds its own durable slot after the loop call's, and reports its own LLM span.
      */
-    private static ChatMessage finalizeWithNativeSchema(
+    private static ChatResult finalizeWithNativeSchema(
             BaseChatModelSetup chatModel,
             String model,
             String durableCallId,
-            ChatMessage loopResponse,
+            ChatResult loopResponse,
             Object outputSchema,
             Map<String, Object> llmMetadata,
             RunnerContext ctx,
@@ -426,7 +431,7 @@ public final class ChatModelInvoker {
             // Persistence and recovery failures are not request failures, as for the loop call.
             throw new DurableExecutionFailure(e);
         }
-        ChatMessage response;
+        ChatResult response;
         try {
             if (outcome.error != null) {
                 throw new InvocationFailure(outcome.error);

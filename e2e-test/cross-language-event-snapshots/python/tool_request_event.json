@@ -5,11 +5,13 @@
     "model": "test-model",
     "tool_calls": [
       {
-        "id": "call_aaaa",
+        "type": "tool_call",
+        "call_id": "call_aaaa",
         "name": "echo",
-        "arguments": {
+        "input": {
           "value": "ping"
-        }
+        },
+        "metadata": {}
       }
     ]
   },
