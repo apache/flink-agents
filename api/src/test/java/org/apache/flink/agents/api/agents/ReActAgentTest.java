@@ -20,21 +20,49 @@ package org.apache.flink.agents.api.agents;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
+import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
+import org.apache.flink.agents.api.chat.model.StructuredOutputStrategy;
+import org.apache.flink.agents.api.chat.model.routing.ModelRouter;
+import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
+import javax.annotation.Nullable;
+
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class ReActAgentTest {
     @Test
@@ -83,9 +111,21 @@ public class ReActAgentTest {
     @Test
     @DisplayName("An agent built on a renderable schema prompts with its rendered JSON Schema")
     public void testAgentAcceptsRenderableSchema() {
-        assertThat(schemaPromptOf(agentWithSchema(WithCount.class)))
-                .contains(
-                        "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}}");
+        assertThat(schemaPromptOf(agentWithSchema(WithCount.class))).contains(WITH_COUNT_SCHEMA);
+    }
+
+    @Test
+    @DisplayName("An agent built on a class schema registers the native prompt with its schema")
+    public void testAgentRegistersNativeSchemaPromptWithRenderedSchema() {
+        assertThat(nativeSchemaPromptOf(agentWithSchema(WithCount.class)))
+                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA);
+    }
+
+    @Test
+    @DisplayName("An agent built on a RowTypeInfo schema registers the native prompt with its text")
+    public void testRowTypeSchemaRegistersNativeSchemaPrompt() {
+        assertThat(nativeSchemaPromptOf(agentWithSchema(rowTypeInfo())))
+                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + rowTypeInfo());
     }
 
     @Test
@@ -97,18 +137,265 @@ public class ReActAgentTest {
                 .hasMessageContaining("must be a RowTypeInfo or a Pojo class");
     }
 
+    @Test
+    @DisplayName(
+            "A RowTypeInfo schema the connection cannot translate keeps the schema instruction")
+    public void testRowTypeSchemaKeepsInstruction() throws Exception {
+        ReActAgent agent = agentWithSchema(rowTypeInfo());
+
+        ChatRequestEvent request =
+                runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+
+        assertThat(systemTexts(request)).containsExactly(schemaPromptOf(agent));
+    }
+
+    @Test
+    @DisplayName("A schema the default chat model applies natively lists its fields without JSON")
+    public void testNativelyAppliedSchemaListsFieldsWithoutJson() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+
+        ChatRequestEvent request =
+                runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+
+        assertThat(request.getMessages())
+                .extracting(ChatMessage::getRole)
+                .containsExactly(MessageRole.SYSTEM, MessageRole.USER);
+        assertThat(systemTexts(request))
+                .containsExactly(NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA);
+        assertThat(request.getOutputSchema()).isEqualTo(WithCount.class);
+    }
+
+    @Test
+    @DisplayName("The schema instruction follows the user prompt's first system message")
+    public void testSchemaInstructionFollowsTheFirstSystemMessage() throws Exception {
+        Prompt prompt =
+                Prompt.fromMessages(
+                        List.of(
+                                new ChatMessage(MessageRole.SYSTEM, "You are a counter."),
+                                new ChatMessage(MessageRole.USER, "{input}")));
+        ReActAgent agent = agentWithSchema(WithCount.class, prompt);
+
+        ChatRequestEvent request =
+                runStart(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+
+        assertThat(request.getMessages())
+                .extracting(ChatMessage::getRole, ChatMessage::getText)
+                .containsExactly(
+                        tuple(MessageRole.SYSTEM, "You are a counter."),
+                        tuple(MessageRole.SYSTEM, NATIVE_SCHEMA_INSTRUCTION + WITH_COUNT_SCHEMA),
+                        tuple(MessageRole.USER, "42"));
+    }
+
+    @Test
+    @DisplayName("A native answer on a plan without the native prompt adds no instruction")
+    public void testNativeGateWithoutNativePromptAddsNoInstruction() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+        RunnerContext ctx =
+                contextFor(agent, setup(StructuredOutputStrategy.AUTO, CLASS_SCHEMAS_ONLY));
+        when(ctx.getResource("_default_native_schema_prompt", ResourceType.PROMPT))
+                .thenThrow(new IllegalArgumentException("Resource not found"));
+
+        ReActAgent.startAction(new InputEvent(42), ctx);
+
+        ChatRequestEvent request = sentRequest(ctx);
+        assertThat(systemTexts(request)).isEmpty();
+        assertThat(request.getOutputSchema()).isEqualTo(WithCount.class);
+    }
+
+    @Test
+    @DisplayName("A gate that throws keeps the instruction and leaves the error to the chat call")
+    public void testThrowingGateKeepsInstruction() throws Exception {
+        ReActAgent agent = agentWithSchema(rowTypeInfo());
+
+        ChatRequestEvent request =
+                runStart(agent, setup(StructuredOutputStrategy.NATIVE, CLASS_SCHEMAS_ONLY));
+
+        assertThat(systemTexts(request)).containsExactly(schemaPromptOf(agent));
+        assertThat(request.getOutputSchema()).isInstanceOf(OutputSchema.class);
+    }
+
+    @Test
+    @DisplayName("An interrupted chat model lookup keeps the instruction and the interrupt status")
+    public void testInterruptedLookupRestoresInterruptStatus() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+        RunnerContext ctx = contextFor(agent, null);
+        when(ctx.getResource("_default_chat_model", ResourceType.CHAT_MODEL))
+                .thenThrow(new InterruptedException());
+
+        try {
+            ReActAgent.startAction(new InputEvent(42), ctx);
+            assertThat(Thread.currentThread().isInterrupted()).isTrue();
+        } finally {
+            Thread.interrupted();
+        }
+        assertThat(systemTexts(sentRequest(ctx)))
+                .anyMatch(text -> text.contains(SCHEMA_INSTRUCTION));
+    }
+
+    @Test
+    @DisplayName("A cancelled chat model lookup propagates the cancellation")
+    public void testCancelledLookupPropagates() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+        RunnerContext ctx = contextFor(agent, null);
+        CancellationException cancellation = new CancellationException();
+        when(ctx.getResource("_default_chat_model", ResourceType.CHAT_MODEL))
+                .thenThrow(cancellation);
+
+        assertThatThrownBy(() -> ReActAgent.startAction(new InputEvent(42), ctx))
+                .isSameAs(cancellation);
+    }
+
+    @Test
+    @DisplayName("A default chat model that is not a chat model setup keeps the instruction")
+    public void testNonSetupChatModelKeepsInstruction() throws Exception {
+        ReActAgent agent = agentWithSchema(WithCount.class);
+
+        ChatRequestEvent request = runStart(agent, mock(ModelRouter.class));
+
+        assertThat(systemTexts(request)).anyMatch(text -> text.contains(SCHEMA_INSTRUCTION));
+    }
+
+    @Test
+    @DisplayName("An agent without a schema sends no instruction and never consults the gate")
+    public void testNoSchemaSkipsInstructionAndGate() throws Exception {
+        ReActAgent agent = agentWithSchema(null);
+        BaseChatModelSetup chatModel = mock(BaseChatModelSetup.class);
+        RunnerContext ctx = contextFor(agent, chatModel);
+
+        ReActAgent.startAction(new InputEvent(42), ctx);
+
+        assertThat(systemTexts(sentRequest(ctx))).isEmpty();
+        verify(ctx, never()).getResource(eq("_default_chat_model"), any());
+        verify(chatModel, never()).willApplyNativeStructuredOutput(any());
+    }
+
+    private static final String SCHEMA_INSTRUCTION = "The final response should be json format";
+
+    /** Pinned as a literal, identical to the Python test's, so the two languages cannot drift. */
+    private static final String NATIVE_SCHEMA_INSTRUCTION =
+            "The final response must include the information for every required field of the"
+                    + " following schema. It does not need to be in JSON format. Schema: ";
+
+    private static final String WITH_COUNT_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}}";
+
+    /** Translates a POJO class schema, as the providers do, and no RowTypeInfo schema. */
+    private static final NativeStructuredOutputSupport[] CLASS_SCHEMAS_ONLY = {
+        NativeStructuredOutputSupport.NATIVE_RECOMMENDED, NativeStructuredOutputSupport.INFEASIBLE
+    };
+
+    private static RowTypeInfo rowTypeInfo() {
+        return new RowTypeInfo(
+                new TypeInformation[] {BasicTypeInfo.INT_TYPE_INFO}, new String[] {"count"});
+    }
+
+    private static ChatRequestEvent runStart(ReActAgent agent, Resource chatModel)
+            throws Exception {
+        RunnerContext ctx = contextFor(agent, chatModel);
+        ReActAgent.startAction(new InputEvent(42), ctx);
+        return sentRequest(ctx);
+    }
+
+    private static RunnerContext contextFor(ReActAgent agent, Resource chatModel) throws Exception {
+        Map<String, Object> config = agent.getActions().get("startAction").f2;
+        Map<String, Object> prompts = agent.getResources().get(ResourceType.PROMPT);
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getResource("_default_chat_model", ResourceType.CHAT_MODEL)).thenReturn(chatModel);
+        when(ctx.getResource("_default_schema_prompt", ResourceType.PROMPT))
+                .thenReturn((Resource) prompts.get("_default_schema_prompt"));
+        when(ctx.getResource("_default_native_schema_prompt", ResourceType.PROMPT))
+                .thenReturn((Resource) prompts.get("_default_native_schema_prompt"));
+        when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT))
+                .thenReturn((Resource) prompts.get("_default_user_prompt"));
+        when(ctx.getActionConfigValue("output_schema")).thenReturn(config.get("output_schema"));
+        return ctx;
+    }
+
+    private static ChatRequestEvent sentRequest(RunnerContext ctx) {
+        ArgumentCaptor<Event> sent = ArgumentCaptor.forClass(Event.class);
+        verify(ctx).sendEvent(sent.capture());
+        return (ChatRequestEvent) sent.getValue();
+    }
+
+    private static List<String> systemTexts(ChatRequestEvent request) {
+        return request.getMessages().stream()
+                .filter(message -> message.getRole() == MessageRole.SYSTEM)
+                .map(ChatMessage::getText)
+                .collect(Collectors.toList());
+    }
+
+    private static BaseChatModelSetup setup(
+            StructuredOutputStrategy strategy, NativeStructuredOutputSupport[] support) {
+        return new SchemaSetup(strategy, new SchemaConnection(support[0], support[1]));
+    }
+
+    /** Answers native support by schema kind: a class schema, or a RowTypeInfo wrapper. */
+    private static class SchemaConnection extends BaseChatModelConnection {
+        private final NativeStructuredOutputSupport classSupport;
+        private final NativeStructuredOutputSupport rowSupport;
+
+        SchemaConnection(
+                NativeStructuredOutputSupport classSupport,
+                NativeStructuredOutputSupport rowSupport) {
+            super(ResourceDescriptor.Builder.newBuilder("SchemaConnection").build(), null);
+            this.classSupport = classSupport;
+            this.rowSupport = rowSupport;
+        }
+
+        @Override
+        protected NativeStructuredOutputSupport supportsNativeStructuredOutput(
+                @Nullable Object outputSchema,
+                @Nullable List<Tool> tools,
+                @Nullable Map<String, Object> modelParams) {
+            return outputSchema instanceof Class ? classSupport : rowSupport;
+        }
+
+        @Override
+        public ChatResult chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            throw new UnsupportedOperationException();
+        }
+    }
+
+    /** An opened setup bound to the given connection. */
+    private static class SchemaSetup extends BaseChatModelSetup {
+        SchemaSetup(StructuredOutputStrategy strategy, BaseChatModelConnection connection) {
+            super(
+                    ResourceDescriptor.Builder.newBuilder("SchemaSetup")
+                            .addInitialArgument("structured_output_strategy", strategy)
+                            .build(),
+                    null);
+            this.connection = connection;
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return new HashMap<>();
+        }
+    }
+
     private static ReActAgent agentWithSchema(Object outputSchema) {
+        return agentWithSchema(outputSchema, null);
+    }
+
+    private static ReActAgent agentWithSchema(Object outputSchema, @Nullable Prompt prompt) {
         return new ReActAgent(
                 ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build(),
-                null,
+                prompt,
                 outputSchema);
     }
 
     private static String schemaPromptOf(ReActAgent agent) {
-        Prompt schemaPrompt =
-                (Prompt)
-                        agent.getResources().get(ResourceType.PROMPT).get("_default_schema_prompt");
-        return schemaPrompt.formatString(Map.of());
+        return promptTextOf(agent, "_default_schema_prompt");
+    }
+
+    private static String nativeSchemaPromptOf(ReActAgent agent) {
+        return promptTextOf(agent, "_default_native_schema_prompt");
+    }
+
+    private static String promptTextOf(ReActAgent agent, String name) {
+        Prompt prompt = (Prompt) agent.getResources().get(ResourceType.PROMPT).get(name);
+        return prompt.formatString(Map.of());
     }
 
     /** A class with no members at all, which Jackson refuses to render rather than rendering. */

@@ -625,7 +625,7 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the native path applies for a POJO class schema on a capable model")
+    @DisplayName("the native path applies for a POJO class schema")
     void testNativeSchemaAppliedWhenGateHolds() throws Exception {
         ConverseRequest applied =
                 connection()
@@ -644,7 +644,6 @@ class BedrockChatModelConnectionTest {
 
     private static Stream<Arguments> gateFailures() {
         return Stream.of(
-                Arguments.of(INCAPABLE_MODEL, Profile.class),
                 Arguments.of(CAPABLE_MODEL, null),
                 // A RowTypeInfo schema arrives wrapped rather than as a bare Class and has no
                 // native translation here, so it degrades to the fallback rather than failing.
@@ -655,7 +654,7 @@ class BedrockChatModelConnectionTest {
 
     @ParameterizedTest
     @MethodSource("gateFailures")
-    @DisplayName("the native path is skipped for an incapable model or a non-POJO schema")
+    @DisplayName("the native path is skipped without a schema or for a non-POJO schema")
     void testNativeSchemaSkippedWhenGateFails(String model, Object outputSchema) {
         assertThat(
                         connection()
@@ -680,7 +679,7 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("the query recommends native exactly when the native branch applies")
+    @DisplayName("the query is infeasible exactly when the native branch is skipped")
     void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
         // literal, is what keeps the query and the branch from drifting in step. The query
@@ -723,10 +722,7 @@ class BedrockChatModelConnectionTest {
                         assertThat(answer).as(label).isEqualTo(expected);
                         assertThat(request.outputConfig() != null)
                                 .as(label)
-                                .isEqualTo(
-                                        expected
-                                                == NativeStructuredOutputSupport
-                                                        .NATIVE_RECOMMENDED);
+                                .isEqualTo(expected != NativeStructuredOutputSupport.INFEASIBLE);
                     }
                 }
             }
@@ -734,12 +730,10 @@ class BedrockChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("an incapable model leaves the request feasible rather than infeasible")
+    @DisplayName("an unlisted model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // A POJO is feasible here even on a model AWS does not document support for, and the
-        // branch's own capability conjunct is what keeps that request unconstrained. Folding
-        // capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
-        // overrule.
+        // Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule; folding it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = params(INCAPABLE_MODEL);
 
         assertThat(support(connection(), incapable))
@@ -751,8 +745,10 @@ class BedrockChatModelConnectionTest {
                                         null,
                                         incapable,
                                         Profile.class)
-                                .outputConfig())
-                .isNull();
+                                .outputConfig()
+                                .textFormat()
+                                .type())
+                .isEqualTo(OutputFormatType.JSON_SCHEMA);
     }
 
     @Test
