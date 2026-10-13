@@ -19,7 +19,7 @@
 
 import asyncio
 import time
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 from unittest.mock import MagicMock, call
 from uuid import uuid4
 
@@ -174,8 +174,9 @@ def _create_mock_runner_context(
     ctx.action_metric_group = metric_group
     ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
     ctx.get_resource = MagicMock(return_value=chat_model)
+    # Like the runtime, the reserved durable_id keyword is not forwarded to fn.
     ctx.durable_execute = MagicMock(
-        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        side_effect=lambda fn, *args, durable_id=None, **kwargs: fn(*args, **kwargs)
     )
 
     return ctx, sent_events, metric_group, sensory_memory
@@ -306,6 +307,61 @@ class TestChatModelActionRetry:
             _LLM_METADATA,
         )
         ctx.report_execution_failed.assert_not_called()
+
+    @pytest.mark.parametrize("chat_async", [False, True])
+    def test_every_attempt_uses_the_chat_durable_id(self, chat_async: bool) -> None:
+        """Each attempt is keyed by "chat", not by a digest of the messages (#1190)."""
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            side_effect=[
+                RuntimeError("transient"),
+                _response_fixture(MessageRole.ASSISTANT, "hello"),
+            ]
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=1, retry_wait_interval_sec=0
+        )
+        if chat_async:
+            async_option = AgentExecutionOptions.CHAT_ASYNC
+            original_get = ctx.config.get.side_effect
+            ctx.config.get = MagicMock(
+                side_effect=lambda option: True
+                if option is async_option
+                else original_get(option)
+            )
+
+            async def durable_execute_async(
+                fn: Callable[..., Any],
+                *args: Any,
+                durable_id: str | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                return ctx.durable_execute(fn, *args, durable_id=durable_id, **kwargs)
+
+            ctx.durable_execute_async = MagicMock(side_effect=durable_execute_async)
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                chat_model.connection,
+                [ChatMessage.of(MessageRole.USER, "hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+
+        assert len(sent_events) == 1
+        event = sent_events[0]
+        assert isinstance(event, ChatResponseEvent)
+        assert event.is_success
+        assert event.response.text == "hello"
+        assert chat_model.chat.call_count == 2
+        durable_call = ctx.durable_execute_async if chat_async else ctx.durable_execute
+        assert [call.kwargs["durable_id"] for call in durable_call.call_args_list] == [
+            "chat",
+            "chat",
+        ]
 
     def test_chat_retries_with_exponential_backoff(self) -> None:
         """Fail once then succeed: 1s interval, 1 retry -> wait 1s (1 * 2^0)."""
