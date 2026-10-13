@@ -18,7 +18,7 @@
 package org.apache.flink.agents.runtime.tracelog;
 
 import org.apache.flink.agents.api.InputEvent;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
@@ -61,12 +61,12 @@ class TraceLogWriterTest {
         TraceRecord record = inputRecord(null);
         RuntimeException appendError = new RuntimeException("append failed");
         RuntimeException flushError = new RuntimeException("flush failed");
-        doThrow(appendError).when(mockLogger).append(record, TraceLogDetail.STANDARD);
+        doThrow(appendError).when(mockLogger).append(record, TraceLogLevel.STANDARD);
         doThrow(flushError).when(mockLogger).flush();
 
         assertThatCode(() -> writer.appendAndFlush(record)).doesNotThrowAnyException();
 
-        verify(mockLogger).append(record, TraceLogDetail.STANDARD);
+        verify(mockLogger).append(record, TraceLogLevel.STANDARD);
         verify(mockLogger).flush();
         assertThat(writeFailures.getCount()).isEqualTo(1);
         assertThat(appendError.getSuppressed()).containsExactly(flushError);
@@ -82,7 +82,7 @@ class TraceLogWriterTest {
 
         assertThatCode(() -> writer.appendAndFlush(record)).doesNotThrowAnyException();
 
-        verify(mockLogger).append(record, TraceLogDetail.STANDARD);
+        verify(mockLogger).append(record, TraceLogLevel.STANDARD);
         verify(mockLogger).flush();
         assertThat(writeFailures.getCount()).isEqualTo(1);
     }
@@ -95,7 +95,7 @@ class TraceLogWriterTest {
         TraceRecord record = inputRecord(null);
         doThrow(new RuntimeException("append failed"))
                 .when(mockLogger)
-                .append(record, TraceLogDetail.STANDARD);
+                .append(record, TraceLogLevel.STANDARD);
 
         writer.appendAndFlush(record);
         writer.appendAndFlush(record);
@@ -119,7 +119,7 @@ class TraceLogWriterTest {
                         mockLogger,
                         Map.of(
                                 "trace-log.targets",
-                                List.of(Map.of("scope", "ALL", "detail", "OFF"))));
+                                List.of(Map.of("scope", "ALL", "level", "OFF"))));
         SimpleCounter writeFailures = openWithWriteFailureCounter(writer);
 
         writer.appendAndFlush(TraceRecords.started(actionContext("process")));
@@ -131,12 +131,14 @@ class TraceLogWriterTest {
     }
 
     @ParameterizedTest
-    @MethodSource("selectionAndDetails")
-    void writerSelectsRecordsAndPassesResolvedDetailToLogger(
-            Map<String, Object> config, Map<String, TraceLogDetail> expectedDetails)
+    @MethodSource("selectionAndLevels")
+    void writerSelectsRecordsAndPassesResolvedLevelToLogger(
+            Map<String, Object> config, Map<String, TraceLogLevel> expectedLevels)
             throws Exception {
         TraceLogger mockLogger = mock(TraceLogger.class);
-        TraceLogWriter writer = TraceLogWriter.forTraceLogger(mockLogger, config);
+        TraceLogWriter writer =
+                TraceLogWriter.forTraceLogger(
+                        mockLogger, new AgentConfiguration(config).getConfData());
         SimpleCounter writeFailures = openWithWriteFailureCounter(writer);
         TraceContext action = actionContext("process");
         List<TraceRecord> records =
@@ -149,95 +151,49 @@ class TraceLogWriterTest {
         records.forEach(writer::appendAndFlush);
 
         ArgumentCaptor<TraceRecord> appended = ArgumentCaptor.forClass(TraceRecord.class);
-        ArgumentCaptor<TraceLogDetail> details = ArgumentCaptor.forClass(TraceLogDetail.class);
-        verify(mockLogger, times(expectedDetails.size()))
-                .append(appended.capture(), details.capture());
-        verify(mockLogger, times(expectedDetails.size())).flush();
-        Map<String, TraceLogDetail> actualDetails = new LinkedHashMap<>();
+        ArgumentCaptor<TraceLogLevel> levels = ArgumentCaptor.forClass(TraceLogLevel.class);
+        verify(mockLogger, times(expectedLevels.size()))
+                .append(appended.capture(), levels.capture());
+        verify(mockLogger, times(expectedLevels.size())).flush();
+        Map<String, TraceLogLevel> actualLevels = new LinkedHashMap<>();
         for (int i = 0; i < appended.getAllValues().size(); i++) {
-            actualDetails.put(
+            actualLevels.put(
                     appended.getAllValues().get(i).getContext().getEntityName(),
-                    details.getAllValues().get(i));
+                    levels.getAllValues().get(i));
         }
-        assertThat(actualDetails).isEqualTo(expectedDetails);
+        assertThat(actualLevels).isEqualTo(expectedLevels);
         assertThat(writeFailures.getCount()).isZero();
     }
 
-    private static Stream<Arguments> selectionAndDetails() {
+    private static Stream<Arguments> selectionAndLevels() {
         Map<String, Object> lookupTarget =
                 Map.of(
                         "scope",
                         Map.of("entityType", "tool", "entityName", "lookup"),
-                        "detail",
+                        "level",
                         "VERBOSE");
         return Stream.of(
-                Arguments.of(Map.of(), Map.of(InputEvent.EVENT_TYPE, TraceLogDetail.STANDARD)),
-                Arguments.of(
-                        Map.of(
-                                "trace-log.targets",
-                                List.of(Map.of("scope", "ALL", "detail", "OFF"), lookupTarget)),
-                        Map.of("lookup", TraceLogDetail.VERBOSE)),
+                Arguments.of(Map.of(), Map.of(InputEvent.EVENT_TYPE, TraceLogLevel.STANDARD)),
                 Arguments.of(
                         Map.of("trace-log.targets", List.of(Map.of("scope", "ALL"), lookupTarget)),
                         Map.of(
                                 InputEvent.EVENT_TYPE,
-                                TraceLogDetail.STANDARD,
+                                TraceLogLevel.STANDARD,
                                 "process",
-                                TraceLogDetail.STANDARD,
+                                TraceLogLevel.STANDARD,
                                 "lookup",
-                                TraceLogDetail.VERBOSE,
+                                TraceLogLevel.VERBOSE,
                                 "other",
-                                TraceLogDetail.STANDARD)),
+                                TraceLogLevel.STANDARD)),
                 Arguments.of(
                         Map.of(
                                 "trace-log.targets",
                                 List.of(
-                                        Map.of("scope", "ALL", "detail", "VERBOSE"),
-                                        Map.of("scope", Map.of("entityType", "tool")))),
-                        Map.of(
-                                InputEvent.EVENT_TYPE,
-                                TraceLogDetail.VERBOSE,
-                                "process",
-                                TraceLogDetail.VERBOSE,
-                                "lookup",
-                                TraceLogDetail.VERBOSE,
-                                "other",
-                                TraceLogDetail.VERBOSE)),
-                Arguments.of(
-                        Map.of(
-                                "trace-log.targets",
-                                List.of(
-                                        Map.of("scope", "ALL", "detail", "VERBOSE"),
+                                        Map.of("scope", "ALL", "level", "OFF"),
                                         Map.of(
                                                 "scope",
                                                 Map.of("entityType", "tool"),
-                                                "detail",
-                                                "OFF"),
-                                        Map.of(
-                                                "scope",
-                                                Map.of(
-                                                        "entityType",
-                                                        "tool",
-                                                        "entityName",
-                                                        "lookup"),
-                                                "detail",
-                                                "STANDARD"))),
-                        Map.of(
-                                InputEvent.EVENT_TYPE,
-                                TraceLogDetail.VERBOSE,
-                                "process",
-                                TraceLogDetail.VERBOSE,
-                                "lookup",
-                                TraceLogDetail.STANDARD)),
-                Arguments.of(
-                        Map.of(
-                                "trace-log.targets",
-                                List.of(
-                                        Map.of("scope", "ALL", "detail", "OFF"),
-                                        Map.of(
-                                                "scope",
-                                                Map.of("entityType", "tool"),
-                                                "detail",
+                                                "level",
                                                 "VERBOSE"),
                                         Map.of(
                                                 "scope",
@@ -246,7 +202,38 @@ class TraceLogWriterTest {
                                                         "tool",
                                                         "entityName",
                                                         "lookup")))),
-                        Map.of("other", TraceLogDetail.VERBOSE)));
+                        Map.of("lookup", TraceLogLevel.VERBOSE, "other", TraceLogLevel.VERBOSE)),
+                Arguments.of(
+                        Map.of(
+                                "trace-log",
+                                Map.of(
+                                        "targets",
+                                        List.of(
+                                                Map.of("scope", "ALL", "level", "VERBOSE"),
+                                                Map.of("scope", "EVENT_ONLY"),
+                                                Map.of(
+                                                        "scope",
+                                                        Map.of("entityType", "event"),
+                                                        "level",
+                                                        "OFF"),
+                                                Map.of("scope", Map.of("entityType", "tool")),
+                                                Map.of(
+                                                        "scope",
+                                                        Map.of(
+                                                                "entityType",
+                                                                "tool",
+                                                                "entityName",
+                                                                "lookup.*"),
+                                                        "level",
+                                                        "OFF"),
+                                                Map.of(
+                                                        "scope",
+                                                        Map.of(
+                                                                "entityType",
+                                                                "tool",
+                                                                "entityName",
+                                                                "lookup"))))),
+                        Map.of("process", TraceLogLevel.VERBOSE, "other", TraceLogLevel.VERBOSE)));
     }
 
     @Test
@@ -255,7 +242,7 @@ class TraceLogWriterTest {
                 new AgentConfiguration(
                         Map.of(
                                 "trace-log.targets",
-                                List.of(Map.of("scope", "ALL", "detail", "STANDARD")),
+                                List.of(Map.of("scope", "ALL", "level", "STANDARD")),
                                 "event-log.level",
                                 "OFF"));
         AgentPlan agentPlan = new AgentPlan(Collections.emptyMap(), Collections.emptyMap(), config);

@@ -50,7 +50,7 @@ We offer data monitoring for built-in metrics, including input runs, events, act
 | **Action** | action.\<action_name\>.numOfPendingActionTasks | Current number of physical Action task segments waiting to run, including continuations. | Gauge |
 | **Action** | action.\<action_name\>.numOfActiveActionExecutions | Current number of logical Action executions that have started but have not reached a terminal state. | Gauge |
 | **Action**  | action.\<action_name\>.routingDecisionLatencyMs | Wall-clock time, in milliseconds, spent resolving a model-routing decision when a `ChatRequestEvent` names a `MODEL_ROUTER`. Recorded once per routing decision, including replayed ones; see [Model Routing]({{< ref "docs/development/model_routing#observability" >}}). | Histogram |
-| **Agent**   | traceLogTruncatedRecords                          | Number of Trace Log records whose attributes were truncated at `STANDARD` detail. Increments once per record, regardless of how many fields were truncated. Use this to adjust truncation limits or select entities at `VERBOSE`. | Count |
+| **Agent**   | traceLogTruncatedRecords                          | Number of Trace Log records whose attributes were truncated at `STANDARD` level. Increments once per record, regardless of how many fields were truncated. Use this to adjust truncation limits or select entities at `VERBOSE`. | Count |
 | **Agent**   | traceLogWriteFailures                           | Number of Trace Log write attempts for which `append`, `flush`, or both failed. Trace Log writes are best-effort and do not fail the job. | Count |
 
 For a locally observed input run, `inputRunLatencyMs` is split into queueing and processing time at the input-run start boundary. `numOfPendingInputEvents` counts buffered inputs, while `numOfActiveInputRuns` counts logical runs; an asynchronous run remains active while it is waiting for its continuation.
@@ -61,7 +61,7 @@ Input-run outcomes and all latency samples are process-local. Runs or Action exe
 
 #### Execution Metrics
 
-LLM, Tool, and sub-agent metrics describe calls observed by the framework within an Action. The framework reports each call's start and outcome directly to the metric collectors. These reports do not create Events for Action routing. Metrics are collected independently of Trace Log output: changing `trace-log.targets` or `detail` does not disable them.
+LLM, Tool, and sub-agent metrics describe calls observed by the framework within an Action. The framework reports each call's start and outcome directly to the metric collectors. These reports do not create Events for Action routing. Metrics are collected independently of Trace Log output: changing `trace-log.targets` or `level` does not disable them.
 
 The `model_resource`, `tool`, `skill`, `mcp_server`, and `subagent` scopes are independent key-value scopes directly under an Action. The existing `model` scope remains dedicated to model usage metrics.
 
@@ -207,7 +207,7 @@ We can check the log result in the WebUI of Flink Job:
 
 ## Trace Log
 
-Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` detail. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their detail.
+Trace Log records Events, Action executions, and component calls as structured JSON. By default, it records only Events at `STANDARD` level. Configure [`trace-log.targets`]({{< ref "docs/operations/configuration#trace-log-targets" >}}) to select other entities or change their level.
 
 The default output is **SLF4J Trace Log**. Select **File Trace Log** with `trace-log.output-type: FILE` or by setting a non-empty `trace-log.base-dir`. A configured base directory takes precedence over `output-type`.
 
@@ -222,18 +222,16 @@ agent:
   trace-log:
     targets:
       - scope: ALL
-        detail: STANDARD
-      - scope:
-          entityType: tool
-          entityName: search
-        detail: VERBOSE
+        level: STANDARD
+      - scope: {tool: search}
+        level: VERBOSE
     output-type: FILE
     base-dir: /tmp/flink-agent-logs
 ```
 
-This example uses file output so the records can be read locally. Each target combines a `scope` with an optional `detail`. The specific Tool target overrides the `ALL` preset. Use `detail: "OFF"` to suppress a matching entity. Selecting an entity does not automatically select its parents or children.
+This example uses file output so the records can be read locally. Each target combines a `scope` with an optional `level`. The specific Tool target overrides the `ALL` preset. Use `level: "OFF"` to suppress a matching entity. Selecting an entity does not automatically select its parents or children.
 
-See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for the complete matching, inheritance, and validation rules. The [Content Detail](#content-detail) section below explains how the selected detail affects the recorded data.
+See [Trace log targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) for the complete matching, inheritance, and validation rules. The [Recording Level](#recording-level) section below explains how the selected level affects the recorded data.
 
 ### SLF4J Trace Log (Default)
 
@@ -260,14 +258,14 @@ By default, each record occupies one line of JSONL. Setting `trace-log.pretty-pr
 
 ### JSON Format
 
-Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. The logger adds `detail` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
+Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. The logger adds `level` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
 
 For an Event, `attributes` contains its payload and `entityMetadata` contains its ID and source relationships. These relationships belong to the trace context and are not fields of the Event passed between Actions.
 
 | Field | Meaning |
 |-------|---------|
 | `timestamp` | Observation or occurrence time. |
-| `detail` | Output metadata identifying the resolved `STANDARD` or `VERBOSE` detail. |
+| `level` | Output metadata identifying the resolved `STANDARD` or `VERBOSE` level. |
 | `inputRunId`, `businessKey`, `agentName` | Available run identity and agent context. |
 | `entityType`, `entityName` | The observed entity's type and name. For an Event, its routing type is the entity name. |
 | `executionId`, `parentExecutionId` | Identity of an Action execution or component call, and its containing execution when available. These fields are absent for Events. |
@@ -280,7 +278,7 @@ For example, an output Event produced by an Action is recorded as:
 ```json
 {
   "timestamp": "2024-01-15T10:30:02Z",
-  "detail": "STANDARD",
+  "level": "STANDARD",
   "inputRunId": "run-1",
   "businessKey": "order-1001",
   "agentName": "OrderAgent",
@@ -303,7 +301,7 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 ```json
 {
   "timestamp": "2024-01-15T10:30:01Z",
-  "detail": "STANDARD",
+  "level": "STANDARD",
   "inputRunId": "run-1",
   "businessKey": "order-1001",
   "agentName": "OrderAgent",
@@ -321,17 +319,17 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 
 One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
 
-### Content Detail
+### Recording Level
 
-| Detail | Behavior |
+| Level | Behavior |
 |--------|----------|
 | `OFF` | Write no matching record. |
 | `STANDARD` | Truncate or summarize large values under `attributes` using the configured limits. |
 | `VERBOSE` | Retain attributes without truncation, after media sanitization. |
 
-`trace-log.standard.max-string-length`, `trace-log.standard.max-array-elements`, and `trace-log.standard.max-depth` control long strings, large arrays, and deep nesting respectively. Setting a threshold to `0` disables that truncation limit. Setting all three to `0` makes `STANDARD` retain the same content as `VERBOSE`, apart from the `detail` label.
+`trace-log.standard.max-string-length`, `trace-log.standard.max-array-elements`, and `trace-log.standard.max-depth` control long strings, large arrays, and deep nesting respectively. Setting a threshold to `0` disables that truncation limit. Setting all three to `0` makes `STANDARD` retain the same content as `VERBOSE`, apart from the `level` label.
 
-**Media sanitization.** Both recording detail settings (`STANDARD` and `VERBOSE`) omit inline Base64 media data from typed `ChatMessage` objects and remove userinfo, query strings, and fragments from media URLs. Media metadata is retained. Message text is not automatically redacted.
+**Media sanitization.** Both recording level settings (`STANDARD` and `VERBOSE`) omit inline Base64 media data from typed `ChatMessage` objects and remove userinfo, query strings, and fragments from media URLs. Media metadata is retained. Message text is not automatically redacted.
 
 **Fields preserved in full.** Truncation never changes entity identity, relationships, entity metadata, timestamps, statuses, or problem categories. It applies only under `attributes`, so `STANDARD` retains the relationships needed to correlate the records that were selected.
 
@@ -386,7 +384,7 @@ Malformed records, conflicting Event identities, missing upstream Events, and cy
 ### Migration Notes
 
 - The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`, and the current output settings.
-- Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `detail`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
+- Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `level`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
 - File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
 - The log metrics are `traceLogTruncatedRecords` and `traceLogWriteFailures`. Update dashboards and alert queries using their old names.
 - Python Event IDs identify occurrences using UUID4. Equal payloads do not imply equal Event IDs.

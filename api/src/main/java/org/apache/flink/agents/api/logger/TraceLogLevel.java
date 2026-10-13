@@ -21,7 +21,7 @@ package org.apache.flink.agents.api.logger;
 import java.util.Locale;
 
 /**
- * Recording detail for matched trace log records. When a record is written, identities,
+ * Recording level for matched trace log records. When a record is written, identities,
  * relationships, timestamps, and statuses are preserved in full.
  *
  * <ul>
@@ -30,7 +30,7 @@ import java.util.Locale;
  *   <li>{@link #VERBOSE} - Attributes are not truncated or summarized.
  * </ul>
  */
-public enum TraceLogDetail {
+public enum TraceLogLevel {
 
     /** Matching records are not written. */
     OFF,
@@ -44,21 +44,21 @@ public enum TraceLogDetail {
     VERBOSE;
 
     /**
-     * Parses a string value into a detail setting, ignoring case.
+     * Parses a string value into a level setting, ignoring case.
      *
-     * @param value the detail name
-     * @return the corresponding detail setting
+     * @param value the level name
+     * @return the corresponding level setting
      * @throws IllegalArgumentException if the value is null or unknown
      */
-    public static TraceLogDetail fromString(String value) {
+    public static TraceLogLevel fromString(String value) {
         if (value == null) {
-            throw new IllegalArgumentException("TraceLogDetail value cannot be null");
+            throw new IllegalArgumentException("TraceLogLevel value cannot be null");
         }
         try {
             return valueOf(value.toUpperCase(Locale.ROOT));
         } catch (IllegalArgumentException e) {
             throw new IllegalArgumentException(
-                    "Invalid TraceLogDetail: '"
+                    "Invalid TraceLogLevel: '"
                             + value
                             + "'. Valid values are: OFF, STANDARD, VERBOSE");
         }

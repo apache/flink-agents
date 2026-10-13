@@ -23,7 +23,7 @@ import java.util.Locale;
 /** Preset scopes for trace log recording targets. */
 public enum TraceLogScope {
 
-    /** Select Events. */
+    /** Select Events; equivalent to {@code entityType: event} without {@code entityName}. */
     EVENT_ONLY,
 
     /** Select all entities. */

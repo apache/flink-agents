@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions.ConditionEvaluationFailureStrategy;
 import org.apache.flink.agents.api.configuration.ConfigOption;
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.junit.jupiter.api.*;
 
 import java.util.HashMap;
@@ -238,7 +240,7 @@ public class AgentConfigurationTest {
     void traceLogDefaultsAndEmptyTargetsSurvivePlanJson() throws Exception {
         AgentConfiguration config = new AgentConfiguration();
         assertEquals(
-                List.of(Map.of("scope", "EVENT_ONLY", "detail", "STANDARD")),
+                List.of(TraceLogTarget.events(TraceLogLevel.STANDARD)),
                 config.get(AgentConfigOptions.TRACE_LOG_TARGETS));
         assertEquals(LoggerType.SLF4J, config.get(AgentConfigOptions.TRACE_LOG_OUTPUT_TYPE));
 
@@ -259,23 +261,75 @@ public class AgentConfigurationTest {
     void traceLogTargetsSurviveNestedConfigurationAndPlanJson() throws Exception {
         List<Map<String, Object>> targets =
                 List.of(
-                        Map.of("scope", "ALL", "detail", "OFF"),
-                        Map.of("scope", "EVENT_ONLY", "detail", "STANDARD"),
+                        Map.of("scope", "ALL", "level", "OFF"),
+                        Map.of("scope", "EVENT_ONLY", "level", "STANDARD"),
                         Map.of(
                                 "scope",
                                 Map.of("entityType", "event", "entityName", "com.foo.*"),
-                                "detail",
+                                "level",
                                 "VERBOSE"),
                         Map.of("scope", Map.of("entityType", "action", "entityName", "process")),
                         Map.of("scope", Map.of("entityType", "tool")));
         AgentConfiguration config =
                 new AgentConfiguration(Map.of("trace-log", Map.of("targets", targets)));
+        List<TraceLogTarget> expected =
+                List.of(
+                        TraceLogTarget.all(TraceLogLevel.OFF),
+                        TraceLogTarget.events(TraceLogLevel.STANDARD),
+                        TraceLogTarget.event("com.foo.*", TraceLogLevel.VERBOSE),
+                        TraceLogTarget.action("process"),
+                        TraceLogTarget.tools());
+        assertEquals(expected, config.get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(
+                        mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                        AgentPlan.class);
+        assertEquals(expected, restored.getConfig().get(AgentConfigOptions.TRACE_LOG_TARGETS));
+    }
+
+    @Test
+    void typedTraceLogTargetsKeepWireValuesAndOmittedLevelsAcrossPlanJson() throws Exception {
+        List<TraceLogTarget> targets =
+                List.of(
+                        TraceLogTarget.tools(TraceLogLevel.VERBOSE),
+                        TraceLogTarget.tool("search"),
+                        TraceLogTarget.entity("custom", "step", TraceLogLevel.OFF));
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentConfigOptions.TRACE_LOG_TARGETS, targets);
         assertEquals(targets, config.get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        assertEquals(
+                List.of(
+                        Map.of("scope", Map.of("entityType", "tool"), "level", "VERBOSE"),
+                        Map.of("scope", Map.of("entityType", "tool", "entityName", "search")),
+                        Map.of(
+                                "scope",
+                                Map.of("entityType", "custom", "entityName", "step"),
+                                "level",
+                                "OFF")),
+                config.getConfData().get("trace-log.targets"));
         ObjectMapper mapper = new ObjectMapper();
         AgentPlan restored =
                 mapper.readValue(
                         mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
                         AgentPlan.class);
         assertEquals(targets, restored.getConfig().get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        assertEquals(config.getConfData(), restored.getConfigData());
+        assertEquals(
+                config.getConfData(),
+                new AgentConfiguration(Map.of("trace-log.targets", targets)).getConfData());
+    }
+
+    @Test
+    void explicitNullTraceLogTargetsAreRejectedAtTheConfigurationBoundary() {
+        AgentConfiguration config = new AgentConfiguration();
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> config.set(AgentConfigOptions.TRACE_LOG_TARGETS, null));
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new AgentConfiguration(
+                                java.util.Collections.singletonMap("trace-log.targets", null)));
     }
 }

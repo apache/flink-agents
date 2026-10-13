@@ -169,7 +169,7 @@ class TraceRecordJsonSerdeTest {
                         + TIMESTAMP
                         + "\",\"entityType\":\"event\","
                         + "\"entityName\":\"InputEvent\",\"entityMetadata\":{\"eventId\":\"input\"},"
-                        + "\"attributes\":{},\"detail\":\"STANDARD\",\"jobId\":\"job\","
+                        + "\"attributes\":{},\"level\":\"STANDARD\",\"jobId\":\"job\","
                         + "\"taskName\":\"task\",\"subtaskId\":1}";
         TraceRecord record = mapper.readValue(json, TraceRecord.class);
 

@@ -18,7 +18,7 @@
 package org.apache.flink.agents.runtime.tracelog;
 
 import org.apache.flink.agents.api.logger.LoggerType;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogScope;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
@@ -110,13 +110,13 @@ public final class TraceLogWriter implements AutoCloseable {
         if (traceLogger == null) {
             return;
         }
-        TraceLogDetail detail = targetResolver.resolve(record);
-        if (detail == null) {
+        TraceLogLevel level = targetResolver.resolve(record);
+        if (level == null) {
             return;
         }
         Exception writeError = null;
         try {
-            traceLogger.append(record, detail);
+            traceLogger.append(record, level);
         } catch (Exception appendError) {
             writeError = appendError;
         }

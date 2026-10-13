@@ -58,6 +58,7 @@ from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
 
 # Include both the active environment and any source checkout already on PYTHONPATH
 # so the embedded interpreter can resolve this test module.
@@ -174,7 +175,7 @@ def test_cross_language_media_sanitized_in_trace_log(tmp_path: Path) -> None:
     agents_env.get_config().set_str("trace-log.base-dir", str(trace_log_dir))
     agents_env.get_config().set(
         AgentConfigOptions.TRACE_LOG_TARGETS,
-        [{"scope": "EVENT_ONLY", "detail": "VERBOSE"}],
+        [TraceLogTarget.events(TraceLogLevel.VERBOSE)],
     )
 
     input_datastream = env.from_collection([{"id": 1, "review": QUESTION}])

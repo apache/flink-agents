@@ -133,7 +133,7 @@ class JsonTruncatorTest {
     }
 
     @Test
-    void testFormerEnvelopeFieldNamesAreTruncatedAsPayload() {
+    void testPayloadFieldsAreTruncatedRegardlessOfName() {
         JsonTruncator truncator = new JsonTruncator(5, 0, 0);
         ObjectNode node = MAPPER.createObjectNode();
         node.put("eventType", "a-long-event-type");
@@ -186,10 +186,7 @@ class JsonTruncatorTest {
 
     @Test
     void testRecursionSkipsDroppedTailElements() {
-        // Regression test: when an array exceeds maxArrayElements, the elements beyond the cap
-        // must NOT be recursed into. Prior to the fix, truncateArrayContents ran on the full
-        // array before truncateArray dropped the tail, causing wasted CPU/allocations on
-        // elements that were about to be discarded.
+        // Elements beyond the retained array limit do not need recursive truncation.
         JsonTruncator truncator = new JsonTruncator(5, 2, 0);
         ObjectNode node = MAPPER.createObjectNode();
         ArrayNode items = MAPPER.createArrayNode();
@@ -217,9 +214,7 @@ class JsonTruncatorTest {
         assertThat(node.get("items").get("truncatedList").get(0).asText()).isEqualTo("a");
         assertThat(node.get("items").get("truncatedList").get(1).asText()).isEqualTo("b");
         assertThat(node.get("items").get("omittedElements").asInt()).isEqualTo(3);
-        // The dropped tail ObjectNodes were never visited — their payload fields remain
-        // untouched (still raw strings, not wrapped truncatedString objects). Under the old
-        // pre-reorder code path, these would have been mutated before being discarded.
+        // Dropped tail objects retain their original payload values.
         assertThat(tail0.get("payload").isTextual()).isTrue();
         assertThat(tail0.get("payload").asText()).isEqualTo(longValue);
         assertThat(tail1.get("payload").isTextual()).isTrue();

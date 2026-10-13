@@ -22,7 +22,7 @@ import org.apache.flink.agents.api.EventContext;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.listener.EventListener;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
@@ -120,7 +120,7 @@ class EventRouterTest {
         ArgumentCaptor<TraceRecord> logRecord = ArgumentCaptor.forClass(TraceRecord.class);
         ArgumentCaptor<EventContext> listener1Context = ArgumentCaptor.forClass(EventContext.class);
         ArgumentCaptor<EventContext> listener2Context = ArgumentCaptor.forClass(EventContext.class);
-        verify(mockLogger).append(logRecord.capture(), eq(TraceLogDetail.STANDARD));
+        verify(mockLogger).append(logRecord.capture(), eq(TraceLogLevel.STANDARD));
         verify(listener1).onEventProcessed(listener1Context.capture(), eq(inputEvent));
         verify(listener2).onEventProcessed(listener2Context.capture(), eq(inputEvent));
         assertThat(logRecord.getValue().getContext()).isSameAs(eventTraceContext);
@@ -128,7 +128,7 @@ class EventRouterTest {
         assertThat(listener1Context.getValue().getEventType()).isEqualTo(InputEvent.EVENT_TYPE);
         assertThat(listener2Context.getValue()).isSameAs(listener1Context.getValue());
         InOrder ordered = inOrder(mockLogger);
-        ordered.verify(mockLogger).append(logRecord.getValue(), TraceLogDetail.STANDARD);
+        ordered.verify(mockLogger).append(logRecord.getValue(), TraceLogLevel.STANDARD);
         ordered.verify(mockLogger).flush();
         verify(spyMetrics).markEventProcessed();
     }
@@ -154,7 +154,7 @@ class EventRouterTest {
                         null);
         doThrow(new RuntimeException("log failed"))
                 .when(mockLogger)
-                .append(any(TraceRecord.class), any(TraceLogDetail.class));
+                .append(any(TraceRecord.class), any(TraceLogLevel.class));
 
         assertThatCode(() -> router.notifyEventProcessed(inputEvent, eventTraceContext))
                 .doesNotThrowAnyException();

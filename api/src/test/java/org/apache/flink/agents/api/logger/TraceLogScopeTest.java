@@ -45,7 +45,7 @@ class TraceLogScopeTest {
     @Test
     @DisplayName("An unknown value is rejected with a message listing the valid values")
     void testFromStringRejectsUnknownValue() {
-        assertThatThrownBy(() -> TraceLogScope.fromString("OFF"))
+        assertThatThrownBy(() -> TraceLogScope.fromString("INVALID_SCOPE"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Invalid TraceLogScope")
                 .hasMessageContaining("EVENT_ONLY, ALL");

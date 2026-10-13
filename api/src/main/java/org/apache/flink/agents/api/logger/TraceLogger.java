@@ -38,15 +38,15 @@ public interface TraceLogger extends AutoCloseable {
     /**
      * Appends a selected record with its identity, relationships, and payload.
      *
-     * <p>The caller selects records and supplies their detail. This method does not perform target
+     * <p>The caller selects records and supplies their level. This method does not perform target
      * selection. OFF skips the record. STANDARD permits attribute truncation, and VERBOSE retains
      * full attributes; identity and relationship fields remain complete for written records.
      *
      * @param record the complete TraceRecord to write
-     * @param detail the selected recording detail, never null
+     * @param level the selected recording level, never null
      * @throws Exception if the append operation fails
      */
-    void append(TraceRecord record, TraceLogDetail detail) throws Exception;
+    void append(TraceRecord record, TraceLogLevel level) throws Exception;
 
     /**
      * Flush any buffered records to the underlying storage.

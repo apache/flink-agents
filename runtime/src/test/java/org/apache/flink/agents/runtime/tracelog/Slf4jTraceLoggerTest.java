@@ -25,7 +25,7 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.LoggerType;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
 import org.apache.flink.agents.api.trace.TraceContext;
@@ -126,7 +126,7 @@ class Slf4jTraceLoggerTest {
     }
 
     @Test
-    void testOffDetailDoesNotWriteOrCountTruncation() throws Exception {
+    void testOffLevelDoesNotWriteOrCountTruncation() throws Exception {
         TraceLoggerConfig config =
                 TraceLoggerConfig.builder()
                         .loggerType(LoggerType.SLF4J)
@@ -139,7 +139,7 @@ class Slf4jTraceLoggerTest {
         SimpleCounter truncatedRecords = new SimpleCounter();
         logger.setTruncatedRecordsCounter(truncatedRecords);
 
-        append(new InputEvent("long input that would be truncated"), null, TraceLogDetail.OFF);
+        append(new InputEvent("long input that would be truncated"), null, TraceLogLevel.OFF);
         logger.flush();
 
         assertTrue(testAppender.getMessages().isEmpty());
@@ -155,7 +155,7 @@ class Slf4jTraceLoggerTest {
         InputEvent inputEvent = new InputEvent("test input");
         TraceContext context = null;
 
-        append(inputEvent, context, TraceLogDetail.STANDARD);
+        append(inputEvent, context, TraceLogLevel.STANDARD);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size(), "Should have logged one message");
@@ -164,7 +164,7 @@ class Slf4jTraceLoggerTest {
         logger.flush();
         logger.close();
         JsonNode jsonNode = objectMapper.readTree(messages.get(0));
-        assertEquals("STANDARD", jsonNode.get("detail").asText());
+        assertEquals("STANDARD", jsonNode.get("level").asText());
         // Verify subtask context fields
         assertEquals(testJobId.toString(), jsonNode.get("jobId").asText());
         assertEquals(testTaskName, jsonNode.get("taskName").asText());
@@ -191,8 +191,8 @@ class Slf4jTraceLoggerTest {
         InputEvent inputEvent = new InputEvent("input data");
         OutputEvent outputEvent = new OutputEvent("output data");
 
-        append(inputEvent, null, TraceLogDetail.STANDARD);
-        append(outputEvent, null, TraceLogDetail.STANDARD);
+        append(inputEvent, null, TraceLogLevel.STANDARD);
+        append(outputEvent, null, TraceLogLevel.STANDARD);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(2, messages.size(), "Should have logged two messages");
@@ -205,7 +205,7 @@ class Slf4jTraceLoggerTest {
     }
 
     @Test
-    void testStandardDetailTruncatesOnlyEventAttributes() throws Exception {
+    void testStandardLevelTruncatesOnlyEventAttributes() throws Exception {
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put(AgentConfigOptions.TRACE_LOG_MAX_STRING_LENGTH.getKey(), 10);
         TraceLoggerConfig config =
@@ -218,7 +218,7 @@ class Slf4jTraceLoggerTest {
 
         InputEvent inputEvent =
                 new InputEvent("this is a very long string that exceeds ten characters");
-        append(inputEvent, null, TraceLogDetail.STANDARD);
+        append(inputEvent, null, TraceLogLevel.STANDARD);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
@@ -259,7 +259,7 @@ class Slf4jTraceLoggerTest {
                         "long error message",
                         "long-problem-category");
 
-        logger.append(record, TraceLogDetail.STANDARD);
+        logger.append(record, TraceLogLevel.STANDARD);
 
         JsonNode json = objectMapper.readTree(testAppender.getMessages().get(0));
         assertEquals(toolContext.getInputRunId(), json.get("inputRunId").asText());
@@ -290,7 +290,7 @@ class Slf4jTraceLoggerTest {
         logger.open(openParams);
 
         InputEvent inputEvent = new InputEvent("test input");
-        append(inputEvent, null, TraceLogDetail.STANDARD);
+        append(inputEvent, null, TraceLogLevel.STANDARD);
 
         List<String> messages = testAppender.getMessages();
         assertEquals(1, messages.size());
@@ -301,7 +301,7 @@ class Slf4jTraceLoggerTest {
                 () -> objectMapper.readTree(json), "Pretty-printed output should be valid JSON");
     }
 
-    private void append(Event event, TraceContext sourceContext, TraceLogDetail detail)
+    private void append(Event event, TraceContext sourceContext, TraceLogLevel level)
             throws Exception {
         logger.append(
                 TraceRecord.create(
@@ -314,7 +314,7 @@ class Slf4jTraceLoggerTest {
                         null,
                         null,
                         event.getAttributes()),
-                detail);
+                level);
     }
 
     /** A log4j2 appender that captures log messages for testing. */

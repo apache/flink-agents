@@ -151,14 +151,14 @@ Trace Log records Events, Action executions, and calls made within Actions. See 
 | `trace-log.output-type` | `SLF4J` | LoggerType | Trace log output: `SLF4J` writes JSON through a dedicated SLF4J logger, visible in Flink's Web UI Logs tab; `FILE` writes per-subtask files. A non-empty `trace-log.base-dir` forces `FILE`, even when `SLF4J` is selected. |
 | `trace-log.base-dir` | (none) | String | Directory for file output; a non-empty value forces `FILE`. When file output is selected without a directory, uses `java.io.tmpdir/flink-agents`. |
 | `trace-log.pretty-print` | false | boolean | Format JSON over multiple lines. When false, each record occupies one line (JSONL). |
-| `trace-log.targets` | `[{scope: EVENT_ONLY, detail: STANDARD}]` | List of objects | Match records and control recording detail. Each target uses `scope` and optional `detail`; see [Trace log targets](#trace-log-targets). |
-| `trace-log.standard.max-string-length` | 2000 | int | Maximum attribute string length at `STANDARD` detail. No effect at `VERBOSE`. |
-| `trace-log.standard.max-array-elements` | 20 | int | Maximum attribute array length at `STANDARD` detail. No effect at `VERBOSE`. |
-| `trace-log.standard.max-depth` | 5 | int | Maximum attribute nesting depth at `STANDARD` detail. Deeper objects are summarized. No effect at `VERBOSE`. |
+| `trace-log.targets` | `[{scope: EVENT_ONLY, level: STANDARD}]` | List of objects | Match records and control the recording level. Each target uses `scope` and optional `level`; see [Trace log targets](#trace-log-targets). |
+| `trace-log.standard.max-string-length` | 2000 | int | Maximum attribute string length at `STANDARD` level. No effect at `VERBOSE`. |
+| `trace-log.standard.max-array-elements` | 20 | int | Maximum attribute array length at `STANDARD` level. No effect at `VERBOSE`. |
+| `trace-log.standard.max-depth` | 5 | int | Maximum attribute nesting depth at `STANDARD` level. Deeper objects are summarized. No effect at `VERBOSE`. |
 
 #### Trace log targets
 
-Every target combines a `scope` with an optional `detail`. Omitting `targets` records only Events at `STANDARD`. An explicit list replaces that default; an empty list records nothing.
+Every target combines a `scope` with an optional `level`. Omitting `targets` records only Events at `STANDARD`. An explicit list replaces that default; an empty list records nothing.
 
 For example, this configuration records all entities at `STANDARD`, with full attributes for the `search` Tool:
 
@@ -167,11 +167,9 @@ agent:
   trace-log:
     targets:
       - scope: ALL
-        detail: STANDARD
-      - scope:
-          entityType: tool
-          entityName: search
-        detail: VERBOSE
+        level: STANDARD
+      - scope: {tool: search}
+        level: VERBOSE
     standard:
       max-string-length: 2000
       max-array-elements: 20
@@ -181,7 +179,48 @@ agent:
     pretty-print: false
 ```
 
-`scope` accepts `EVENT_ONLY` (match Events), `ALL` (match all entities), or an object with required `entityType` and optional `entityName`.
+Java and Python can configure targets with `TraceLogTarget` through the same `TRACE_LOG_TARGETS` option:
+
+{{< tabs >}}
+{{< tab "python" >}}
+
+```python
+from flink_agents.api.core_options import AgentConfigOptions
+from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
+
+agents_env.get_config().set(
+    AgentConfigOptions.TRACE_LOG_TARGETS,
+    [
+        TraceLogTarget.all(TraceLogLevel.STANDARD),
+        TraceLogTarget.tool("search", TraceLogLevel.VERBOSE),
+    ],
+)
+```
+
+{{< /tab >}}
+{{< tab "java" >}}
+
+```java
+import java.util.List;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
+
+agentsEnv.getConfig().set(
+        AgentConfigOptions.TRACE_LOG_TARGETS,
+        List.of(
+                TraceLogTarget.all(TraceLogLevel.STANDARD),
+                TraceLogTarget.tool("search", TraceLogLevel.VERBOSE)));
+```
+
+{{< /tab >}}
+{{< /tabs >}}
+
+`TraceLogTarget` provides `all()` and whole-type factories `events()`, `actions()`, `tools()`, `llms()`, `parsers()`, and `subagents()`. The corresponding singular factories accept a name, such as `event("OrderCreated")` or `tool("search")`. All factories accept an optional `TraceLogLevel`. Omitting it preserves inheritance: `tool("search")` inherits the level of a matching Tool type target or `ALL`, as described below. Targets are immutable.
+
+In YAML, `scope` accepts `EVENT_ONLY` (match Events), `ALL` (match all entities), or a selector object. Use one of the keys `event`, `action`, `tool`, `llm`, `parser`, or `subagent` with an entity name, for example `{event: OrderCreated}`. The value `"*"` selects that whole type: `{event: "*"}` is equivalent to `EVENT_ONLY`.
+
+The generic form `{entityType: custom, entityName: name}` also supports custom entity types reported through `ExecutionReporter`; omit `entityName` to select the whole type. Use `TraceLogTarget.entity(...)` for the same selection in Java or Python. For example, `TraceLogTarget.entity("retriever", "catalog")` corresponds to `scope: {entityType: retriever, entityName: catalog}`. Each selector object must contain exactly one category key, or the generic `entityType` and optional `entityName` fields. Multiple category keys and mixing a category key with the generic fields are rejected.
 
 Direct model or tool calls inside an Action are not automatically recorded as separate calls, even with `scope: ALL`.
 
@@ -193,34 +232,39 @@ Direct model or tool calls inside an Action are not automatically recorded as se
 | `action` | The name used to declare the Action in the Agent. | `create_order` |
 | `llm` | The registered ChatModel Resource name used by the call. | `primary_model` |
 
-For example, `scope: {entityType: llm, entityName: primary_model}` selects calls to the Resource named `primary_model`. Its configured model or deployment is recorded separately in `entityMetadata.model`.
+For example, `scope: {llm: primary_model}` selects calls to the Resource named `primary_model`. Its configured model or deployment is recorded separately in `entityMetadata.model`.
 
-Entity names match exactly. A name ending in `.*` matches its namespace and descendants: `com.foo.*` matches `com.foo` and `com.foo.Event`, but not `com.foobar.Event`. Omitting `entityName` matches the whole type.
+Entity names match exactly. A name ending in `.*` matches its namespace and descendants: `{event: "com.foo.*"}` matches `com.foo` and `com.foo.Event`, but not `com.foobar.Event`. Other wildcard forms are unsupported. A category selector with `"*"`, or a generic selector without `entityName`, matches the whole type.
 
-`detail` accepts `OFF`, `STANDARD`, and `VERBOSE`. `OFF` writes no record. `STANDARD` truncates or summarizes attributes using the `standard` limits; `VERBOSE` retains full attributes. Both recording settings preserve all identity and relationship fields, entity metadata, timestamps, statuses, and problem categories. Media payload sanitization applies at both recording settings. See [Content Detail]({{< ref "docs/operations/monitoring#content-detail" >}}) for the truncation format and media handling. In YAML, write `detail: "OFF"` with quotes so Python does not interpret it as a boolean.
+`level` accepts `OFF`, `STANDARD`, and `VERBOSE`. `OFF` writes no record. `STANDARD` truncates or summarizes attributes using the `standard` limits; `VERBOSE` retains full attributes. Both recording settings preserve all identity and relationship fields, entity metadata, timestamps, statuses, and problem categories. Media payload sanitization applies at both recording settings. See [Recording Level]({{< ref "docs/operations/monitoring#recording-level" >}}) for the truncation format and media handling. In YAML, write `level: "OFF"` with quotes so Python does not interpret it as a boolean.
 
-An omitted `detail` inherits from a preset, including `OFF`, rather than from a broader entity target:
+For each entity, matching scopes are considered from most to least specific:
 
-| Target scope | Detail when omitted |
-|--------------|---------------------|
-| `ALL` | `STANDARD` |
-| `EVENT_ONLY` | The `ALL` detail, or `STANDARD` if `ALL` is absent |
-| An Event entity scope | The `EVENT_ONLY` detail, otherwise the `ALL` detail, otherwise `STANDARD` |
-| Any other entity scope | The `ALL` detail, otherwise the `EVENT_ONLY` detail, otherwise `STANDARD` |
+| Order | Matching scope |
+|-------|----------------|
+| 1 | Exact entity name within its type |
+| 2 | Namespace prefixes within its type, from longest to shortest |
+| 3 | Entity type (`EVENT_ONLY` is the `event` type scope) |
+| 4 | `ALL` |
 
-For example, with an `ALL` preset at `VERBOSE`, a Tool target without `detail` also uses `VERBOSE`. A more specific Tool target does not inherit from another Tool type or namespace target. Omitting detail does not opt into recording when the inherited detail is `OFF`; set `STANDARD` or `VERBOSE` explicitly to enable that target.
+The first explicitly specified `level` in this chain applies. An omitted `level` inherits from the next matching scope and does not override it. If at least one scope matches but no matching scope specifies `level`, the entity uses `STANDARD`. If no scope matches, no record is written. Target order does not affect the result.
 
-Only matching entities whose effective detail is not `OFF` are recorded. If several targets match, detail comes from the most specific scope: exact name, longest namespace prefix, entity type, `EVENT_ONLY`, then `ALL`. Target order does not affect the result. Duplicate scopes with conflicting effective details after inheritance are rejected when logging starts. Selecting a Tool does not automatically select its parent Action; recorded relationships retain their IDs even when related records are omitted.
+An explicit `OFF` stops inheritance and suppresses recording. A more specific scope can enable recording by explicitly setting `STANDARD` or `VERBOSE`; omitting `level` continues to inherit `OFF`.
 
-An `ALL` preset with `detail: "OFF"` disables its default range, while a more specific target with explicit `STANDARD` or `VERBOSE` can enable recording. A preset is unnecessary when selecting only one entity type. To record only Tools:
+For example, a Tool type target at `VERBOSE` supplies the level to matching namespace and exact-name targets that omit it. A matching namespace target at `OFF` suppresses an exact-name target that omits `level`, while an exact-name target with explicit `STANDARD` or `VERBOSE` enables that entity. `EVENT_ONLY` applies only to Events; its level does not affect a Tool target.
+
+Duplicate targets for the same scope merge an omitted level with an explicit level and accept repeated identical explicit levels. Different explicit levels for the same scope are rejected when logging starts, regardless of target order. This includes equivalent targets expressed as `EVENT_ONLY`, `{event: "*"}`, or `{entityType: event}`. For example, `EVENT_ONLY` without `level` and `{event: "*"}` with `VERBOSE` merge into one Event type target at `VERBOSE`. Typed targets, mapping objects, and YAML follow the same validation, matching, and inheritance rules.
+
+Selecting a Tool does not automatically select its parent Action; recorded relationships retain their IDs even when related records are omitted.
+
+An `ALL` preset with `level: "OFF"` disables its default range, while a more specific target with explicit `STANDARD` or `VERBOSE` can enable recording. A preset is unnecessary when selecting only one entity type. To record only Tools:
 
 ```yaml
 agent:
   trace-log:
     targets:
-      - scope:
-          entityType: tool
-        detail: VERBOSE
+      - scope: {tool: "*"}
+        level: VERBOSE
 ```
 
 To record everything except one Tool, use a local `OFF` target:
@@ -230,11 +274,9 @@ agent:
   trace-log:
     targets:
       - scope: ALL
-        detail: STANDARD
-      - scope:
-          entityType: tool
-          entityName: search
-        detail: "OFF"
+        level: STANDARD
+      - scope: {tool: search}
+        level: "OFF"
 ```
 
 The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` configuration keys are unsupported and rejected at startup. Migrate selection and verbosity to `targets`, truncation limits to `trace-log.standard.*`, and output settings to `trace-log.output-type`, `trace-log.base-dir`, and `trace-log.pretty-print`.

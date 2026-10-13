@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
@@ -88,7 +88,7 @@ public class FileTraceLogger implements TraceLogger {
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
 
     // Trace-Log-only mapper: chat messages are logged through their sanitized projection
-    // (media metadata instead of payload bytes) at every detail setting.
+    // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
             new ObjectMapper().registerModule(ChatMessageTraceLogSerializer.module());
 
@@ -178,11 +178,11 @@ public class FileTraceLogger implements TraceLogger {
     }
 
     @Override
-    public void append(TraceRecord record, TraceLogDetail detail) throws Exception {
+    public void append(TraceRecord record, TraceLogLevel level) throws Exception {
         if (writer == null) {
             throw new IllegalStateException("FileTraceLogger not initialized. Call open() first.");
         }
-        if (detail == TraceLogDetail.OFF) {
+        if (level == TraceLogLevel.OFF) {
             return;
         }
 
@@ -193,8 +193,8 @@ public class FileTraceLogger implements TraceLogger {
         }
         ObjectNode rootNode = (ObjectNode) tree;
 
-        // Truncate record attributes at STANDARD detail.
-        if (detail == TraceLogDetail.STANDARD && truncator != null) {
+        // Truncate record attributes at STANDARD level.
+        if (level == TraceLogLevel.STANDARD && truncator != null) {
             JsonNode attributesNode = rootNode.get("attributes");
             if (attributesNode instanceof ObjectNode) {
                 boolean truncated = truncator.truncate((ObjectNode) attributesNode);
@@ -204,7 +204,7 @@ public class FileTraceLogger implements TraceLogger {
             }
         }
 
-        ObjectNode ordered = withDetail(rootNode, detail);
+        ObjectNode ordered = withLevel(rootNode, level);
 
         String json =
                 prettyPrint
@@ -213,10 +213,10 @@ public class FileTraceLogger implements TraceLogger {
         writer.println(json);
     }
 
-    private static ObjectNode withDetail(ObjectNode rootNode, TraceLogDetail detail) {
+    private static ObjectNode withLevel(ObjectNode rootNode, TraceLogLevel level) {
         ObjectNode ordered = MAPPER.createObjectNode();
         ordered.set("timestamp", rootNode.get("timestamp"));
-        ordered.put("detail", detail.name());
+        ordered.put("level", level.name());
         Iterator<Map.Entry<String, JsonNode>> fields = rootNode.fields();
         while (fields.hasNext()) {
             Map.Entry<String, JsonNode> field = fields.next();

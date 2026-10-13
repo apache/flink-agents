@@ -18,16 +18,20 @@
 
 package org.apache.flink.agents.runtime.tracelog;
 
-import org.apache.flink.agents.api.logger.TraceLogDetail;
-import org.apache.flink.agents.api.logger.TraceLogScope;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.apache.flink.agents.api.configuration.AgentConfigOptions;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.AgentPlan;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Collections;
@@ -43,11 +47,11 @@ class TraceLogTargetResolverTest {
     @Test
     void defaultsIncludeOnlyEventsAtStandard() {
         TraceLogTargetResolver resolver = new TraceLogTargetResolver(Collections.emptyMap());
-        assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.STANDARD);
+        assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogLevel.STANDARD);
         assertThat(resolver.resolve("action", "process")).isNull();
         assertThat(resolver.resolve("tool", "lookup")).isNull();
         assertThat(new TraceLogTargetResolver(null).resolve("event", "some.Event"))
-                .isEqualTo(TraceLogDetail.STANDARD);
+                .isEqualTo(TraceLogLevel.STANDARD);
     }
 
     @Test
@@ -68,16 +72,16 @@ class TraceLogTargetResolverTest {
     @Test
     void allSelectsEveryEntity() {
         TraceLogTargetResolver resolver = resolver(target("ALL", "VERBOSE"));
-        assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.VERBOSE);
-        assertThat(resolver.resolve("action", "process")).isEqualTo(TraceLogDetail.VERBOSE);
-        assertThat(resolver.resolve("custom", "work")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogLevel.VERBOSE);
+        assertThat(resolver.resolve("action", "process")).isEqualTo(TraceLogLevel.VERBOSE);
+        assertThat(resolver.resolve("custom", "work")).isEqualTo(TraceLogLevel.VERBOSE);
     }
 
     @Test
     void allOffAllowsExplicitlySelectingOnlyTools() {
         TraceLogTargetResolver resolver =
                 resolver(target("ALL", "OFF"), entity("tool", null, "VERBOSE"));
-        assertThat(resolver.resolve("tool", "lookup")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("tool", "lookup")).isEqualTo(TraceLogLevel.VERBOSE);
         assertThat(resolver.resolve("event", "some.Event")).isNull();
         assertThat(resolver.resolve("action", "process")).isNull();
     }
@@ -85,7 +89,7 @@ class TraceLogTargetResolverTest {
     @Test
     void exactNameDoesNotImplicitlySelectDescendants() {
         TraceLogTargetResolver resolver = resolver(entity("event", "com.foo", "VERBOSE"));
-        assertThat(resolver.resolve("event", "com.foo")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("event", "com.foo")).isEqualTo(TraceLogLevel.VERBOSE);
         assertThat(resolver.resolve("event", "com.foo.Event")).isNull();
         assertThat(resolver.resolve("event", "com.foobar.Event")).isNull();
     }
@@ -93,10 +97,10 @@ class TraceLogTargetResolverTest {
     @Test
     void explicitPrefixIncludesRootAndDescendantsButNotSimilarNames() {
         TraceLogTargetResolver resolver = resolver(entity("event", "com.foo.*", null));
-        assertThat(resolver.resolve("event", "com.foo")).isEqualTo(TraceLogDetail.STANDARD);
-        assertThat(resolver.resolve("event", "com.foo.Event")).isEqualTo(TraceLogDetail.STANDARD);
+        assertThat(resolver.resolve("event", "com.foo")).isEqualTo(TraceLogLevel.STANDARD);
+        assertThat(resolver.resolve("event", "com.foo.Event")).isEqualTo(TraceLogLevel.STANDARD);
         assertThat(resolver.resolve("event", "com.foo.nested.Event"))
-                .isEqualTo(TraceLogDetail.STANDARD);
+                .isEqualTo(TraceLogLevel.STANDARD);
         assertThat(resolver.resolve("event", "com.foobar.Event")).isNull();
     }
 
@@ -114,18 +118,17 @@ class TraceLogTargetResolverTest {
             TraceLogTargetResolver resolver =
                     new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
             assertThat(resolver.resolve("event", "com.foo.Special"))
-                    .isEqualTo(TraceLogDetail.VERBOSE);
+                    .isEqualTo(TraceLogLevel.VERBOSE);
             assertThat(resolver.resolve("event", "com.foo.Other"))
-                    .isEqualTo(TraceLogDetail.STANDARD);
-            assertThat(resolver.resolve("event", "com.bar.Other"))
-                    .isEqualTo(TraceLogDetail.VERBOSE);
+                    .isEqualTo(TraceLogLevel.STANDARD);
+            assertThat(resolver.resolve("event", "com.bar.Other")).isEqualTo(TraceLogLevel.VERBOSE);
             assertThat(resolver.resolve("event", "org.example.Other"))
-                    .isEqualTo(TraceLogDetail.STANDARD);
+                    .isEqualTo(TraceLogLevel.STANDARD);
         }
     }
 
     @Test
-    void entityTypeThenEventPresetThenAllDetermineDetail() {
+    void eventTypeAliasOverridesAllAndAllowsMoreSpecificLevels() {
         List<Map<String, Object>> targets =
                 List.of(
                         target("ALL", "VERBOSE"),
@@ -136,17 +139,14 @@ class TraceLogTargetResolverTest {
         for (List<Map<String, Object>> ordering : List.of(targets, reversed)) {
             TraceLogTargetResolver resolver =
                     new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
-            assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.STANDARD);
-            assertThat(resolver.resolve("event", "special")).isEqualTo(TraceLogDetail.VERBOSE);
-            assertThat(resolver.resolve("action", "process")).isEqualTo(TraceLogDetail.VERBOSE);
+            assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogLevel.STANDARD);
+            assertThat(resolver.resolve("event", "special")).isEqualTo(TraceLogLevel.VERBOSE);
+            assertThat(resolver.resolve("action", "process")).isEqualTo(TraceLogLevel.VERBOSE);
         }
-        TraceLogTargetResolver type =
-                resolver(target("EVENT_ONLY", "STANDARD"), entity("event", null, "VERBOSE"));
-        assertThat(type.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.VERBOSE);
     }
 
     @Test
-    void unnamedEntitiesUseTypeOrPresetDetail() {
+    void unnamedEntitiesUseTypeOrAllLevel() {
         TraceLogTargetResolver resolver =
                 resolver(
                         entity("tool", "search", "STANDARD"),
@@ -154,9 +154,9 @@ class TraceLogTargetResolverTest {
                         entity("event", "com.foo.*", "VERBOSE"),
                         target("EVENT_ONLY", "STANDARD"),
                         target("ALL", "VERBOSE"));
-        assertThat(resolver.resolve("tool", null)).isEqualTo(TraceLogDetail.VERBOSE);
-        assertThat(resolver.resolve("event", null)).isEqualTo(TraceLogDetail.STANDARD);
-        assertThat(resolver.resolve(null, null)).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("tool", null)).isEqualTo(TraceLogLevel.VERBOSE);
+        assertThat(resolver.resolve("event", null)).isEqualTo(TraceLogLevel.STANDARD);
+        assertThat(resolver.resolve(null, null)).isEqualTo(TraceLogLevel.VERBOSE);
     }
 
     @Test
@@ -166,42 +166,37 @@ class TraceLogTargetResolverTest {
                         entity("event", "same", "STANDARD"),
                         entity("action", "same", "VERBOSE"),
                         entity("ALL", null, "VERBOSE"));
-        assertThat(resolver.resolve("event", "same")).isEqualTo(TraceLogDetail.STANDARD);
-        assertThat(resolver.resolve("action", "same")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("event", "same")).isEqualTo(TraceLogLevel.STANDARD);
+        assertThat(resolver.resolve("action", "same")).isEqualTo(TraceLogLevel.VERBOSE);
         assertThat(resolver.resolve("tool", "same")).isNull();
-        assertThat(resolver.resolve("ALL", "same")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(resolver.resolve("ALL", "same")).isEqualTo(TraceLogLevel.VERBOSE);
     }
 
     @ParameterizedTest
-    @MethodSource("omittedDetails")
-    void omittedDetailInheritsPresetInsteadOfBroaderEntityTargets(
+    @MethodSource("omittedLevels")
+    void omittedLevelInheritsFromTheMatchingChain(
             List<Map<String, Object>> targets,
             String entityType,
             String entityName,
-            TraceLogDetail expectedDetail) {
+            TraceLogLevel expectedLevel) {
         List<Map<String, Object>> reversed = new java.util.ArrayList<>(targets);
         Collections.reverse(reversed);
         for (List<Map<String, Object>> ordering : List.of(targets, reversed)) {
             TraceLogTargetResolver resolver =
                     new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
-            assertThat(resolver.resolve(entityType, entityName)).isEqualTo(expectedDetail);
+            assertThat(resolver.resolve(entityType, entityName)).isEqualTo(expectedLevel);
         }
     }
 
-    private static Stream<Arguments> omittedDetails() {
+    private static Stream<Arguments> omittedLevels() {
         return Stream.of(
-                Arguments.of(
-                        List.of(target("ALL", "VERBOSE"), entity("tool", "search", null)),
-                        "tool",
-                        "search",
-                        TraceLogDetail.VERBOSE),
                 Arguments.of(
                         List.of(target("ALL", "VERBOSE"), target("EVENT_ONLY", null)),
                         "event",
                         "some.Event",
-                        TraceLogDetail.VERBOSE),
+                        TraceLogLevel.VERBOSE),
                 Arguments.of(
-                        List.of(target("ALL", null)), "tool", "search", TraceLogDetail.STANDARD),
+                        List.of(target("ALL", null)), "tool", "search", TraceLogLevel.STANDARD),
                 Arguments.of(
                         List.of(
                                 target("ALL", "VERBOSE"),
@@ -209,7 +204,7 @@ class TraceLogTargetResolverTest {
                                 entity("event", "some.Event", null)),
                         "event",
                         "some.Event",
-                        TraceLogDetail.STANDARD),
+                        TraceLogLevel.STANDARD),
                 Arguments.of(
                         List.of(
                                 target("ALL", "VERBOSE"),
@@ -217,22 +212,17 @@ class TraceLogTargetResolverTest {
                                 entity("tool", "search", null)),
                         "tool",
                         "search",
-                        TraceLogDetail.VERBOSE),
+                        TraceLogLevel.VERBOSE),
                 Arguments.of(
                         List.of(target("EVENT_ONLY", "VERBOSE"), entity("tool", null, null)),
                         "tool",
                         "search",
-                        TraceLogDetail.VERBOSE),
-                Arguments.of(
-                        List.of(target("EVENT_ONLY", null), entity("tool", null, null)),
-                        "tool",
-                        "search",
-                        TraceLogDetail.STANDARD),
+                        TraceLogLevel.STANDARD),
                 Arguments.of(
                         List.of(entity("tool", "search", null)),
                         "tool",
                         "search",
-                        TraceLogDetail.STANDARD),
+                        TraceLogLevel.STANDARD),
                 Arguments.of(
                         List.of(target("ALL", "OFF"), entity("tool", "search", null)),
                         "tool",
@@ -253,7 +243,7 @@ class TraceLogTargetResolverTest {
                                 entity("tool", "com.foo.search", null)),
                         "tool",
                         "com.foo.search",
-                        TraceLogDetail.STANDARD),
+                        null),
                 Arguments.of(
                         List.of(
                                 target("ALL", "OFF"),
@@ -262,7 +252,73 @@ class TraceLogTargetResolverTest {
                                 entity("tool", "com.foo.search", null)),
                         "tool",
                         "com.foo.search",
-                        null));
+                        TraceLogLevel.VERBOSE),
+                Arguments.of(
+                        List.of(
+                                target("ALL", "OFF"),
+                                entity("tool", null, "VERBOSE"),
+                                entity("tool", "com.*", null),
+                                entity("tool", "com.foo.*", null),
+                                entity("tool", "com.foo.search", null)),
+                        "tool",
+                        "com.foo.search",
+                        TraceLogLevel.VERBOSE),
+                Arguments.of(
+                        List.of(
+                                entity("tool", "com.*", "VERBOSE"),
+                                entity("tool", "com.foo.*", null),
+                                entity("tool", "com.foo.search", null)),
+                        "tool",
+                        "com.foo.search",
+                        TraceLogLevel.VERBOSE),
+                Arguments.of(
+                        List.of(
+                                entity("tool", "com.*", "OFF"),
+                                entity("tool", "com.foo.*", null),
+                                entity("tool", "com.foo.search", null)),
+                        "tool",
+                        "com.foo.search",
+                        null),
+                Arguments.of(
+                        List.of(
+                                entity("tool", null, null),
+                                entity("tool", "com.*", null),
+                                entity("tool", "com.foo.*", null),
+                                entity("tool", "com.foo.search", null)),
+                        "tool",
+                        "com.foo.search",
+                        TraceLogLevel.STANDARD),
+                Arguments.of(
+                        List.of(
+                                entity("tool", "com.*", "VERBOSE"),
+                                entity("tool", "com.foo", "OFF"),
+                                entity("tool", "com.foo.*", null)),
+                        "tool",
+                        "com.foo.child",
+                        TraceLogLevel.VERBOSE),
+                Arguments.of(
+                        List.of(
+                                entity("tool", "com.foo.*", "OFF"),
+                                entity("tool", "com.foobar.search", null)),
+                        "tool",
+                        "com.foobar.search",
+                        TraceLogLevel.STANDARD),
+                Arguments.of(
+                        List.of(
+                                entity("tool", "com.foo.*", null),
+                                entity("tool", "com.foo.search", null)),
+                        "tool",
+                        "org.search",
+                        null),
+                Arguments.of(List.of(entity("tool", "com.foo.*", null)), "tool", null, null),
+                Arguments.of(
+                        List.of(
+                                target("ALL", "VERBOSE"),
+                                entity("tool", "com.foo.*", "OFF"),
+                                entity("event", "com.foo.search", null)),
+                        "event",
+                        "com.foo.search",
+                        TraceLogLevel.VERBOSE));
     }
 
     @Test
@@ -280,76 +336,146 @@ class TraceLogTargetResolverTest {
         for (List<Map<String, Object>> ordering : List.of(targets, reversed)) {
             TraceLogTargetResolver resolver =
                     new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
-            assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.VERBOSE);
+            assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogLevel.VERBOSE);
             assertThat(resolver.resolve("tool", null)).isNull();
             assertThat(resolver.resolve("tool", "org.search")).isNull();
             assertThat(resolver.resolve("tool", "com.bar.search"))
-                    .isEqualTo(TraceLogDetail.STANDARD);
+                    .isEqualTo(TraceLogLevel.STANDARD);
             assertThat(resolver.resolve("tool", "com.foo.other")).isNull();
-            assertThat(resolver.resolve("tool", "com.foo.search"))
-                    .isEqualTo(TraceLogDetail.VERBOSE);
+            assertThat(resolver.resolve("tool", "com.foo.search")).isEqualTo(TraceLogLevel.VERBOSE);
             assertThat(resolver.resolve("tool", "com.bar.hidden")).isNull();
-            assertThat(resolver.resolve("tool", "com.foo.other"))
-                    .as("Cached OFF detail must not fall back to a broader target")
-                    .isNull();
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("duplicateScopes")
+    void duplicateScopesUseExplicitLevelRegardlessOfOrder(Object firstScope, Object secondScope) {
+        for (TraceLogLevel level : List.of(TraceLogLevel.OFF, TraceLogLevel.VERBOSE)) {
+            Map<String, Object> explicit = target(firstScope, level);
+            Map<String, Object> omitted = target(secondScope, null);
+            TraceLogLevel expected = level == TraceLogLevel.OFF ? null : level;
+            for (TraceLogTargetResolver resolver :
+                    List.of(
+                            resolver(explicit, omitted),
+                            resolver(omitted, explicit),
+                            resolver(
+                                    explicit,
+                                    target(
+                                            secondScope,
+                                            level.name().toLowerCase(java.util.Locale.ROOT))))) {
+                assertThat(resolver.resolve("event", "com.foo.Event")).isEqualTo(expected);
+            }
+        }
+        assertThat(
+                        resolver(target(firstScope, null), target(secondScope, null))
+                                .resolve("event", "com.foo.Event"))
+                .isEqualTo(TraceLogLevel.STANDARD);
+    }
+
+    @ParameterizedTest
+    @MethodSource("duplicateScopes")
+    void conflictingExplicitDuplicateScopesFailAtStartup(Object firstScope, Object secondScope) {
+        for (TraceLogLevel first : TraceLogLevel.values()) {
+            for (TraceLogLevel second : TraceLogLevel.values()) {
+                if (first == second) {
+                    continue;
+                }
+                assertThatThrownBy(
+                                () ->
+                                        resolver(
+                                                target(firstScope, first),
+                                                target(secondScope, second)))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("trace-log.targets")
+                        .hasMessageContaining("conflicting");
+            }
+        }
+    }
+
+    private static Stream<Arguments> duplicateScopes() {
+        Map<String, String> eventType = Map.of("entityType", "event");
+        Map<String, String> prefix = Map.of("entityType", "event", "entityName", "com.foo.*");
+        Map<String, String> exact = Map.of("entityType", "event", "entityName", "com.foo.Event");
+        return Stream.of(
+                Arguments.of("ALL", "ALL"),
+                Arguments.of("EVENT_ONLY", eventType),
+                Arguments.of(prefix, prefix),
+                Arguments.of(exact, exact));
+    }
+
+    @Test
+    void mergedExplicitLevelIsInheritedByMoreSpecificScopes() {
+        List<Map<String, Object>> targets =
+                List.of(
+                        target("ALL", "OFF"),
+                        target("EVENT_ONLY", null),
+                        entity("event", null, "VERBOSE"),
+                        entity("event", "com.*", null),
+                        entity("event", "com.foo.*", null),
+                        entity("event", "com.foo.Event", null));
+        List<Map<String, Object>> reversed = new java.util.ArrayList<>(targets);
+        Collections.reverse(reversed);
+        for (List<Map<String, Object>> ordering : List.of(targets, reversed)) {
+            TraceLogTargetResolver resolver =
+                    new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
+            assertThat(resolver.resolve("event", "com.foo.Event")).isEqualTo(TraceLogLevel.VERBOSE);
+            assertThat(resolver.resolve("event", "com.foo.Other")).isEqualTo(TraceLogLevel.VERBOSE);
+            assertThat(resolver.resolve("tool", "com.foo.Event")).isNull();
         }
     }
 
     @Test
-    void presetsAndDetailsAcceptEnumsAndCaseInsensitiveStrings() {
-        TraceLogTargetResolver resolver =
-                resolver(
-                        target("event_only", "verbose"),
-                        target(TraceLogScope.ALL, TraceLogDetail.OFF));
-        assertThat(resolver.resolve("event", "some.Event")).isEqualTo(TraceLogDetail.VERBOSE);
-        assertThat(resolver.resolve("tool", "lookup")).isNull();
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"OFF", "STANDARD", "VERBOSE"})
-    void duplicateScopesWithSameEffectiveDetailAreAllowed(String detail) {
-        List<Map<String, Object>> targets =
+    void typedTargetsAndYamlKeepTheSameInheritanceThroughPlanJson() throws Exception {
+        AgentConfiguration typed = new AgentConfiguration();
+        typed.set(
+                AgentConfigOptions.TRACE_LOG_TARGETS,
                 List.of(
-                        target("ALL", detail),
-                        target("all", detail.toLowerCase(java.util.Locale.ROOT)),
-                        target("EVENT_ONLY", null),
-                        target("event_only", detail),
-                        entity("tool", "com.foo.*", null),
-                        entity("tool", "com.foo.*", TraceLogDetail.fromString(detail)));
-        List<Map<String, Object>> reversed = new java.util.ArrayList<>(targets);
-        Collections.reverse(reversed);
-        TraceLogDetail expected = "OFF".equals(detail) ? null : TraceLogDetail.fromString(detail);
-        for (List<Map<String, Object>> ordering : List.of(targets, reversed)) {
-            TraceLogTargetResolver resolver =
-                    new TraceLogTargetResolver(Map.of("trace-log.targets", ordering));
-            assertThat(resolver.resolve("tool", "com.foo.search")).isEqualTo(expected);
-            assertThat(resolver.resolve("event", "some.Event")).isEqualTo(expected);
+                        TraceLogTarget.events(TraceLogLevel.OFF),
+                        TraceLogTarget.tools(TraceLogLevel.VERBOSE),
+                        TraceLogTarget.tool("com.foo.*", TraceLogLevel.OFF),
+                        TraceLogTarget.tool("com.foo.search"),
+                        TraceLogTarget.tool("com.foo.visible", TraceLogLevel.STANDARD),
+                        TraceLogTarget.entity("custom", null, TraceLogLevel.VERBOSE),
+                        TraceLogTarget.entity("custom", "step")));
+        String yaml =
+                "trace-log:\n"
+                        + "  targets:\n"
+                        + "    - scope: EVENT_ONLY\n      level: \"OFF\"\n"
+                        + "    - scope: {tool: \"*\"}\n      level: VERBOSE\n"
+                        + "    - scope: {tool: com.foo.*}\n      level: \"OFF\"\n"
+                        + "    - scope: {tool: com.foo.search}\n"
+                        + "    - scope: {tool: com.foo.visible}\n      level: STANDARD\n"
+                        + "    - scope: {entityType: custom}\n      level: VERBOSE\n"
+                        + "    - scope: {entityType: custom, entityName: step}\n";
+        AgentConfiguration fromYaml =
+                new AgentConfiguration(
+                        new ObjectMapper(new YAMLFactory())
+                                .readValue(yaml, new TypeReference<Map<String, Object>>() {}));
+        assertThat(fromYaml.get(AgentConfigOptions.TRACE_LOG_TARGETS))
+                .isEqualTo(typed.get(AgentConfigOptions.TRACE_LOG_TARGETS));
+        ObjectMapper mapper = new ObjectMapper();
+        for (AgentConfiguration config : List.of(typed, fromYaml)) {
+            AgentPlan restored =
+                    mapper.readValue(
+                            mapper.writeValueAsString(new AgentPlan(Map.of(), Map.of(), config)),
+                            AgentPlan.class);
+            for (Map<String, Object> data :
+                    List.of(
+                            config.getConfData(),
+                            restored.getConfigData(),
+                            Map.<String, Object>of(
+                                    "trace-log.targets",
+                                    config.get(AgentConfigOptions.TRACE_LOG_TARGETS)))) {
+                TraceLogTargetResolver resolver = new TraceLogTargetResolver(data);
+                assertThat(resolver.resolve("event", "OrderCreated")).isNull();
+                assertThat(resolver.resolve("tool", "search")).isEqualTo(TraceLogLevel.VERBOSE);
+                assertThat(resolver.resolve("tool", "com.foo.search")).isNull();
+                assertThat(resolver.resolve("tool", "com.foo.visible"))
+                        .isEqualTo(TraceLogLevel.STANDARD);
+                assertThat(resolver.resolve("custom", "step")).isEqualTo(TraceLogLevel.VERBOSE);
+                assertThat(resolver.resolve("action", "process")).isNull();
+            }
         }
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {"exact", "prefix", "type", "preset", "event-preset"})
-    void conflictingDuplicateScopesFailAtStartup(String selector) {
-        Map<String, Object> first;
-        Map<String, Object> second;
-        if ("preset".equals(selector)) {
-            first = target("ALL", "VERBOSE");
-            second = target("all", null);
-        } else if ("event-preset".equals(selector)) {
-            first = target("EVENT_ONLY", "STANDARD");
-            second = target("EVENT_ONLY", null);
-        } else {
-            String name =
-                    "type".equals(selector)
-                            ? null
-                            : "prefix".equals(selector) ? "com.foo.*" : "name";
-            first = entity("tool", name, "STANDARD");
-            second = entity("tool", name, null);
-        }
-        assertThatThrownBy(() -> resolver(first, second, target("ALL", "VERBOSE")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("trace-log.targets")
-                .hasMessageContaining("conflicting");
     }
 
     @Test
@@ -362,9 +488,9 @@ class TraceLogTargetResolverTest {
                         resolver.resolve(
                                 TraceRecord.create(
                                         action, TraceRecord.Statuses.FAILED, null, null)))
-                .isEqualTo(TraceLogDetail.VERBOSE);
+                .isEqualTo(TraceLogLevel.VERBOSE);
         assertThat(resolver.resolve(TraceRecord.create(action, null, null, null)))
-                .isEqualTo(TraceLogDetail.VERBOSE);
+                .isEqualTo(TraceLogLevel.VERBOSE);
         assertThat(
                         resolver.resolve(
                                 TraceRecord.create(
@@ -386,20 +512,6 @@ class TraceLogTargetResolverTest {
                 .hasMessageContaining("trace-log.targets");
     }
 
-    @ParameterizedTest
-    @NullSource
-    @ValueSource(ints = {42})
-    void nonStringScopeFieldsAreRejectedWithConfigurationError(Object fieldName) {
-        Map<Object, Object> scope = new HashMap<>();
-        scope.put("entityType", "tool");
-        scope.put(fieldName, "unexpected");
-
-        assertThatThrownBy(() -> resolver(target(scope, null)))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("trace-log.targets")
-                .hasMessageContaining("unknown field '" + fieldName + "'");
-    }
-
     private static Stream<Map<String, Object>> malformedConfigs() {
         return Stream.of(
                 Map.of("trace-log.targets", "not-a-list"),
@@ -407,22 +519,7 @@ class TraceLogTargetResolverTest {
                 Map.of("trace-log", Map.of("targets", Map.of())),
                 Map.of("trace-log.targets.scope", "ALL"),
                 Map.of("trace-log.targets", List.of("not-an-object")),
-                config(Map.of("detail", "STANDARD")),
-                config(target("INVALID_SCOPE", null)),
-                config(target(true, null)),
-                config(target("OFF", null)),
                 config(target("ALL", 42)),
-                config(Map.of("scope", "ALL", "level", "VERBOSE")),
-                config(target(Map.of("entityName", "name"), null)),
-                config(entity("", null, null)),
-                config(entity("   ", null, null)),
-                config(target(Map.of("entityType", 42), null)),
-                config(entity("tool", "", null)),
-                config(target(Map.of("entityType", "tool", "entityName", true), null)),
-                config(entity("tool", "com.*.foo", null)),
-                config(entity("tool", "com.foo*", null)),
-                config(entity("tool", ".*", null)),
-                config(target(Map.of("entityType", "tool", "eventType", "name"), null)),
                 Collections.singletonMap("trace-log.targets", null));
     }
 
@@ -455,17 +552,17 @@ class TraceLogTargetResolverTest {
         return new TraceLogTargetResolver(Map.of("trace-log.targets", List.of(targets)));
     }
 
-    private static Map<String, Object> target(Object scope, Object detail) {
+    private static Map<String, Object> target(Object scope, Object level) {
         Map<String, Object> target = new HashMap<>();
         target.put("scope", scope);
-        if (detail != null) target.put("detail", detail);
+        if (level != null) target.put("level", level);
         return target;
     }
 
-    private static Map<String, Object> entity(String type, String name, Object detail) {
+    private static Map<String, Object> entity(String type, String name, Object level) {
         Map<String, Object> scope = new HashMap<>();
         scope.put("entityType", type);
         if (name != null) scope.put("entityName", name);
-        return target(scope, detail);
+        return target(scope, level);
     }
 }

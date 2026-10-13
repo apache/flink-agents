@@ -428,7 +428,7 @@ def test_reader_warns_on_unreadable_file_and_keeps_other_files(
     assert "[UNREADABLE_FILE]" in result.stderr
 
 
-def test_reader_preserves_reused_event_edges_across_detail_levels(
+def test_reader_preserves_reused_event_edges_across_levels(
     tmp_path: Path,
 ) -> None:
     log_path = tmp_path / "events.log"
@@ -439,11 +439,11 @@ def test_reader_preserves_reused_event_edges_across_detail_levels(
         "shared_action",
         {"value": {"truncatedString": "abc...", "omittedChars": 3}},
     )
-    reused_record["detail"] = "STANDARD"
+    reused_record["level"] = "STANDARD"
     verbose_record = _record(
         "shared-output", "SharedEvent", "root-2", "shared_action", {"value": "abcdef"}
     )
-    verbose_record["detail"] = "VERBOSE"
+    verbose_record["level"] = "VERBOSE"
     _write_log(
         log_path,
         [

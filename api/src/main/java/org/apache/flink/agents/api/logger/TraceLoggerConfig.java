@@ -52,7 +52,7 @@ public final class TraceLoggerConfig {
      * Object)}.
      *
      * <p>Built-in loggers read this property for output settings and STANDARD attribute truncation
-     * limits. Record selection and detail are supplied by the caller. Custom loggers may use the
+     * limits. Record selection and level are supplied by the caller. Custom loggers may use the
      * same property to access agent-level configuration without depending on the runtime module.
      */
     public static final String AGENT_CONFIG_PROPERTY_KEY = "agentConfig";

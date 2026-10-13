@@ -24,31 +24,31 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/** Tests for {@link TraceLogDetail}. */
-class TraceLogDetailTest {
+/** Tests for {@link TraceLogLevel}. */
+class TraceLogLevelTest {
 
     @Test
-    @DisplayName("Parse a detail setting from its name, ignoring case")
+    @DisplayName("Parse a level setting from its name, ignoring case")
     void testFromStringIsCaseInsensitive() {
-        assertThat(TraceLogDetail.fromString("off")).isEqualTo(TraceLogDetail.OFF);
-        assertThat(TraceLogDetail.fromString("standard")).isEqualTo(TraceLogDetail.STANDARD);
-        assertThat(TraceLogDetail.fromString("VERBOSE")).isEqualTo(TraceLogDetail.VERBOSE);
+        assertThat(TraceLogLevel.fromString("off")).isEqualTo(TraceLogLevel.OFF);
+        assertThat(TraceLogLevel.fromString("standard")).isEqualTo(TraceLogLevel.STANDARD);
+        assertThat(TraceLogLevel.fromString("VERBOSE")).isEqualTo(TraceLogLevel.VERBOSE);
     }
 
     @Test
     @DisplayName("A null value is rejected with a message naming the enum")
     void testFromStringRejectsNull() {
-        assertThatThrownBy(() -> TraceLogDetail.fromString(null))
+        assertThatThrownBy(() -> TraceLogLevel.fromString(null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("TraceLogDetail value cannot be null");
+                .hasMessageContaining("TraceLogLevel value cannot be null");
     }
 
     @Test
     @DisplayName("An unknown value is rejected with a message listing the valid values")
     void testFromStringRejectsUnknownValue() {
-        assertThatThrownBy(() -> TraceLogDetail.fromString("DEBUG"))
+        assertThatThrownBy(() -> TraceLogLevel.fromString("DEBUG"))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Invalid TraceLogDetail")
+                .hasMessageContaining("Invalid TraceLogLevel")
                 .hasMessageContaining("OFF, STANDARD, VERBOSE");
     }
 }

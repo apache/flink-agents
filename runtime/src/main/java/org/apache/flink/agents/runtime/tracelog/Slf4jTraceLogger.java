@@ -22,7 +22,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
@@ -58,9 +58,9 @@ import java.util.Map;
  * from different subtasks, each JSON record includes {@code jobId}, {@code taskName}, and {@code
  * subtaskId} fields.
  *
- * <p>The caller supplies selected records and their recording detail. At {@link
- * TraceLogDetail#STANDARD}, attributes are truncated according to the configured limits;
- * identities, relationships, timestamps, and statuses remain complete.
+ * <p>The caller supplies selected records and their recording level. At {@link
+ * TraceLogLevel#STANDARD}, attributes are truncated according to the configured limits; identities,
+ * relationships, timestamps, and statuses remain complete.
  *
  * <h3>Thread Safety</h3>
  *
@@ -77,7 +77,7 @@ public class Slf4jTraceLogger implements TraceLogger {
     private static final Logger TRACE_LOG = LoggerFactory.getLogger(TRACE_LOGGER_NAME);
 
     // Trace-Log-only mapper: chat messages are logged through their sanitized projection
-    // (media metadata instead of payload bytes) at every detail setting.
+    // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
             new ObjectMapper().registerModule(ChatMessageTraceLogSerializer.module());
 
@@ -149,8 +149,8 @@ public class Slf4jTraceLogger implements TraceLogger {
     }
 
     @Override
-    public void append(TraceRecord record, TraceLogDetail detail) throws Exception {
-        if (detail == TraceLogDetail.OFF) {
+    public void append(TraceRecord record, TraceLogLevel level) throws Exception {
+        if (level == TraceLogLevel.OFF) {
             return;
         }
         JsonNode tree = MAPPER.valueToTree(record);
@@ -160,8 +160,8 @@ public class Slf4jTraceLogger implements TraceLogger {
         }
         ObjectNode rootNode = (ObjectNode) tree;
 
-        // Truncate record attributes at STANDARD detail.
-        if (detail == TraceLogDetail.STANDARD && truncator != null) {
+        // Truncate record attributes at STANDARD level.
+        if (level == TraceLogLevel.STANDARD && truncator != null) {
             JsonNode attributesNode = rootNode.get("attributes");
             if (attributesNode instanceof ObjectNode) {
                 boolean truncated = truncator.truncate((ObjectNode) attributesNode);
@@ -171,7 +171,7 @@ public class Slf4jTraceLogger implements TraceLogger {
             }
         }
 
-        ObjectNode ordered = withDetailAndSubtaskContext(rootNode, detail);
+        ObjectNode ordered = withLevelAndSubtaskContext(rootNode, level);
 
         String json =
                 prettyPrint
@@ -180,10 +180,10 @@ public class Slf4jTraceLogger implements TraceLogger {
         TRACE_LOG.info(json);
     }
 
-    private ObjectNode withDetailAndSubtaskContext(ObjectNode rootNode, TraceLogDetail detail) {
+    private ObjectNode withLevelAndSubtaskContext(ObjectNode rootNode, TraceLogLevel level) {
         ObjectNode ordered = MAPPER.createObjectNode();
         ordered.set("timestamp", rootNode.get("timestamp"));
-        ordered.put("detail", detail.name());
+        ordered.put("level", level.name());
         ordered.put("jobId", jobId);
         ordered.put("taskName", taskName);
         ordered.put("subtaskId", subtaskId);

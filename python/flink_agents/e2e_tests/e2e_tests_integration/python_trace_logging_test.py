@@ -40,6 +40,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.trace_log import TraceLogTarget
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
@@ -76,13 +77,13 @@ def test_python_trace_logging(tmp_path: Path) -> None:
     assert outputs, "Trace log should contain Python output Events."
     for record in outputs:
         assert record["timestamp"]
-        assert record["detail"] == "STANDARD"
+        assert record["level"] == "STANDARD"
         assert record["entityMetadata"]["eventId"]
         assert "processed_review" in record["attributes"]["output"]
 
 
 def _run_trace_logging_pipeline(
-    tmp_path: Path, targets: list[dict] | None = None
+    tmp_path: Path, targets: list[TraceLogTarget] | None = None
 ) -> Path:
     """Run the trace logging pipeline and return the trace log directory.
 
@@ -144,7 +145,9 @@ def _read_log_records(trace_log_dir: Path) -> list[dict]:
 
 def test_trace_tree_reads_runtime_event_lineage(tmp_path: Path) -> None:
     """The reader reconstructs the Event flow written by a PyFlink job."""
-    trace_log_dir = _run_trace_logging_pipeline(tmp_path, targets=[{"scope": "ALL"}])
+    trace_log_dir = _run_trace_logging_pipeline(
+        tmp_path, targets=[TraceLogTarget.all()]
+    )
     records = _read_log_records(trace_log_dir)
     input_events = {
         record["entityMetadata"]["eventId"]: record

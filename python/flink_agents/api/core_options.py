@@ -19,6 +19,9 @@ import os
 from enum import Enum
 
 from flink_agents.api.configuration import ConfigOption
+from flink_agents.api.trace_log import TraceLogLevel as TraceLogLevel
+from flink_agents.api.trace_log import TraceLogScope as TraceLogScope
+from flink_agents.api.trace_log import TraceLogTarget
 
 
 class ShortTermMemoryTtlUpdate(Enum):
@@ -55,29 +58,6 @@ class ConditionEvaluationFailureStrategy(Enum):
 
     WARN_AND_SKIP = "WARN_AND_SKIP"
     FAIL = "FAIL"
-
-
-class TraceLogDetail(Enum):
-    """Recording detail for matched trace log records.
-
-    OFF suppresses matching records. STANDARD and VERBOSE preserve identities,
-    relationships, timestamps, and statuses in full. Mirrors the Java
-    ``TraceLogDetail`` enum.
-    """
-
-    OFF = "OFF"
-    STANDARD = "STANDARD"
-    VERBOSE = "VERBOSE"
-
-
-class TraceLogScope(Enum):
-    """Preset scopes for trace log recording targets.
-
-    Mirrors the Java ``TraceLogScope`` enum.
-    """
-
-    EVENT_ONLY = "EVENT_ONLY"
-    ALL = "ALL"
 
 
 class AgentConfigOptions:
@@ -213,20 +193,26 @@ class AgentConfigOptions:
         default=None,
     )
 
-    # Each target requires scope: EVENT_ONLY/ALL, or an object containing
-    # entityType and optional entityName. Names match exactly, except "com.foo.*",
-    # which also matches "com.foo" and its descendants. Detail is OFF (do not
+    # Targets may be TraceLogTarget objects or maps with scope: EVENT_ONLY/ALL,
+    # a category selector (e.g. {event: OrderCreated}), or entityType and optional
+    # entityName. Names match exactly, except "com.foo.*",
+    # which also matches "com.foo" and its descendants. Level is OFF (do not
     # record), STANDARD (truncate attributes), or VERBOSE (full attributes).
-    # Omitted entity detail inherits a preset, never another entity target:
-    # Events prefer EVENT_ONLY over ALL; other entities use ALL, or EVENT_ONLY
-    # when it is the only preset. Without presets, detail defaults to STANDARD.
-    # ALL defaults to STANDARD; EVENT_ONLY inherits ALL or defaults to STANDARD.
-    # More specific scopes determine detail, independently of target order.
-    # An empty list selects none; more specific targets can override preset OFF.
+    # Matching order: exact name, matching namespace prefixes longest to shortest,
+    # entity type, then ALL. EVENT_ONLY aliases the Event type scope. The first
+    # explicit level applies; omitted level inherits from the next matching
+    # scope. A match without any explicit level uses STANDARD; no match records
+    # nothing. Explicit OFF stops inheritance; a more specific explicit STANDARD
+    # or VERBOSE can enable recording. Target order does not affect the result.
+    # Duplicate scopes (including EVENT_ONLY and its Event type alias) merge
+    # omitted with explicit level and accept identical explicit levels;
+    # differing explicit levels for the same scope are rejected at startup.
+    # Omitting targets defaults to EVENT_ONLY at STANDARD. An explicit list
+    # replaces that default; an empty list selects none.
     TRACE_LOG_TARGETS = ConfigOption(
         key="trace-log.targets",
         config_type=list,
-        default=[{"scope": "EVENT_ONLY", "detail": "STANDARD"}],
+        default=[TraceLogTarget.events(TraceLogLevel.STANDARD)],
     )
 
     TRACE_LOG_MAX_STRING_LENGTH = ConfigOption(

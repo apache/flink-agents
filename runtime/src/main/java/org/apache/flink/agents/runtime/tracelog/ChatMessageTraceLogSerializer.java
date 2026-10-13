@@ -31,8 +31,8 @@ import java.io.IOException;
 /**
  * The Trace Log's {@link ChatMessage} serializer: each content block is written through its own
  * {@link ContentBlock#sanitize()} projection, so media payload bytes and unsanitized URLs never
- * reach the log — at either detail setting, VERBOSE included. Everything else (role, tool calls,
- * extra args) keeps the regular shape, and the detail-dependent {@link JsonTruncator} still applies
+ * reach the log — at either level setting, VERBOSE included. Everything else (role, tool calls,
+ * extra args) keeps the regular shape, and the level-dependent {@link JsonTruncator} still applies
  * to the result afterwards at STANDARD.
  *
  * <p>This serializer is registered only on the Trace Log mappers via {@link #module()}; the global

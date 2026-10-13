@@ -39,7 +39,7 @@ Memory events are useful when you need to:
 - audit which memory entries an action changed;
 - trigger follow-up actions from memory changes;
 - inspect memory reads during debugging by enabling read events;
-- inspect short-term or sensory values from a Trace Log captured at `VERBOSE` detail.
+- inspect short-term or sensory values from a Trace Log captured at `VERBOSE` level.
 
 Memory events are not a replacement for the memory backends themselves. In particular, long-term memory events describe requested operations and observed read/search results; they do not provide a complete copy of the long-term memory store.
 
@@ -160,7 +160,7 @@ The `key` and `value` fields belong to the Event's `attributes` map. When this E
 ```json
 {
   "timestamp": "2026-07-03T04:22:36.087914Z",
-  "detail": "VERBOSE",
+  "level": "VERBOSE",
   "entityType": "event",
   "entityName": "_short_term_write_event",
   "entityMetadata": {"eventId": "da8ca017-25cc-4942-9085-ae38490e303c"},
@@ -223,7 +223,7 @@ public static void onStmWrite(Event event, RunnerContext ctx) {
 
 ## Inspecting Memory Values from the Trace Log
 
-Short-term and sensory changes can be followed offline from the Trace Log if the job logs events at `VERBOSE` detail. Write events may contain ambiguous `null` object markers, while run-begin events contain only value nodes, so these events are not a complete reconstruction format.
+Short-term and sensory changes can be followed offline from the Trace Log if the job logs events at `VERBOSE` level. Write events may contain ambiguous `null` object markers, while run-begin events contain only value nodes, so these events are not a complete reconstruction format.
 
 **Short-term memory** for a key at time *t*:
 
@@ -238,7 +238,7 @@ Because `agent-run.begin-event` is disabled by default, the Trace Log has no bui
 
 ## Semantics & Caveats
 
-- **Trace Log detail.** Configure [recording targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) with `scope: EVENT_ONLY` and `detail: VERBOSE` when full memory-event attributes are required, or select individual Event names with an entity scope. Memory-event generation and log selection are independent: the emission switches determine whether Events are produced, while targets determine whether they are written to Trace Log.
+- **Trace Log level.** Configure [recording targets]({{< ref "docs/operations/configuration#trace-log-targets" >}}) with `scope: EVENT_ONLY` and `level: VERBOSE` when full memory-event attributes are required, or select individual Event names with an entity scope. Memory-event generation and log selection are independent: the emission switches determine whether Events are produced, while targets determine whether they are written to Trace Log.
 - **Durable execution.** A long-term memory operation wrapped in `durable_execute` is not recorded again when the durable result is replayed from state. The generated events describe operations that actually executed in the current attempt.
 - **Observation failures.** Unsupported short-term or sensory values are omitted. Invalid long-term records are skipped individually after a valid batch is parsed, but a bridge, batch-serialization, or malformed-payload failure drops the current partition key's LTM observation batch. Warnings do not include observed values. These failures do not fail the action or roll back a completed long-term backend operation.
 - **Failed actions.** A failed action does not reach the memory-event emission boundary. The operator task fails and recovery rebuilds the interpreter, so queued actions do not continue in the same interpreter instance after the failure.

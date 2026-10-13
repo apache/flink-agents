@@ -32,6 +32,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.trace_log import TraceLogLevel, TraceLogTarget
 
 # Include both the active environment and any source checkout already on PYTHONPATH so
 # the embedded interpreter can resolve this test module.
@@ -82,7 +83,7 @@ def test_memory_trace_logging(tmp_path: Path) -> None:
     # VERBOSE keeps the full event payload.
     agents_env.get_config().set(
         AgentConfigOptions.TRACE_LOG_TARGETS,
-        [{"scope": "EVENT_ONLY", "detail": "VERBOSE"}],
+        [TraceLogTarget.events(TraceLogLevel.VERBOSE)],
     )
 
     input_datastream = env.from_collection(inputs)

@@ -34,7 +34,8 @@ import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.listener.EventListener;
 import org.apache.flink.agents.api.logger.LoggerType;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerFactory;
@@ -2074,7 +2075,7 @@ public class ActionExecutionOperatorTest {
         }
 
         @Override
-        public void append(TraceRecord record, TraceLogDetail detail) {
+        public void append(TraceRecord record, TraceLogLevel level) {
             RECORDS.add(record);
         }
 
@@ -2117,7 +2118,7 @@ public class ActionExecutionOperatorTest {
 
     private static AgentConfiguration traceEnabledConfig() {
         AgentConfiguration config = new AgentConfiguration();
-        config.set(AgentConfigOptions.TRACE_LOG_TARGETS, List.of(Map.of("scope", "ALL")));
+        config.set(AgentConfigOptions.TRACE_LOG_TARGETS, List.of(TraceLogTarget.all()));
         return config;
     }
 
@@ -2532,12 +2533,8 @@ public class ActionExecutionOperatorTest {
             config.set(
                     AgentConfigOptions.TRACE_LOG_TARGETS,
                     List.of(
-                            Map.of("scope", "EVENT_ONLY"),
-                            Map.of(
-                                    "scope",
-                                    Map.of("entityType", "action", "entityName", "action1"),
-                                    "detail",
-                                    "VERBOSE")));
+                            TraceLogTarget.events(),
+                            TraceLogTarget.action("action1", TraceLogLevel.VERBOSE)));
         }
         AgentPlan agentPlan = TestAgent.getAgentPlanWithConfig(config);
         try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =

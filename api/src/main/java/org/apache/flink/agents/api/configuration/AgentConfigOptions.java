@@ -18,10 +18,11 @@
 package org.apache.flink.agents.api.configuration;
 
 import org.apache.flink.agents.api.logger.LoggerType;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.Map;
 
 /** The set of configuration options for agents parameters. */
 public class AgentConfigOptions {
@@ -149,52 +150,59 @@ public class AgentConfigOptions {
             new ConfigOption<>("job-identifier", String.class, null);
 
     /**
-     * Trace log recording targets. Each target requires {@code scope}: either {@code EVENT_ONLY},
-     * {@code ALL}, or an object with required {@code entityType} and optional {@code entityName}.
-     * Names match exactly, except a suffix {@code .*}: {@code com.foo.*} matches both {@code
-     * com.foo} and names beginning with {@code com.foo.}. A target's optional {@code detail} is
-     * {@code OFF}, {@code STANDARD}, or {@code VERBOSE}. {@code OFF} suppresses matching records;
-     * the other details affect attributes, while identities, relationships, timestamps, and
-     * statuses remain complete.
+     * Trace log recording targets, configured through {@link TraceLogTarget} factories. In YAML,
+     * each target requires {@code scope}: either {@code EVENT_ONLY}, {@code ALL}, or an object with
+     * required {@code entityType} and optional {@code entityName}. A scope may also use one
+     * category selector, such as {@code {event: OrderCreated}} or {@code {tool: "*"}} for all
+     * Tools. The categories are {@code event}, {@code action}, {@code llm}, {@code tool}, {@code
+     * parser}, and {@code subagent}; custom types use the generic {@code entityType}/{@code
+     * entityName} form. Do not mix the two forms. Names match exactly, except a suffix {@code .*}:
+     * {@code com.foo.*} matches both {@code com.foo} and names beginning with {@code com.foo.}. A
+     * target's optional {@code level} is {@code OFF}, {@code STANDARD}, or {@code VERBOSE}. {@code
+     * OFF} suppresses matching records; the other levels affect attributes, while identities,
+     * relationships, timestamps, and statuses remain complete.
      *
-     * <p>Only matching entities whose effective detail is not {@code OFF} are recorded. More
-     * specific scopes determine detail: exact name, longest name prefix, entity type, {@code
-     * EVENT_ONLY}, then {@code ALL}. Target order does not matter. Defaults to {@code EVENT_ONLY}
-     * with {@code STANDARD} detail; an explicitly empty list records no entities. A more specific
-     * target can enable or disable recording even when a preset has the opposite setting.
+     * <p>Matching scopes are checked from most to least specific: exact name, matching namespace
+     * prefixes from longest to shortest, entity type, then {@code ALL}. {@code EVENT_ONLY} is an
+     * alias for {@code entityType: event} without {@code entityName}. The first explicitly
+     * specified level applies; omitted level inherits from the next matching scope. If at least one
+     * scope matches but none specifies level, {@code STANDARD} applies. If no scope matches, no
+     * record is written. An explicit {@code OFF} stops inheritance and suppresses recording, unless
+     * a more specific scope explicitly enables it with {@code STANDARD} or {@code VERBOSE}.
      *
-     * <p>An omitted detail inherits from a preset, not another entity target. Event targets prefer
-     * {@code EVENT_ONLY} over {@code ALL}; other entity targets use {@code ALL}, falling back to
-     * {@code EVENT_ONLY} when it is the only preset. Without presets, entity targets use {@code
-     * STANDARD}. An {@code ALL} target with omitted detail uses {@code STANDARD}; an {@code
-     * EVENT_ONLY} target with omitted detail inherits {@code ALL}, or uses {@code STANDARD} if
-     * {@code ALL} is absent.
+     * <p>Target order does not matter. Duplicate scopes merge omitted level with explicit level and
+     * accept repeated identical explicit levels; differing explicit levels for the same scope are
+     * rejected at startup. This also applies to {@code EVENT_ONLY} and its equivalent Event type
+     * scope.
+     *
+     * <p>Defaults to {@code EVENT_ONLY} with {@code STANDARD} level. An explicit list replaces this
+     * default; an explicitly empty list records no entities.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
-    public static final ConfigOption<List<Map<String, Object>>> TRACE_LOG_TARGETS =
+    public static final ConfigOption<List<TraceLogTarget>> TRACE_LOG_TARGETS =
             (ConfigOption)
                     new ConfigOption<>(
                             "trace-log.targets",
                             List.class,
                             Collections.singletonList(
-                                    Map.of("scope", "EVENT_ONLY", "detail", "STANDARD")));
+                                    TraceLogTarget.events(TraceLogLevel.STANDARD)));
 
     /**
-     * The maximum string length for logged attributes at STANDARD detail. Strings exceeding this
+     * The maximum string length for logged attributes at STANDARD level. Strings exceeding this
      * length will be truncated. Defaults to 2000.
      */
     public static final ConfigOption<Integer> TRACE_LOG_MAX_STRING_LENGTH =
             new ConfigOption<>("trace-log.standard.max-string-length", Integer.class, 2000);
 
     /**
-     * The maximum number of array elements to include in logged attributes at STANDARD detail.
+     * The maximum number of array elements to include in logged attributes at STANDARD level.
      * Arrays exceeding this size will be truncated. Defaults to 20.
      */
     public static final ConfigOption<Integer> TRACE_LOG_MAX_ARRAY_ELEMENTS =
             new ConfigOption<>("trace-log.standard.max-array-elements", Integer.class, 20);
 
     /**
-     * The maximum nesting depth for logged attributes at STANDARD detail. Objects deeper than this
+     * The maximum nesting depth for logged attributes at STANDARD level. Objects deeper than this
      * level will be summarized. Defaults to 5.
      */
     public static final ConfigOption<Integer> TRACE_LOG_MAX_DEPTH =

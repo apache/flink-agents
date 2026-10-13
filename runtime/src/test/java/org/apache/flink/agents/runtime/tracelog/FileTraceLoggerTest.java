@@ -31,7 +31,7 @@ import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.logger.LoggerType;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
@@ -130,7 +130,7 @@ class FileTraceLoggerTest {
     }
 
     @Test
-    void testOffDetailDoesNotWriteOrCountTruncation() throws Exception {
+    void testOffLevelDoesNotWriteOrCountTruncation() throws Exception {
         config = buildConfig(Map.of(AgentConfigOptions.TRACE_LOG_MAX_STRING_LENGTH.getKey(), 5));
         logger = new FileTraceLogger(config);
         logger.open(openParams);
@@ -141,7 +141,7 @@ class FileTraceLoggerTest {
                 logger,
                 new InputEvent("long input that would be truncated"),
                 null,
-                TraceLogDetail.OFF);
+                TraceLogLevel.OFF);
         logger.flush();
 
         assertEquals("", Files.readString(getExpectedLogFilePath()));
@@ -156,8 +156,8 @@ class FileTraceLoggerTest {
         TraceContext inputContext = null;
         TraceContext outputContext = null;
 
-        append(logger, inputEvent, inputContext, TraceLogDetail.STANDARD);
-        append(logger, outputEvent, outputContext, TraceLogDetail.STANDARD);
+        append(logger, inputEvent, inputContext, TraceLogLevel.STANDARD);
+        append(logger, outputEvent, outputContext, TraceLogLevel.STANDARD);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -199,7 +199,7 @@ class FileTraceLoggerTest {
                         customEvent.getAttributes());
 
         // When
-        logger.append(record, TraceLogDetail.STANDARD);
+        logger.append(record, TraceLogLevel.STANDARD);
         logger.flush();
 
         // Then
@@ -244,7 +244,7 @@ class FileTraceLoggerTest {
         logger.open(openParams);
         InputEvent event1 = new InputEvent("first event");
         TraceContext context1 = null;
-        append(logger, event1, context1, TraceLogDetail.STANDARD);
+        append(logger, event1, context1, TraceLogLevel.STANDARD);
         logger.close();
 
         // When - second session (append mode)
@@ -252,7 +252,7 @@ class FileTraceLoggerTest {
         secondLogger.open(openParams);
         InputEvent event2 = new InputEvent("second event");
         TraceContext context2 = null;
-        append(secondLogger, event2, context2, TraceLogDetail.STANDARD);
+        append(secondLogger, event2, context2, TraceLogLevel.STANDARD);
         secondLogger.flush();
         secondLogger.close();
 
@@ -284,7 +284,7 @@ class FileTraceLoggerTest {
         logger.open(openParams);
         InputEvent event1 = new InputEvent("subtask 0 event");
         TraceContext context1 = null;
-        append(logger, event1, context1, TraceLogDetail.STANDARD);
+        append(logger, event1, context1, TraceLogLevel.STANDARD);
         logger.flush();
 
         // Given - subtask 1
@@ -294,7 +294,7 @@ class FileTraceLoggerTest {
         logger2.open(openParams2);
         InputEvent event2 = new InputEvent("subtask 1 event");
         TraceContext context2 = null;
-        append(logger2, event2, context2, TraceLogDetail.STANDARD);
+        append(logger2, event2, context2, TraceLogLevel.STANDARD);
         logger2.flush();
         logger2.close();
 
@@ -346,7 +346,7 @@ class FileTraceLoggerTest {
 
         logger.open(openParams);
         InputEvent inputEvent = new InputEvent("test input");
-        append(logger, inputEvent, null, TraceLogDetail.STANDARD);
+        append(logger, inputEvent, null, TraceLogLevel.STANDARD);
         logger.flush();
 
         // Then - output should be valid JSON spanning multiple lines (pretty-printed)
@@ -366,8 +366,8 @@ class FileTraceLoggerTest {
     }
 
     @Test
-    void testStandardDetailTruncation() throws Exception {
-        // Given - STANDARD detail and a small max-string-length for easy testing
+    void testStandardLevelTruncation() throws Exception {
+        // Given - STANDARD level and a small max-string-length for easy testing
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("trace-log.standard.max-string-length", 10);
         agentConfig.put("trace-log.standard.max-array-elements", 20);
@@ -382,7 +382,7 @@ class FileTraceLoggerTest {
                 new TestCustomEvent("this is a very long string that exceeds 10", 1);
         TraceContext context = null;
 
-        append(logger, event, context, TraceLogDetail.STANDARD);
+        append(logger, event, context, TraceLogLevel.STANDARD);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -390,7 +390,7 @@ class FileTraceLoggerTest {
         assertEquals(1, lines.size());
 
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals("STANDARD", jsonNode.get("detail").asText());
+        assertEquals("STANDARD", jsonNode.get("level").asText());
         assertEquals(
                 event.getId().toString(),
                 jsonNode.get("entityMetadata").get("eventId").textValue(),
@@ -401,13 +401,13 @@ class FileTraceLoggerTest {
         JsonNode customDataNode = attrsNode.get("customData");
         assertTrue(
                 customDataNode.has("truncatedString"),
-                "Long string should be truncated at STANDARD detail");
+                "Long string should be truncated at STANDARD level");
         assertTrue(customDataNode.has("omittedChars"));
     }
 
     @Test
-    void testVerboseDetailNoTruncation() throws Exception {
-        // Given - a small limit that VERBOSE detail bypasses
+    void testVerboseLevelNoTruncation() throws Exception {
+        // Given - a small limit that VERBOSE level bypasses
         Map<String, Object> agentConfig = new HashMap<>();
         agentConfig.put("trace-log.standard.max-string-length", 10);
 
@@ -419,7 +419,7 @@ class FileTraceLoggerTest {
                 new TestCustomEvent("this is a very long string that exceeds 10", 1);
         TraceContext context = null;
 
-        append(logger, event, context, TraceLogDetail.VERBOSE);
+        append(logger, event, context, TraceLogLevel.VERBOSE);
         logger.flush();
 
         Path logFile = getExpectedLogFilePath();
@@ -427,34 +427,34 @@ class FileTraceLoggerTest {
         assertEquals(1, lines.size());
 
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
-        assertEquals("VERBOSE", jsonNode.get("detail").asText());
+        assertEquals("VERBOSE", jsonNode.get("level").asText());
 
         // The customData field (inside attributes) should NOT be truncated
         JsonNode attrsNode = jsonNode.get("attributes");
         assertTrue(
                 attrsNode.get("customData").isTextual(),
-                "String should be preserved at VERBOSE detail");
+                "String should be preserved at VERBOSE level");
         assertEquals(
                 "this is a very long string that exceeds 10", attrsNode.get("customData").asText());
     }
 
     @Test
     void testMediaPayloadsNeverReachTheLogAtStandard() throws Exception {
-        assertMediaPayloadsSanitizedAt(TraceLogDetail.STANDARD);
+        assertMediaPayloadsSanitizedAt(TraceLogLevel.STANDARD);
     }
 
     @Test
     void testMediaPayloadsNeverReachTheLogAtVerbose() throws Exception {
         // VERBOSE lifts truncation, not sanitization: payload bytes and raw URLs stay out.
-        assertMediaPayloadsSanitizedAt(TraceLogDetail.VERBOSE);
+        assertMediaPayloadsSanitizedAt(TraceLogLevel.VERBOSE);
     }
 
-    private void assertMediaPayloadsSanitizedAt(TraceLogDetail detail) throws Exception {
+    private void assertMediaPayloadsSanitizedAt(TraceLogLevel level) throws Exception {
         logger.open(openParams);
 
         // A natively typed Java event: its messages are already ChatMessage instances, so the
         // Trace Log's ChatMessage serializer engages directly.
-        append(logger, multimodalChatRequest(), null, detail);
+        append(logger, multimodalChatRequest(), null, level);
         logger.flush();
 
         assertSanitizedMediaLogLine();
@@ -462,13 +462,13 @@ class FileTraceLoggerTest {
 
     @Test
     void testCrossLanguageMediaPayloadsNeverReachTheLogAtStandard() throws Exception {
-        assertCrossLanguageMediaSanitizedAt(TraceLogDetail.STANDARD);
+        assertCrossLanguageMediaSanitizedAt(TraceLogLevel.STANDARD);
     }
 
     @Test
     void testCrossLanguageMediaPayloadsNeverReachTheLogAtVerbose() throws Exception {
         // VERBOSE lifts truncation, not sanitization, on the cross-language path either.
-        assertCrossLanguageMediaSanitizedAt(TraceLogDetail.VERBOSE);
+        assertCrossLanguageMediaSanitizedAt(TraceLogLevel.VERBOSE);
     }
 
     /**
@@ -488,7 +488,7 @@ class FileTraceLoggerTest {
      * a MiniCluster, lives in the Python suite at {@code
      * e2e_tests/e2e_tests_integration/trace_log_media_sanitization_test.py}.
      */
-    private void assertCrossLanguageMediaSanitizedAt(TraceLogDetail detail) throws Exception {
+    private void assertCrossLanguageMediaSanitizedAt(TraceLogLevel level) throws Exception {
         logger.open(openParams);
 
         // The wire format is not sanitized: it carries the payload and the signed URL verbatim,
@@ -507,7 +507,7 @@ class FileTraceLoggerTest {
                 ((ChatRequestEvent) restored).getMessages().get(0) instanceof ChatMessage,
                 "restored messages must be typed ChatMessage instances, not generic maps");
 
-        append(logger, restored, null, detail);
+        append(logger, restored, null, level);
         logger.flush();
 
         assertSanitizedMediaLogLine();
@@ -571,7 +571,7 @@ class FileTraceLoggerTest {
                         "long error message",
                         "long-problem-category");
 
-        logger.append(record, TraceLogDetail.STANDARD);
+        logger.append(record, TraceLogLevel.STANDARD);
         logger.flush();
 
         JsonNode json = objectMapper.readTree(Files.readAllLines(getExpectedLogFilePath()).get(0));
@@ -599,7 +599,7 @@ class FileTraceLoggerTest {
     }
 
     private static void append(
-            TraceLogger logger, Event event, TraceContext sourceContext, TraceLogDetail detail)
+            TraceLogger logger, Event event, TraceContext sourceContext, TraceLogLevel level)
             throws Exception {
         logger.append(
                 TraceRecord.create(
@@ -612,7 +612,7 @@ class FileTraceLoggerTest {
                         null,
                         null,
                         event.getAttributes()),
-                detail);
+                level);
     }
 
     /** Custom test event class using the attributes-based pattern. */

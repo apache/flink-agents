@@ -19,8 +19,9 @@
 package org.apache.flink.agents.runtime.tracelog;
 
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
-import org.apache.flink.agents.api.logger.TraceLogDetail;
+import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogScope;
+import org.apache.flink.agents.api.logger.TraceLogTarget;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
 
@@ -36,15 +37,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-/** Selects records and resolves their recording detail from trace log targets. */
+/** Selects records and resolves their recording level from trace log targets. */
 final class TraceLogTargetResolver {
-    private static final Set<String> TARGET_FIELDS = Set.of("scope", "detail");
-    private static final Set<String> SCOPE_FIELDS = Set.of("entityType", "entityName");
     private static final Set<String> LEGACY_OUTPUT_KEYS =
             Set.of("eventLoggerType", "baseLogDir", "prettyPrint");
 
-    @Nullable private final TraceLogDetail allDetail;
-    @Nullable private final TraceLogDetail eventDetail;
+    @Nullable private final TraceLogLevel allLevel;
     private final Map<String, TypeTargets> typeTargets = new LinkedHashMap<>();
     private final List<Target> targets = new ArrayList<>();
 
@@ -59,159 +57,84 @@ final class TraceLogTargetResolver {
         Object configuredTargets =
                 data.getOrDefault(
                         targetsKey, AgentConfigOptions.TRACE_LOG_TARGETS.getDefaultValue());
-        if (!(configuredTargets instanceof List)) {
-            throw invalidTargets("must be a list of targets");
-        }
-        List<Target> configured = new ArrayList<>();
-        int index = 0;
-        for (Object configuredTarget : (List<?>) configuredTargets) {
-            configured.add(parseTarget(configuredTarget, index++));
-        }
-        allDetail = resolvePresetDetail(configured, TraceLogScope.ALL, TraceLogDetail.STANDARD);
-        TraceLogDetail eventOnlyDetail =
-                resolvePresetDetail(
-                        configured,
-                        TraceLogScope.EVENT_ONLY,
-                        allDetail == null ? TraceLogDetail.STANDARD : allDetail);
-        eventDetail = eventOnlyDetail == null ? allDetail : eventOnlyDetail;
-        TraceLogDetail inheritedDetail =
-                allDetail != null
-                        ? allDetail
-                        : eventOnlyDetail != null ? eventOnlyDetail : TraceLogDetail.STANDARD;
-
-        Map<Object, TraceLogDetail> selectors = new LinkedHashMap<>();
-        for (Target target : configured) {
-            TraceLogDetail presetDefault = presetDetail(target.entityType);
-            TraceLogDetail detail =
-                    target.detailOr(presetDefault == null ? inheritedDetail : presetDefault);
-            Object selector =
-                    target.preset != null
-                            ? target.preset
-                            : new AbstractMap.SimpleImmutableEntry<>(
-                                    target.entityType, target.entityName);
-            TraceLogDetail previous = selectors.putIfAbsent(selector, detail);
-            if (previous != null) {
-                if (previous != detail) {
-                    throw invalidTargets("conflicting details for scope " + selector);
+        Map<Object, Target> selectors = new LinkedHashMap<>();
+        for (TraceLogTarget configuredTarget : TraceLogTarget.parseTargets(configuredTargets)) {
+            Target target = fromConfiguredTarget(configuredTarget);
+            Object selector = target.selector();
+            Target previous = selectors.putIfAbsent(selector, target);
+            if (previous != null && target.level != null) {
+                if (previous.level != null && previous.level != target.level) {
+                    throw invalidTargets("conflicting levels for scope " + selector);
                 }
-                continue;
-            }
-            targets.add(new Target(target.preset, target.entityType, target.entityName, detail));
-            if (target.preset == null) {
-                typeTargets
-                        .computeIfAbsent(
-                                target.entityType, type -> new TypeTargets(presetDetail(type)))
-                        .add(target, detail);
+                selectors.put(selector, target);
             }
         }
-        typeTargets
-                .values()
-                .forEach(
-                        values ->
-                                values.prefixDetails.sort(
-                                        Comparator.comparingInt(
-                                                        (PrefixTarget target) ->
-                                                                target.prefix.length())
-                                                .reversed()));
-    }
+        Target all = selectors.get(TraceLogScope.ALL);
+        allLevel = all == null ? null : all.levelOr(TraceLogLevel.STANDARD);
 
-    @Nullable
-    private static TraceLogDetail resolvePresetDetail(
-            List<Target> configured, TraceLogScope preset, TraceLogDetail inheritedDetail) {
-        TraceLogDetail resolved = null;
+        // Compile broader scopes first so runtime lookups need no inheritance traversal.
+        List<Target> configured = new ArrayList<>(selectors.values());
+        configured.sort(
+                Comparator.comparingInt(
+                                (Target target) ->
+                                        target.entityName == null
+                                                ? 0
+                                                : target.entityName.endsWith(".*") ? 1 : 2)
+                        .thenComparingInt(
+                                target ->
+                                        target.entityName == null
+                                                ? 0
+                                                : target.entityName.length()));
         for (Target target : configured) {
-            if (target.preset == preset) {
-                TraceLogDetail detail = target.detailOr(inheritedDetail);
-                if (resolved != null && resolved != detail) {
-                    throw invalidTargets("conflicting details for scope " + preset);
-                }
-                resolved = detail;
+            TraceLogLevel level;
+            if (target.preset == TraceLogScope.ALL) {
+                level = allLevel;
+            } else {
+                TypeTargets overrides =
+                        typeTargets.computeIfAbsent(
+                                target.entityType, type -> new TypeTargets(allLevel));
+                TraceLogLevel inherited = overrides.resolve(target.entityName);
+                level = target.levelOr(inherited == null ? TraceLogLevel.STANDARD : inherited);
+                overrides.add(target, level);
             }
+            targets.add(new Target(target.preset, target.entityType, target.entityName, level));
         }
-        return resolved;
     }
 
     /**
      * Returns null for unmatched or OFF records; selection is independent of parents and status.
      */
     @Nullable
-    TraceLogDetail resolve(TraceRecord record) {
+    TraceLogLevel resolve(TraceRecord record) {
         return resolve(record.getContext().getEntityType(), record.getContext().getEntityName());
     }
 
-    /** Exact name, longest prefix, type, EVENT_ONLY, then ALL determine the detail. */
+    /** Exact name, longest prefix, type, then ALL select the precomputed level. */
     @Nullable
-    TraceLogDetail resolve(@Nullable String entityType, @Nullable String entityName) {
-        TraceLogDetail defaultDetail = presetDetail(entityType);
+    TraceLogLevel resolve(@Nullable String entityType, @Nullable String entityName) {
         TypeTargets overrides = typeTargets.get(entityType);
-        TraceLogDetail detail = overrides == null ? defaultDetail : overrides.resolve(entityName);
-        return detail == TraceLogDetail.OFF ? null : detail;
+        TraceLogLevel level = overrides == null ? allLevel : overrides.resolve(entityName);
+        return level == TraceLogLevel.OFF ? null : level;
     }
 
-    @Nullable
-    private TraceLogDetail presetDetail(@Nullable String entityType) {
-        return TraceContext.EVENT_ENTITY_TYPE.equals(entityType) ? eventDetail : allDetail;
-    }
-
-    private static Target parseTarget(Object configuredTarget, int index) {
-        if (!(configuredTarget instanceof Map)) {
-            throw invalidTargets("target " + index + " must be an object");
-        }
-        Map<?, ?> data = (Map<?, ?>) configuredTarget;
-        checkFields(data, TARGET_FIELDS, index);
-        TraceLogDetail detail;
-        try {
-            Object rawDetail = data.get("detail");
-            detail = rawDetail == null ? null : TraceLogDetail.fromString(rawDetail.toString());
-        } catch (IllegalArgumentException error) {
-            throw invalidTargets("target " + index + ": " + error.getMessage());
-        }
+    private static Target fromConfiguredTarget(TraceLogTarget configuredTarget) {
+        Map<String, Object> data = configuredTarget.toConfig();
+        TraceLogLevel level =
+                data.containsKey("level")
+                        ? TraceLogLevel.fromString((String) data.get("level"))
+                        : null;
         Object scope = data.get("scope");
-        if (scope instanceof String || scope instanceof TraceLogScope) {
-            try {
-                return new Target(TraceLogScope.fromString(scope.toString()), null, null, detail);
-            } catch (IllegalArgumentException error) {
-                throw invalidTargets("target " + index + ": " + error.getMessage());
-            }
+        if (scope instanceof String) {
+            return "EVENT_ONLY".equals(scope)
+                    ? new Target(null, TraceContext.EVENT_ENTITY_TYPE, null, level)
+                    : new Target(TraceLogScope.ALL, null, null, level);
         }
-        if (!(scope instanceof Map)) {
-            throw invalidTargets(
-                    "target " + index + " scope must be EVENT_ONLY, ALL, or an object");
-        }
-        Map<?, ?> scopeData = (Map<?, ?>) scope;
-        checkFields(scopeData, SCOPE_FIELDS, index);
-        String entityType = requiredString(scopeData.get("entityType"), index, "entityType");
-        String entityName =
-                scopeData.get("entityName") == null
-                        ? null
-                        : requiredString(scopeData.get("entityName"), index, "entityName");
-        boolean prefix = entityName != null && entityName.endsWith(".*");
-        if (entityName != null
-                && entityName.contains("*")
-                && (!prefix
-                        || entityName.length() == 2
-                        || entityName.substring(0, entityName.length() - 2).contains("*"))) {
-            throw invalidTargets(
-                    "target "
-                            + index
-                            + " entityName must be an exact name or a namespace ending in .*; omit entityName to select the whole type");
-        }
-        return new Target(null, entityType, entityName, detail);
-    }
-
-    private static void checkFields(Map<?, ?> data, Set<String> allowed, int index) {
-        for (Object key : data.keySet()) {
-            if (!(key instanceof String) || !allowed.contains((String) key)) {
-                throw invalidTargets("target " + index + " has unknown field '" + key + "'");
-            }
-        }
-    }
-
-    private static String requiredString(Object value, int index, String field) {
-        if (!(value instanceof String) || ((String) value).trim().isEmpty()) {
-            throw invalidTargets("target " + index + " " + field + " must be a non-empty string");
-        }
-        return (String) value;
+        Map<?, ?> entityScope = (Map<?, ?>) scope;
+        return new Target(
+                null,
+                (String) entityScope.get("entityType"),
+                (String) entityScope.get("entityName"),
+                level);
     }
 
     private static IllegalArgumentException invalidTargets(String detail) {
@@ -240,53 +163,60 @@ final class TraceLogTargetResolver {
         return "targets=" + targets;
     }
 
-    /** Targets for one entity type, with the type and preset default resolved at startup. */
+    /** Targets for one entity type, with inherited levels resolved at startup. */
     private static final class TypeTargets {
-        @Nullable private TraceLogDetail defaultDetail;
-        private final Map<String, TraceLogDetail> exactDetails = new LinkedHashMap<>();
-        private final List<PrefixTarget> prefixDetails = new ArrayList<>();
+        @Nullable private TraceLogLevel defaultLevel;
+        private final Map<String, TraceLogLevel> exactLevels = new LinkedHashMap<>();
+        private final List<PrefixTarget> prefixLevels = new ArrayList<>();
 
-        private TypeTargets(@Nullable TraceLogDetail defaultDetail) {
-            this.defaultDetail = defaultDetail;
+        private TypeTargets(@Nullable TraceLogLevel defaultLevel) {
+            this.defaultLevel = defaultLevel;
         }
 
-        private void add(Target target, TraceLogDetail detail) {
+        private void add(Target target, TraceLogLevel level) {
             String name = target.entityName;
             if (name == null) {
-                defaultDetail = detail;
+                defaultLevel = level;
             } else if (name.endsWith(".*")) {
-                prefixDetails.add(new PrefixTarget(name.substring(0, name.length() - 2), detail));
+                String prefix = name.substring(0, name.length() - 2);
+                // Keep longest prefixes first, preserving input order for equal lengths.
+                int index = 0;
+                while (index < prefixLevels.size()
+                        && prefixLevels.get(index).prefix.length() >= prefix.length()) {
+                    index++;
+                }
+                prefixLevels.add(index, new PrefixTarget(prefix, level));
             } else {
-                exactDetails.put(name, detail);
+                exactLevels.put(name, level);
             }
         }
 
         @Nullable
-        private TraceLogDetail resolve(@Nullable String entityName) {
-            if (entityName == null || (exactDetails.isEmpty() && prefixDetails.isEmpty())) {
-                return defaultDetail;
+        private TraceLogLevel resolve(@Nullable String entityName) {
+            if (entityName == null || (exactLevels.isEmpty() && prefixLevels.isEmpty())) {
+                return defaultLevel;
             }
-            TraceLogDetail exact = exactDetails.get(entityName);
+            TraceLogLevel exact = exactLevels.get(entityName);
             if (exact != null) {
                 return exact;
             }
-            for (PrefixTarget target : prefixDetails) {
+            for (PrefixTarget target : prefixLevels) {
                 String prefix = target.prefix;
                 if (entityName.equals(prefix) || entityName.startsWith(prefix + ".")) {
-                    return target.detail;
+                    return target.level;
                 }
             }
-            return defaultDetail;
+            return defaultLevel;
         }
     }
 
     private static final class PrefixTarget {
         private final String prefix;
-        private final TraceLogDetail detail;
+        private final TraceLogLevel level;
 
-        private PrefixTarget(String prefix, TraceLogDetail detail) {
+        private PrefixTarget(String prefix, TraceLogLevel level) {
             this.prefix = prefix;
-            this.detail = detail;
+            this.level = level;
         }
     }
 
@@ -294,30 +224,32 @@ final class TraceLogTargetResolver {
         @Nullable private final TraceLogScope preset;
         @Nullable private final String entityType;
         @Nullable private final String entityName;
-        @Nullable private final TraceLogDetail detail;
+        @Nullable private final TraceLogLevel level;
 
         private Target(
                 @Nullable TraceLogScope preset,
                 @Nullable String entityType,
                 @Nullable String entityName,
-                @Nullable TraceLogDetail detail) {
+                @Nullable TraceLogLevel level) {
             this.preset = preset;
             this.entityType = entityType;
             this.entityName = entityName;
-            this.detail = detail;
+            this.level = level;
         }
 
-        private TraceLogDetail detailOr(TraceLogDetail inheritedDetail) {
-            return detail == null ? inheritedDetail : detail;
+        private TraceLogLevel levelOr(TraceLogLevel inheritedLevel) {
+            return level == null ? inheritedLevel : level;
+        }
+
+        private Object selector() {
+            return preset != null
+                    ? preset
+                    : new AbstractMap.SimpleImmutableEntry<>(entityType, entityName);
         }
 
         @Override
         public String toString() {
-            Object scope =
-                    preset != null
-                            ? preset
-                            : new AbstractMap.SimpleImmutableEntry<>(entityType, entityName);
-            return "{scope=" + scope + ", detail=" + detail + "}";
+            return "{scope=" + selector() + ", level=" + level + "}";
         }
     }
 }

@@ -137,11 +137,3 @@ def test_unknown_agent_config_option_raises_attribute_error() -> None:
 
     with pytest.raises(AttributeError):
         _ = AgentConfigOptions.UNKNOWN_OPTION
-
-
-def test_trace_log_off_is_a_detail_setting() -> None:
-    from flink_agents.api.core_options import TraceLogDetail, TraceLogScope
-
-    assert TraceLogDetail("OFF") is TraceLogDetail.OFF
-    with pytest.raises(ValueError):
-        TraceLogScope("OFF")
