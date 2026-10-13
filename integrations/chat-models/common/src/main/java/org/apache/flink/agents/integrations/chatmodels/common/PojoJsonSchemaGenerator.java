@@ -18,6 +18,7 @@
 package org.apache.flink.agents.integrations.chatmodels.common;
 
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.github.victools.jsonschema.generator.FieldScope;
 import com.github.victools.jsonschema.generator.Option;
 import com.github.victools.jsonschema.generator.OptionPreset;
 import com.github.victools.jsonschema.generator.SchemaGenerator;
@@ -28,6 +29,7 @@ import com.github.victools.jsonschema.module.jackson.JacksonModule;
 import com.github.victools.jsonschema.module.jackson.JacksonOption;
 
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /** Derives the JSON Schema that chat model connections send as a native output schema. */
 public final class PojoJsonSchemaGenerator {
@@ -44,9 +46,12 @@ public final class PojoJsonSchemaGenerator {
     //     e.g. "getDerived()".
     //   - Sorting fields before methods and applying no further comparison leaves properties in
     //     declaration order, which is the order pydantic emits.
-    //   - The required check marks every field required except an Optional one. The default marks
-    //     nothing required, which lets a model omit fields at will, while marking everything
-    //     required would force the fields a caller declared omissible.
+    //   - The required check of generate marks every field required except an Optional one. The
+    //     default marks nothing required, which lets a model omit fields at will, while marking
+    //     everything required would force the fields a caller declared omissible.
+    //     generateAllRequired marks every field required for callers whose provider expects every
+    //     property in the required set, as OpenAI's strict mode does. An Optional field stays
+    //     nullable there, so the schema still admits null for it.
     //   - The Jackson module names properties the way an ObjectMapper reads them, honoring
     //     @JsonProperty renames and dropping @JsonIgnore fields, which the required check would
     //     otherwise mark required. It lists enum constants mapped by @JsonProperty or by a
@@ -64,6 +69,27 @@ public final class PojoJsonSchemaGenerator {
      * @return the schema document
      */
     public static ObjectNode generate(Class<?> type, Option... options) {
+        return generate(
+                type, field -> !Optional.class.equals(field.getRawMember().getType()), options);
+    }
+
+    /**
+     * Generates the JSON Schema for {@code type} with every field required.
+     *
+     * <p>The schema differs from the one {@link #generate} derives only in its required set, which
+     * also lists an {@code Optional} field. That field's schema admits null, so a response can
+     * still send null for it.
+     *
+     * @param type the class a response is deserialized into
+     * @param options additional generator options enabled on top of the fixed settings
+     * @return the schema document
+     */
+    public static ObjectNode generateAllRequired(Class<?> type, Option... options) {
+        return generate(type, field -> true, options);
+    }
+
+    private static ObjectNode generate(
+            Class<?> type, Predicate<FieldScope> requiredCheck, Option... options) {
         SchemaGeneratorConfigBuilder builder =
                 new SchemaGeneratorConfigBuilder(
                         SchemaVersion.DRAFT_2020_12, OptionPreset.PLAIN_JSON);
@@ -76,8 +102,7 @@ public final class PojoJsonSchemaGenerator {
                         JacksonOption.FLATTENED_ENUMS_FROM_JSONVALUE));
         builder.forTypesInGeneral()
                 .withPropertySorter(PropertySortUtils.SORT_PROPERTIES_FIELDS_BEFORE_METHODS);
-        builder.forFields()
-                .withRequiredCheck(field -> !Optional.class.equals(field.getRawMember().getType()));
+        builder.forFields().withRequiredCheck(requiredCheck);
         return new SchemaGenerator(builder.build()).generateSchema(type);
     }
 }
