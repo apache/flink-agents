@@ -399,3 +399,7 @@ The constructor registers those sources on the agent, so they do not also need `
 
 **Which declaration wins.** Sources reach the agent from three levels. `@Skills`/`@skills` methods are merged first, then the execution environment's `SKILLS` resources, then the agent's own. A declaration from a later level wins when two of them resolve to the same skill name.
 
+## As a Sub-Agent
+
+A ReActAgent can run as a sub-agent of another agent, delegated to by the parent's chat model or called from the parent's actions. See [Use a ReActAgent as the child]({{< ref "docs/development/multi-agent/subagents#use-a-reactagent-as-the-child" >}}).
+
