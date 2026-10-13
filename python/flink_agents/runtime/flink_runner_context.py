@@ -386,10 +386,10 @@ class _BatchAsyncExecutionResult:
                 execution_indexes.append(index)
                 suppliers.append(future._callable)
 
-        parallelism = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM)
-        timeout_ms = self._ctx.config.get(
-            AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS
+        parallelism = self._ctx.config.get(
+            AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
         )
+        timeout_ms = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         batch_futures: list[Any | None] = [None] * len(suppliers)
         started: list[bool] = [False] * len(suppliers)
@@ -575,9 +575,7 @@ def _execute_sliding_window_batch(
 
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
-            timeout_message = (
-                f"Async batch execution timed out after {timeout_ms} ms"
-            )
+            timeout_message = f"Async batch execution timed out after {timeout_ms} ms"
             raise _BatchTimeoutError(timeout_message)
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:
@@ -1432,9 +1430,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     def _durable_identity(self, call: _DurableCall) -> str:
         return durable_identity_for_call(call.func, call.args, call.kwargs)
 
-    def _call_matches(
-        self, current: _PersistedCallResult, call: _DurableCall
-    ) -> bool:
+    def _call_matches(self, current: _PersistedCallResult, call: _DurableCall) -> bool:
         function_id = self._durable_identity(call)
         return current.function_id == function_id
 
@@ -1454,7 +1450,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
-    def _prepare_batch_execution(self, calls: list[_DurableCall]) -> _BatchExecutionPlan:
+    def _prepare_batch_execution(
+        self, calls: list[_DurableCall]
+    ) -> _BatchExecutionPlan:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []

@@ -71,9 +71,9 @@ public class VLLMChatModelConnection extends OpenAICompletionsConnection {
 
     /**
      * vLLM implements the OpenAI {@code json_schema} response format for whatever model it serves
-     * (via guided decoding), so structured-output capability does not depend on OpenAI model names
-     * — the inherited allowlist would wrongly reject served models such as {@code
-     * Qwen/Qwen2.5-7B-Instruct}. See <a
+     * (via guided decoding), so structured-output capability does not depend on OpenAI model names.
+     * The inherited allowlist would wrongly report served models such as {@code
+     * Qwen/Qwen2.5-7B-Instruct} as not capable. See <a
      * href="https://docs.vllm.ai/en/stable/features/structured_outputs.html">vLLM structured
      * outputs</a>.
      */

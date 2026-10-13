@@ -148,37 +148,51 @@ def test_native_response_format_applied_on_capable_model(monkeypatch) -> None:
     assert kwargs["result_format"] == "message"
 
 
-def test_native_not_applied_for_default_model(monkeypatch) -> None:
-    """The default model answers a schema instead of refusing it, and sends none.
+def test_unlisted_model_answers_feasible_and_still_carries_the_schema(
+    monkeypatch,
+) -> None:
+    """An unlisted model is merely feasible, yet its request carries the full schema.
 
-    Omitting ``model`` is the path every existing caller is on, so the schema is
-    answered with the prompt-engineering fallback rather than raising, and no
-    undocumented parameter reaches the request.
+    The default model is unlisted, and omitting ``model`` is the path every existing
+    caller is on. Folding capability into feasibility would report INFEASIBLE, which a
+    NATIVE policy cannot overrule; folding it into the request would drop a schema that
+    policy chose to send. The request carries what a listed model's request carries,
+    not a weaker form.
     """
-    response, kwargs = _chat(
-        monkeypatch, output_schema=OutputSchema(output_schema=Person)
+    schema = OutputSchema(output_schema=Person)
+
+    assert (
+        _connection().supports_native_structured_output(schema, [], {})
+        is NativeStructuredOutputSupport.FEASIBLE
     )
+
+    _, listed = _chat(monkeypatch, model=_CAPABLE_MODEL, output_schema=schema)
+    response, kwargs = _chat(monkeypatch, output_schema=schema)
     assert response.text == "ok"
-    assert "response_format" not in kwargs
+    assert kwargs["response_format"] == listed["response_format"]
 
 
-def test_native_not_applied_for_a_non_string_model(monkeypatch) -> None:
-    """A model that is not a string is answered with the fallback rather than an error.
+def test_non_string_model_answers_feasible_and_still_carries_the_schema(
+    monkeypatch,
+) -> None:
+    """A model that is not a string is answered ``FEASIBLE`` rather than with an error.
 
     This connection's capability predicate tests membership of a frozenset allowlist,
-    which answers for any hashable value without raising, so a schema sent against such
-    a model degrades to prompt engineering and the request carries no
-    ``response_format``. The value reaches the provider as the model either way, which
-    is what decides the call. Sibling connections classify by other means and several
-    raise on this input, so the tolerance is local to this connection rather than a
-    contract every connection keeps.
+    which answers for any hashable value without raising. Sibling connections classify
+    by other means and several raise on this input, so the tolerance is local to this
+    connection rather than a contract every connection keeps. The request still
+    carries the schema, and the value reaches the provider as the model unchanged.
     """
-    response, kwargs = _chat(
-        monkeypatch, model=123, output_schema=OutputSchema(output_schema=Person)
+    schema = OutputSchema(output_schema=Person)
+    assert (
+        _connection().supports_native_structured_output(schema, [], {"model": 123})
+        is NativeStructuredOutputSupport.FEASIBLE
     )
+
+    response, kwargs = _chat(monkeypatch, model=123, output_schema=schema)
     assert response.text == "ok"
-    assert "response_format" not in kwargs
     assert kwargs["model"] == 123
+    assert kwargs["response_format"]["type"] == "json_schema"
 
 
 def test_native_not_applied_when_schema_none(monkeypatch) -> None:
@@ -306,7 +320,7 @@ _DEFAULT_MODEL = "qwen-plus"
 
 
 def _judging_connection() -> tuple[DashScopeChatModelConnection, list[str | None]]:
-    """A connection recording every model its request path judges for capability.
+    """A connection recording every model it judges for capability.
 
     Subclassing keeps the predicate itself under test rather than standing a stub in
     for it: the override notes what it was asked about and delegates to the real one.
@@ -356,23 +370,23 @@ def test_query_does_not_consume_the_model() -> None:
     [{"model": _CAPABLE_MODEL}, {"model": "qwen-turbo"}, {"model": ""}, {}],
     ids=["capable", "incapable", "blank", "absent"],
 )
-def test_query_judges_the_model_the_request_judges(
+def test_query_judges_the_model_the_request_is_issued_against(
     monkeypatch, model_kwargs: dict[str, Any]
 ) -> None:
-    """The query asks about exactly the model the request path asks about.
+    """The query asks about exactly the model the request is issued against.
 
     The query resolves the effective model separately from the builder, so only
-    capturing what each feeds the capability check keeps the two from drifting apart.
+    comparing the model it judges with the model the request names keeps the two from
+    drifting apart.
     """
     conn, judged = _judging_connection()
-    _patched_call(monkeypatch)
+    mock_call = _patched_call(monkeypatch)
     schema = OutputSchema(output_schema=Person)
 
     conn.supports_native_structured_output(schema, [], model_kwargs)
     conn.chat(_messages(), output_schema=schema, **model_kwargs)
 
-    assert len(judged) == 2
-    assert judged[0] == judged[1]
+    assert judged[0] == mock_call.call_args.kwargs["model"]
 
 
 def _add(a: int, b: int) -> int:
@@ -394,17 +408,17 @@ def _add(a: int, b: int) -> int:
 
 
 def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
-    """The answer matches whether the request ends up carrying a response_format.
+    """The answer is INFEASIBLE exactly when the request carries no response_format.
 
-    Comparing the answer against what the request carries, rather than against a
-    literal, is what keeps the query and the branch from drifting in step. The model is
-    capable in every case, so the schema form is the only thing that moves.
+    Comparing the answer against what the request carries, rather than only against a
+    literal, is what keeps the query and the branch from drifting in step. The schema
+    form, the tools and the model's capability all move; the exact answer is pinned as
+    well, so capability can only separate FEASIBLE from NATIVE_RECOMMENDED.
     """
     conn = _connection()
     mock_call = _patched_call(monkeypatch)
     tool = FunctionTool(func=PythonFunction.from_callable(_add))
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
-    model_kwargs = {"model": _CAPABLE_MODEL}
 
     for schema in (
         OutputSchema(output_schema=Person),
@@ -412,19 +426,25 @@ def test_query_agrees_with_the_native_branch(monkeypatch) -> None:
         None,
     ):
         for tools in (None, [], [tool]):
-            support = conn.supports_native_structured_output(
-                schema, tools, model_kwargs
-            )
+            for model in (_CAPABLE_MODEL, "qwen-turbo"):
+                support = conn.supports_native_structured_output(
+                    schema, tools, {"model": model}
+                )
 
-            conn.chat(_messages(), tools=tools, output_schema=schema, **model_kwargs)
+                conn.chat(_messages(), tools=tools, output_schema=schema, model=model)
 
-            carried = "response_format" in mock_call.call_args.kwargs
-            expected = (
-                NativeStructuredOutputSupport.NATIVE_RECOMMENDED
-                if carried
-                else NativeStructuredOutputSupport.INFEASIBLE
-            )
-            assert support is expected, f"schema {schema}, tools {tools}"
+                label = f"schema {schema}, tools {tools}, model {model}"
+                if schema is None or schema.output_schema is not Person:
+                    expected = NativeStructuredOutputSupport.INFEASIBLE
+                elif model == _CAPABLE_MODEL:
+                    expected = NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                else:
+                    expected = NativeStructuredOutputSupport.FEASIBLE
+                carried = "response_format" in mock_call.call_args.kwargs
+                assert support is expected, label
+                assert carried == (
+                    support is not NativeStructuredOutputSupport.INFEASIBLE
+                ), label
 
 
 def test_query_ignores_a_caller_response_format() -> None:

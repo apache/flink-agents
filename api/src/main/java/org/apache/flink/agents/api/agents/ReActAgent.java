@@ -30,10 +30,12 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.api.java.typeutils.RowTypeInfo;
@@ -49,14 +51,29 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 
-/** Built-in ReAct Agent implementation based on the function call ability of llm. . */
+/**
+ * Built-in ReAct Agent implementation based on the function call ability of llm.
+ *
+ * <p>When an output schema is given, the agent adds a system instruction describing it. If the chat
+ * model applies the schema natively, the instruction describes the schema's fields without
+ * requiring JSON, and the schema is applied on the final conversion. Otherwise it asks for a JSON
+ * response matching the schema.
+ */
 public class ReActAgent extends Agent {
     private static final Logger LOG = LoggerFactory.getLogger(ReActAgent.class);
 
     private static final String DEFAULT_CHAT_MODEL = "_default_chat_model";
     private static final String DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt";
+    private static final String DEFAULT_NATIVE_SCHEMA_PROMPT = "_default_native_schema_prompt";
     private static final String DEFAULT_USER_PROMPT = "_default_user_prompt";
+
+    // Kept byte-identical to the Python _NATIVE_SCHEMA_PROMPT_PREFIX.
+    private static final String NATIVE_SCHEMA_PROMPT_PREFIX =
+            "The final response must include the information for every required field of the"
+                    + " following schema. It does not need to be in JSON format. Schema: ";
+
     private static final ObjectMapper mapper = new ObjectMapper();
 
     public ReActAgent(
@@ -112,6 +129,10 @@ public class ReActAgent extends Agent {
                                     "The final response should be json format, and match the schema %s",
                                     jsonSchema));
             this.addResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT, schemaPrompt);
+            this.addResource(
+                    DEFAULT_NATIVE_SCHEMA_PROMPT,
+                    ResourceType.PROMPT,
+                    Prompt.fromText(NATIVE_SCHEMA_PROMPT_PREFIX + jsonSchema));
             actionConfig.put("output_schema", outputSchema);
         }
 
@@ -181,22 +202,59 @@ public class ReActAgent extends Agent {
             inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
         }
 
-        Prompt schmaPrompt;
-        try {
-            schmaPrompt = (Prompt) ctx.getResource(DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT);
-        } catch (Exception e) {
-            schmaPrompt = null;
-        }
-
-        if (schmaPrompt != null) {
-            List<ChatMessage> instruct = schmaPrompt.formatMessages(MessageRole.SYSTEM, Map.of());
-            int index = ChatMessage.findFirstSystemMessage(inputMessages);
-            inputMessages.addAll(index + 1, instruct);
-        }
-
         Object outputSchema = ctx.getActionConfigValue("output_schema");
 
+        Prompt schemaPrompt = promptOrNull(ctx, DEFAULT_SCHEMA_PROMPT);
+        if (schemaPrompt != null) {
+            // A plan built before the native prompt existed has none, and then adds no
+            // instruction on the native path.
+            Prompt instruction =
+                    appliesSchemaNatively(ctx, outputSchema)
+                            ? promptOrNull(ctx, DEFAULT_NATIVE_SCHEMA_PROMPT)
+                            : schemaPrompt;
+            if (instruction != null) {
+                List<ChatMessage> instruct =
+                        instruction.formatMessages(MessageRole.SYSTEM, Map.of());
+                int index = ChatMessage.findFirstSystemMessage(inputMessages);
+                inputMessages.addAll(index + 1, instruct);
+            }
+        }
+
         ctx.sendEvent(new ChatRequestEvent(DEFAULT_CHAT_MODEL, inputMessages, outputSchema));
+    }
+
+    @Nullable
+    private static Prompt promptOrNull(RunnerContext ctx, String name) {
+        try {
+            return (Prompt) ctx.getResource(name, ResourceType.PROMPT);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Whether the default chat model enforces the schema through the provider. If so, the loop is
+     * told the schema's fields without being asked for JSON, and the schema is applied on the final
+     * conversion. Any failure to answer, other than cancellation, keeps the JSON instruction: an
+     * infeasible NATIVE strategy is reported by the chat model call itself.
+     */
+    private static boolean appliesSchemaNatively(RunnerContext ctx, Object outputSchema) {
+        try {
+            Resource chatModel = ctx.getResource(DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL);
+            return chatModel instanceof BaseChatModelSetup
+                    && ((BaseChatModelSetup) chatModel)
+                            .willApplyNativeStructuredOutput(outputSchema);
+        } catch (CancellationException e) {
+            throw e;
+        } catch (Exception e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            LOG.debug(
+                    "Keeping the JSON schema instruction: native structured output is unresolved.",
+                    e);
+            return false;
+        }
     }
 
     @Action(EventType.ChatResponseEvent)

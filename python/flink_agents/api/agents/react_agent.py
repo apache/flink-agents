@@ -15,6 +15,8 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
+import logging
+from concurrent.futures import CancelledError
 from typing import TYPE_CHECKING, cast
 
 from pydantic import (
@@ -30,6 +32,7 @@ from flink_agents.api.chat_message import (
     MessageRole,
     find_first_system_message,
 )
+from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.decorators import action
 from flink_agents.api.events.chat_event import ChatRequestEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
@@ -41,10 +44,19 @@ from flink_agents.api.runner_context import RunnerContext
 if TYPE_CHECKING:
     from flink_agents.api.events.chat_event import ChatResponseEvent
 
+_LOG = logging.getLogger(__name__)
+
 _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
+_DEFAULT_NATIVE_SCHEMA_PROMPT = "_default_native_schema_prompt"
 _DEFAULT_USER_PROMPT = "_default_user_prompt"
 _OUTPUT_SCHEMA = "_output_schema"
+
+# Kept byte-identical to the Java NATIVE_SCHEMA_PROMPT_PREFIX.
+_NATIVE_SCHEMA_PROMPT_PREFIX = (
+    "The final response must include the information for every required field of"
+    " the following schema. It does not need to be in JSON format. Schema: "
+)
 
 
 class ReActAgent(Agent):
@@ -116,9 +128,12 @@ class ReActAgent(Agent):
             Prompt to instruct the llm, could include input and output example,
             task and so on.
         output_schema : Optional[Union[type[BaseModel], RowTypeInfo]] = None
-            The schema should be RowTypeInfo or subclass of BaseModel. When user
-            provide output schema, ReAct agent will add system prompt to instruct
-            response format of llm, and add output parser according to the schema.
+            The schema should be RowTypeInfo or subclass of BaseModel. When given,
+            the ReAct agent adds a system prompt describing it and parses the
+            response according to it. If the chat model applies the schema
+            natively, the prompt describes the schema's fields without requiring
+            JSON, and the schema is applied on the final conversion. Otherwise it
+            asks for a JSON response matching the schema.
 
         Raises:
         ------
@@ -142,6 +157,9 @@ class ReActAgent(Agent):
             schema_prompt = f"The final response should be json format, and match the schema {json_schema}."
             self._resources[ResourceType.PROMPT][_DEFAULT_SCHEMA_PROMPT] = (
                 Prompt.from_text(text=schema_prompt)
+            )
+            self._resources[ResourceType.PROMPT][_DEFAULT_NATIVE_SCHEMA_PROMPT] = (
+                Prompt.from_text(text=f"{_NATIVE_SCHEMA_PROMPT_PREFIX}{json_schema}")
             )
 
         if prompt:
@@ -195,19 +213,22 @@ class ReActAgent(Agent):
             str_usr_input = {k: str(v) for k, v in usr_input.items()}
             usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
 
-        try:
-            schema_prompt = cast(
-                "Prompt", ctx.get_resource(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
-            )
-        except KeyError:
-            schema_prompt = None
-
-        if schema_prompt:
-            instruct = schema_prompt.format_messages()
-            index = find_first_system_message(usr_msgs)
-            usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
+        schema_prompt = ReActAgent._prompt_or_none(ctx, _DEFAULT_SCHEMA_PROMPT)
 
         output_schema = ctx.get_action_config_value(key="output_schema")
+
+        if schema_prompt is not None:
+            # A plan built before the native prompt existed has none, and then adds
+            # no instruction on the native path.
+            instruction = (
+                ReActAgent._prompt_or_none(ctx, _DEFAULT_NATIVE_SCHEMA_PROMPT)
+                if ReActAgent._schema_applied_natively(output_schema, ctx)
+                else schema_prompt
+            )
+            if instruction is not None:
+                instruct = instruction.format_messages()
+                index = find_first_system_message(usr_msgs)
+                usr_msgs = usr_msgs[: index + 1] + instruct + usr_msgs[index + 1 :]
 
         ctx.send_event(
             ChatRequestEvent(
@@ -216,6 +237,39 @@ class ReActAgent(Agent):
                 output_schema=output_schema,
             )
         )
+
+    @staticmethod
+    def _prompt_or_none(ctx: RunnerContext, name: str) -> Prompt | None:
+        try:
+            return cast("Prompt", ctx.get_resource(name, ResourceType.PROMPT))
+        except KeyError:
+            return None
+
+    @staticmethod
+    def _schema_applied_natively(
+        output_schema: OutputSchema | None, ctx: RunnerContext
+    ) -> bool:
+        """Whether the default chat model enforces ``output_schema`` through the
+        provider. If so, the loop is told the schema's fields without being asked
+        for JSON, and the schema is applied on the final conversion.
+
+        Any failure answers ``False`` and keeps the JSON instruction: the chat
+        model action asks the same question and reports the failure itself.
+        """
+        try:
+            chat_model = ctx.get_resource(_DEFAULT_CHAT_MODEL, ResourceType.CHAT_MODEL)
+            return isinstance(
+                chat_model, BaseChatModelSetup
+            ) and chat_model.will_apply_native_structured_output(output_schema)
+        except (CancelledError, InterruptedError):
+            raise
+        except Exception:
+            _LOG.debug(
+                "Keeping the JSON schema instruction: the chat model could not answer "
+                "whether it applies the schema natively.",
+                exc_info=True,
+            )
+            return False
 
     @action(EventType.ChatResponseEvent)
     @staticmethod

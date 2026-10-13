@@ -238,16 +238,12 @@ class _Labelled(BaseModel):
 
 
 # A model the provider documents native structured-output support for.
-#
-# Deliberately a 4.5-generation name, which is the only generation that is both
-# structured-output capable and still accepts a JSON prefill. The prefill tests below
-# assert that an output_config suppresses the prefill; on a 4.6-or-later name the
-# prefill capability guard would suppress it as well, so those assertions would hold
-# even with the output_config suppression removed.
 _CAPABLE_MODEL = "claude-sonnet-4-5"
 
 # A model the provider does not document native structured-output support for,
-# predating the cutoff.
+# predating the cutoff. It accepts a JSON prefill, so the prefill tests below that
+# assert an output_config suppresses the prefill have no other reason to see it
+# suppressed.
 _INCAPABLE_MODEL = "claude-sonnet-4-20250514"
 
 # The models the provider documents native structured-output support for, in the order
@@ -299,15 +295,9 @@ def _request_kwargs(**chat_kwargs: Any) -> Dict[str, Any]:
     return connection.client.messages.create.call_args.kwargs
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-4-5", "claude-opus-4-6"])
-def test_native_output_config_applied_on_capable_model(model) -> None:
-    # One name from each way the capability check can match: a 4.5-generation alias
-    # reached by prefix, and a 4.6 name reached by exact match. The chat path consults
-    # the check as a whole, so covering only one branch would let it be narrowed to
-    # that branch while silently dropping native structured output for every model on
-    # the other.
+def test_native_output_config_applied() -> None:
     output_config = _request_kwargs(
-        model=model, output_schema=OutputSchema(output_schema=_Answer)
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Answer)
     )["output_config"]
 
     # Asserting the property name rather than mere presence: a config derived from the
@@ -349,9 +339,17 @@ def test_map_member_schema_is_accepted_and_sent_whole() -> None:
     assert output_config["format"]["schema"]["properties"]["labels"]["properties"] == {}
 
 
-def test_native_output_config_not_applied_on_incapable_model() -> None:
-    assert "output_config" not in _request_kwargs(
-        model=_INCAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Answer)
+def test_unlisted_model_answers_feasible_and_still_carries_the_schema() -> None:
+    # Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy
+    # cannot overrule; folding it into the request would drop a schema that policy chose
+    # to send. The request carries what a listed model's request carries, not a weaker
+    # form.
+    schema = OutputSchema(output_schema=_Answer)
+
+    assert _support_for(_INCAPABLE_MODEL) is NativeStructuredOutputSupport.FEASIBLE
+    assert (
+        _request_kwargs(model=_INCAPABLE_MODEL, output_schema=schema)["output_config"]
+        == _request_kwargs(model=_CAPABLE_MODEL, output_schema=schema)["output_config"]
     )
 
 
@@ -583,9 +581,10 @@ def test_json_prefill_suppressed_by_caller_output_config() -> None:
 def test_json_prefill_suppressed_by_derived_output_config() -> None:
     # The schema reaches the request as an output_config of the framework's own making,
     # which the provider documents as incompatible with prefilling just the same. The
-    # model accepts prefilling, so the output_config is the only thing suppressing it.
+    # model is unlisted and accepts prefilling, so the output_config is the only thing
+    # suppressing it; suppression keyed on capability would keep the prefill here.
     assert _prefill_outcome(
-        model=_CAPABLE_MODEL,
+        model=_INCAPABLE_MODEL,
         json_prefill=True,
         output_schema=OutputSchema(output_schema=_Answer),
     ) == (False, _CONTINUATION)
@@ -594,11 +593,13 @@ def test_json_prefill_suppressed_by_derived_output_config() -> None:
 def test_json_prefill_applied_when_schema_falls_back() -> None:
     # Suppression keys on whether the schema reached the request, not on whether one was
     # supplied. Keying it on the schema would strip the prefill the prompt-engineering
-    # fallback depends on, which is the case the prefill mainly exists for.
+    # fallback depends on, which is the case the prefill mainly exists for. A
+    # RowTypeInfo has no native translation, so it is supplied but not sent.
+    row_type = Types.ROW_NAMED(["verdict"], [Types.STRING()])
     assert _prefill_outcome(
         model=_INCAPABLE_MODEL,
         json_prefill=True,
-        output_schema=OutputSchema(output_schema=_Answer),
+        output_schema=OutputSchema(output_schema=row_type),
     ) == (True, _COMPLETED)
 
 
@@ -777,7 +778,7 @@ def test_sampling_and_prefill_boundaries_differ() -> None:
 
 
 def _judging_connection() -> tuple[AnthropicChatModelConnection, list]:
-    """A connection recording every model its request path judges for capability.
+    """A connection recording every model it judges for capability.
 
     Subclassing keeps the predicate itself under test rather than standing a stub in
     for it: the override notes what it was asked about and delegates to the real one.
@@ -811,14 +812,14 @@ def _judging_connection() -> tuple[AnthropicChatModelConnection, list]:
     [{"model": _CAPABLE_MODEL}, {"model": _INCAPABLE_MODEL}, {"model": ""}, {}],
     ids=["capable", "incapable", "blank", "absent"],
 )
-def test_query_judges_the_model_the_request_judges(
+def test_query_judges_the_model_the_request_is_issued_against(
     model_kwargs: Dict[str, Any],
 ) -> None:
-    """The query asks about exactly the model the request path asks about.
+    """The query asks about exactly the model the request names.
 
-    This connection reads the parameter without a fallback. Pinning the query against
-    what the builder judges is what would catch a fallback being added to one of the
-    two without the other.
+    This connection reads the parameter without a fallback. Comparing the model the
+    query judges with the model the request names is what would catch a fallback being
+    added to one of the two without the other.
     """
     connection, judged = _judging_connection()
     schema = OutputSchema(output_schema=_Answer)
@@ -830,8 +831,8 @@ def test_query_judges_the_model_the_request_judges(
         **model_kwargs,
     )
 
-    assert len(judged) == 2
-    assert judged[0] == judged[1]
+    sent = connection.client.messages.create.call_args.kwargs
+    assert judged[0] == sent.get("model")
 
 
 # A caller-supplied output_config, kept as one object so the binding test below can tell
@@ -842,14 +843,15 @@ _CALLER_OUTPUT_CONFIG = {
 
 
 def test_query_agrees_with_the_native_branch() -> None:
-    """The answer matches whether the request carries an output_config derived here.
+    """The answer is INFEASIBLE exactly when no derived output_config is carried.
 
-    Comparing the answer against what the request carries, rather than against a
-    literal, is what keeps the query and the branch from drifting in step. The model is
-    capable throughout, so the schema form and the caller's output_config are what move.
-    A caller-supplied config reaches the request untouched, so the comparison is against
-    a *derived* config: identity separates the two, since writing a derived one replaces
-    the caller's object.
+    Comparing the answer against what the request carries, rather than only against a
+    literal, is what keeps the query and the branch from drifting in step. The schema
+    form, the caller's output_config, the tools and the model's capability all move;
+    the exact answer is pinned as well, so capability can only separate FEASIBLE from
+    NATIVE_RECOMMENDED. A caller-supplied config reaches the request untouched, so the
+    comparison is against a *derived* config: identity separates the two, since writing
+    a derived one replaces the caller's object.
     """
     conn = _connection_returning(
         Message(
@@ -875,33 +877,45 @@ def test_query_agrees_with_the_native_branch() -> None:
     ):
         for caller_config in (None, _CALLER_OUTPUT_CONFIG):
             for tools in (None, [], [tool]):
-                model_kwargs: Dict[str, Any] = {"model": _CAPABLE_MODEL}
-                if caller_config is not None:
-                    model_kwargs["output_config"] = caller_config
-                support = conn.supports_native_structured_output(
-                    schema, tools, model_kwargs
-                )
+                for model in (_CAPABLE_MODEL, _INCAPABLE_MODEL):
+                    model_kwargs: Dict[str, Any] = {"model": model}
+                    if caller_config is not None:
+                        model_kwargs["output_config"] = caller_config
+                    support = conn.supports_native_structured_output(
+                        schema, tools, model_kwargs
+                    )
 
-                conn.chat(
-                    [ChatMessage.of(role=MessageRole.USER, content="hi")],
-                    tools=tools,
-                    output_schema=schema,
-                    **model_kwargs,
-                )
+                    conn.chat(
+                        [ChatMessage.of(role=MessageRole.USER, content="hi")],
+                        tools=tools,
+                        output_schema=schema,
+                        **model_kwargs,
+                    )
 
-                sent = conn.client.messages.create.call_args.kwargs
-                derived = (
-                    "output_config" in sent
-                    and sent["output_config"] is not _CALLER_OUTPUT_CONFIG
-                )
-                expected = (
-                    NativeStructuredOutputSupport.NATIVE_RECOMMENDED
-                    if derived
-                    else NativeStructuredOutputSupport.INFEASIBLE
-                )
-                assert support is expected, (
-                    f"schema {schema}, caller_config {caller_config}, tools {tools}"
-                )
+                    label = (
+                        f"schema {schema}, caller_config {caller_config}, "
+                        f"tools {tools}, model {model}"
+                    )
+                    feasible = (
+                        schema is not None
+                        and schema.output_schema is _Answer
+                        and caller_config is None
+                    )
+                    if not feasible:
+                        expected = NativeStructuredOutputSupport.INFEASIBLE
+                    elif model == _CAPABLE_MODEL:
+                        expected = NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+                    else:
+                        expected = NativeStructuredOutputSupport.FEASIBLE
+                    sent = conn.client.messages.create.call_args.kwargs
+                    derived = (
+                        "output_config" in sent
+                        and sent["output_config"] is not _CALLER_OUTPUT_CONFIG
+                    )
+                    assert support is expected, label
+                    assert derived == (
+                        support is not NativeStructuredOutputSupport.INFEASIBLE
+                    ), label
 
 
 def test_query_follows_the_caller_output_config() -> None:

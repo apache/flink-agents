@@ -25,6 +25,7 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    StructuredOutputStrategy,
 )
 from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import ResourceType
@@ -172,6 +173,9 @@ class JavaChatModelSetup(BaseChatModelSetup):
         self,
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
+        *,
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         """Execute chat conversation by delegating to Java implementation.
@@ -180,20 +184,31 @@ class JavaChatModelSetup(BaseChatModelSetup):
         2. Call Java chat method with prompt-template arguments
         3. Convert Java response back to Python format
 
-        Parameters
-        ----------
-        messages : Sequence[ChatMessage]
-            Input message sequence
-        prompt_args : Mapping[str, Any] | None
-            Prompt-template variables forwarded to the Java setup.
-        **kwargs : Any
-            Additional parameters passed to the model service
+        Args:
+            messages: Input message sequence.
+            prompt_args: Prompt-template variables forwarded to the Java setup.
+            tools: Not supported. Must be ``None``.
+            output_schema: Not supported. Must be ``None``.
+            **kwargs: Additional parameters passed to the model service.
 
         Returns:
-        -------
-        ChatResult
-            Model response message
+            Model response result.
+
+        Raises:
+            NotImplementedError: If ``tools`` or ``output_schema`` is given. They
+                are refused rather than dropped, or sent with the Java setup's bound
+                prompt and tools, since the bridge reaches only the Java setup's
+                three-argument ``chat``, which prepares the request itself.
         """
+        if tools is not None or output_schema is not None:
+            msg = (
+                "A Java chat model setup cannot be sent explicit tools or an output "
+                "schema from Python: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's three-argument "
+                "chat, which adds its own bound prompt and tools. Bind tools and "
+                "apply the schema on the Java side instead."
+            )
+            raise NotImplementedError(msg)
         # Convert Python messages to Java format
         java_messages = [
             _to_java_chat_message(self._j_resource_adapter, message)
@@ -204,3 +219,32 @@ class JavaChatModelSetup(BaseChatModelSetup):
         )
 
         return from_java_chat_result(j_response_message)
+
+    @override
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Never applies a schema natively, so a caller keeps describing the schema
+        in the prompt, which works here.
+
+        No connection is resolved on this side, and ``chat`` carries only messages,
+        prompt arguments and keyword arguments across the bridge, so a schema has no
+        way to travel natively.
+
+        Raises:
+            ValueError: If ``output_schema`` is not ``None`` and the strategy is
+                ``NATIVE``, which this setup cannot honor.
+        """
+        if (
+            output_schema is not None
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            msg = (
+                "Structured output strategy NATIVE was requested, but a Java chat "
+                "model setup reached from Python through JavaChatModelSetup cannot "
+                "be given an output schema: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's chat. Use AUTO "
+                "or PROMPT, or apply the schema on the Java side."
+            )
+            raise ValueError(msg)
+        return False

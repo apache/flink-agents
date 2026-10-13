@@ -23,12 +23,16 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.ReActAgent;
 import org.apache.flink.agents.api.annotation.ToolParam;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.Tool;
+import org.apache.flink.agents.integrations.chatmodels.ollama.OllamaChatModelConnection;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -47,7 +51,10 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.apache.flink.agents.api.agents.AgentExecutionOptions.MAX_RETRIES;
 import static org.apache.flink.agents.integration.test.OllamaPreparationUtils.pullModel;
@@ -215,6 +222,122 @@ public class ReActAgentTest {
                 "The result should be a String when no output schema is provided.");
     }
 
+    @Test
+    public void testReActAgentNativeStructuredOutput() throws Exception {
+        Assumptions.assumeTrue(ollamaReady, String.format("%s is not ready", OLLAMA_MODEL));
+        // Surefire reruns a failed test in the same JVM.
+        RecordingOllamaChatModelConnection.REQUESTS.clear();
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        env.setParallelism(1);
+
+        // Create the table environment
+        StreamTableEnvironment tableEnv = StreamTableEnvironment.create(env);
+
+        // Create agents execution environment
+        AgentsExecutionEnvironment agentsEnv =
+                AgentsExecutionEnvironment.getExecutionEnvironment(env, tableEnv);
+
+        // register resource to agents execution environment; the recording connection lets the
+        // test check what each request to Ollama carried.
+        agentsEnv
+                .addResource(
+                        "recording_ollama",
+                        ResourceType.CHAT_MODEL_CONNECTION,
+                        ResourceDescriptor.Builder.newBuilder(
+                                        RecordingOllamaChatModelConnection.class.getName())
+                                .addInitialArgument("endpoint", "http://localhost:11434")
+                                .addInitialArgument("requestTimeout", 240)
+                                .build())
+                .addResource(
+                        "add",
+                        ResourceType.TOOL,
+                        Tool.fromMethod(
+                                ReActAgentTest.class.getMethod("add", Double.class, Double.class)))
+                .addResource(
+                        "multiply",
+                        ResourceType.TOOL,
+                        Tool.fromMethod(
+                                ReActAgentTest.class.getMethod(
+                                        "multiply", Double.class, Double.class)));
+
+        agentsEnv.getConfig().set(MAX_RETRIES, 3);
+
+        // Unlike a RowTypeInfo, a POJO schema has a native translation on Ollama, so under the
+        // default AUTO strategy the final answer is converted with the schema applied.
+        Agent agent = getNativeStructuredOutputAgent();
+
+        // Create input table from sample data
+        Table inputTable =
+                tableEnv.fromValues(
+                        DataTypes.ROW(
+                                DataTypes.FIELD("a", DataTypes.DOUBLE()),
+                                DataTypes.FIELD("b", DataTypes.DOUBLE()),
+                                DataTypes.FIELD("c", DataTypes.DOUBLE())),
+                        Row.of(2131, 29847, 3));
+
+        DataStream<Object> out =
+                agentsEnv
+                        .fromTable(
+                                inputTable,
+                                (KeySelector<Object, Double>)
+                                        value -> (Double) ((Row) value).getField("a"))
+                        .apply(agent)
+                        .toDataStream();
+
+        CloseableIterator<Object> results = out.collectAsync();
+
+        env.execute();
+
+        Assertions.assertTrue(
+                results.hasNext(),
+                "This may be caused by the LLM response does not match the output schema, you can rerun this case.");
+        Object result = results.next();
+        Assertions.assertTrue(
+                result instanceof CalcResult,
+                "The result should be the parsed CalcResult, got: " + result);
+        Assertions.assertEquals(95934.0, ((CalcResult) result).result, 1e-6);
+
+        List<RecordedRequest> requests =
+                new ArrayList<>(RecordingOllamaChatModelConnection.REQUESTS);
+        List<RecordedRequest> conversions =
+                requests.stream()
+                        .filter(request -> request.outputSchema != null)
+                        .collect(Collectors.toList());
+        List<RecordedRequest> loopRequests =
+                requests.stream()
+                        .filter(request -> request.outputSchema == null)
+                        .collect(Collectors.toList());
+        Assertions.assertFalse(
+                conversions.isEmpty(),
+                "No request carried the native schema, so the run may have used the prompt"
+                        + " fallback. Requests: "
+                        + requests);
+        for (RecordedRequest conversion : conversions) {
+            Assertions.assertSame(
+                    CalcResult.class,
+                    conversion.outputSchema,
+                    "The conversion request should carry the CalcResult class as its schema.");
+            Assertions.assertTrue(
+                    conversion.toolNames.isEmpty(),
+                    "The conversion request should carry no tools, got: " + conversion);
+        }
+        for (RecordedRequest loopRequest : loopRequests) {
+            Assertions.assertEquals(
+                    List.of("add", "multiply"),
+                    loopRequest.toolNames,
+                    "Every tool-loop request should carry the bound tools.");
+        }
+        Assertions.assertTrue(
+                loopRequests.stream()
+                        .anyMatch(request -> request.responseToolCalls.contains("multiply")),
+                "The model should call the multiply tool in the loop; it may have computed"
+                        + " without tools, you can rerun this case. Requests: "
+                        + requests);
+        Assertions.assertNotNull(
+                requests.get(requests.size() - 1).outputSchema,
+                "The native conversion should be the last model call. Requests: " + requests);
+    }
+
     // create ReAct agent; pass false to skip the output schema.
     private static Agent getAgent(boolean withSchema) {
         ResourceDescriptor chatModelDescriptor =
@@ -245,11 +368,95 @@ public class ReActAgentTest {
         return new ReActAgent(chatModelDescriptor, Prompt.fromMessages(messages), outputTypeInfo);
     }
 
+    // create a ReAct agent on the recording connection, with the CalcResult POJO as output schema.
+    private static Agent getNativeStructuredOutputAgent() {
+        ResourceDescriptor chatModelDescriptor =
+                ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
+                        .addInitialArgument("connection", "recording_ollama")
+                        .addInitialArgument("model", OLLAMA_MODEL)
+                        .addInitialArgument("tools", List.of("add", "multiply"))
+                        .addInitialArgument("extract_reasoning", true)
+                        .build();
+
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(
+                new ChatMessage(
+                        MessageRole.SYSTEM, "Must call function tool to do the calculate."));
+        messages.add(new ChatMessage(MessageRole.USER, "What is ({a} + {b}) * {c}."));
+        return new ReActAgent(chatModelDescriptor, Prompt.fromMessages(messages), CalcResult.class);
+    }
+
     private void checkResult(CloseableIterator<?> results) {
         Assertions.assertTrue(
                 results.hasNext(),
                 "This may be caused by the LLM response does not match the output schema, you can rerun this case.");
         Row res = (Row) results.next();
         Assertions.assertEquals("+I[95934.0]", res.toString());
+    }
+
+    /** Native output schema: Ollama receives this POJO's JSON schema as its format. */
+    public static class CalcResult {
+        public double result;
+    }
+
+    /** The tools and output schema of one request, and the tool calls of its response. */
+    static final class RecordedRequest {
+        final List<String> toolNames;
+        // null on a tool-loop request
+        final Object outputSchema;
+        final List<String> responseToolCalls;
+
+        RecordedRequest(List<Tool> tools, Object outputSchema, ChatResult response) {
+            this.toolNames =
+                    tools.stream()
+                            .map(tool -> tool.getMetadata().getName())
+                            .sorted()
+                            .collect(Collectors.toList());
+            this.outputSchema = outputSchema;
+            this.responseToolCalls =
+                    response.getToolCalls().stream()
+                            .map(ToolCallBlock::getName)
+                            .collect(Collectors.toList());
+        }
+
+        @Override
+        public String toString() {
+            return String.format(
+                    "{tools=%s, outputSchema=%s, toolCalls=%s}",
+                    toolNames, outputSchema, responseToolCalls);
+        }
+    }
+
+    /**
+     * Records every request sent to Ollama, so the test can tell the native conversion request
+     * apart from a prompt fallback, which never passes a schema to the connection.
+     */
+    public static class RecordingOllamaChatModelConnection extends OllamaChatModelConnection {
+        static final List<RecordedRequest> REQUESTS =
+                Collections.synchronizedList(new ArrayList<>());
+
+        public RecordingOllamaChatModelConnection(
+                ResourceDescriptor descriptor, ResourceContext resourceContext) {
+            super(descriptor, resourceContext);
+        }
+
+        @Override
+        public ChatResult chat(
+                List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
+            ChatResult response = super.chat(messages, tools, modelParams);
+            REQUESTS.add(new RecordedRequest(tools, null, response));
+            return response;
+        }
+
+        @Override
+        public ChatResult chat(
+                List<ChatMessage> messages,
+                List<Tool> tools,
+                Map<String, Object> modelParams,
+                Object outputSchema) {
+            ChatResult response = super.chat(messages, tools, modelParams, outputSchema);
+            REQUESTS.add(new RecordedRequest(tools, outputSchema, response));
+            return response;
+        }
     }
 }

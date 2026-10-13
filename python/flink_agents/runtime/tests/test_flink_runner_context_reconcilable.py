@@ -18,14 +18,27 @@
 import asyncio
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Dict, List, Sequence
+from unittest.mock import MagicMock
 
 import cloudpickle
 import pytest
+from pydantic import BaseModel
 
+from flink_agents.api.agents.types import OutputSchema
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import (
+    BaseChatModelConnection,
+    BaseChatModelSetup,
+)
+from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.core_options import AgentExecutionOptions
 from flink_agents.api.runner_context import AsyncFuture, DurableFuture
+from flink_agents.api.tools.tool import Tool
+from flink_agents.api.trace import ExecutionReporter
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.durable_exception import deserialize_durable_exception
 from flink_agents.runtime.durable_execution import (
@@ -113,7 +126,6 @@ class _FakeJavaRunnerContext:
         self.call_results.append(
             _StoredCallResult(
                 function_id=function_id,
-
                 status=status,
                 result_payload=result_payload,
                 exception_payload=exception_payload,
@@ -126,7 +138,6 @@ class _FakeJavaRunnerContext:
         self.call_results.append(
             _StoredCallResult(
                 function_id=function_id,
-
                 status="PENDING",
             )
         )
@@ -143,7 +154,6 @@ class _FakeJavaRunnerContext:
         assert current.function_id == function_id
         self.call_results[self.current_call_index] = _StoredCallResult(
             function_id=function_id,
-
             status="FAILED" if exception_payload is not None else "SUCCEEDED",
             result_payload=result_payload,
             exception_payload=exception_payload,
@@ -154,15 +164,12 @@ class _FakeJavaRunnerContext:
         self.operations.append("clear")
         self.call_results = self.call_results[: self.current_call_index]
 
-    def reservePendingBatch(
-        self, function_ids: list[str]
-    ) -> None:
+    def reservePendingBatch(self, function_ids: list[str]) -> None:
         self.operations.append(f"reserve:{len(function_ids)}")
         for function_id in function_ids:
             self.call_results.append(
                 _StoredCallResult(
                     function_id=function_id,
-
                     status="PENDING",
                 )
             )
@@ -180,7 +187,6 @@ class _FakeJavaRunnerContext:
         assert current.function_id == function_id
         self.call_results[index] = _StoredCallResult(
             function_id=function_id,
-
             status="FAILED" if exception_payload is not None else "SUCCEEDED",
             result_payload=result_payload,
             exception_payload=exception_payload,
@@ -287,6 +293,119 @@ def _run_async_after_workers_started(
     return _drain(iterator)
 
 
+class _ReplayAnswer(BaseModel):
+    result: int
+
+
+class _CountingConnection(BaseChatModelConnection):
+    """Answers prose without a schema and JSON with one, counting each request.
+
+    The first ``failing_schema_calls`` schema-carrying requests raise.
+    """
+
+    unconstrained_calls: int = 0
+    schema_carrying_calls: int = 0
+    failing_schema_calls: int = 0
+
+    def chat(
+        self,
+        messages: Sequence[ChatMessage],
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        if output_schema is None:
+            self.unconstrained_calls += 1
+            return ChatResult(message=ChatMessage.assistant("the answer is 42"))
+        self.schema_carrying_calls += 1
+        if self.schema_carrying_calls <= self.failing_schema_calls:
+            msg = "conversion call failed"
+            raise RuntimeError(msg)
+        return ChatResult(message=ChatMessage.assistant('{"result": 42}'))
+
+
+class _NativeSetup(BaseChatModelSetup):
+    @property
+    def model_kwargs(self) -> Dict[str, Any]:
+        return {}
+
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        return output_schema is not None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize(
+    "finalization_failures", [0, 1], ids=["first-attempt", "after-retry"]
+)
+def test_native_finalization_replays_both_calls_without_provider_calls(
+    asynchronous: bool, finalization_failures: int
+) -> None:
+    from flink_agents.plan.actions.chat_model_action import chat
+
+    connection = _CountingConnection(failing_schema_calls=finalization_failures)
+    chat_model = _NativeSetup(connection="c", model="m")
+    chat_model._resolved_connection = connection
+    store = _FakeJavaRunnerContext()
+    sent_events: list = []
+
+    def run_once() -> None:
+        store.current_call_index = 0
+        runner = _create_runner_context(store)
+        ctx = MagicMock(spec=ExecutionReporter)
+        ctx.get_resource = MagicMock(return_value=chat_model)
+        ctx.action_metric_group = None
+        ctx.sensory_memory = MagicMock()
+        ctx.sensory_memory.get = MagicMock(return_value=None)
+        ctx.send_event = MagicMock(side_effect=sent_events.append)
+        ctx.config = MagicMock()
+        ctx.config.get = MagicMock(
+            side_effect=lambda option: {
+                id(AgentExecutionOptions.CHAT_ASYNC): asynchronous,
+                id(AgentExecutionOptions.MAX_RETRIES): finalization_failures,
+                id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): 0,
+            }.get(id(option), option.get_default_value())
+        )
+        ctx.durable_execute = runner.durable_execute
+        ctx.durable_execute_async = runner.durable_execute_async
+        try:
+            _run_async(
+                chat(
+                    uuid.uuid4(),
+                    "test-model",
+                    [ChatMessage.of(MessageRole.USER, "hi")],
+                    {},
+                    OutputSchema(output_schema=_ReplayAnswer),
+                    ctx,
+                )
+            )
+        finally:
+            _close_runner_context(runner)
+
+    attempts = finalization_failures + 1
+    run_once()
+    calls_made = (connection.unconstrained_calls, connection.schema_carrying_calls)
+    assert calls_made == (attempts, attempts)
+    journal = [r.function_id for r in store.call_results]
+    loop_id, finalize_id = journal[:2]
+    assert loop_id != finalize_id
+    assert journal == [loop_id, finalize_id] * attempts
+
+    run_once()
+
+    # A recovered run replays every answer, a failed finalization included, from
+    # its own record.
+    assert (connection.unconstrained_calls, connection.schema_carrying_calls) == (
+        calls_made
+    )
+    assert [r.function_id for r in store.call_results] == journal
+    assert store.current_call_index == len(journal)
+    assert len(sent_events) == 2
+    for event in sent_events:
+        assert event.structured_output == _ReplayAnswer(result=42)
+
+
 def _preload_pending(
     j_runner_context: _FakeJavaRunnerContext,
     func: Callable[..., Any],
@@ -296,7 +415,6 @@ def _preload_pending(
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=durable_identity_for_call(func, args, kwargs or None),
-
             status="PENDING",
         )
     )
@@ -400,7 +518,6 @@ def test_flink_runner_context_sync_reconciler_mismatch_clears_and_executes() -> 
         [
             _StoredCallResult(
                 function_id="wrong.expected.function_id",
-
                 status="PENDING",
             ),
             _StoredCallResult(
@@ -461,12 +578,10 @@ def test_flink_runner_context_durable_execute_reexecutes_pending_after_batch_res
     j_runner_context.call_results = [
         _StoredCallResult(
             function_id=first_id,
-
             status="PENDING",
         ),
         _StoredCallResult(
             function_id=second_id,
-
             status="PENDING",
         ),
     ]
@@ -504,7 +619,6 @@ def test_flink_runner_context_durable_execute_async_reexecutes_pending_after_bat
     j_runner_context.call_results = [
         _StoredCallResult(
             function_id=function_id,
-
             status="PENDING",
         ),
     ]
@@ -992,14 +1106,11 @@ def test_flink_runner_context_gather_recovers_partial_batch() -> None:
         call_count += 1
         return _call_value(value)
 
-    cached_function_id = durable_identity_for_call(
-        tracked_call, ("one",), None
-    )
+    cached_function_id = durable_identity_for_call(tracked_call, ("one",), None)
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
                 function_id=cached_function_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
             ),
@@ -1026,13 +1137,10 @@ def test_flink_runner_context_gather_recovers_partial_batch() -> None:
 
 def test_flink_runner_context_gather_returns_cached_failure() -> None:
     j_runner_context = _FakeJavaRunnerContext()
-    cached_function_id = durable_identity_for_call(
-        _call_value, ("one",), None
-    )
+    cached_function_id = durable_identity_for_call(_call_value, ("one",), None)
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=cached_function_id,
-
             status="FAILED",
             exception_payload=cloudpickle.dumps(ValueError("cached failure")),
         )
@@ -1040,9 +1148,7 @@ def test_flink_runner_context_gather_returns_cached_failure() -> None:
     ctx = _create_runner_context(j_runner_context)
 
     try:
-        outcomes = _run_async(
-            ctx.gather(ctx.durable_execute_async(_call_value, "one"))
-        )
+        outcomes = _run_async(ctx.gather(ctx.durable_execute_async(_call_value, "one")))
     finally:
         _close_runner_context(ctx)
 
@@ -1237,7 +1343,6 @@ def test_flink_runner_context_gather_returns_deserialize_failure_as_outcome() ->
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
-
             status="SUCCEEDED",
             result_payload=b"not-valid-pickle",
         )
@@ -1272,16 +1377,13 @@ def test_flink_runner_context_gather_reconciles_pending_slot() -> None:
     j_runner_context.call_results.append(
         _StoredCallResult(
             function_id=function_id,
-
             status="PENDING",
         )
     )
     ctx = _create_runner_context(j_runner_context)
     try:
         outcomes = _run_async(
-            ctx.gather(
-                ctx.durable_execute_async(tracked_call, reconciler=reconciler)
-            )
+            ctx.gather(ctx.durable_execute_async(tracked_call, reconciler=reconciler))
         )
     finally:
         _close_runner_context(ctx)
@@ -1304,26 +1406,21 @@ def test_flink_runner_context_gather_recovers_three_slot_partial_batch() -> None
 
     first_id = durable_identity_for_call(tracked_call, ("one",), None)
     second_id = durable_identity_for_call(tracked_call, ("two",), None)
-    third_id = durable_identity_for_call(
-        tracked_call, ("three",), None
-    )
+    third_id = durable_identity_for_call(tracked_call, ("three",), None)
     j_runner_context.call_results.extend(
         [
             _StoredCallResult(
                 function_id=first_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-one"),
             ),
             _StoredCallResult(
                 function_id=second_id,
-
                 status="SUCCEEDED",
                 result_payload=cloudpickle.dumps("cached-two"),
             ),
             _StoredCallResult(
                 function_id=third_id,
-
                 status="PENDING",
             ),
         ]
@@ -1468,7 +1565,8 @@ def test_mixed_async_recovery_reexecutes_ordinary_calls_and_preserves_slots() ->
             durable = ctx.durable_execute_async(query, "durable", durable_id="durable")
             outcomes = _run_async(ctx.gather(ordinary, durable))
             assert [outcome.value for outcome in outcomes] == [
-                f"ordinary-{attempt + 1}", "durable-1"
+                f"ordinary-{attempt + 1}",
+                "durable-1",
             ]
             assert ctx.durable_execute(query, "after", durable_id="after") == "after-1"
             assert len(j_ctx.call_results) == 3
@@ -1550,7 +1648,6 @@ def test_async_gather_rejects_invalid_handles_before_running_callbacks() -> None
         _close_runner_context(other)
 
 
-
 def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> None:
     j_ctx = _FakeJavaRunnerContext()
     ctx = _create_runner_context(
@@ -1592,7 +1689,8 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
         assert isinstance(outcomes[1].error, TimeoutError)
         assert isinstance(outcomes[2].error, TimeoutError)
         assert [result.status for result in j_ctx.call_results] == [
-            "SUCCEEDED", "PENDING"
+            "SUCCEEDED",
+            "PENDING",
         ]
         assert j_ctx.current_call_index == 2
         assert durable_calls == []
@@ -1603,16 +1701,21 @@ def test_mixed_batch_timeout_preserves_unstarted_durable_slot_for_recovery() -> 
     recovered = _create_runner_context(j_ctx)
     j_ctx.current_call_index = 0
     try:
-        outcomes = _run_async(recovered.gather(
-            recovered.durable_execute_async(lambda: "cached", durable_id="cached"),
-            recovered.execute_async(lambda: "ordinary-new"),
-            recovered.durable_execute_async(durable, durable_id="pending"),
-        ))
+        outcomes = _run_async(
+            recovered.gather(
+                recovered.durable_execute_async(lambda: "cached", durable_id="cached"),
+                recovered.execute_async(lambda: "ordinary-new"),
+                recovered.durable_execute_async(durable, durable_id="pending"),
+            )
+        )
         assert [outcome.value for outcome in outcomes] == [
-            "cached", "ordinary-new", "durable"
+            "cached",
+            "ordinary-new",
+            "durable",
         ]
         assert [result.status for result in j_ctx.call_results] == [
-            "SUCCEEDED", "SUCCEEDED"
+            "SUCCEEDED",
+            "SUCCEEDED",
         ]
         assert durable_calls == ["durable"]
         assert j_ctx.current_call_index == 2

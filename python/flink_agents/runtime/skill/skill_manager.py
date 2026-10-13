@@ -83,7 +83,8 @@ class SkillManager:
             ),
             "package": SkillSourceHandler(
                 lambda p: PackageSkillRepository(
-                    _require(p, "package", "package"), _require(p, "package", "resource")
+                    _require(p, "package", "package"),
+                    _require(p, "package", "resource"),
                 ),
                 lambda p: f"{p.get('package', '')}/{p.get('resource', '')}",
             ),
