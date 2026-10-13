@@ -25,12 +25,10 @@ import com.openai.azure.AzureUrlPathMode;
 import com.openai.azure.credential.AzureApiKeyCredential;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
-import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
@@ -420,7 +418,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         String nativeSchemaName = null;
         if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
             Class<?> schemaClass = (Class<?>) outputSchema;
-            builder.responseFormat(toNativeResponseFormat(schemaClass));
+            builder.responseFormat(OpenAIChatCompletionsUtils.toNativeResponseFormat(schemaClass));
             nativeSchemaName = schemaClass.getSimpleName();
         }
 
@@ -469,26 +467,6 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         }
 
         return builder.build();
-    }
-
-    // Derives the strict json_schema response format from a POJO class via the SDK's typed
-    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
-    // not callable from Java, so the response format is extracted through the typed builder, which
-    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
-    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
-        return ChatCompletionCreateParams.builder()
-                .model(ChatModel.of(""))
-                .addUserMessage("")
-                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
-                .build()
-                .rawParams()
-                .responseFormat()
-                .orElseThrow(
-                        () ->
-                                new IllegalStateException(
-                                        "OpenAI SDK did not produce a response_format for schema "
-                                                + schemaClass.getName()))
-                .asJsonSchema();
     }
 
     @Override

@@ -20,8 +20,10 @@ package org.apache.flink.agents.integrations.chatmodels.openai;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.victools.jsonschema.generator.Option;
 import com.openai.core.JsonValue;
 import com.openai.core.Timeout;
+import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionAssistantMessageParam;
 import com.openai.models.chat.completions.ChatCompletionContentPart;
 import com.openai.models.chat.completions.ChatCompletionContentPartImage;
@@ -48,6 +50,7 @@ import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -64,8 +67,8 @@ import java.util.stream.Collectors;
 /**
  * Static helpers for converting between Flink Agents {@link ChatMessage} and OpenAI Chat
  * Completions API message types, plus shared parsing/validation of common connection arguments
- * ({@code timeout}, {@code max_retries}). No tool-definition conversion — that stays
- * per-connection.
+ * ({@code timeout}, {@code max_retries}) and the native response format for an output schema. No
+ * tool-definition conversion — that stays per-connection.
  *
  * <p>Used by both {@code OpenAICompletionsConnection} (OpenAI / OpenAI-compatible providers) and
  * {@code AzureOpenAIChatModelConnection} (Azure OpenAI). Both rely on the same openai-java SDK
@@ -173,6 +176,37 @@ final class OpenAIChatCompletionsUtils {
             throw new IllegalArgumentException(
                     argumentName + " must be a finite number, got: " + raw, e);
         }
+    }
+
+    /**
+     * Derives the strict {@code json_schema} response format for a POJO output schema class.
+     *
+     * <p>The schema comes from the shared generator rather than the SDK's typed {@code
+     * responseFormat(Class)} builder, whose schema lists an annotated enum constant by its Java
+     * name, a value the response then fails to deserialize from. Strict mode expects every property
+     * in the required set and no additional properties, so the schema states both.
+     */
+    static ResponseFormatJsonSchema toNativeResponseFormat(Class<?> schemaClass) {
+        Map<String, JsonValue> schema = new LinkedHashMap<>();
+        PojoJsonSchemaGenerator.generateAllRequired(
+                        schemaClass, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
+                .fields()
+                .forEachRemaining(
+                        member ->
+                                schema.put(
+                                        member.getKey(),
+                                        JsonValue.fromJsonNode(member.getValue())));
+        return ResponseFormatJsonSchema.builder()
+                .jsonSchema(
+                        ResponseFormatJsonSchema.JsonSchema.builder()
+                                .name("json-schema-from-" + schemaClass.getSimpleName())
+                                .schema(
+                                        ResponseFormatJsonSchema.JsonSchema.Schema.builder()
+                                                .additionalProperties(schema)
+                                                .build())
+                                .strict(true)
+                                .build())
+                .build();
     }
 
     /** Convert a list of Flink Agents ChatMessages to OpenAI ChatCompletionMessageParams. */

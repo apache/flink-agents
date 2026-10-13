@@ -22,13 +22,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
 import com.openai.models.ReasoningEffort;
-import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
@@ -307,7 +305,8 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         // the branch applies whenever the query answers other than INFEASIBLE. Model capability is
         // not asked: a caller that hands this connection a schema has already chosen to send it.
         if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
-            builder.responseFormat(toNativeResponseFormat((Class<?>) outputSchema));
+            builder.responseFormat(
+                    OpenAIChatCompletionsUtils.toNativeResponseFormat((Class<?>) outputSchema));
         }
 
         Object temperature = modelParams.remove("temperature");
@@ -346,26 +345,6 @@ public class OpenAICompletionsConnection extends BaseChatModelConnection {
         }
 
         return builder.build();
-    }
-
-    // Derives the strict json_schema response format from a POJO class via the SDK's typed
-    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
-    // not callable from Java, so the response format is extracted through the typed builder, which
-    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
-    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
-        return ChatCompletionCreateParams.builder()
-                .model(ChatModel.of(""))
-                .addUserMessage("")
-                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
-                .build()
-                .rawParams()
-                .responseFormat()
-                .orElseThrow(
-                        () ->
-                                new IllegalStateException(
-                                        "OpenAI SDK did not produce a response_format for schema "
-                                                + schemaClass.getName()))
-                .asJsonSchema();
     }
 
     private List<ChatCompletionTool> convertTools(List<Tool> tools, boolean strictMode) {

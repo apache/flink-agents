@@ -18,8 +18,13 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonValue;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openai.core.ObjectMappers;
 import com.openai.errors.BadRequestException;
 import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
@@ -41,10 +46,12 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -60,13 +67,15 @@ class OpenAICompletionsConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /** A representative POJO output schema. */
     public static class Person {
         public String name;
         public int age;
     }
 
-    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    /** A polymorphic member, which the derived schema states as a discriminated union. */
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
     @JsonSubTypes({
         @JsonSubTypes.Type(value = Dog.class, name = "dog"),
@@ -88,6 +97,65 @@ class OpenAICompletionsConnectionTest {
     public static class Owner {
         public String name;
         public Pet pet;
+    }
+
+    /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+        public Phase phase;
+    }
+
+    /** Enum constants deserialized from their {@code @JsonProperty} values. */
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    /** Enum constants deserialized from their {@code @JsonValue} method. */
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
+    }
+
+    /** Output schema fixture with an {@code Optional} field and a nested object. */
+    public static class Draft {
+        public String title;
+        public Optional<String> note;
+        public Person author;
+    }
+
+    /** The JSON Schema the request carries, as a JSON tree. */
+    private static JsonNode nativeSchema(ChatCompletionCreateParams params) {
+        return ObjectMappers.jsonMapper()
+                .valueToTree(
+                        params.responseFormat()
+                                .orElseThrow()
+                                .asJsonSchema()
+                                .jsonSchema()
+                                ._schema());
+    }
+
+    private static List<String> textValues(JsonNode array) {
+        List<String> values = new ArrayList<>();
+        array.forEach(value -> values.add(value.asText()));
+        return values;
     }
 
     /** The JSON Schema the request carries, as the SDK holds it on the response format. */
@@ -302,10 +370,11 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    @DisplayName("A polymorphic member is sent as a discriminated union")
     void testPolymorphicMemberSchemaIsSent() {
-        // Jackson renders this member as an object declaring no properties, while the SDK derives
-        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // Jackson renders this member as an object declaring no properties, while the schema
+        // generator derives the full union the provider accepts. Reading a Jackson-rendered schema
+        // here would refuse
         // a request that works.
         ChatCompletionCreateParams request =
                 connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Owner.class);
@@ -314,6 +383,56 @@ class OpenAICompletionsConnectionTest {
                 .contains("bark={type=string}")
                 .contains("meow={type=string}")
                 .contains("kind={const=dog}");
+    }
+
+    @Test
+    @DisplayName("The derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode properties =
+                nativeSchema(
+                                connection()
+                                        .buildRequest(
+                                                userMessage(),
+                                                List.of(),
+                                                params("gpt-4o"),
+                                                Ticket.class))
+                        .path("properties");
+
+        // Strict mode confines the model to the listed values, so each has to deserialize into
+        // the enum. Listed by constant name instead, a plain mapper refuses every value the schema
+        // allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
+    }
+
+    @Test
+    @DisplayName("The derived schema requires every field and forbids extras at every level")
+    void derivedSchemaRequiresEveryFieldAndForbidsExtras() {
+        JsonNode schema =
+                nativeSchema(
+                        connection()
+                                .buildRequest(
+                                        userMessage(), List.of(), params("gpt-4o"), Draft.class));
+
+        // Strict mode rejects a schema that leaves a property out of the required set or admits
+        // additional properties, so the Optional field is required too and admits null instead.
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("title", "note", "author");
+        assertThat(textValues(schema.path("properties").path("note").path("type")))
+                .contains("null");
+        assertThat(schema.path("additionalProperties").asBoolean(true)).isFalse();
+        JsonNode author = schema.path("properties").path("author");
+        assertThat(textValues(author.path("required"))).containsExactlyInAnyOrder("name", "age");
+        assertThat(author.path("additionalProperties").asBoolean(true)).isFalse();
     }
 
     @Test

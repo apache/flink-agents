@@ -18,6 +18,7 @@
 
 package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
+import com.anthropic.core.ObjectMappers;
 import com.anthropic.models.messages.ContentBlockParam;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
@@ -27,9 +28,12 @@ import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.StopReason;
 import com.anthropic.models.messages.TextBlock;
 import com.anthropic.models.messages.Usage;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
@@ -52,6 +56,7 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -310,12 +315,12 @@ class AnthropicChatModelConnectionTest {
                 "");
     }
 
-    /** A POJO the SDK can derive a JSON schema from. */
+    /** A representative POJO output schema. */
     public static class Answer {
         public String verdict;
     }
 
-    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    /** A polymorphic member, which the derived schema states as a discriminated union. */
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
     @JsonSubTypes({
         @JsonSubTypes.Type(value = Dog.class, name = "dog"),
@@ -337,6 +342,48 @@ class AnthropicChatModelConnectionTest {
     public static class Owner {
         public String verdict;
         public Pet pet;
+    }
+
+    /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+        public Phase phase;
+    }
+
+    /** Enum constants deserialized from their {@code @JsonProperty} values. */
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    /** Enum constants deserialized from their {@code @JsonValue} method. */
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
+    }
+
+    /** Output schema fixture with an {@code Optional} field and a nested object. */
+    public static class Draft {
+        public String title;
+        public Optional<String> note;
+        public Answer answer;
     }
 
     private static Map<String, Object> paramsWithModel(String model, Object jsonPrefill) {
@@ -365,6 +412,23 @@ class AnthropicChatModelConnectionTest {
                 .map(schema -> schema.get("properties"))
                 .map(properties -> MAPPER.convertValue(properties, MAP_TYPE).keySet())
                 .orElse(Set.of());
+    }
+
+    /** The JSON Schema the request carries, as a JSON tree. */
+    private static JsonNode nativeSchema(AnthropicChatModelConnection.BuiltRequest built) {
+        return ObjectMappers.jsonMapper()
+                .valueToTree(
+                        built.params
+                                .outputConfig()
+                                .flatMap(OutputConfig::format)
+                                .orElseThrow()
+                                .schema());
+    }
+
+    private static List<String> textValues(JsonNode array) {
+        List<String> values = new ArrayList<>();
+        array.forEach(value -> values.add(value.asText()));
+        return values;
     }
 
     /** The JSON Schema the request carries, as the SDK holds it on the output config. */
@@ -495,15 +559,55 @@ class AnthropicChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("a polymorphic member is sent as the discriminated union the SDK derives")
+    @DisplayName("a polymorphic member is sent as a discriminated union")
     void testPolymorphicMemberSchemaIsSent() {
-        // Jackson renders this member as an object declaring no properties, while the SDK derives
-        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // Jackson renders this member as an object declaring no properties, while the schema
+        // generator derives the full union the provider accepts. Reading a Jackson-rendered schema
+        // here would refuse
         // a request that works.
         assertThat(nativeSchemaPayload(build(CAPABLE_MODEL, Owner.class, null)))
                 .contains("bark={type=string}")
                 .contains("meow={type=string}")
                 .contains("kind={const=dog}");
+    }
+
+    @Test
+    @DisplayName("the derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode properties =
+                nativeSchema(build(CAPABLE_MODEL, Ticket.class, null)).path("properties");
+
+        // Structured outputs confine the model to the listed values, so each has to deserialize
+        // into the enum. Listed by constant name instead, a plain mapper refuses every value the
+        // schema allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
+    }
+
+    @Test
+    @DisplayName("the derived schema requires every field and forbids extras at every level")
+    void derivedSchemaRequiresEveryFieldAndForbidsExtras() {
+        JsonNode schema = nativeSchema(build(CAPABLE_MODEL, Draft.class, null));
+
+        // A response can neither drop a declared field nor add an undeclared one; the Optional
+        // field is required too and admits null instead.
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("title", "note", "answer");
+        assertThat(textValues(schema.path("properties").path("note").path("type")))
+                .contains("null");
+        assertThat(schema.path("additionalProperties").asBoolean(true)).isFalse();
+        JsonNode answer = schema.path("properties").path("answer");
+        assertThat(textValues(answer.path("required"))).containsExactly("verdict");
+        assertThat(answer.path("additionalProperties").asBoolean(true)).isFalse();
     }
 
     @Test

@@ -19,7 +19,8 @@ package org.apache.flink.agents.integrations.chatmodels.anthropic;
 
 import com.anthropic.client.AnthropicClient;
 import com.anthropic.client.okhttp.AnthropicOkHttpClient;
-import com.anthropic.core.JsonSchemaLocalValidation;
+import com.anthropic.core.JsonValue;
+import com.anthropic.models.messages.JsonOutputFormat;
 import com.anthropic.models.messages.Message;
 import com.anthropic.models.messages.MessageCreateParams;
 import com.anthropic.models.messages.MessageParam;
@@ -27,6 +28,7 @@ import com.anthropic.models.messages.Model;
 import com.anthropic.models.messages.OutputConfig;
 import com.anthropic.models.messages.TextBlockParam;
 import com.anthropic.models.messages.Tool;
+import com.github.victools.jsonschema.generator.Option;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -35,11 +37,13 @@ import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.integrations.chatmodels.common.PojoJsonSchemaGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -402,34 +406,32 @@ public class AnthropicChatModelConnection extends BaseChatModelConnection {
     }
 
     /**
-     * Derives the native {@code output_config} for a POJO class through the SDK's typed
-     * structured-output builder.
+     * Derives the native {@code output_config} for a POJO output schema class.
      *
-     * <p>The Kotlin facade {@code StructuredOutputsKt.outputFormatFromClass} would produce this
-     * directly, but it is compiled {@code ACC_SYNTHETIC} and so cannot be named from Java. The
-     * typed builder generates the same schema; the config is extracted from the throwaway request
-     * it produces and reattached to the real one, which also avoids that overload's side effect of
-     * retyping the request and the response as {@code StructuredMessageCreateParams} and {@code
-     * StructuredMessage}. The throwaway request is never sent, so its placeholder model, message
-     * and token limit only have to satisfy the builder's required-field check.
-     *
-     * <p>Local schema validation is off so that the provider, not the client, is the authority on
-     * which schemas it accepts.
+     * <p>The schema comes from the shared generator rather than the SDK's typed {@code
+     * outputConfig(Class)} builder, whose schema lists an annotated enum constant by its Java name,
+     * a value the response then fails to deserialize from. It lists every property as required and
+     * forbids additional properties, as the schema that builder derives does.
      */
-    private static <T> OutputConfig toNativeOutputConfig(Class<T> schemaClass) {
-        return MessageCreateParams.builder()
-                .model(Model.of(""))
-                .addUserMessage("")
-                .maxTokens(1)
-                .outputConfig(schemaClass, JsonSchemaLocalValidation.NO)
-                .build()
-                .rawParams()
-                .outputConfig()
-                .orElseThrow(
-                        () ->
-                                new IllegalStateException(
-                                        "Anthropic SDK did not produce an output_config for schema "
-                                                + schemaClass.getName()));
+    private static OutputConfig toNativeOutputConfig(Class<?> schemaClass) {
+        Map<String, JsonValue> schema = new LinkedHashMap<>();
+        PojoJsonSchemaGenerator.generateAllRequired(
+                        schemaClass, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
+                .fields()
+                .forEachRemaining(
+                        member ->
+                                schema.put(
+                                        member.getKey(),
+                                        JsonValue.fromJsonNode(member.getValue())));
+        return OutputConfig.builder()
+                .format(
+                        JsonOutputFormat.builder()
+                                .schema(
+                                        JsonOutputFormat.Schema.builder()
+                                                .additionalProperties(schema)
+                                                .build())
+                                .build())
+                .build();
     }
 
     @Override
