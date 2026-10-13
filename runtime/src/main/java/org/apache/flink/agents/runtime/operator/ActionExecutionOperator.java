@@ -1745,6 +1745,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 setCurrentKey(key);
                 ActionTask task = pollNextActionTask();
                 checkState(task != null, "Action task queue was empty.");
+                this.actionTask = task;
 
                 contextManager.createAndSetRunnerContext(
                         task,
@@ -1796,7 +1797,6 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 context.setActionTask(task);
                 context.setPriority(recordIndex, taskIndex);
 
-                this.actionTask = task;
                 this.sequenceNumber = seq;
                 this.replayCompletedAction = replay;
 
@@ -1873,7 +1873,11 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 // This engine propagates an action failure through commit() rather than through
                 // processActionTaskForKey(), so the input run is closed here: the failure counter,
                 // the active-run gauge and the terminal latency samples all depend on it.
-                builtInMetrics.markInputRunFailed(actionTask.getTraceContext().getInputRunId());
+                // actionTask is bound right after the poll, so it is non-null on a preparation
+                // failure too; guard anyway and always rethrow the original failure.
+                if (actionTask != null) {
+                    builtInMetrics.markInputRunFailed(actionTask.getTraceContext().getInputRunId());
+                }
                 throw new ActionTaskExecutionException("Failed to execute action task", failure);
             }
             checkState(result != null, "Action task completion result must not be null.");

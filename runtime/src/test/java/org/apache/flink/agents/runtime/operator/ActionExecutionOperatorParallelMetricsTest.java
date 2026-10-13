@@ -45,6 +45,9 @@ import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
+import org.apache.flink.agents.runtime.operator.ActionTask;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
@@ -266,5 +269,45 @@ class ActionExecutionOperatorParallelMetricsTest {
         public static void handleInput(Event event, RunnerContext context) {
             throw new IllegalStateException("parallel action boom");
         }
+    }
+
+    @Test
+    @Timeout(20)
+    void preparationFailureDoesNotHideOriginalException() throws Exception {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                newHarness(new AgentPlan(new PlainAgent(), parallelConfig()))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator = operator(testHarness);
+
+            // A preparation-time listener failure must surface as the original exception,
+            // not as a NullPointerException from commit() dereferencing a null actionTask.
+            operator.addTaskLifecycleListener(
+                    new TaskLifecycleListener() {
+                        @Override
+                        public void onActionPrepared(ActionTask task) {
+                            throw new IllegalStateException("listener boom");
+                        }
+                    });
+
+            assertThatThrownBy(
+                            () -> {
+                                testHarness.processElement(new StreamRecord<>(0L));
+                                operator.waitInFlightEventsFinished();
+                            })
+                    .as(
+                            "a preparation failure must surface as the original listener exception, "
+                                    + "not an NPE masking it")
+                    .isNotInstanceOf(NullPointerException.class)
+                    .hasStackTraceContaining("listener boom");
+        }
+    }
+
+    /** Agent whose action does nothing, so the only failure comes from the listener. */
+    public static class PlainAgent extends Agent {
+
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handleInput(Event event, RunnerContext context) {}
     }
 }
