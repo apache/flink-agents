@@ -81,6 +81,15 @@ public class ReActAgent extends Agent {
     private static final String SKILLS_SOURCES_ARGUMENT = "skills_sources";
     private static final String SKILLS_RESOURCE_NAME = "_react_agent_skills";
 
+    /**
+     * Action config flag recording that this agent registered {@link #DEFAULT_USER_PROMPT}, as
+     * {@code output_schema} does for {@link #DEFAULT_SCHEMA_PROMPT}. A sub-agent's resource lookup
+     * falls back to the root agent's resources, so {@link #startAction} looks up a built-in prompt
+     * only when the running scope's own action config declares it; otherwise an unconfigured child
+     * would pick up a parent ReActAgent's prompt under the same name.
+     */
+    private static final String HAS_USER_PROMPT = "has_user_prompt";
+
     private static final ObjectMapper mapper = new ObjectMapper();
 
     public ReActAgent(
@@ -171,6 +180,7 @@ public class ReActAgent extends Agent {
 
         if (prompt != null) {
             this.addResource(DEFAULT_USER_PROMPT, ResourceType.PROMPT, prompt);
+            actionConfig.put(HAS_USER_PROMPT, true);
         }
 
         try {
@@ -260,18 +270,27 @@ public class ReActAgent extends Agent {
                 descriptor.getLanguage(), descriptor.getModule(), descriptor.getClazz(), arguments);
     }
 
+    /**
+     * Whether {@code input} is a map holding a single "input" entry - the one structured shape
+     * {@link #startAction} converts without a user-supplied prompt, so a sub-agent declared with a
+     * single "input" field needs no prompt. Keyed by equals, so a non-String key never matches.
+     */
+    private static boolean isSingleInputMap(Object input) {
+        return input instanceof Map
+                && ((Map<?, ?>) input).size() == 1
+                && ((Map<?, ?>) input).containsKey("input");
+    }
+
     public static void startAction(Event event, RunnerContext ctx) {
         // Built-in events reach an action as their concrete subclass (restored at the JSON
         // boundary), so the dispatched InputEvent is cast directly.
         InputEvent inputEvent = (InputEvent) event;
         Object input = inputEvent.getInput();
 
-        Prompt userPrompt;
-        try {
-            userPrompt = (Prompt) ctx.getResource(DEFAULT_USER_PROMPT, ResourceType.PROMPT);
-        } catch (Exception e) {
-            userPrompt = null;
-        }
+        Prompt userPrompt =
+                Boolean.TRUE.equals(ctx.getActionConfigValue(HAS_USER_PROMPT))
+                        ? declaredPrompt(ctx, DEFAULT_USER_PROMPT)
+                        : null;
 
         List<ChatMessage> inputMessages = new ArrayList<>();
         // A String is not a primitive wrapper, but the documented input contract covers it like
@@ -287,51 +306,65 @@ public class ReActAgent extends Agent {
             }
         } else {
             if (userPrompt == null) {
-                throw new RuntimeException(
-                        String.format(
-                                "The input type is %s, which is not primitive types,"
-                                        + " user should provide prompt to help convert it to ChatMessage",
-                                input.getClass()));
-            }
-
-            Map<String, String> fields = new HashMap<>();
-            if (input instanceof Row) {
-                Row userInput = (Row) input;
-                for (String name : Objects.requireNonNull(userInput.getFieldNames(true))) {
-                    fields.put(name, String.valueOf(userInput.getField(name)));
+                if (isSingleInputMap(input)) {
+                    // The one structured shape that works without a user-supplied prompt: a
+                    // single "input" entry, the arguments of a model-driven call against an
+                    // input schema declaring only that field. The value becomes the user message
+                    // directly, mirroring the prompt-less primitive branch.
+                    inputMessages.add(
+                            new ChatMessage(
+                                    MessageRole.USER,
+                                    String.valueOf(((Map<?, ?>) input).get("input"))));
+                } else {
+                    throw new RuntimeException(
+                            String.format(
+                                    "The input type is %s, which is not primitive types,"
+                                            + " user should provide prompt to help convert it to"
+                                            + " ChatMessage",
+                                    input.getClass()));
                 }
-            } else if (input instanceof Map) {
-                for (Map.Entry<?, ?> entry : ((Map<?, ?>) input).entrySet()) {
-                    fields.put(String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
-                }
-            } else { // regard as pojo
-                ObjectMapper objectMapper = new ObjectMapper();
-                try {
-                    // A read into the raw Map.class ignores the declared String values, so JSON
-                    // numbers and booleans come back as Integer/Boolean. Stringify every value
-                    // like the Map branch above, otherwise Prompt#format fails with a bare
-                    // ClassCastException when it casts a placeholder value to String.
-                    Map<?, ?> pojoFields =
-                            mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
-                    for (Map.Entry<?, ?> entry : pojoFields.entrySet()) {
+            } else {
+                Map<String, String> fields = new HashMap<>();
+                if (input instanceof Row) {
+                    Row userInput = (Row) input;
+                    for (String name : Objects.requireNonNull(userInput.getFieldNames(true))) {
+                        fields.put(name, String.valueOf(userInput.getField(name)));
+                    }
+                } else if (input instanceof Map) {
+                    for (Map.Entry<?, ?> entry : ((Map<?, ?>) input).entrySet()) {
                         fields.put(
                                 String.valueOf(entry.getKey()), String.valueOf(entry.getValue()));
                     }
-                } catch (JsonProcessingException e) {
-                    throw new RuntimeException(
-                            String.format(
-                                    "Input must be primitive type, Row, Map or Pojo, but is %s",
-                                    input.getClass()));
+                } else { // regard as pojo
+                    ObjectMapper objectMapper = new ObjectMapper();
+                    try {
+                        // A read into the raw Map.class ignores the declared String values, so JSON
+                        // numbers and booleans come back as Integer/Boolean. Stringify every value
+                        // like the Map branch above, otherwise Prompt#format fails with a bare
+                        // ClassCastException when it casts a placeholder value to String.
+                        Map<?, ?> pojoFields =
+                                mapper.readValue(objectMapper.writeValueAsString(input), Map.class);
+                        for (Map.Entry<?, ?> entry : pojoFields.entrySet()) {
+                            fields.put(
+                                    String.valueOf(entry.getKey()),
+                                    String.valueOf(entry.getValue()));
+                        }
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(
+                                String.format(
+                                        "Input must be primitive type, Row, Map or Pojo, but is %s",
+                                        input.getClass()));
+                    }
                 }
-            }
 
-            inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
+                inputMessages = userPrompt.formatMessages(MessageRole.USER, fields);
+            }
         }
 
         Object outputSchema = ctx.getActionConfigValue("output_schema");
 
-        Prompt schemaPrompt = promptOrNull(ctx, DEFAULT_SCHEMA_PROMPT);
-        if (schemaPrompt != null) {
+        if (outputSchema != null) {
+            Prompt schemaPrompt = declaredPrompt(ctx, DEFAULT_SCHEMA_PROMPT);
             // A plan built before the native prompt existed has none, and then adds no
             // instruction on the native path.
             Prompt instruction =
@@ -380,6 +413,24 @@ public class ReActAgent extends Agent {
                     "Keeping the JSON schema instruction: native structured output is unresolved.",
                     e);
             return false;
+        }
+    }
+
+    /**
+     * Resolves a built-in prompt the running scope's action config declares. The constructor
+     * registers the prompt together with its declaration, so a failed lookup is a broken plan and
+     * is reported rather than silently dropping the prompt.
+     */
+    private static Prompt declaredPrompt(RunnerContext ctx, String name) {
+        try {
+            return (Prompt) ctx.getResource(name, ResourceType.PROMPT);
+        } catch (Exception e) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Prompt %s is declared by this agent's action config but cannot be"
+                                    + " resolved.",
+                            name),
+                    e);
         }
     }
 

@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 from typing import Any, Callable
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import BaseModel, Field
@@ -27,6 +28,9 @@ from flink_agents.api.agents.react_agent import (
     _DEFAULT_SCHEMA_PROMPT,
     ReActAgent,
 )
+from flink_agents.api.chat_message import MessageRole
+from flink_agents.api.events.event import InputEvent
+from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import (
     JavaResourceDescriptor,
     ResourceDescriptor,
@@ -92,6 +96,122 @@ def _native_schema_prompt(agent: ReActAgent) -> str:
 
 def _expected_prompt(rendered: Any) -> str:
     return f"The final response should be json format, and match the schema {rendered}."
+
+
+def _bare_agent() -> ReActAgent:
+    """A ReActAgent with neither a prompt nor an output schema."""
+    return ReActAgent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS, model="qwen3:8b")
+    )
+
+
+def _context_without_prompt() -> tuple[MagicMock, list]:
+    """A mock context owning no prompt resource, collecting sent events."""
+    ctx = MagicMock()
+    ctx.get_resource = MagicMock(side_effect=KeyError("no such resource"))
+    ctx.get_action_config_value = MagicMock(return_value=None)
+    sent_events: list = []
+    ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
+    return ctx, sent_events
+
+
+def _sole_user_text(sent_events: list) -> str:
+    """The text of the single user message of the emitted chat request."""
+    assert len(sent_events) == 1
+    messages = sent_events[0].messages
+    assert len(messages) == 1
+    assert messages[0].role == MessageRole.USER
+    return messages[0].text
+
+
+def _start_action_config(agent: ReActAgent) -> dict:
+    """The action config the agent registered for its start action."""
+    return agent._actions["start_action"][2]
+
+
+# --- built-in prompt scoping ---
+
+
+def test_configured_agent_declares_built_in_prompts_in_action_config() -> None:
+    """A configured agent declares its built-in prompts in the start action config."""
+    agent = ReActAgent(
+        chat_model=ResourceDescriptor(clazz=_CHAT_MODEL_CLASS, model="qwen3:8b"),
+        prompt=Prompt.from_text("Task: {input}"),
+        output_schema=Person,
+    )
+
+    config = _start_action_config(agent)
+    assert config["has_user_prompt"] is True
+    assert config["output_schema"] is not None
+
+
+def test_bare_agent_declares_no_built_in_prompt() -> None:
+    """A bare agent declares no built-in prompt in the start action config."""
+    config = _start_action_config(_bare_agent())
+
+    assert config["has_user_prompt"] is False
+    assert config["output_schema"] is None
+
+
+def test_undeclared_prompts_are_not_looked_up() -> None:
+    """A prompt reachable but not declared by this agent is not looked up."""
+    ctx, sent_events = _context_without_prompt()
+    # A runtime whose child scope falls back to the root agent's resources makes a
+    # parent ReActAgent's prompts reachable under the same names.
+    ctx.get_resource = MagicMock(return_value=Prompt.from_text("PARENT ONLY: {input}"))
+
+    ReActAgent.start_action(InputEvent(input="review the diff"), ctx)
+
+    assert _sole_user_text(sent_events) == "review the diff"
+    ctx.get_resource.assert_not_called()
+
+
+def test_declared_output_schema_inserts_schema_instruction() -> None:
+    """A declared output schema inserts the schema instruction before the user message."""
+    ctx, sent_events = _context_without_prompt()
+    output_schema = _start_action_config(_agent(Person))["output_schema"]
+    ctx.get_action_config_value = MagicMock(
+        side_effect=lambda key: output_schema if key == "output_schema" else None
+    )
+    ctx.get_resource = MagicMock(return_value=Prompt.from_text("match the schema"))
+
+    ReActAgent.start_action(InputEvent(input="review the diff"), ctx)
+
+    messages = sent_events[0].messages
+    assert [m.text for m in messages] == ["match the schema", "review the diff"]
+    assert messages[1].role == MessageRole.USER
+    ctx.get_resource.assert_any_call(_DEFAULT_SCHEMA_PROMPT, ResourceType.PROMPT)
+
+
+def test_declared_prompt_that_cannot_be_resolved_is_reported() -> None:
+    """A declared prompt that cannot be resolved is reported, not dropped."""
+    ctx, _ = _context_without_prompt()
+    ctx.get_action_config_value = MagicMock(
+        side_effect=lambda key: key == "has_user_prompt" or None
+    )
+
+    with pytest.raises(RuntimeError, match="_default_user_prompt"):
+        ReActAgent.start_action(InputEvent(input="review the diff"), ctx)
+
+
+# --- start_action input dispatch ---
+
+
+def test_single_input_map_without_prompt_becomes_user_message() -> None:
+    """A single-input map without a prompt passes the value through."""
+    ctx, sent_events = _context_without_prompt()
+
+    ReActAgent.start_action(InputEvent(input={"input": "analyze this review"}), ctx)
+
+    assert _sole_user_text(sent_events) == "analyze this review"
+
+
+def test_multi_key_map_without_prompt_still_reports_prompt_requirement() -> None:
+    """A multi-key map without a prompt still reports that a prompt is required."""
+    ctx, _ = _context_without_prompt()
+
+    with pytest.raises(RuntimeError, match="not primitive types"):
+        ReActAgent.start_action(InputEvent(input={"input": "x", "other": "y"}), ctx)
 
 
 def test_unrenderable_output_schema_raises_naming_the_model() -> None:

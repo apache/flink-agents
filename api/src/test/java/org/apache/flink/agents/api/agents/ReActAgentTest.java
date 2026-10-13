@@ -63,6 +63,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -313,6 +314,7 @@ public class ReActAgentTest {
         when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT))
                 .thenReturn((Resource) prompts.get("_default_user_prompt"));
         when(ctx.getActionConfigValue("output_schema")).thenReturn(config.get("output_schema"));
+        when(ctx.getActionConfigValue("has_user_prompt")).thenReturn(config.get("has_user_prompt"));
         return ctx;
     }
 
@@ -565,16 +567,125 @@ public class ReActAgentTest {
                 .hasMessageContaining("FieldLess");
     }
 
+    // --- built-in prompt scoping ---
+
+    @Test
+    @DisplayName("A configured agent declares its built-in prompts in the start action config")
+    public void testConfiguredAgentDeclaresBuiltInPromptsInActionConfig() {
+        ReActAgent agent =
+                new ReActAgent(
+                        chatModelDescriptor(), Prompt.fromText("Task: {input}"), WithCount.class);
+
+        Map<String, Object> config = agent.getActions().get("startAction").f2;
+        assertThat(config).containsEntry("has_user_prompt", true);
+        assertThat(config).containsEntry("output_schema", WithCount.class);
+    }
+
+    @Test
+    @DisplayName("A bare agent declares no built-in prompt in the start action config")
+    public void testBareAgentDeclaresNoBuiltInPrompt() {
+        Map<String, Object> config = bareAgent().getActions().get("startAction").f2;
+
+        assertThat(config).doesNotContainKeys("has_user_prompt", "output_schema");
+    }
+
+    @Test
+    @DisplayName("A prompt reachable but not declared by this agent is not looked up")
+    public void testUndeclaredPromptsAreNotLookedUp() throws Exception {
+        // As a sub-agent, a lookup missing locally falls back to the root agent's resources, so
+        // a parent ReActAgent's prompts are reachable under the same names.
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT))
+                .thenReturn(Prompt.fromText("PARENT ONLY: {input}"));
+        when(ctx.getResource("_default_schema_prompt", ResourceType.PROMPT))
+                .thenReturn(Prompt.fromText("PARENT SCHEMA"));
+
+        ReActAgent.startAction(new InputEvent("review the diff"), ctx);
+
+        assertThat(soleUserMessage(ctx).getText()).isEqualTo("review the diff");
+        verify(ctx, never()).getResource(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("A declared output schema inserts the schema instruction before the user message")
+    public void testDeclaredOutputSchemaInsertsSchemaInstruction() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getActionConfigValue("output_schema")).thenReturn(WithCount.class);
+        when(ctx.getResource("_default_schema_prompt", ResourceType.PROMPT))
+                .thenReturn(Prompt.fromText("match the schema"));
+
+        ReActAgent.startAction(new InputEvent("review the diff"), ctx);
+
+        ChatRequestEvent request = soleRequest(ctx);
+        assertThat(request.getMessages()).hasSize(2);
+        assertThat(request.getMessages().get(0).getRole()).isEqualTo(MessageRole.SYSTEM);
+        assertThat(request.getMessages().get(0).getText()).isEqualTo("match the schema");
+        assertThat(request.getMessages().get(1).getText()).isEqualTo("review the diff");
+        assertThat(request.getOutputSchema()).isEqualTo(WithCount.class);
+    }
+
+    @Test
+    @DisplayName("A declared prompt that cannot be resolved is reported, not dropped")
+    public void testDeclaredPromptThatCannotBeResolvedIsReported() throws Exception {
+        RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getActionConfigValue("has_user_prompt")).thenReturn(true);
+        when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT))
+                .thenThrow(new IllegalArgumentException("Resource not found"));
+
+        assertThatThrownBy(() -> ReActAgent.startAction(new InputEvent("review the diff"), ctx))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("_default_user_prompt")
+                .hasCauseInstanceOf(IllegalArgumentException.class);
+    }
+
+    // --- single-input map ---
+
+    @Test
+    @DisplayName("A single-input map without a prompt passes the value through")
+    public void testSingleInputMapWithoutPromptBecomesUserMessage() {
+        RunnerContext ctx = mock(RunnerContext.class);
+
+        ReActAgent.startAction(new InputEvent(Map.of("input", "analyze this review")), ctx);
+
+        assertThat(soleUserMessage(ctx).getText()).isEqualTo("analyze this review");
+    }
+
+    @Test
+    @DisplayName("A multi-key map without a prompt still reports that a prompt is required")
+    public void testMultiKeyMapWithoutPromptStillReportsPromptRequirement() {
+        RunnerContext ctx = mock(RunnerContext.class);
+
+        assertThatThrownBy(
+                        () ->
+                                ReActAgent.startAction(
+                                        new InputEvent(Map.of("input", "x", "other", "y")), ctx))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessageContaining("not primitive types");
+    }
+
+    private static ReActAgent bareAgent() {
+        return new ReActAgent(chatModelDescriptor(), null, null);
+    }
+
+    private static ResourceDescriptor chatModelDescriptor() {
+        return ResourceDescriptor.Builder.newBuilder("com.example.ChatModel").build();
+    }
+
     private static RunnerContext contextWithPrompt(Prompt prompt) throws Exception {
         RunnerContext ctx = mock(RunnerContext.class);
+        when(ctx.getActionConfigValue("has_user_prompt")).thenReturn(true);
         when(ctx.getResource("_default_user_prompt", ResourceType.PROMPT)).thenReturn(prompt);
         return ctx;
     }
 
-    private static ChatMessage soleUserMessage(RunnerContext ctx) {
+    private static ChatRequestEvent soleRequest(RunnerContext ctx) {
         ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
         verify(ctx).sendEvent(captor.capture());
-        ChatRequestEvent request = (ChatRequestEvent) captor.getValue();
+        return (ChatRequestEvent) captor.getValue();
+    }
+
+    private static ChatMessage soleUserMessage(RunnerContext ctx) {
+        ChatRequestEvent request = soleRequest(ctx);
         assertThat(request.getMessages()).hasSize(1);
         ChatMessage message = request.getMessages().get(0);
         assertThat(message.getRole()).isEqualTo(MessageRole.USER);

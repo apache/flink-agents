@@ -52,6 +52,12 @@ _DEFAULT_CHAT_MODEL = "_default_chat_model"
 _DEFAULT_SCHEMA_PROMPT = "_default_schema_prompt"
 _DEFAULT_NATIVE_SCHEMA_PROMPT = "_default_native_schema_prompt"
 _DEFAULT_USER_PROMPT = "_default_user_prompt"
+# Action config flag recording that the agent registered _DEFAULT_USER_PROMPT,
+# as output_schema does for _DEFAULT_SCHEMA_PROMPT. start_action looks up a
+# built-in prompt only when the running scope's own action config declares it,
+# keeping a sub-agent's prompts its own on a runtime whose child scope falls
+# back to the root agent's resources.
+_HAS_USER_PROMPT = "has_user_prompt"
 _OUTPUT_SCHEMA = "_output_schema"
 _SKILLS_ARGUMENT = "skills"
 _SKILLS_SOURCES_ARGUMENT = "skills_sources"
@@ -252,6 +258,7 @@ class ReActAgent(Agent):
             output_schema=OutputSchema(output_schema=output_schema)
             if output_schema
             else None,
+            has_user_prompt=bool(prompt),
         )
 
     @staticmethod
@@ -261,12 +268,11 @@ class ReActAgent(Agent):
         # at the JSON boundary), so the dispatched InputEvent is used directly.
         usr_input = cast("InputEvent", event).input
 
-        try:
-            prompt = cast(
-                "Prompt", ctx.get_resource(_DEFAULT_USER_PROMPT, ResourceType.PROMPT)
-            )
-        except KeyError:
-            prompt = None
+        prompt = (
+            _declared_prompt(ctx, _DEFAULT_USER_PROMPT)
+            if ctx.get_action_config_value(key=_HAS_USER_PROMPT)
+            else None
+        )
 
         if isinstance(usr_input, bool | str | int | float | type(None)):
             usr_input = str(usr_input)
@@ -278,26 +284,36 @@ class ReActAgent(Agent):
                 usr_msgs = [ChatMessage.user(usr_input)]
         else:
             if not prompt:
-                err_msg = (
-                    f"Input type is {usr_input.__class__}, which is not primitive types. "
-                    f"User should provide prompt to help convert it to ChatMessage."
+                if isinstance(usr_input, dict) and set(usr_input.keys()) == {"input"}:
+                    # The one structured shape that works without a user-supplied
+                    # prompt: a single "input" entry, the arguments of a model-driven
+                    # call against an input schema declaring only that field. The
+                    # value becomes the user message directly, mirroring the
+                    # prompt-less primitive branch.
+                    usr_msgs = [ChatMessage.user(str(usr_input["input"]))]
+                else:
+                    err_msg = (
+                        f"Input type is {usr_input.__class__}, which is not primitive types. "
+                        f"User should provide prompt to help convert it to ChatMessage."
+                    )
+                    raise RuntimeError(err_msg)
+            else:
+                if isinstance(usr_input, Row):
+                    usr_input = usr_input.as_dict(recursive=True)
+                elif isinstance(usr_input, dict):
+                    pass
+                else:  # regard as pojo
+                    usr_input = usr_input.__dict__
+                # Convert Any values to str to match format_messages signature
+                str_usr_input = {k: str(v) for k, v in usr_input.items()}
+                usr_msgs = prompt.format_messages(
+                    role=MessageRole.USER, **str_usr_input
                 )
-                raise RuntimeError(err_msg)
-            if isinstance(usr_input, Row):
-                usr_input = usr_input.as_dict(recursive=True)
-            elif isinstance(usr_input, dict):
-                pass
-            else:  # regard as pojo
-                usr_input = usr_input.__dict__
-            # Convert Any values to str to match format_messages signature
-            str_usr_input = {k: str(v) for k, v in usr_input.items()}
-            usr_msgs = prompt.format_messages(role=MessageRole.USER, **str_usr_input)
-
-        schema_prompt = ReActAgent._prompt_or_none(ctx, _DEFAULT_SCHEMA_PROMPT)
 
         output_schema = ctx.get_action_config_value(key="output_schema")
 
-        if schema_prompt is not None:
+        if output_schema is not None:
+            schema_prompt = _declared_prompt(ctx, _DEFAULT_SCHEMA_PROMPT)
             # A plan built before the native prompt existed has none, and then adds
             # no instruction on the native path.
             instruction = (
@@ -364,3 +380,20 @@ class ReActAgent(Agent):
             output = response.text
 
         ctx.send_event(OutputEvent(output=output))
+
+
+def _declared_prompt(ctx: RunnerContext, name: str) -> Prompt:
+    """Resolve a built-in prompt the running scope's action config declares.
+
+    The constructor registers the prompt together with its declaration, so a
+    failed lookup is a broken plan and is reported rather than silently dropping
+    the prompt.
+    """
+    try:
+        return cast("Prompt", ctx.get_resource(name, ResourceType.PROMPT))
+    except KeyError as e:
+        err_msg = (
+            f"Prompt {name} is declared by this agent's action config but cannot "
+            f"be resolved."
+        )
+        raise RuntimeError(err_msg) from e
