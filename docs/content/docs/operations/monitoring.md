@@ -22,11 +22,44 @@ specific language governing permissions and limitations
 under the License.
 -->
 
-## Metric
+## Overview
+
+A running agent produces three kinds of observability data, and each answers a different question.
+
+- **Metrics** show how much and how fast: Event and Action throughput, input-run outcomes and latency, LLM, Tool and sub-agent calls, and token usage. They go through [Flink's metric system](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/), so they reach the same reporters and dashboards as the rest of the job.
+- **Logs** carry what your Action code and the framework write through Flink's logging framework, such as warnings and stack traces.
+- **The [Trace Log](#trace-log)** records Events, Action executions and the calls made within Actions as structured JSON, so you can follow what one input did. By default it records only Events; configure `trace-log.targets` to include Actions and component calls.
+
+A typical investigation starts from a metric that looks wrong, such as a rising `numOfInputRunsFailed`, moves to the logs of the affected task for the error, and then to the Trace Log to see which Events and Actions led there.
+
+## Metrics
+
+Flink Agents registers its metrics with the job's Flink metric system. For the metric types used below (Count, Meter, Histogram and Gauge), see [Metric types](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/ops/metrics/#metric-types).
+
+### Accessing metrics
+
+Metrics are available wherever the job's other metrics are: through a configured [metric reporter](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/), such as Prometheus, or in the Flink Web UI.
+
+With Flink's default operator scope, metric identifiers start with `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`; reporters may format them differently. For an agent operator, `<operator_name>` is the agent name, or `action-execute-operator` when the agent has no name. In the Flink Web UI, the agent operator's metrics appear under the prefix `<subtask_index>.<operator_name>`.
+
+{{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
+
+### Scopes
+
+The **Scope** column in the tables below identifies the metric group. The example names omit the operator prefix shown above; reporters may represent the groups as labels instead.
+
+| Scope | Metric group | Example name |
+|-------|--------------|--------------|
+| **Agent** | the agent operator itself | `numOfEventProcessed` |
+| **Action** | `action.<action_name>` | `action.chat_model_action.numOfActionsExecuted` |
+| **Model** | `action.<action_name>.model.<model_name>` | `action.chat_model_action.model.qwen3:1.7b.promptTokens` |
+| **Model Resource**, **Tool**, **Skill**, **MCP Server**, **Subagent** | `action.<action_name>.<kind>.<name>`, where `<kind>` is `model_resource`, `tool`, `skill`, `mcp_server` or `subagent` | `action.tool_call_action.tool.get_weather.numOfToolCallsSucceeded` |
+
+Each group below the Agent scope is a key-value group: `<action_name>` is the Action's name, `<model_name>` the model a chat model reports usage for, and `<name>` the resource, Tool, Skill, MCP Server or sub-agent name. Reporters that support key-value groups, such as Prometheus, expose them as labels.
 
 ### Built-in Metrics
 
-We offer data monitoring for built-in metrics, including input runs, events, actions, execution health, and token usage.
+Flink Agents provides built-in metrics for input runs, Events, Actions, execution health, and token usage.
 
 #### Event and Action Metrics
 
@@ -100,8 +133,6 @@ A timeout does not necessarily stop a running Tool. If the callable has not fini
 
 Available per-call outcomes are reported independently of response aggregation, so a later response-processing failure does not repeat or discard them. If a batch raises an ordinary Exception without returning per-call outcomes, known starts may still be observed, but no outcomes are inferred from timestamps or the batch exception. If a Java batch propagates an `Error`, directly or through a `CompletionException`, unresolved prepared calls are reported as failed and the original `Error` is rethrown. Those failures indicate a fatal batch abort; they do not imply that every Tool body ran. These rules describe the framework's observations and do not change timeout handling, durable persistence, or the business `ToolResponseEvent` error contract.
 
-In previous releases, `retryCount` and `retryWaitSec` used the `model.<connection_name>` scope. They now use `model_resource.<resource_name>` so retries are attributed to the configured ChatModel resource. Existing queries and dashboards for these two metrics must use the new scope.
-
 #### Token Usage Metrics
 
 Token usage metrics are automatically recorded when chat models are invoked through `ChatModelConnection`. These metrics help track LLM API usage and costs.
@@ -174,14 +205,6 @@ public class MyAgent extends Agent {
 
 {{< /tabs >}}
 
-
-### How to check the metrics with Flink executor
-
-Flink agents enable the reporting of metrics to external systems by creating a metric identifier prefix in the format `<host>.taskmanager.<tm_id>.<job_name>.<operator_name>.<subtask_index>`. For an agent operator, `<operator_name>` is the agent name. If the Agent name is unavailable, the operator retains the previous `action-execute-operator` value as a fallback. This changes only the value of the existing `<operator_name>` scope; the Agent-specific metric hierarchy is unchanged. Queries and dashboards that filter on `operator_name=action-execute-operator` must use the Agent name after upgrading. Agent-specific metrics use key-value metric groups (e.g., `action.<action_name>`, `model.<model_name>`) which are exposed as dimensions/labels in reporters that support them (such as Prometheus). Please refer to [Flink Metric Reporters](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/metric_reporters/) for more details.
-
-Additionally, we can check the metric results in the Flink Job WebUI using the metric identifier prefix `<subtask_index>.<operator_name>`.
-
-{{< img src="/fig/operations/metricwebui.png" alt="Metric Web UI" >}}
 
 ## Log
 
