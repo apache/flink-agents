@@ -294,9 +294,9 @@ def test_react_agent_native_structured_output_on_remote_runner(
 
     env.get_config().set(AgentExecutionOptions.MAX_RETRIES, 3)
 
-    log_dir = tmp_path / "event_logs"
+    log_dir = tmp_path / "trace_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    env.get_config().set_str("baseLogDir", str(log_dir))
+    env.get_config().set_str("trace-log.base-dir", str(log_dir))
 
     record_file = tmp_path / "ollama_requests.jsonl"
     connection = RecordingOllamaChatModelConnection
