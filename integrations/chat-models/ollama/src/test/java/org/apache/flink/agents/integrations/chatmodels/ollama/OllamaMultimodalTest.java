@@ -24,11 +24,14 @@ import io.github.ollama4j.models.chat.OllamaChatRequest;
 import io.github.ollama4j.utils.Utils;
 import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UnsupportedContentBlockException;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -121,10 +124,18 @@ class OllamaMultimodalTest {
             names = {"SYSTEM", "ASSISTANT", "TOOL"})
     @DisplayName("Images outside user messages fail explicitly")
     void testImagesOutsideUserMessagesFail(MessageRole role) {
+        List<DataContentBlock> blocks =
+                List.of(TextBlock.of("see"), ImageBlock.fromBase64("image/png", FIRST));
+        if (role == MessageRole.SYSTEM) {
+            assertThatThrownBy(() -> new ChatMessage(role, blocks))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("SYSTEM messages accept only text");
+            return;
+        }
         ChatMessage message =
-                new ChatMessage(
-                        role,
-                        List.of(TextBlock.of("see"), ImageBlock.fromBase64("image/png", FIRST)));
+                role == MessageRole.TOOL
+                        ? ChatMessage.tool(new ToolResultBlock("call", blocks, false))
+                        : new ChatMessage(role, blocks);
 
         assertThatThrownBy(() -> request(message))
                 .isInstanceOf(UnsupportedContentBlockException.class)
@@ -163,7 +174,7 @@ class OllamaMultimodalTest {
     }
 
     /** Goes through the public chat(); the errors are raised before any request is sent. */
-    private static ChatMessage chat(ChatMessage message) {
+    private static ChatResult chat(ChatMessage message) {
         ResourceDescriptor descriptor =
                 ResourceDescriptor.Builder.newBuilder(OllamaChatModelConnection.class.getName())
                         .addInitialArgument("endpoint", "http://localhost:11434")

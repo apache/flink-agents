@@ -25,6 +25,7 @@ from uuid import UUID
 
 from flink_agents.api.agents.types import OutputSchema
 from flink_agents.api.chat_message import ChatMessage
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.events.event import BuiltInAttribute, Event
 
 
@@ -133,7 +134,7 @@ class ChatResponseEvent(Event):
     ----------
     request_id : UUID
         The id of the request event.
-    response : ChatMessage
+    response : ChatResult
         The response from the chat model.
     retry_count : int
         The total number of retries across all tool call rounds.
@@ -151,6 +152,8 @@ class ChatResponseEvent(Event):
     _ERROR: ClassVar[str] = "error"
     _RETRY_COUNT: ClassVar[str] = "retry_count"
     _TOTAL_RETRY_WAIT_SEC: ClassVar[str] = "total_retry_wait_sec"
+    _STRUCTURED_OUTPUT: ClassVar[str] = "structured_output"
+    _MODEL_ROUTING: ClassVar[str] = "model_routing"
 
     _ATTRIBUTE_SCHEMA: ClassVar[Tuple[BuiltInAttribute, ...]] = (
         BuiltInAttribute.required_untyped(_REQUEST_ID),
@@ -159,13 +162,15 @@ class ChatResponseEvent(Event):
         BuiltInAttribute.optional_untyped(_ERROR),
         BuiltInAttribute.optional(_RETRY_COUNT, int),
         BuiltInAttribute.optional(_TOTAL_RETRY_WAIT_SEC, int),
+        BuiltInAttribute.optional_untyped(_STRUCTURED_OUTPUT),
+        BuiltInAttribute.optional(_MODEL_ROUTING, dict),
     )
 
     def __init__(
         self,
         request_id: UUID,
         status: str,
-        response: ChatMessage | None = None,
+        response: ChatResult | None = None,
         error: str | None = None,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
@@ -174,7 +179,7 @@ class ChatResponseEvent(Event):
         if not (
             (
                 status == self.SUCCESS
-                and isinstance(response, ChatMessage)
+                and isinstance(response, ChatResult)
                 and error is None
             )
             or (
@@ -206,7 +211,7 @@ class ChatResponseEvent(Event):
     def success(
         cls,
         request_id: UUID,
-        response: ChatMessage,
+        response: ChatResult,
         retry_count: int = 0,
         total_retry_wait_sec: int = 0,
     ) -> "ChatResponseEvent":
@@ -245,7 +250,7 @@ class ChatResponseEvent(Event):
         )
         response_raw = attributes.get(cls._RESPONSE)
         response = (
-            ChatMessage.model_validate(response_raw)
+            ChatResult.model_validate(response_raw)
             if isinstance(response_raw, dict)
             else response_raw
         )
@@ -257,6 +262,11 @@ class ChatResponseEvent(Event):
             retry_count=attributes.get(cls._RETRY_COUNT, 0),
             total_retry_wait_sec=attributes.get(cls._TOTAL_RETRY_WAIT_SEC, 0),
         )
+        result.attributes[cls._STRUCTURED_OUTPUT] = event.attributes.get(
+            cls._STRUCTURED_OUTPUT
+        )
+        if cls._MODEL_ROUTING in event.attributes:
+            result.attributes[cls._MODEL_ROUTING] = event.attributes[cls._MODEL_ROUTING]
         return result.reconstruct_from(event)
 
     @property
@@ -266,11 +276,16 @@ class ChatResponseEvent(Event):
         return UUID(val) if isinstance(val, str) else val
 
     @property
-    def response(self) -> ChatMessage:
+    def response(self) -> ChatResult:
         """Return the chat model response."""
         if self.is_failed:
             raise ChatResponseError(self.request_id, self.error)
         return self.get_attr(self._RESPONSE)
+
+    @property
+    def structured_output(self) -> Any:
+        """Parsed final output, separate from the provider response."""
+        return self.attributes.get(self._STRUCTURED_OUTPUT)
 
     @property
     def status(self) -> str:

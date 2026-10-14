@@ -35,6 +35,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
     NativeStructuredOutputSupport,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool
 from flink_agents.integrations.chat_models.chat_model_utils import to_openai_tool
 from flink_agents.integrations.chat_models.openai.openai_utils import (
@@ -64,11 +65,11 @@ MAX_OPENAI_RETRIES = 2_147_483_647
 # boundary there is temporal rather than nominal. The o1 family is not uniform: o1 is
 # capable while o1-mini is not, so an "o1" prefix would admit an incapable sibling.
 #
-# A name outside every listed family reports not-capable and degrades to the prompt
-# fallback rather than failing at the provider. Within a listed family the prefix
-# assumes capability, so a family variant that ships without json_schema support has
-# to be excluded explicitly, either by a marker that appears in no capable name or by
-# replacing the family prefix with exact names.
+# A name outside every listed family reports not-capable, which the structured-output
+# query reports as FEASIBLE rather than NATIVE_RECOMMENDED. Within a listed family the
+# prefix assumes capability, so a family variant that ships without json_schema support
+# has to be excluded explicitly, either by a marker that appears in no capable name or
+# by replacing the family prefix with exact names.
 _NON_TEXT_MODALITY_MARKERS = ("-audio", "-realtime", "-tts", "-transcribe")
 _NATIVE_STRUCTURED_OUTPUT_FAMILY_PREFIXES = (
     "gpt-4o-mini",
@@ -237,9 +238,11 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
     ) -> NativeStructuredOutputSupport:
-        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+        """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
-        The effective model is the ``model`` parameter verbatim.
+        Feasibility is the helper the native branch asks; capability, judged on the
+        ``model`` parameter verbatim, only separates ``FEASIBLE`` from
+        ``NATIVE_RECOMMENDED``.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
@@ -258,8 +261,9 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         See the module-level allowlist for the source of truth and the rationale for
         rejecting non-text modality variants, matching capable text families by prefix,
         and matching the gpt-4o snapshots and the o1 names exactly. A name outside
-        every listed family reports ``False`` so it degrades to the prompt-engineering
-        fallback rather than failing at the provider.
+        every listed family reports ``False``. The answer shapes only the
+        structured-output query; the request carries a schema it is handed whatever
+        this reports.
         """
         if not effective_model:
             return False
@@ -313,7 +317,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Direct communication with model service for chat conversation.
 
         Parameters
@@ -324,18 +328,18 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             List of tools that can be called by the model
         output_schema : OutputSchema | None
             The schema the response should conform to, or ``None`` for an unconstrained
-            response. Native structured output is applied only for a ``BaseModel``
-            schema on a model the provider documents as capable; a ``RowTypeInfo``
-            schema or an incapable model keeps the prompt-engineering fallback.
+            response. Native structured output is applied for a ``BaseModel`` schema
+            whatever the model; a ``RowTypeInfo`` schema keeps the prompt-engineering
+            fallback.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message. When the response carries a finish reason,
-            it is available as ``extra_args["finish_reason"]``.
+            it is available as ``ChatResult.finish_reason``.
         """
         # Snapshotted before the native branch below, so the feasibility check is
         # asked with the parameters as they arrived. This path strips nothing today,
@@ -352,15 +356,14 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
                     tool_spec["function"]["strict"] = strict
                     tool_spec["function"]["parameters"]["additionalProperties"] = False
 
-        # Native structured output applies only for a BaseModel schema on a model the
-        # provider documents as capable; a RowTypeInfo schema or an incapable model
-        # keeps the prompt-engineering fallback.
+        # Native structured output applies only for a BaseModel schema; a RowTypeInfo
+        # schema carries no response_format.
         #
-        # The feasibility half is asked rather than restated, so a caller asking the
-        # same question gets the answer this branch acts on.
-        if self._can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self._model_supports_native_structured_output(kwargs.get("model")):
+        # The feasibility check is shared with the structured-output query rather than
+        # restated, so the branch applies whenever the query answers other than
+        # INFEASIBLE. Model capability is not asked: a caller that hands this
+        # connection a schema has already chosen to send it.
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             kwargs["response_format"] = _native_response_format(output_schema)
 
         response = self.client.chat.completions.create(
@@ -369,21 +372,19 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
             **kwargs,
         )
 
-        extra_args = {}
-        # Record token metrics if model name and usage are available
-        model_name = kwargs.get("model")
-        if model_name and response.usage:
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = response.usage.prompt_tokens
-            extra_args["completionTokens"] = response.usage.completion_tokens
-
         choice = response.choices[0]
-        if choice.finish_reason is not None:
-            extra_args["finish_reason"] = choice.finish_reason
-
-        message = choice.message
-
-        return convert_from_openai_message(message, extra_args)
+        return ChatResult(
+            message=convert_from_openai_message(choice.message),
+            model=kwargs.get("model"),
+            response_id=response.id,
+            usage=TokenUsage(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+            )
+            if response.usage
+            else None,
+            finish_reason=choice.finish_reason,
+        )
 
     @override
     def close(self) -> None:

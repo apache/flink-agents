@@ -27,7 +27,7 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.env.EmbeddedPythonEnvironment;
@@ -55,10 +55,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import static org.apache.flink.agents.plan.actions.Utils.requiredVersions;
 import static org.apache.flink.agents.plan.actions.Utils.supportAsync;
@@ -266,28 +264,22 @@ class PythonBridgeManager implements AutoCloseable {
      * Every plan in the tree rooted at {@code plan}: the plan itself plus each internal sub-agent's
      * child plan, recursively. Internal sub-agents are the only nested plans reachable from a
      * parent's {@link ResourceType#AGENT} providers, through {@link
-     * InternalSubagentProvider#getChildPlan()}. Compilation rejects a cycle, and the identity guard
-     * also collapses a child plan shared by more than one parent so it is scanned once.
+     * InternalSubagentPlans#plan(ResourceProvider)}. Compilation rejects cycles. Each descriptor
+     * stores its own child-plan data, including when declarations share an Agent.
      */
     static List<AgentPlan> planTree(AgentPlan plan) {
         List<AgentPlan> plans = new ArrayList<>();
-        collectPlanTree(plan, plans, Collections.newSetFromMap(new IdentityHashMap<>()));
+        collectPlanTree(plan, plans);
         return plans;
     }
 
-    private static void collectPlanTree(
-            AgentPlan plan, List<AgentPlan> acc, Set<AgentPlan> visited) {
-        if (!visited.add(plan)) {
-            return;
-        }
+    private static void collectPlanTree(AgentPlan plan, List<AgentPlan> acc) {
         acc.add(plan);
         Map<String, ResourceProvider> agents =
                 plan.getResourceProviders()
                         .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
         for (ResourceProvider provider : agents.values()) {
-            if (provider instanceof InternalSubagentProvider) {
-                collectPlanTree(((InternalSubagentProvider) provider).getChildPlan(), acc, visited);
-            }
+            InternalSubagentPlans.plan(provider).ifPresent(child -> collectPlanTree(child, acc));
         }
     }
 

@@ -87,10 +87,10 @@ public class FileTraceLogger implements TraceLogger {
     private static final String DEFAULT_BASE_LOG_DIR =
             Paths.get(System.getProperty("java.io.tmpdir"), "flink-agents").toString();
 
-    // Trace-Log-only mapper: chat messages are logged through their sanitized projection
+    // Trace-Log-only mapper: content blocks use their sanitized projection
     // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(ChatMessageTraceLogSerializer.module());
+            new ObjectMapper().registerModule(ContentBlockTraceLogSerializer.module());
 
     private final TraceLoggerConfig config;
     private boolean prettyPrint;

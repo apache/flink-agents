@@ -17,7 +17,7 @@
 ################################################################################
 """E2E tests for internal sub-agents on a real Flink job.
 
-A child agent registered directly as an ``AGENT`` resource exercises the whole
+A child agent registered through a descriptor exercises the whole
 operator round-trip: the Python-compiled child plan is materialized into a Java
 ``InternalSubagentSetup``, the call event is sent on the mailbox thread, the
 mailbox is released while the caller awaits, and the child's actions are
@@ -56,6 +56,7 @@ from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
 
 os.environ["PYTHONPATH"] = sysconfig.get_paths()["purelib"]
 
@@ -134,7 +135,14 @@ def _run_and_collect(child: Agent, tmp_path: Path) -> str:
     input_stream = env.from_collection(["hello"])
 
     root = RootAgent()
-    root.add_resource(CHILD_SCOPE, ResourceType.AGENT, child)
+    root.add_resource(
+        CHILD_SCOPE,
+        ResourceType.AGENT,
+        InternalSubagentResourceDescriptorBuilder()
+        .agent(child)
+        .description("Delegate the prompt")
+        .build(),
+    )
 
     agents_env = AgentsExecutionEnvironment.get_execution_environment(env=env)
     output_datastream = (

@@ -1,0 +1,122 @@
+{
+  "actions": {
+    "chat_model_action": {
+      "name": "chat_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.chat_model_action",
+        "qualname": "process_chat_request_or_tool_response"
+      },
+      "trigger_conditions": [
+        "_chat_request_event",
+        "_tool_response_event"
+      ],
+      "config": null
+    },
+    "tool_call_action": {
+      "name": "tool_call_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.tool_call_action",
+        "qualname": "process_tool_request"
+      },
+      "trigger_conditions": [
+        "_tool_request_event"
+      ],
+      "config": null
+    },
+    "context_retrieval_action": {
+      "name": "context_retrieval_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.context_retrieval_action",
+        "qualname": "process_context_retrieval_request"
+      },
+      "trigger_conditions": [
+        "_context_retrieval_request_event"
+      ],
+      "config": null
+    }
+  },
+  "resource_providers": {
+    "agent": {
+      "child": {
+        "name": "child",
+        "type": "agent",
+        "descriptor": {
+          "language": "java",
+          "target_module": "",
+          "target_clazz": "org.apache.flink.agents.runtime.subagent.InternalSubagentSetup",
+          "arguments": {
+            "description": "Python child",
+            "input_schema": "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"}}}",
+            "plan": {
+              "actions": {
+                "handle": {
+                  "name": "handle",
+                  "exec": {
+                    "func_type": "PythonFunction",
+                    "module": "flink_agents.plan.tests.test_agent_plan_cross_language",
+                    "qualname": "_dummy_action"
+                  },
+                  "trigger_conditions": [
+                    "_input_event"
+                  ],
+                  "config": null
+                },
+                "chat_model_action": {
+                  "name": "chat_model_action",
+                  "exec": {
+                    "func_type": "PythonFunction",
+                    "module": "flink_agents.plan.actions.chat_model_action",
+                    "qualname": "process_chat_request_or_tool_response"
+                  },
+                  "trigger_conditions": [
+                    "_chat_request_event",
+                    "_tool_response_event"
+                  ],
+                  "config": null
+                },
+                "tool_call_action": {
+                  "name": "tool_call_action",
+                  "exec": {
+                    "func_type": "PythonFunction",
+                    "module": "flink_agents.plan.actions.tool_call_action",
+                    "qualname": "process_tool_request"
+                  },
+                  "trigger_conditions": [
+                    "_tool_request_event"
+                  ],
+                  "config": null
+                },
+                "context_retrieval_action": {
+                  "name": "context_retrieval_action",
+                  "exec": {
+                    "func_type": "PythonFunction",
+                    "module": "flink_agents.plan.actions.context_retrieval_action",
+                    "qualname": "process_context_retrieval_request"
+                  },
+                  "trigger_conditions": [
+                    "_context_retrieval_request_event"
+                  ],
+                  "config": null
+                }
+              },
+              "resource_providers": {},
+              "agent_name": "Agent",
+              "config": {
+                "conf_data": {}
+              }
+            },
+            "scope": "child"
+          }
+        },
+        "__resource_provider_type__": "JavaResourceProvider"
+      }
+    }
+  },
+  "agent_name": "Agent",
+  "config": {
+    "conf_data": {}
+  }
+}

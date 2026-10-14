@@ -22,6 +22,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.victools.jsonschema.generator.Option;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -143,6 +144,37 @@ class PojoJsonSchemaGeneratorTest {
         // all-inclusive one it must invent a value for the field the caller made omissible.
         assertThat(textValues(schema.path("required")))
                 .containsExactlyInAnyOrder("summary", "counts", "total");
+    }
+
+    @Test
+    @DisplayName("The all-required schema requires an Optional field and admits null for it")
+    void allRequiredRequiresOptionalFieldsAsNullable() {
+        JsonNode schema = PojoJsonSchemaGenerator.generateAllRequired(Report.class);
+
+        // A provider expecting every property in the required set rejects a schema that leaves
+        // the Optional field out, so the field stays omissible only by taking null.
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("summary", "counts", "note", "total");
+        assertThat(textValues(schema.path("properties").path("note").path("type")))
+                .contains("null");
+    }
+
+    @Test
+    @DisplayName("The all-required schema differs from the default one only in its required set")
+    void allRequiredChangesOnlyTheRequiredSet() {
+        for (Class<?> type : List.of(Report.class, Profile.class, Ticket.class)) {
+            ObjectNode allRequired =
+                    PojoJsonSchemaGenerator.generateAllRequired(
+                            type, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);
+            ObjectNode partlyRequired =
+                    PojoJsonSchemaGenerator.generate(
+                            type, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);
+            allRequired.remove("required");
+            partlyRequired.remove("required");
+
+            // Compared as text, so property order, enum values and the option count too.
+            assertThat(allRequired.toString()).isEqualTo(partlyRequired.toString());
+        }
     }
 
     @Test

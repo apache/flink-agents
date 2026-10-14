@@ -32,7 +32,9 @@ from pyflink.table import DataTypes, Schema
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.events.event import Event
+from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
+from flink_agents.api.skills import Skills
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.runtime.output_type_utils import (
     infer_row_type_info,
@@ -281,6 +283,38 @@ def test_apply_sends_plan_to_java_validator() -> None:
     assert payload["actions"]["handle"]["trigger_conditions"] == [
         "type == EventType.InputEvent && input > 2"
     ]
+
+
+def test_environment_resource_entries_keep_their_order_when_agent_overrides_one():
+    """The agent's override moves last instead of keeping the environment slot.
+
+    Downstream, ``AgentPlan`` flattens these entries into an ordered source list
+    where later entries win, so an entry left in its environment slot would let an
+    unrelated environment declaration win instead.
+    """
+    env_skills = {
+        "z": Skills.from_local_dir("/tmp/z-env"),
+        "a": Skills.from_local_dir("/tmp/a-env"),
+    }
+    agent = Agent()
+    agent_override = Skills.from_local_dir("/tmp/z-agent")
+    agent.resources[ResourceType.SKILLS]["z"] = agent_override
+    builder = RemoteAgentBuilder(
+        input=MagicMock(),
+        config=AgentConfiguration(),
+        resources={ResourceType.SKILLS: env_skills},
+        agents={},
+    )
+
+    with patch(
+        "flink_agents.runtime.remote_execution_environment.invoke_method",
+        return_value=None,
+    ):
+        builder.apply(agent)
+
+    merged = agent.resources[ResourceType.SKILLS]
+    assert list(merged) == ["a", "z"]
+    assert merged["z"] is agent_override
 
 
 def test_apply_surfaces_java_error_and_allows_retry() -> None:

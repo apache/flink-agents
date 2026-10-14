@@ -1,5 +1,5 @@
 ---
-title: 'ReAct Agent'
+title: "Use the Built-in ReAct Agent"
 weight: 2
 type: docs
 ---
@@ -23,6 +23,8 @@ under the License.
 -->
 
 ## Overview
+
+Flink Agents provides `ReActAgent` as a built-in subclass of `Agent` that implements the ReAct pattern.
 
 ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously.
 
@@ -227,7 +229,7 @@ See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) 
 
 #### Prepare Flink and Flink Agents
 
-Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructions to setup Flink and the Flink Agents.
+Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to setup Flink and the Flink Agents.
 
 #### Clone the Flink Agents Repository (if not done already)
 
@@ -254,7 +256,7 @@ $FLINK_HOME/bin/start-cluster.sh
 {{< /tab >}}
 
 {{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
+1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
 2. Start the Flink cluster
     ```bash
     $FLINK_HOME/bin/start-cluster.sh

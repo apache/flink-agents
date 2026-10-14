@@ -21,29 +21,18 @@ import pytest
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
-from flink_agents.api.subagent import SubagentSetup
 from flink_agents.api.tests.subagent_test_utils import TestSubagentSetup
 from flink_agents.plan.agent_plan import AgentPlan
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.resource_provider import PythonResourceProvider
 
 
-def test_subagent_setup_compiles_into_agent_provider() -> None:
-    """A registered SubagentSetup lands in the AGENT provider map and resolves."""
-    setup = TestSubagentSetup()
+def test_registered_setup_instance_is_rejected_during_compilation() -> None:
+    """The generic registration API does not make setup instances valid plans."""
     agent = Agent()
-    agent.add_resource("reviewer", ResourceType.AGENT, setup)
-
-    plan = AgentPlan.from_agent(agent, AgentConfiguration())
-
-    agents = plan.resource_providers[ResourceType.AGENT]
-    assert agents is not None
-    assert "reviewer" in agents
-    resolved = agents["reviewer"].provide(
-        resource_context=None, config=AgentConfiguration()
-    )
-    assert isinstance(resolved, SubagentSetup)
-    assert resolved.resource_type() == ResourceType.AGENT
+    agent.add_resource("reviewer", ResourceType.AGENT, TestSubagentSetup())
+    with pytest.raises(TypeError, match="setup instances cannot be registered"):
+        AgentPlan.from_agent(agent, AgentConfiguration())
 
 
 def test_agent_descriptor_compiles_into_agent_provider() -> None:
@@ -72,21 +61,21 @@ def test_non_setup_agent_resource_is_rejected() -> None:
 
     with pytest.raises(
         TypeError,
-        match="must be a SubagentSetup, a ResourceDescriptor, or an Agent",
+        match="must be a ResourceDescriptor",
     ):
         AgentPlan.from_agent(agent, AgentConfiguration())
 
 
-def test_live_external_subagent_is_rebuilt_after_plan_json_round_trip() -> None:
-    """A live setup crosses the plan JSON boundary as its descriptor and is
-    rebuilt with its configuration on the other side.
-    """
+def test_external_descriptor_is_rebuilt_after_plan_json_round_trip() -> None:
+    """An external descriptor retains its configuration across the plan boundary."""
     agent = Agent()
     agent.add_resource(
         "reviewer",
         ResourceType.AGENT,
-        TestSubagentSetup(
-            endpoint_url="http://review.internal:8080", fail_on_call=True
+        ResourceDescriptor(
+            clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup",
+            endpoint_url="http://review.internal:8080",
+            fail_on_call=True,
         ),
     )
 
@@ -119,10 +108,10 @@ def test_child_agent_compiles_into_internal_provider() -> None:
 
     agents = plan.resource_providers[ResourceType.AGENT]
     provider = agents["child"]
-    assert provider.module == "flink_agents.runtime.internal_subagent"
-    assert provider.clazz == "InternalSubagentSetup"
-    assert provider.serialized["scope"] == "child"
-    assert provider.serialized["child_plan"] is not None
+    assert provider.descriptor.language == "java"
+    assert provider.descriptor.target_clazz.endswith(".InternalSubagentSetup")
+    assert provider.descriptor.arguments["scope"] == "child"
+    assert provider.descriptor.arguments["plan"] is not None
 
 
 def test_shared_child_agent_compiles_to_single_plan() -> None:
@@ -135,9 +124,9 @@ def test_shared_child_agent_compiles_to_single_plan() -> None:
     plan = AgentPlan.from_agent(root, AgentConfiguration())
 
     agents = plan.resource_providers[ResourceType.AGENT]
-    first_plan = agents["first"].serialized["child_plan"]
-    second_plan = agents["second"].serialized["child_plan"]
-    assert first_plan is second_plan
+    first_plan = agents["first"].descriptor.arguments["plan"]
+    second_plan = agents["second"].descriptor.arguments["plan"]
+    assert first_plan == second_plan
 
 
 def test_cycle_not_through_root_is_rejected_with_cycle_path() -> None:

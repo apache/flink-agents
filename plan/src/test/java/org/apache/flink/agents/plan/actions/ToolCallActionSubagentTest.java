@@ -44,6 +44,7 @@ import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.tools.ToolType;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -70,7 +71,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("{\"verdict\":\"approved\",\"findings\":[\"style\"]}");
         assertThat(response.getError()).doesNotContainKey("call-1");
     }
@@ -144,7 +145,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
+        assertThat(response.getResponses().get("call-1").getText())
                 .isEqualTo("{\"approved\":true,\"note\":\"clean\"}");
     }
 
@@ -161,7 +162,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent delegated = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(delegated.getSuccess()).containsEntry("call-1", true);
-        assertThat(delegated.getResponses().get("call-1").getResult()).isEqualTo("done");
+        assertThat(delegated.getResponses().get("call-1").getText()).isEqualTo("done");
         // A sub-agent call resolves through the setup, which owns its own durable execution.
         assertThat(ctx.durableExecutions).isZero();
 
@@ -169,7 +170,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent direct = ToolResponseEvent.fromEvent(ctx.sentEvents.get(1));
         assertThat(direct.getSuccess()).containsEntry("call-1", true);
-        assertThat(direct.getResponses().get("call-1").getResult()).isEqualTo("reviewer called");
+        assertThat(direct.getResponses().get("call-1").getText()).isEqualTo("reviewer called");
         assertThat(ctx.durableExecutions).isOne();
     }
 
@@ -207,8 +208,7 @@ class ToolCallActionSubagentTest {
 
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", true);
-        assertThat(response.getResponses().get("call-1").getResult())
-                .isEqualTo("queryOrder called");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("queryOrder called");
         assertThat(ctx.durableExecutions).isOne();
     }
 
@@ -233,8 +233,8 @@ class ToolCallActionSubagentTest {
         assertThat(response.getSuccess())
                 .containsEntry("call-1", true)
                 .containsEntry("call-2", true);
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("a done");
-        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("b done");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("a done");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("b done");
         assertSubagentReports(ctx.reports, "a", "b");
     }
 
@@ -312,9 +312,9 @@ class ToolCallActionSubagentTest {
                 .containsEntry("call-1", true)
                 .containsEntry("call-2", true)
                 .containsEntry("call-3", true);
-        assertThat(response.getResponses().get("call-1").getResult()).isEqualTo("agent-result");
-        assertThat(response.getResponses().get("call-2").getResult()).isEqualTo("alpha called");
-        assertThat(response.getResponses().get("call-3").getResult()).isEqualTo("beta called");
+        assertThat(response.getResponses().get("call-1").getText()).isEqualTo("agent-result");
+        assertThat(response.getResponses().get("call-2").getText()).isEqualTo("alpha called");
+        assertThat(response.getResponses().get("call-3").getText()).isEqualTo("beta called");
     }
 
     /**
@@ -409,43 +409,27 @@ class ToolCallActionSubagentTest {
     }
 
     @Test
-    void reportsResolvedSubagentPreparationFailureWithTheCreatedIdentity() throws Exception {
-        RecordingSubagentSetup agent = new RecordingSubagentSetup(SubagentResult.ok("unreachable"));
-        FakeRunnerContext ctx = new FakeRunnerContext().withAgent("reviewer", agent);
-        ToolRequestEvent request =
-                new ToolRequestEvent(
-                        "model",
-                        List.of(
-                                Map.of(
-                                        "id",
-                                        "call-1",
-                                        "function",
-                                        Map.of(
-                                                "name", "_subagent_reviewer",
-                                                "arguments", "invalid"))));
+    void reportsUnresolvedSubagentWithTheCreatedIdentity() throws Exception {
+        FakeRunnerContext ctx = new FakeRunnerContext();
 
-        ToolCallAction.processToolRequest(request, ctx);
+        ToolCallAction.processToolRequest(toolRequest("_subagent_missing"), ctx);
 
-        assertThat(agent.prompts).isEmpty();
         assertThat(ctx.reports)
                 .extracting(report -> report.phase)
                 .containsExactly("created", "failed");
+        assertThat(ctx.reports.get(0).executionId).isNotBlank();
         assertThat(ctx.reports)
                 .allSatisfy(
                         report -> {
                             assertThat(report.executionId)
                                     .isEqualTo(ctx.reports.get(0).executionId);
                             assertThat(report.entityType)
-                                    .isEqualTo(ExecutionReporter.EntityTypes.SUBAGENT);
-                            assertThat(report.entityName).isEqualTo("reviewer");
+                                    .isEqualTo(ExecutionReporter.EntityTypes.TOOL);
+                            assertThat(report.entityName).isEqualTo("_subagent_missing");
                         });
         ToolResponseEvent response = ToolResponseEvent.fromEvent(ctx.sentEvents.get(0));
         assertThat(response.getSuccess()).containsEntry("call-1", false);
-        assertThat(response.getResponses().get("call-1").getError())
-                .isEqualTo(
-                        "Sub-agent _subagent_reviewer execute failed: INVALID_ARGUMENT /: type (expected object)");
-        assertThat(response.getError())
-                .containsEntry("call-1", "INVALID_ARGUMENT /: type (expected object)");
+        assertThat(response.getResponses().get("call-1").isError()).isTrue();
     }
 
     private static void assertSubagentReports(
@@ -473,7 +457,7 @@ class ToolCallActionSubagentTest {
     }
 
     private static ToolRequestEvent toolRequest(String callableName) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -491,7 +475,7 @@ class ToolCallActionSubagentTest {
 
     /** One request carrying two sub-agent calls, so the batched path has more than one to run. */
     private static ToolRequestEvent twoSubagentRequest(String first, String second) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -525,7 +509,7 @@ class ToolCallActionSubagentTest {
      */
     private static ToolRequestEvent mixedRequest(
             String subagentName, String firstTool, String secondTool) {
-        return new ToolRequestEvent(
+        return ChatFixtures.request(
                 "model",
                 List.of(
                         Map.of(
@@ -858,7 +842,7 @@ class ToolCallActionSubagentTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(getMetadata().getName() + " called");
+            return ToolResponse.text(getMetadata().getName() + " called");
         }
     }
 

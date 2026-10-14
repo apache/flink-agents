@@ -35,7 +35,7 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
-from flink_agents.api.resource import ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.runtime.async_subagent import BaseAsyncSubagentSetup, RunStatus
@@ -137,12 +137,24 @@ class DeferredExternalAgent(Agent):
 def build_async_agent() -> Agent:
     """Build the agent registering the async external sub-agent."""
     agent = AsyncExternalAgent()
-    agent.add_resource("reviewer", ResourceType.AGENT, InMemoryAsyncSubagentSetup())
+    agent.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        ResourceDescriptor(
+            clazz=f"{InMemoryAsyncSubagentSetup.__module__}.{InMemoryAsyncSubagentSetup.__name__}"
+        ),
+    )
     return agent
 
 
 def build_deferred_agent() -> Agent:
     """Build the agent registering the deferred external sub-agent."""
     agent = DeferredExternalAgent()
-    agent.add_resource("reviewer", ResourceType.AGENT, InMemoryDeferredSubagentSetup())
+    agent.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        ResourceDescriptor(
+            clazz=f"{InMemoryDeferredSubagentSetup.__module__}.{InMemoryDeferredSubagentSetup.__name__}"
+        ),
+    )
     return agent

@@ -46,7 +46,8 @@ class InternalSubagentMatchTest {
     void scopeMatchingAppliesTypeAndConditionFilters() throws Exception {
         Action typed = action("typed", InputEvent.EVENT_TYPE);
         Action conditional = action("conditional", "attributes.route == 'extra'");
-        InternalSubagentSetup setup = new InternalSubagentSetup("scope", plan(typed, conditional));
+        InternalSubagentSetup setup =
+                new InternalSubagentSetup(descriptor(plan(typed, conditional)), null);
 
         List<Action> plain = setup.matchActions(new InputEvent("plain"));
         assertThat(plain).containsExactly(typed);
@@ -76,5 +77,18 @@ class InternalSubagentMatchTest {
             byName.put(action.getName(), action);
         }
         return new AgentPlan(byName);
+    }
+
+    private static org.apache.flink.agents.api.resource.ResourceDescriptor descriptor(
+            AgentPlan plan) {
+        return org.apache.flink.agents.api.resource.ResourceDescriptor.Builder.newBuilder(
+                        org.apache.flink.agents.api.subagent
+                                .InternalSubagentResourceDescriptorBuilder.SETUP_CLASS)
+                .addInitialArgument("scope", "scope")
+                .addInitialArgument(
+                        "plan",
+                        new com.fasterxml.jackson.databind.ObjectMapper()
+                                .convertValue(plan, java.util.Map.class))
+                .build();
     }
 }

@@ -1,5 +1,5 @@
 ---
-title: 'YAML Agent'
+title: "Define an Agent with YAML"
 weight: 3
 type: docs
 ---
@@ -26,15 +26,15 @@ under the License.
 
 The YAML API lets you declare a Flink Agents application — the agent's actions, tools, prompts, chat models, and other resources — as a single declarative file, and load it into an `AgentsExecutionEnvironment` with one call. Your action and tool implementations still live in Python or Java; the YAML file only describes how those pieces are wired together.
 
-This quickstart runs the same **Review Analysis** workflow as the [Workflow Agent Quickstart]({{< ref "docs/get-started/quickstart/workflow_agent" >}}) — extracting a satisfaction score and dissatisfaction reasons from a stream of product reviews — but declares the agent in YAML and loads it with `load_yaml` / `loadYaml`. The action functions and the `notify_shipping_manager` tool are reused from the workflow-agent example as static methods, so this quickstart shows the **smallest possible delta** between a code-defined agent and a YAML-declared agent.
+This quickstart runs the same **Review Analysis** workflow as the [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent" >}}) — extracting a satisfaction score and dissatisfaction reasons from a stream of product reviews — but declares the agent in YAML and loads it with `load_yaml` / `loadYaml`. The action functions and the `notify_shipping_manager` tool are reused from the single-Agent example as static methods, so this quickstart shows the **smallest possible delta** between a code-defined agent and a YAML-declared agent.
 
-For the full reference of the YAML format, see the [YAML API]({{< ref "docs/development/yaml" >}}) documentation.
+For the full reference of the YAML format, see the [YAML API]({{< ref "docs/development/create-agent/yaml" >}}) documentation.
 
 ## Code Walkthrough
 
 ### Declare the Agent in YAML
 
-The whole agent — chat model, prompt, tool, and the two actions — is declared in `yaml_review_analysis_agent.yaml`. The `function:` strings point at static methods on the existing `ReviewAnalysisAgent` class from the workflow-agent quickstart.
+The whole agent — chat model, prompt, tool, and the two actions — is declared in `yaml_review_analysis_agent.yaml`. The `function:` strings point at static methods on the existing `ReviewAnalysisAgent` class from the single-Agent quickstart.
 
 {{< tabs "Declare Agent YAML" >}}
 
@@ -44,7 +44,7 @@ agents:
   - name: review_analysis_agent
     description: |
       YAML-declared review analysis agent. Reuses the static methods of
-      ReviewAnalysisAgent from the workflow_agent quickstart as actions
+      ReviewAnalysisAgent from the single-Agent quickstart as actions
       and tool, but wires everything together through this YAML file
       instead of class-level decorators.
 
@@ -112,7 +112,7 @@ agents:
   - name: review_analysis_agent
     description: |
       YAML-declared review analysis agent. Reuses the static methods of
-      ReviewAnalysisAgent from the workflow_agent quickstart as actions
+      ReviewAnalysisAgent from the single-Agent quickstart as actions
       and tool, but wires everything together through this YAML file
       instead of class-level annotations.
 
@@ -187,7 +187,7 @@ agents:
 
 A few things to notice in the YAML above:
 
-- `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/yaml#class-aliases" >}}) doc.
+- `clazz: ollama` is an alias resolved by the loader to the full Ollama chat-model class — see the alias table in the [YAML API]({{< ref "docs/development/create-agent/yaml#class-aliases" >}}) doc.
 - `trigger_conditions: [input]` / `[chat_response]` use **event aliases** for the framework's built-in events. An alias replaces only a complete event-type entry; it never rewrites text inside a condition expression or quoted event type.
 - `function:` strings use the `<module-or-class>:<qualname>` format. The right side is the class-qualified method name, so the YAML reuses the same `process_input` / `processInput` static methods the original `ReviewAnalysisAgent` already defines.
 - The prompt is declared inline as a `messages:` list and referenced from the chat-model setup by name.
@@ -280,7 +280,7 @@ agentsEnv.execute("YAML Agent Example Job");
 
 {{< /tabs >}}
 
-The key difference from the code-defined workflow agent quickstart is the pair of calls:
+The key difference from the code-defined Agent quickstart is the pair of calls:
 
 1. `agents_env.load_yaml(...)` / `agentsEnv.loadYaml(...)` — parses the YAML and registers the declared agent(s) and shared resources on the environment.
 2. `.apply("review_analysis_agent")` — looks the agent up **by name** instead of passing an `Agent` instance.
@@ -304,7 +304,7 @@ See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) 
 
 #### Prepare Flink and Flink Agents
 
-Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructions to set up Flink and Flink Agents.
+Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to set up Flink and Flink Agents.
 
 #### Clone the Flink Agents Repository (if not done already)
 
@@ -331,7 +331,7 @@ $FLINK_HOME/bin/start-cluster.sh
 {{< /tab >}}
 
 {{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
+1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
 2. Start the Flink cluster
     ```bash
     $FLINK_HOME/bin/start-cluster.sh

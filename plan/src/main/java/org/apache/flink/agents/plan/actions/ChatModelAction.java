@@ -22,7 +22,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -46,7 +47,13 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 import static org.apache.flink.agents.api.agents.Agent.STRUCTURED_OUTPUT;
 
@@ -224,7 +231,7 @@ public class ChatModelAction {
     }
 
     private static void handleToolCalls(
-            ChatMessage response,
+            ChatResult response,
             UUID initialRequestId,
             String model,
             BaseChatModelSetup chatModel,
@@ -237,11 +244,10 @@ public class ChatModelAction {
                 ctx.getSensoryMemory(),
                 initialRequestId,
                 messages,
-                Collections.singletonList(response));
+                Collections.singletonList(response.getMessage()));
 
-        injectBashToolArgs(response.getToolCalls(), chatModel);
-
-        ToolRequestEvent toolRequestEvent = new ToolRequestEvent(model, response.getToolCalls());
+        ToolRequestEvent toolRequestEvent =
+                new ToolRequestEvent(model, injectBashToolArgs(response.getToolCalls(), chatModel));
 
         saveToolRequestEventContext(
                 ctx.getSensoryMemory(),
@@ -260,38 +266,26 @@ public class ChatModelAction {
      * _inject_bash_tool_args}.
      */
     @SuppressWarnings("unchecked")
-    private static void injectBashToolArgs(
-            List<Map<String, Object>> toolCalls, BaseChatModelSetup chatModel) throws Exception {
-        if (toolCalls == null || toolCalls.isEmpty()) {
-            return;
-        }
+    private static List<ToolCallBlock> injectBashToolArgs(
+            List<ToolCallBlock> calls, BaseChatModelSetup chatModel) throws Exception {
         List<String> scriptDirs = new ArrayList<>(chatModel.getAllowedScriptDirs());
-        List<String> declaredSkills = chatModel.getSkills();
-        if (declaredSkills != null
-                && !declaredSkills.isEmpty()
-                && chatModel.getResourceContext() != null) {
-            scriptDirs.addAll(chatModel.getResourceContext().getSkillDirs(declaredSkills));
-        }
-        for (Map<String, Object> call : toolCalls) {
-            Object function = call.get("function");
-            if (!(function instanceof Map)) {
+        if (chatModel.getSkills() != null
+                && !chatModel.getSkills().isEmpty()
+                && chatModel.getResourceContext() != null)
+            scriptDirs.addAll(chatModel.getResourceContext().getSkillDirs(chatModel.getSkills()));
+        List<ToolCallBlock> result = new ArrayList<>();
+        for (ToolCallBlock call : calls) {
+            if (!Skills.BASH_TOOL.equals(call.getName())) {
+                result.add(call);
                 continue;
             }
-            Map<String, Object> functionMap = (Map<String, Object>) function;
-            if (!Skills.BASH_TOOL.equals(functionMap.get("name"))) {
-                continue;
-            }
-            Object argsObj = functionMap.get("arguments");
-            Map<String, Object> args;
-            if (argsObj instanceof Map) {
-                args = (Map<String, Object>) argsObj;
-            } else {
-                args = new HashMap<>();
-                functionMap.put("arguments", args);
-            }
-            args.put("allowed_commands", new ArrayList<>(chatModel.getAllowedCommands()));
-            args.put("allowed_script_dirs", scriptDirs);
+            Map<String, Object> input = new HashMap<>(call.getInput());
+            input.put("allowed_commands", new ArrayList<>(chatModel.getAllowedCommands()));
+            input.put("allowed_script_dirs", scriptDirs);
+            result.add(
+                    new ToolCallBlock(call.getCallId(), call.getName(), input, call.getMetadata()));
         }
+        return result;
     }
 
     static String cleanLlmResponse(String rawResponse) {
@@ -303,7 +297,7 @@ public class ChatModelAction {
     }
 
     @SuppressWarnings("unchecked")
-    static ChatMessage generateStructuredOutput(ChatMessage response, Object outputSchema)
+    static Object generateStructuredOutput(ChatResult response, Object outputSchema)
             throws JsonProcessingException {
         String output = response.getText();
         output = cleanLlmResponse(output);
@@ -321,10 +315,7 @@ public class ChatModelAction {
             throw new RuntimeException(
                     String.format("Unsupported output schema %s.", outputSchema));
         }
-        Map<String, Object> extraArgs = new HashMap<>(response.getExtraArgs());
-        extraArgs.put(STRUCTURED_OUTPUT, structuredOutput);
-        return new ChatMessage(
-                response.getRole(), response.getBlocks(), response.getToolCalls(), extraArgs);
+        return structuredOutput;
     }
 
     /**
@@ -435,20 +426,20 @@ public class ChatModelAction {
                         routingMetadata =
                                 takeRoutingMetadata(ctx.getSensoryMemory(), initialRequestId);
                     }
-                    if (routingMetadata != null) {
-                        result.response.getExtraArgs().put("model_routing", routingMetadata);
-                    }
                     Map<String, Long> retryStats =
                             getRetryStats(ctx.getSensoryMemory(), initialRequestId);
                     int totalRetryCount = retryStats.get(TOTAL_RETRY_COUNT).intValue();
                     int totalRetryWaitSec = retryStats.get(TOTAL_RETRY_WAIT_SEC).intValue();
                     clearRequestContext(ctx.getSensoryMemory(), initialRequestId);
-                    ctx.sendEvent(
+                    ChatResponseEvent completed =
                             ChatResponseEvent.success(
                                     initialRequestId,
                                     result.response,
                                     totalRetryCount,
-                                    totalRetryWaitSec));
+                                    totalRetryWaitSec);
+                    completed.setStructuredOutput(result.structuredOutput);
+                    if (routingMetadata != null) completed.setRoutingMetadata(routingMetadata);
+                    ctx.sendEvent(completed);
                 }
                 return;
             } catch (ChatModelInvoker.ChatAttemptFailed e) {
@@ -571,8 +562,8 @@ public class ChatModelAction {
      * the content as cut off by the token budget or withheld by content filtering raises {@link
      * IllegalStateException}; any other reason, and an absent one, are accepted.
      */
-    static void rejectIncompleteResponse(ChatMessage response) {
-        Object finishReason = response.getExtraArgs().get(FINISH_REASON);
+    static void rejectIncompleteResponse(ChatResult response) {
+        String finishReason = response.getFinishReason();
         if (TRUNCATED_FINISH_REASON.equals(finishReason)) {
             throw new IllegalStateException(
                     String.format(
@@ -593,13 +584,13 @@ public class ChatModelAction {
         }
     }
 
-    static ChatMessage generateStructuredOutputWithReport(
-            RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
+    static Object generateStructuredOutputWithReport(
+            RunnerContext ctx, ChatResult response, Object outputSchema) throws Exception {
         String executionId =
                 ExecutionReporters.started(
                         ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
         try {
-            ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
+            Object structuredResponse = generateStructuredOutput(response, outputSchema);
             ExecutionReporters.succeeded(
                     ctx, executionId, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
             return structuredResponse;
@@ -659,22 +650,8 @@ public class ChatModelAction {
         List<ChatMessage> toolResponseMessages = new ArrayList<>();
 
         for (Map.Entry<String, ToolResponse> entry : responses.entrySet()) {
-            Map<String, Object> extraArgs = new HashMap<>();
-            String toolCallId = entry.getKey();
-            if (event.getExternalIds().containsKey(toolCallId)) {
-                extraArgs.put("externalId", event.getExternalIds().get(toolCallId));
-            }
-
-            ToolResponse response = entry.getValue();
-            if (success.get(toolCallId) && response.isSuccess()) {
-                toolResponseMessages.add(
-                        new ChatMessage(
-                                MessageRole.TOOL, String.valueOf(response.getResult()), extraArgs));
-            } else {
-                toolResponseMessages.add(
-                        new ChatMessage(
-                                MessageRole.TOOL, String.valueOf(response.getError()), extraArgs));
-            }
+            toolResponseMessages.add(
+                    ChatMessage.tool(entry.getValue().toResultBlock(entry.getKey())));
         }
 
         List<ChatMessage> messages =

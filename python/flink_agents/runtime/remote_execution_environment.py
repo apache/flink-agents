@@ -130,8 +130,20 @@ class RemoteAgentBuilder(AgentBuilder):
             agent = self.__agents[agent]
 
         # inspect refer actions and resources from env to agent.
+        # Environment entries are placed before agent entries so downstream merging sees
+        # env-then-agent precedence. An entry the agent overrides is dropped from the
+        # environment side rather than replaced in place: ``dict.__or__`` keeps the left
+        # operand's slot, which would leave the agent's replacement early in the order
+        # and let an unrelated environment entry end up last and win instead.
         for type, name_to_resource in self.__resources.items():
-            agent.resources[type] = name_to_resource | agent.resources[type]
+            agent_level = agent.resources[type]
+            merged = {
+                name: resource
+                for name, resource in name_to_resource.items()
+                if name not in agent_level
+            }
+            merged.update(agent_level)
+            agent.resources[type] = merged
 
         agent_plan_json = AgentPlan.from_agent(
             agent, self.__config, agent_name

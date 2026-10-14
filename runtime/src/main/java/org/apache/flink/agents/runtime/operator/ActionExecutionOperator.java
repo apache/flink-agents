@@ -32,8 +32,6 @@ import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
-import org.apache.flink.agents.plan.resourceprovider.PythonSerializableResourceProvider;
-import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
@@ -1240,9 +1238,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
     }
 
     private void snapshotStateInternal(StateSnapshotContext context) throws Exception {
-        durableExecManager.snapshotRecoveryMarker();
-        durableExecManager.snapshotLastCompletedSequenceNumbers(
-                getKeyedStateBackend(), context.getCheckpointId());
+        Map<Object, Long> lastCompletedSequenceNumbers =
+                durableExecManager.snapshotLastCompletedSequenceNumbers(
+                        getKeyedStateBackend(), context.getCheckpointId());
+        durableExecManager.snapshotRecoveryMarker(lastCompletedSequenceNumbers);
 
         super.snapshotState(context);
     }
@@ -1328,9 +1327,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
      * notifies them through a single bridge listener.
      *
      * <p>The bridge listener is registered when the Python runtime has any sub-agent setup to
-     * notify: an external Python setup materialized eagerly here, or a Python-compiled internal
-     * sub-agent whose Java-owned child plan leaves its caller-facing handle to be built lazily in
-     * the Python runtime (see {@link #hasPythonCompiledSubagent()}).
+     * notify: an external Python setup materialized eagerly here, or an internal sub-agent whose
+     * Java-owned child plan leaves its caller-facing handle to be built lazily in the Python
+     * runtime. Any Python action can call an internal sub-agent, regardless of the language in
+     * which its descriptor was declared.
      *
      * <p>Runs while the operator opens, after the Python bridge is up, because the Python runtime
      * materializes the setups it owns.
@@ -1357,33 +1357,10 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                                 getRuntimeContext().getUserCodeClassLoader(), resourceCache));
             }
         }
-        if (pythonSetupRegistered || hasPythonCompiledSubagent()) {
+        if (pythonSetupRegistered || (pythonBridge.isInitialized() && !internalSetups.isEmpty())) {
             addTaskLifecycleListener(
                     new PythonTaskLifecycleListener(pythonBridge.getPythonActionExecutor()));
         }
-    }
-
-    /**
-     * Whether the root plan declares a sub-agent compiled from Python. Such a sub-agent keeps a
-     * caller-facing handle in the Python runtime even when its child plan dispatches on the Java
-     * side — an internal sub-agent is Java-owned, so it is materialized as a Java {@link
-     * InternalSubagentSetup} here and its Python handle is built lazily during the action body. The
-     * operator must still bridge the task lifecycle into Python so that handle observes {@code
-     * onActionPrepared} and a no-id submit can mint identities. A Python-compiled agent declares
-     * its top-level sub-agents in the root plan, so this root-level check also covers nested ones
-     * (the bridge listener is operator-wide and fires for child-scope actions too).
-     */
-    private boolean hasPythonCompiledSubagent() {
-        Map<String, ResourceProvider> agentProviders =
-                agentPlan
-                        .getResourceProviders()
-                        .getOrDefault(ResourceType.AGENT, Collections.emptyMap());
-        for (ResourceProvider provider : agentProviders.values()) {
-            if (provider instanceof PythonSerializableResourceProvider) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -1448,7 +1425,7 @@ public class ActionExecutionOperator<IN, OUT> extends AbstractStreamOperator<OUT
                 setup.getOrCreateChildCache(
                         getRuntimeContext().getUserCodeClassLoader(), resourceCache);
         return new RunnerContextImpl.SubagentScope(
-                metricGroup, setup.getChildPlan(), childCache, callStatus);
+                metricGroup, setup.getPlan(), childCache, callStatus);
     }
 
     /**

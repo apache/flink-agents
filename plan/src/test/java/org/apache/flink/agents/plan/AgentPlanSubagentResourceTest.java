@@ -23,10 +23,12 @@ import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.api.subagent.TestSubagentSetup;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.junit.jupiter.api.Test;
 
@@ -42,9 +44,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 public class AgentPlanSubagentResourceTest {
 
     @Test
-    void subagentSetupInstanceCompilesIntoAgentProvider() throws Exception {
+    void externalDescriptorCompilesIntoAgentProvider() throws Exception {
         Agent agent = new Agent();
-        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup(null));
+        agent.addResource(
+                "reviewer", ResourceType.AGENT, new TestSubagentSetup(null).getDescriptor());
 
         AgentPlan plan = new AgentPlan(agent);
 
@@ -84,8 +87,8 @@ public class AgentPlanSubagentResourceTest {
         agent.getResources().get(ResourceType.AGENT).put("bad", "not-a-subagent");
 
         assertThatThrownBy(() -> new AgentPlan(agent))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("must be a SubagentSetup, a ResourceDescriptor, or an Agent");
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("must be a ResourceDescriptor");
     }
 
     @Test
@@ -99,16 +102,16 @@ public class AgentPlanSubagentResourceTest {
         Map<String, ResourceProvider> agentProviders =
                 plan.getResourceProviders().get(ResourceType.AGENT);
         assertThat(agentProviders).containsKey("child");
-        assertThat(agentProviders.get("child")).isInstanceOf(InternalSubagentProvider.class);
-        InternalSubagentProvider provider = (InternalSubagentProvider) agentProviders.get("child");
-        assertThat(provider.getScope()).isEqualTo("child");
-        assertThat(provider.getChildPlan()).isNotNull();
+        assertThat(agentProviders.get("child")).isInstanceOf(JavaResourceProvider.class);
+        JavaResourceProvider provider = (JavaResourceProvider) agentProviders.get("child");
+        assertThat(provider.getDescriptor().getArgument("scope", "")).isEqualTo("child");
+        assertThat(InternalSubagentPlans.decode(provider.getDescriptor())).isNotNull();
     }
 
     /**
      * Serializing the provider must close its nested child plan before writing the provider's own
      * fields, so the type marker stays at the provider level and the plan deserializes back to an
-     * equivalent {@link InternalSubagentProvider}.
+     * equivalent {@link JavaResourceProvider}.
      */
     @Test
     void internalSubagentProviderSurvivesJsonRoundTrip() throws Exception {
@@ -116,8 +119,8 @@ public class AgentPlanSubagentResourceTest {
         Agent child = new Agent();
         root.addResource("child", ResourceType.AGENT, child);
         AgentPlan plan = new AgentPlan(root);
-        InternalSubagentProvider original =
-                (InternalSubagentProvider)
+        JavaResourceProvider original =
+                (JavaResourceProvider)
                         plan.getResourceProviders().get(ResourceType.AGENT).get("child");
 
         ObjectMapper mapper = new ObjectMapper();
@@ -125,12 +128,12 @@ public class AgentPlanSubagentResourceTest {
 
         ResourceProvider provider =
                 deserialized.getResourceProviders().get(ResourceType.AGENT).get("child");
-        assertThat(provider).isInstanceOf(InternalSubagentProvider.class);
-        InternalSubagentProvider roundTripped = (InternalSubagentProvider) provider;
-        assertThat(roundTripped.getScope()).isEqualTo("child");
-        assertThat(roundTripped.getChildPlan()).isNotNull();
-        assertThat(roundTripped.getChildPlan().getAgentName())
-                .isEqualTo(original.getChildPlan().getAgentName());
+        assertThat(provider).isInstanceOf(JavaResourceProvider.class);
+        JavaResourceProvider roundTripped = (JavaResourceProvider) provider;
+        assertThat(roundTripped.getDescriptor().getArgument("scope", "")).isEqualTo("child");
+        assertThat(InternalSubagentPlans.decode(roundTripped.getDescriptor())).isNotNull();
+        assertThat(InternalSubagentPlans.decode(roundTripped.getDescriptor()).getAgentName())
+                .isEqualTo(InternalSubagentPlans.decode(original.getDescriptor()).getAgentName());
     }
 
     @Test
@@ -144,9 +147,12 @@ public class AgentPlanSubagentResourceTest {
 
         Map<String, ResourceProvider> agentProviders =
                 plan.getResourceProviders().get(ResourceType.AGENT);
-        InternalSubagentProvider first = (InternalSubagentProvider) agentProviders.get("first");
-        InternalSubagentProvider second = (InternalSubagentProvider) agentProviders.get("second");
-        assertThat(first.getChildPlan()).isSameAs(second.getChildPlan());
+        JavaResourceProvider first = (JavaResourceProvider) agentProviders.get("first");
+        JavaResourceProvider second = (JavaResourceProvider) agentProviders.get("second");
+        assertThat(first.getDescriptor().getInitialArguments().get("plan"))
+                .isEqualTo(second.getDescriptor().getInitialArguments().get("plan"));
+        assertThat(first.getDescriptor().getArgument("scope", "")).isEqualTo("first");
+        assertThat(second.getDescriptor().getArgument("scope", "")).isEqualTo("second");
     }
 
     @Test
@@ -204,5 +210,44 @@ public class AgentPlanSubagentResourceTest {
         assertThatThrownBy(() -> new AgentPlan(agent))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("must not start with the reserved prefix '_subagent_'");
+    }
+
+    @Test
+    void descriptorMetadataSurvivesCompilationAndJsonWithoutMutatingDeclaration() throws Exception {
+        Agent child = new Agent();
+        ResourceDescriptor declaration =
+                new InternalSubagentResourceDescriptorBuilder()
+                        .agent(child)
+                        .description("Reviews code")
+                        .inputSchema("{\"type\":\"object\"}")
+                        .build();
+        Agent root = new Agent();
+        root.addResource("reviewer", ResourceType.AGENT, declaration);
+        root.addResource("second", ResourceType.AGENT, declaration);
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan restored =
+                mapper.readValue(mapper.writeValueAsString(new AgentPlan(root)), AgentPlan.class);
+        JavaResourceProvider provider =
+                (JavaResourceProvider)
+                        restored.getResourceProviders().get(ResourceType.AGENT).get("reviewer");
+        assertThat(provider.getDescriptor().getInitialArguments())
+                .containsEntry("description", "Reviews code")
+                .containsEntry("input_schema", "{\"type\":\"object\"}")
+                .containsEntry("scope", "reviewer")
+                .doesNotContainKey("agent");
+        assertThat(InternalSubagentPlans.plan(provider)).isPresent();
+        assertThat(declaration.getInitialArguments())
+                .containsEntry("agent", child)
+                .doesNotContainKeys("scope", "plan");
+    }
+
+    @Test
+    void descriptorCycleThroughRootIsRejected() {
+        Agent root = new Agent();
+        root.addResource(
+                "self",
+                ResourceType.AGENT,
+                new InternalSubagentResourceDescriptorBuilder().agent(root).build());
+        assertThatThrownBy(() -> new AgentPlan(root)).hasMessageContaining("Cyclic sub-agent");
     }
 }

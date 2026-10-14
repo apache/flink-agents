@@ -25,13 +25,13 @@ from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
+    StructuredOutputStrategy,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan.resource.java.conversions import (
-    dump_blocks,
-    from_java_chat_message,
-    normalize_tool_call_id,
+    from_java_chat_result,
 )
 from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAdapter
 
@@ -39,14 +39,11 @@ from flink_agents.plan.resource.java.java_resource_adapter import JavaResourceAd
 def _to_java_chat_message(
     j_resource_adapter: JavaResourceAdapter, message: ChatMessage
 ) -> Any:
-    """Build a Java message with content blocks preserved across the bridge."""
-    tool_calls = [normalize_tool_call_id(call) for call in message.tool_calls]
-    return j_resource_adapter.fromPythonChatMessage(
-        message.role.value,
-        dump_blocks(message),
-        tool_calls,
-        message.extra_args,
-    )
+    """Build a Java message from fields extracted on the Python calling thread.
+
+    Content crosses as block maps so media blocks survive the bridge.
+    """
+    return j_resource_adapter.fromPythonChatMessage(message.model_dump(mode="json"))
 
 
 class JavaChatModelConnection(BaseChatModelConnection):
@@ -88,7 +85,7 @@ class JavaChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Chat by forwarding the request to the wrapped Java connection.
 
         This connection serves as a Java resource wrapper only.
@@ -112,7 +109,7 @@ class JavaChatModelConnection(BaseChatModelConnection):
         ]
         j_response_message = self._j_resource.chat(java_messages, java_tools, kwargs)
 
-        return from_java_chat_message(j_response_message)
+        return from_java_chat_result(j_response_message)
 
     @override
     def close(self) -> None:
@@ -170,34 +167,50 @@ class JavaChatModelSetup(BaseChatModelSetup):
     def open(self) -> None:
         """Open the java resource."""
         self._j_resource.open()
+        resolved = self._j_resource.getSkills()
+        self.skills = list(resolved) if resolved else None
 
     @override
     def chat(
         self,
         messages: Sequence[ChatMessage],
         prompt_args: Mapping[str, Any] | None = None,
+        *,
+        tools: List[Tool] | None = None,
+        output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Execute chat conversation by delegating to Java implementation.
 
         1. Convert Python messages to Java format
         2. Call Java chat method with prompt-template arguments
         3. Convert Java response back to Python format
 
-        Parameters
-        ----------
-        messages : Sequence[ChatMessage]
-            Input message sequence
-        prompt_args : Mapping[str, Any] | None
-            Prompt-template variables forwarded to the Java setup.
-        **kwargs : Any
-            Additional parameters passed to the model service
+        Args:
+            messages: Input message sequence.
+            prompt_args: Prompt-template variables forwarded to the Java setup.
+            tools: Not supported. Must be ``None``.
+            output_schema: Not supported. Must be ``None``.
+            **kwargs: Additional parameters passed to the model service.
 
         Returns:
-        -------
-        ChatMessage
-            Model response message
+            Model response result.
+
+        Raises:
+            NotImplementedError: If ``tools`` or ``output_schema`` is given. They
+                are refused rather than dropped, or sent with the Java setup's bound
+                prompt and tools, since the bridge reaches only the Java setup's
+                three-argument ``chat``, which prepares the request itself.
         """
+        if tools is not None or output_schema is not None:
+            msg = (
+                "A Java chat model setup cannot be sent explicit tools or an output "
+                "schema from Python: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's three-argument "
+                "chat, which adds its own bound prompt and tools. Bind tools and "
+                "apply the schema on the Java side instead."
+            )
+            raise NotImplementedError(msg)
         # Convert Python messages to Java format
         java_messages = [
             _to_java_chat_message(self._j_resource_adapter, message)
@@ -207,4 +220,33 @@ class JavaChatModelSetup(BaseChatModelSetup):
             java_messages, prompt_args or {}, kwargs
         )
 
-        return from_java_chat_message(j_response_message)
+        return from_java_chat_result(j_response_message)
+
+    @override
+    def will_apply_native_structured_output(
+        self, output_schema: OutputSchema | None
+    ) -> bool:
+        """Never applies a schema natively, so a caller keeps describing the schema
+        in the prompt, which works here.
+
+        No connection is resolved on this side, and ``chat`` carries only messages,
+        prompt arguments and keyword arguments across the bridge, so a schema has no
+        way to travel natively.
+
+        Raises:
+            ValueError: If ``output_schema`` is not ``None`` and the strategy is
+                ``NATIVE``, which this setup cannot honor.
+        """
+        if (
+            output_schema is not None
+            and self.structured_output_strategy == StructuredOutputStrategy.NATIVE
+        ):
+            msg = (
+                "Structured output strategy NATIVE was requested, but a Java chat "
+                "model setup reached from Python through JavaChatModelSetup cannot "
+                "be given an output schema: the bridge carries only messages, prompt "
+                "arguments and keyword arguments to the Java setup's chat. Use AUTO "
+                "or PROMPT, or apply the schema on the Java side."
+            )
+            raise ValueError(msg)
+        return False

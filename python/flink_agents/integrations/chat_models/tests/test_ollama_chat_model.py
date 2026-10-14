@@ -20,10 +20,11 @@ import os
 from unittest.mock import MagicMock
 
 import pytest
+from ollama import ChatResponse as OllamaResponse
 from pydantic import BaseModel
 
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage, MessageRole, ReasoningBlock
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.e2e_tests.test_utils import pull_model
@@ -111,7 +112,7 @@ def test_ollama_chat_with_tools() -> None:
     tool_calls = response.tool_calls
     assert len(tool_calls) == 1
     tool_call = tool_calls[0]
-    assert add(**tool_call["function"]["arguments"]) == 3
+    assert add(**tool_call.input) == 3
 
 
 class Person(BaseModel):
@@ -185,13 +186,16 @@ def test_extract_think_tags() -> None:
 
 def test_ollama_chat_with_extract_reasoning() -> None:
     """Test that extract_reasoning functionality works correctly."""
-    # Create mock objects for client and response
+    # Return a typed provider response so absent optional fields remain None.
     mock_client = MagicMock()
-    mock_response = MagicMock()
     # Use a more realistic reasoning pattern at the beginning
-    mock_response.message.content = "<think>To answer what the meaning of life is, I should consider philosophical perspectives. The question is often associated with the number 42 from Hitchhiker's Guide to the Galaxy.</think>The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
-    mock_response.message.role = "assistant"
-    mock_response.message.tool_calls = None
+    mock_response = OllamaResponse(
+        message={
+            "role": "assistant",
+            "content": "<think>To answer what the meaning of life is, I should consider philosophical perspectives. The question is often associated with the number 42 from Hitchhiker's Guide to the Galaxy.</think>The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy.",
+        },
+        done_reason="stop",
+    )
 
     # Configure mock client to return our mock response
     mock_client.chat.return_value = mock_response
@@ -235,6 +239,8 @@ def test_ollama_chat_with_extract_reasoning() -> None:
         == "The meaning of life is often considered to be 42, according to the Hitchhiker's Guide to the Galaxy."
     )
     # Check that the reasoning has been extracted and stored
-    assert "reasoning" in response.extra_args
-    assert "philosophical perspectives" in response.extra_args["reasoning"]
-    assert "Hitchhiker's Guide to the Galaxy" in response.extra_args["reasoning"]
+    reasoning = response.message.blocks[0]
+    assert isinstance(reasoning, ReasoningBlock)
+    assert "philosophical perspectives" in reasoning.text
+    assert "Hitchhiker's Guide to the Galaxy" in reasoning.text
+    assert response.finish_reason == "stop"

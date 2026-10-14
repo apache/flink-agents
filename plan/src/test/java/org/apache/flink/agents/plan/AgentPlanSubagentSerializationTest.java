@@ -38,22 +38,19 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * An external sub-agent registered programmatically as a live {@link SubagentSetup} instance must
- * survive the plan's serialization round-trip — the transfer that carries a compiled plan from the
- * JobManager to a remote TaskManager — and resolve there to an equivalent setup carrying the same
- * configuration. In-process the plan resolves to the live object, so only the round-trip exercises
- * the descriptor-based rebuild on the far side.
- */
+/** An external descriptor retains its configuration across plan transfer. */
 public class AgentPlanSubagentSerializationTest {
 
     @Test
-    void liveExternalSubagentIsRebuiltAfterPlanSerializationRoundTrip() throws Exception {
+    void externalDescriptorIsRebuiltAfterPlanSerializationRoundTrip() throws Exception {
         Agent agent = new Agent();
         agent.addResource(
                 "reviewer",
                 ResourceType.AGENT,
-                new ExternalReviewSubagent("http://review.internal:8080", 3));
+                ResourceDescriptor.Builder.newBuilder(ExternalReviewSubagent.class.getName())
+                        .addInitialArgument("endpoint", "http://review.internal:8080")
+                        .addInitialArgument(ExternalReviewSubagent.FIELD_MAX_RETRIES, 3)
+                        .build());
 
         AgentPlan plan = new AgentPlan(agent);
 

@@ -18,12 +18,16 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.openai.core.JsonField;
 import com.openai.core.JsonMissing;
 import com.openai.core.JsonValue;
+import com.openai.core.ObjectMappers;
 import com.openai.errors.BadRequestException;
 import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
@@ -32,6 +36,7 @@ import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionMessage;
 import com.openai.models.completions.CompletionUsage;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -48,10 +53,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -82,6 +89,8 @@ class AzureOpenAIChatModelConnectionTest {
 
     private static final Map<String, Object> CALLER_RESPONSE_FORMAT = Map.of("type", "json_object");
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private static ResourceDescriptor.Builder connectionDescriptor() {
         return ResourceDescriptor.Builder.newBuilder(
                 AzureOpenAIChatModelConnection.class.getName());
@@ -93,7 +102,7 @@ class AzureOpenAIChatModelConnectionTest {
         public int age;
     }
 
-    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    /** A polymorphic member, which the derived schema states as a discriminated union. */
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
     @JsonSubTypes({
         @JsonSubTypes.Type(value = Dog.class, name = "dog"),
@@ -115,6 +124,30 @@ class AzureOpenAIChatModelConnectionTest {
     public static class Owner {
         public String name;
         public Pet pet;
+    }
+
+    /** Output schema fixture whose enum constants are deserialized from values other than names. */
+    public static class Ticket {
+        public Status status;
+    }
+
+    /** Enum constants deserialized from their {@code @JsonProperty} values. */
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    /** The JSON Schema the request carries, as a JSON tree. */
+    private static JsonNode nativeSchema(ChatCompletionCreateParams params) {
+        return ObjectMappers.jsonMapper()
+                .valueToTree(
+                        params.responseFormat()
+                                .orElseThrow()
+                                .asJsonSchema()
+                                .jsonSchema()
+                                ._schema());
     }
 
     /** The JSON Schema the request carries, as the SDK holds it on the response format. */
@@ -309,8 +342,8 @@ class AzureOpenAIChatModelConnectionTest {
 
         assertThat(request.responseFormat()).isPresent();
         ResponseFormatJsonSchema jsonSchema = request.responseFormat().get().asJsonSchema();
-        // The SDK derives the wire name from the class, so it identifies the schema without being
-        // equal to the class name.
+        // The wire name is derived from the class, so it identifies the schema without being equal
+        // to the class name.
         assertThat(jsonSchema.jsonSchema().name()).contains("Person");
         assertThat(jsonSchema.jsonSchema().strict()).contains(true);
         // Asserting the members rather than only the flags: a schema declaring no properties
@@ -321,10 +354,11 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    @DisplayName("A polymorphic member is sent as a discriminated union")
     void testPolymorphicMemberSchemaIsSent() {
-        // Jackson renders this member as an object declaring no properties, while the SDK derives
-        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // Jackson renders this member as an object declaring no properties, while the schema
+        // generator derives the full union the provider accepts. Reading a Jackson-rendered schema
+        // here would refuse
         // a request that works.
         ChatCompletionCreateParams request =
                 connection()
@@ -334,6 +368,30 @@ class AzureOpenAIChatModelConnectionTest {
                 .contains("bark={type=string}")
                 .contains("meow={type=string}")
                 .contains("kind={const=dog}");
+    }
+
+    @Test
+    @DisplayName("The derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode status =
+                nativeSchema(
+                                connection()
+                                        .buildRequest(
+                                                userMessage(),
+                                                List.of(),
+                                                params("gpt-4o-mini"),
+                                                Ticket.class))
+                        .path("properties")
+                        .path("status");
+
+        // Strict mode confines the model to the listed values, so each has to deserialize into
+        // the enum. Listed by constant name instead, a plain mapper refuses every value the schema
+        // allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : status.path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
     }
 
     @Test
@@ -348,15 +406,6 @@ class AzureOpenAIChatModelConnectionTest {
                                 userMessage(), List.of(), params("gpt-4o-mini"), Person.class);
 
         assertThat(request.model()).isEqualTo(ChatModel.of(DEPLOYMENT));
-    }
-
-    @Test
-    @DisplayName("Native NOT applied when the backing model of the deployment is absent")
-    void testNativeNotAppliedWhenDeploymentModelAbsent() {
-        ChatCompletionCreateParams request =
-                connection().buildRequest(userMessage(), List.of(), params(null), Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
     }
 
     @Test
@@ -382,31 +431,6 @@ class AzureOpenAIChatModelConnectionTest {
     private static NativeStructuredOutputSupport support(
             AzureOpenAIChatModelConnection connection, Map<String, Object> modelParams) {
         return connection.supportsNativeStructuredOutput(Person.class, List.of(), modelParams);
-    }
-
-    @Test
-    @DisplayName("Native NOT applied for a backing model outside the allowlist")
-    void testNativeNotAppliedForUnknownDeploymentModel() {
-        ChatCompletionCreateParams request =
-                connection()
-                        .buildRequest(
-                                userMessage(),
-                                List.of(),
-                                params("some-unknown-model"),
-                                Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
-    }
-
-    @Test
-    @DisplayName("Native NOT applied for a bare gpt-4o backing model")
-    void testNativeNotAppliedForBareGpt4o() {
-        // Azure carries model name and model version as separate properties, so a bare gpt-4o may
-        // be the 2024-05-13 version, which predates structured-output support.
-        ChatCompletionCreateParams request =
-                connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Person.class);
-
-        assertThat(request.responseFormat()).isEmpty();
     }
 
     @ParameterizedTest
@@ -539,22 +563,27 @@ class AzureOpenAIChatModelConnectionTest {
             })
     @DisplayName("The query reports incapable, Responses-only and empty names feasible only")
     void testQueryReportsIncapableModelsFeasible(String model) {
-        // A version-suffixed value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name
-        // Azure reports as the model behind a deployment. The codex, gpt-5-pro and o3-pro names do
-        // support structured outputs but are served only on the Responses API, so they are
-        // incapable on the chat completions API this connection calls.
+        // Azure carries model name and model version as separate properties, so a bare gpt-4o may
+        // be the 2024-05-13 version, which predates structured-output support. A version-suffixed
+        // value such as gpt-4o-2024-08-06 is an OpenAI snapshot name, not a name Azure reports as
+        // the model behind a deployment. The codex, gpt-5-pro and o3-pro names do support
+        // structured outputs but are served only on the Responses API, so they are incapable on the
+        // chat completions API this connection calls.
         assertThat(support(connection(), params(model)))
                 .isEqualTo(NativeStructuredOutputSupport.FEASIBLE);
     }
 
-    @Test
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"gpt-4o-mini", "gpt-3.5-turbo"})
     @DisplayName(
             "A caller-supplied response_format alongside a natively applied schema is rejected")
-    void testCallerResponseFormatConflictsWithNativeSchema() {
+    void testCallerResponseFormatConflictsWithNativeSchema(String modelOfAzureDeployment) {
         // Both values would otherwise reach the same request, where the additional body property
-        // silently competes with the typed response_format the schema produced.
+        // silently competes with the typed response_format the schema produced. A listed, an
+        // unlisted and an unset backing model all reach the native branch.
         AzureOpenAIChatModelConnection conn = connection();
-        Map<String, Object> args = paramsWithCallerResponseFormat("gpt-4o-mini");
+        Map<String, Object> args = paramsWithCallerResponseFormat(modelOfAzureDeployment);
 
         assertThatThrownBy(() -> conn.chat(userMessage(), null, args, Person.class))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -564,7 +593,6 @@ class AzureOpenAIChatModelConnectionTest {
 
     private static Stream<Arguments> nonNativePaths() {
         return Stream.of(
-                Arguments.of("incapable_model", CAPABLE_API_VERSION, "gpt-4o", Person.class),
                 Arguments.of(
                         "non_pojo_schema", CAPABLE_API_VERSION, "gpt-4o-mini", "row<name STRING>"),
                 Arguments.of("no_output_schema", CAPABLE_API_VERSION, "gpt-4o-mini", null),
@@ -608,13 +636,12 @@ class AzureOpenAIChatModelConnectionTest {
     void testResponseCarriesBackingModelTokenMetrics() {
         // The deployment name is what the request targets, but usage has to be attributed to the
         // model behind it, which is the only name that identifies what actually ran.
-        ChatMessage response =
+        ChatResult response =
                 connection().toResponse(completionWithUsage(11L, 7L), params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs())
-                .containsEntry("model_name", "gpt-4o-mini")
-                .containsEntry("promptTokens", 11L)
-                .containsEntry("completionTokens", 7L);
+        assertThat(response.getModel()).isEqualTo("gpt-4o-mini");
+        assertThat(response.getUsage().getPromptTokens()).isEqualTo(11L);
+        assertThat(response.getUsage().getCompletionTokens()).isEqualTo(7L);
     }
 
     @Test
@@ -645,29 +672,29 @@ class AzureOpenAIChatModelConnectionTest {
             String label, ChatCompletion completion, Map<String, Object> modelParams) {
         // Leaving the backing model unset is the documented default, and a completion may arrive
         // without a usage report; both drop the metrics rather than costing the caller the reply.
-        ChatMessage response = connection().toResponse(completion, modelParams);
+        ChatResult response = connection().toResponse(completion, modelParams);
 
-        assertThat(response.getExtraArgs())
+        assertThat(response.getMetadata())
                 .doesNotContainKeys("model_name", "promptTokens", "completionTokens");
     }
 
     @Test
     @DisplayName("The finish reason reported by the provider reaches the response extra args")
     void testResponseCarriesFinishReason() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
                                         JsonField.of(ChatCompletion.Choice.FinishReason.LENGTH)),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+        assertThat(response.getFinishReason()).isEqualTo("length");
     }
 
     @Test
     @DisplayName("A finish reason outside the documented set is stored as received")
     void testResponseCarriesUnknownFinishReasonVerbatim() {
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
@@ -676,21 +703,21 @@ class AzureOpenAIChatModelConnectionTest {
                                                         "some_vendor_reason"))),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "some_vendor_reason");
+        assertThat(response.getFinishReason()).isEqualTo("some_vendor_reason");
     }
 
     @Test
     @DisplayName("An empty finish reason is recorded rather than discarded")
     void testResponseCarriesEmptyFinishReason() {
         // The choice carries a value, so it is recorded; emptiness is not treated as absence.
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonAndUsage(
                                         JsonField.of(ChatCompletion.Choice.FinishReason.of(""))),
                                 params("gpt-4o-mini"));
 
-        assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+        assertThat(response.getFinishReason()).isEqualTo("");
     }
 
     @Test
@@ -698,7 +725,7 @@ class AzureOpenAIChatModelConnectionTest {
     void testResponseCarriesFinishReasonWithoutTokenMetrics() {
         // The metrics need both a backing model and a usage report, and neither is supplied here,
         // so the absent promptTokens proves that branch did not run and could not have written it.
-        ChatMessage response =
+        ChatResult response =
                 connection()
                         .toResponse(
                                 completionWithFinishReasonWithoutUsage(
@@ -706,9 +733,8 @@ class AzureOpenAIChatModelConnectionTest {
                                                 ChatCompletion.Choice.FinishReason.TOOL_CALLS)),
                                 params(null));
 
-        assertThat(response.getExtraArgs())
-                .containsEntry("finish_reason", "tool_calls")
-                .doesNotContainKey("promptTokens");
+        assertThat(response.getFinishReason()).isEqualTo("tool_calls");
+        assertThat(response.getUsage()).isNull();
     }
 
     private static Stream<Arguments> finishReasonsWithoutAValue() {
@@ -726,12 +752,12 @@ class AzureOpenAIChatModelConnectionTest {
         // inputs, so reading the value has to go through the raw field.
         AzureOpenAIChatModelConnection connection = connection();
         ChatCompletion completion = completionWithFinishReasonAndUsage(finishReason);
-        AtomicReference<ChatMessage> response = new AtomicReference<>();
+        AtomicReference<ChatResult> response = new AtomicReference<>();
 
         assertThatCode(() -> response.set(connection.toResponse(completion, params("gpt-4o-mini"))))
                 .doesNotThrowAnyException();
 
-        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(response.get().getFinishReason()).isNull();
     }
 
     private static ChatCompletion completionWithFinishReasonAndUsage(
@@ -799,7 +825,7 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("The query recommends native exactly when the native branch applies")
+    @DisplayName("The query is infeasible exactly when the native branch is skipped")
     void testQueryAgreesWithTheNativeBranch() {
         // Comparing the answer against what the request ends up carrying, rather than against a
         // literal, is what keeps the query and the branch from drifting in step. The api-version
@@ -832,10 +858,7 @@ class AzureOpenAIChatModelConnectionTest {
                         assertThat(answer).as(label).isEqualTo(expected);
                         assertThat(request.responseFormat().isPresent())
                                 .as(label)
-                                .isEqualTo(
-                                        expected
-                                                == NativeStructuredOutputSupport
-                                                        .NATIVE_RECOMMENDED);
+                                .isEqualTo(expected != NativeStructuredOutputSupport.INFEASIBLE);
                     }
                 }
             }
@@ -854,11 +877,11 @@ class AzureOpenAIChatModelConnectionTest {
     }
 
     @Test
-    @DisplayName("An incapable backing model leaves the request feasible rather than infeasible")
+    @DisplayName(
+            "An unlisted backing model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // The backing model is outside the allowlist, which says nothing about whether this
-        // connection could translate the schema form at all. Folding capability into
-        // feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
+        // Folding capability into feasibility would report INFEASIBLE, which a NATIVE policy cannot
+        // overrule; folding it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = params("gpt-3.5-turbo");
 
         assertThat(support(connection(), incapable))
@@ -867,7 +890,7 @@ class AzureOpenAIChatModelConnectionTest {
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
                                 .responseFormat())
-                .isEmpty();
+                .isPresent();
     }
 
     @Test
@@ -901,7 +924,7 @@ class AzureOpenAIChatModelConnectionTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(null);
+            return ToolResponse.success(List.of());
         }
     }
 }

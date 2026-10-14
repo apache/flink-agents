@@ -24,17 +24,24 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
+import org.apache.flink.agents.api.chat.messages.ToolResultBlock;
 import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
+import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
 import org.apache.flink.agents.api.logger.TraceLogger;
 import org.apache.flink.agents.api.logger.TraceLoggerConfig;
 import org.apache.flink.agents.api.logger.TraceLoggerOpenParams;
+import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
 import org.apache.flink.agents.api.trace.TraceRecords;
@@ -454,12 +461,118 @@ class FileTraceLoggerTest {
     private void assertMediaPayloadsSanitizedAt(TraceLogLevel level) throws Exception {
         logger.open(openParams);
 
-        // A natively typed Java event: its messages are already ChatMessage instances, so the
-        // Trace Log's ChatMessage serializer engages directly.
-        append(logger, multimodalChatRequest(), null, level);
+        String payload = PAYLOAD;
+        String signedUrl = SIGNED_URL;
+        ChatRequestEvent event = multimodalChatRequest();
+        ChatMessage message = event.getMessages().get(0);
+
+        append(logger, event, null, level);
+        append(
+                logger,
+                ChatResponseEvent.success(
+                        UUID.randomUUID(),
+                        new ChatResult(
+                                ChatMessage.assistant(message.getBlocks()),
+                                "local",
+                                "response-id",
+                                null,
+                                "stop",
+                                Map.of("provider", "ollama"))),
+                null,
+                level);
+        ChatMessage assistant =
+                ChatMessage.assistant(
+                                List.of(
+                                        new ReasoningBlock(
+                                                "check the weather", Map.of("signature", "sig")),
+                                        new ToolCallBlock(
+                                                "call-1",
+                                                "weather",
+                                                Map.of("city", "Berlin"),
+                                                Map.of("provider", "ollama"))))
+                        .withMetadata(Map.of("turn", 1));
+        ChatMessage tool =
+                ChatMessage.tool(
+                        new ToolResultBlock(
+                                "call-1",
+                                List.of(
+                                        new TextBlock("sunny"),
+                                        ImageBlock.fromBase64("image/png", payload),
+                                        new DocumentBlock(
+                                                "application/pdf",
+                                                new UrlSource(signedUrl),
+                                                "cat.pdf",
+                                                42L,
+                                                null)),
+                                false,
+                                Map.of("source", "weather")));
+        append(logger, new ChatRequestEvent("test-model", List.of(assistant, tool)), null, level);
+        ToolResponse toolResponse =
+                ToolResponse.success(
+                                ((ToolResultBlock) tool.getBlocks().get(0)).getBlocks(),
+                                12L,
+                                "weather")
+                        .withMetadata(Map.of("source", "weather"));
+        append(
+                logger,
+                new ToolResponseEvent(
+                        UUID.randomUUID(),
+                        Map.of("call-1", toolResponse),
+                        Map.of("call-1", true),
+                        Map.of()),
+                null,
+                level);
         logger.flush();
 
         assertSanitizedMediaLogLine();
+        Path logFile = getExpectedLogFilePath();
+        JsonNode logged =
+                objectMapper
+                        .readTree(Files.readAllLines(logFile).get(0))
+                        .at("/attributes/messages/0");
+
+        String responseLine = Files.readAllLines(logFile).get(1);
+        assertFalse(responseLine.contains(payload), "Response inline payload must never be logged");
+        assertFalse(
+                responseLine.contains("secret"), "Response URL credentials must never be logged");
+        assertFalse(
+                responseLine.contains("X-Amz-Signature"),
+                "Response URL query must never be logged");
+        JsonNode response = objectMapper.readTree(responseLine).get("attributes").get("response");
+        assertEquals("assistant", response.at("/message/role").asText());
+        assertEquals("ollama", response.at("/metadata/provider").asText());
+        assertEquals(logged.get("blocks"), response.at("/message/blocks"));
+        assertEquals("response-id", response.get("response_id").asText());
+        String toolLine = Files.readAllLines(logFile).get(2);
+        JsonNode messages = objectMapper.readTree(toolLine).at("/attributes/messages");
+        assertEquals(1, messages.at("/0/metadata/turn").asInt());
+        assertEquals("check the weather", messages.at("/0/blocks/0/text").asText());
+        assertEquals("sig", messages.at("/0/blocks/0/metadata/signature").asText());
+        assertEquals("Berlin", messages.at("/0/blocks/1/input/city").asText());
+        assertEquals("ollama", messages.at("/0/blocks/1/metadata/provider").asText());
+        assertEquals("call-1", messages.at("/1/blocks/0/call_id").asText());
+        assertEquals("sunny", messages.at("/1/blocks/0/blocks/0/text").asText());
+        assertEquals("weather", messages.at("/1/blocks/0/metadata/source").asText());
+        assertFalse(toolLine.contains(payload));
+        assertFalse(toolLine.contains("secret"));
+        assertFalse(toolLine.contains("X-Amz-Signature"));
+        String toolResponseLine = Files.readAllLines(logFile).get(3);
+        assertFalse(toolResponseLine.contains(payload));
+        assertFalse(toolResponseLine.contains("secret"));
+        assertFalse(toolResponseLine.contains("X-Amz-Signature"));
+        JsonNode loggedToolResponse =
+                objectMapper.readTree(toolResponseLine).at("/attributes/responses/call-1");
+        assertEquals(messages.at("/1/blocks/0/blocks"), loggedToolResponse.get("blocks"));
+        assertTrue(loggedToolResponse.get("success").asBoolean());
+        assertEquals(12L, loggedToolResponse.get("execution_time_ms").asLong());
+        assertEquals("weather", loggedToolResponse.get("tool_name").asText());
+        assertEquals("weather", loggedToolResponse.at("/metadata/source").asText());
+
+        // The normal wire mapper must retain the payload, even after logging the same object.
+        String wire = objectMapper.writeValueAsString(toolResponse);
+        assertTrue(wire.contains(payload));
+        assertTrue(wire.contains(signedUrl));
+        assertEquals(toolResponse, objectMapper.readValue(wire, ToolResponse.class));
     }
 
     @Test
@@ -479,9 +592,9 @@ class FileTraceLoggerTest {
      * still be sanitized before they reach the log.
      *
      * <p>{@code Event.fromJson} restores the concrete {@link ChatRequestEvent}, so its messages
-     * become typed {@link ChatMessage} instances rather than generic maps. Only a typed message
-     * engages the Trace Log's {@code ChatMessage} serializer; had the event stayed generic, its
-     * messages would be logged verbatim and the payload and URL credentials would leak.
+     * become typed {@link ChatMessage} instances rather than generic maps. Their typed blocks
+     * engage the Trace Log's content-block serializer; if the blocks remained generic maps, their
+     * payload and URL credentials would be logged verbatim.
      *
      * <p>This drives the deserialization seam directly, so it is a focused unit test rather than a
      * public-API end-to-end test: {@code Event.fromJson} is an internal bridge entry point, not a

@@ -15,24 +15,15 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Plan-layer support for internal sub-agents.
-
-An ``Agent`` registered directly as an AGENT resource
-(``add_resource(name, AGENT, ChildAgent())``) is compiled into an internal
-sub-agent: the child's compiled :class:`~flink_agents.plan.agent_plan.AgentPlan`
-plus a scope id (the resource name) are carried by a
-``PythonSerializableResourceProvider`` referencing the runtime setup class
-``flink_agents.runtime.internal_subagent.InternalSubagentSetup`` by name, so
-the plan layer keeps its dependency direction (the setup itself lives in the
-runtime layer, mirroring Java's ``InternalSubagentProvider``).
-
-The ``begin`` / ``end`` / ``get_or_compile`` helpers provide thread-local
-cycle detection and child-plan reuse during compilation, mirroring Java's
-``InternalSubagentCompilationHelper``.
-"""
+"""Compile and traverse child plans carried by ordinary resource descriptors."""
 
 import threading
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Callable
+
+from flink_agents.api.agents.agent import Agent
+from flink_agents.api.resource import JavaResourceDescriptor, ResourceDescriptor
+from flink_agents.api.subagent import INTERNAL_SUBAGENT_SETUP_CLASS
 
 if TYPE_CHECKING:
     from flink_agents.plan.agent_plan import AgentPlan
@@ -118,3 +109,47 @@ def get_or_compile(
     finally:
         del compiling[key]
         path.pop()
+
+
+def is_internal(descriptor: ResourceDescriptor) -> bool:
+    """Whether the descriptor constructs the internal sub-agent runtime."""
+    return (
+        descriptor.language == "java"
+        and descriptor.target_clazz == INTERNAL_SUBAGENT_SETUP_CLASS
+    )
+
+
+def compile_descriptor(
+    name: str,
+    descriptor: ResourceDescriptor,
+    compiler: Callable[[Agent], "AgentPlan"],
+) -> ResourceDescriptor:
+    """Compile a child Agent without modifying its declaration."""
+    if not is_internal(descriptor):
+        return descriptor
+    arguments = dict(descriptor.arguments)
+    agent = arguments.pop("agent", None)
+    if not isinstance(agent, Agent) or "plan" in arguments:
+        msg = (
+            f"Internal sub-agent '{name}' requires an Agent declaration, "
+            "not a compiled plan"
+        )
+        raise ValueError(msg)
+    plan = get_or_compile(agent, name, compiler)
+    arguments["plan"] = plan.model_dump(mode="json", serialize_as_any=True)
+    arguments["scope"] = name
+    return JavaResourceDescriptor(
+        clazz=INTERNAL_SUBAGENT_SETUP_CLASS, arguments=arguments
+    )
+
+
+def decode_plan(descriptor: ResourceDescriptor) -> "AgentPlan":
+    """Restore the typed plan from a descriptor's JSON data."""
+    from flink_agents.plan.agent_plan import AgentPlan
+
+    data = descriptor.arguments.get("plan")
+    if not isinstance(data, dict):
+        msg = "Internal sub-agent requires a compiled plan object"
+        raise TypeError(msg)
+    # AgentPlan's validator reconstructs providers in place; preserve the descriptor.
+    return AgentPlan.model_validate(deepcopy(data))

@@ -18,10 +18,10 @@
 """Runtime setup for internal sub-agents.
 
 The compiled form of an ``Agent`` registered directly as an AGENT resource:
-the plan layer carries the child
+the compiled descriptor carries the child
 :class:`~flink_agents.plan.agent_plan.AgentPlan` and the scope (the resource
-name) in a ``PythonSerializableResourceProvider`` referencing this class by
-name; this runtime class owns the invocation behavior.
+name) in a ``JavaResourceProvider`` referencing the Java runtime setup.
+This Python caller owns the invocation behavior.
 
 Execution mode is the deferred one, inherited from
 :class:`~flink_agents.runtime.deferred_subagent.DeferredSubagentSetup`:
@@ -84,7 +84,7 @@ class InternalSubagentCallFactory(Protocol):
 class InternalSubagentSetup(DeferredSubagentSetup):
     """Compiled internal sub-agent, produced during ``AgentPlan`` compilation.
 
-    Holds the child agent's compiled ``child_plan`` and its ``scope`` (the
+    Holds the child agent's compiled ``plan`` and its ``scope`` (the
     resource name used for runtime resolution). The child work is orchestrated
     by the operator: the async callable delegates to
     :class:`InternalSubagentCallFactory` on the runtime context. The
@@ -92,7 +92,7 @@ class InternalSubagentSetup(DeferredSubagentSetup):
     explicit identities, deferred issue, and the await-only resolve.
     """
 
-    child_plan: AgentPlan
+    plan: AgentPlan
     scope: str
 
     def prepare(

@@ -23,8 +23,12 @@ from typing import Any, ClassVar, Dict, List, Sequence
 import pytest
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+)
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import (
     action,
     chat_model_setup,
@@ -277,9 +281,9 @@ class MockChatModelImpl(BaseChatModelSetup):
     def resource_type(cls) -> ResourceType:
         return ResourceType.CHAT_MODEL
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Testing Implementation."""
-        return ChatMessage.of(MessageRole.ASSISTANT, self.host + " " + self.desc)
+        return ChatResult(message=ChatMessage.assistant(self.host + " " + self.desc))
 
 
 class MockEmbeddingModelConnection(BaseEmbeddingModelConnection):
@@ -534,10 +538,7 @@ def test_agent_plan_merges_decorated_python_tool_injected_args() -> None:
     assert tool_resource.injected_args == {
         "tenant_id": InjectedArg.from_config("tenant.id")
     }
-    assert (
-        "tenant_id"
-        not in tool_resource.metadata.args_schema["properties"]
-    )
+    assert "tenant_id" not in tool_resource.metadata.args_schema["properties"]
 
 
 def test_agent_plan_accepts_matching_decorated_python_tool_injected_args() -> None:

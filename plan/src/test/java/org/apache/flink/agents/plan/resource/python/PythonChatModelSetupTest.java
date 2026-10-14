@@ -18,12 +18,16 @@
 package org.apache.flink.agents.plan.resource.python;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import pemja.core.object.PyObject;
@@ -35,7 +39,15 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.any;
+import static org.mockito.Mockito.anyList;
+import static org.mockito.Mockito.anyMap;
+import static org.mockito.Mockito.argThat;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 public class PythonChatModelSetupTest {
     @Mock private PythonResourceAdapter mockAdapter;
@@ -91,7 +103,7 @@ public class PythonChatModelSetupTest {
     @Test
     void testChat() throws Exception {
         ChatMessage inputMessage = mock(ChatMessage.class);
-        ChatMessage outputMessage = mock(ChatMessage.class);
+        ChatResult outputMessage = mock(ChatResult.class);
         List<ChatMessage> messages = Collections.singletonList(inputMessage);
         Map<String, Object> promptArgs = new HashMap<>();
         promptArgs.put("input", "value");
@@ -105,9 +117,9 @@ public class PythonChatModelSetupTest {
         when(mockAdapter.toPythonChatMessage(inputMessage)).thenReturn(pythonInputMessage);
         when(mockAdapter.callMethod(eq(mockChatModelSetup), eq("chat"), any(Map.class)))
                 .thenReturn(pythonOutputMessage);
-        when(mockAdapter.fromPythonChatMessage(pythonOutputMessage)).thenReturn(outputMessage);
+        when(mockAdapter.fromPythonChatResult(pythonOutputMessage)).thenReturn(outputMessage);
 
-        ChatMessage result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
+        ChatResult result = pythonChatModelSetup.chat(messages, promptArgs, modelParams);
 
         assertThat(result).isEqualTo(outputMessage);
 
@@ -130,7 +142,7 @@ public class PythonChatModelSetupTest {
                                     assertThat(pythonMessages.get(0)).isEqualTo(pythonInputMessage);
                                     return true;
                                 }));
-        verify(mockAdapter).fromPythonChatMessage(pythonOutputMessage);
+        verify(mockAdapter).fromPythonChatResult(pythonOutputMessage);
         verify(pythonInputMessage).close();
         verify(pythonOutputMessage).close();
     }
@@ -149,6 +161,50 @@ public class PythonChatModelSetupTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ChatModelSetup is not initialized")
                 .hasMessageContaining("Cannot perform chat operation");
+    }
+
+    private PythonChatModelSetup setupWithStrategy(String strategy) {
+        return new PythonChatModelSetup(
+                mockAdapter,
+                mockChatModelSetup,
+                new ResourceDescriptor(
+                        PythonChatModelSetup.class.getName(),
+                        Map.of("structured_output_strategy", strategy)),
+                mockGetResource);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"auto", "prompt"})
+    void testWillApplyNativeStructuredOutputIsFalse(String strategy) {
+        // No connection is bound on this side, so the gate must answer without consulting one.
+        assertThat(setupWithStrategy(strategy).willApplyNativeStructuredOutput(String.class))
+                .isFalse();
+    }
+
+    @Test
+    void testWillApplyNativeStructuredOutputRejectsNativeStrategy() {
+        assertThatThrownBy(
+                        () ->
+                                setupWithStrategy("native")
+                                        .willApplyNativeStructuredOutput(String.class))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("bridge");
+    }
+
+    @Test
+    void testWillApplyNativeStructuredOutputIsFalseForNullSchemaUnderNative() {
+        assertThat(setupWithStrategy("native").willApplyNativeStructuredOutput(null)).isFalse();
+    }
+
+    @Test
+    void testExplicitChatIsRefused() {
+        List<ChatMessage> messages = Collections.singletonList(mock(ChatMessage.class));
+
+        // Refused even without a schema: the bridge cannot send messages without the Python
+        // setup's bound prompt and tools.
+        assertThatThrownBy(() -> pythonChatModelSetup.chat(messages, List.of(), Map.of(), null))
+                .isInstanceOf(UnsupportedOperationException.class);
+        verifyNoInteractions(mockAdapter);
     }
 
     @Test
@@ -171,5 +227,66 @@ public class PythonChatModelSetupTest {
         pythonChatModelSetup.setMetricGroup(metricGroup);
 
         verify(mockAdapter).setMetricGroup(mockChatModelSetup, metricGroup);
+    }
+
+    /**
+     * The wrapper's {@code open()} only delegates to Python, so the base implementation — the only
+     * place that expands the {@code skills_sources} marker — never runs for this instance. The
+     * resolved names still have to land on the wrapper, because the Java-side reader ({@code
+     * ChatModelAction.injectBashToolArgs}) builds the bash tool's {@code allowed_script_dirs} from
+     * {@code getSkills()} and a source-only declaration carries no explicit {@code skills}
+     * argument.
+     */
+    @Test
+    void openResolvesSkillsSourcesMarkerOntoTheWrapper() throws Exception {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        "flink_agents.integrations.chat_models.ollama.OllamaChatModelSetup",
+                        Map.of(
+                                "skills_sources",
+                                List.of(
+                                        new SkillSourceSpec(
+                                                "local", Map.of("path", "/data/skills")))));
+        when(mockGetResource.resolveSkillNamesForSources(anyList()))
+                .thenReturn(List.of("demo", "extra"));
+        PythonChatModelSetup setup =
+                new PythonChatModelSetup(
+                        mockAdapter, mockChatModelSetup, descriptor, mockGetResource);
+
+        setup.open();
+
+        assertThat(setup.getSkills()).containsExactly("demo", "extra");
+        verify(mockAdapter).callMethod(eq(mockChatModelSetup), eq("open"), anyMap());
+    }
+
+    @Test
+    void openKeepsExplicitSkillsFirstAndAppendsResolvedSources() throws Exception {
+        ResourceDescriptor descriptor =
+                new ResourceDescriptor(
+                        "flink_agents.integrations.chat_models.ollama.OllamaChatModelSetup",
+                        Map.of(
+                                "skills",
+                                List.of("explicit"),
+                                "skills_sources",
+                                List.of(
+                                        new SkillSourceSpec(
+                                                "local", Map.of("path", "/data/skills")))));
+        when(mockGetResource.resolveSkillNamesForSources(anyList()))
+                .thenReturn(List.of("explicit", "demo"));
+        PythonChatModelSetup setup =
+                new PythonChatModelSetup(
+                        mockAdapter, mockChatModelSetup, descriptor, mockGetResource);
+
+        setup.open();
+
+        assertThat(setup.getSkills()).containsExactly("explicit", "demo");
+    }
+
+    @Test
+    void openLeavesSkillsNullWhenNoSourcesAreDeclared() throws Exception {
+        pythonChatModelSetup.open();
+
+        assertThat(pythonChatModelSetup.getSkills()).isNull();
+        verify(mockAdapter).callMethod(eq(mockChatModelSetup), eq("open"), anyMap());
     }
 }

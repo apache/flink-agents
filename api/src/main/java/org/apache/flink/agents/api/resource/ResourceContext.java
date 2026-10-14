@@ -18,6 +18,8 @@
 
 package org.apache.flink.agents.api.resource;
 
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.function.BiFunction;
@@ -48,6 +50,20 @@ public interface ResourceContext {
     List<String> getSkillDirs(List<String> skillNames) throws Exception;
 
     /**
+     * Resolve skill names from the given source specifications.
+     *
+     * <p>At plan time, a descriptor may record a set of {@link SkillSourceSpec} entries as a marker
+     * meaning "all skills from these sources." At runtime, this method resolves the marker into
+     * actual skill names by looking up the sources in the agent's {@code SkillManager}.
+     *
+     * <p>Returns an empty list if no skills are configured or the sources are not loaded.
+     */
+    default List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources)
+            throws Exception {
+        return Collections.emptyList();
+    }
+
+    /**
      * Create a {@link ResourceContext} backed by the given resource lookup function. The skill
      * methods return empty defaults — convenient for tests or for runtimes without skills support.
      */
@@ -65,6 +81,11 @@ public interface ResourceContext {
 
             @Override
             public List<String> getSkillDirs(List<String> skillNames) {
+                return Collections.emptyList();
+            }
+
+            @Override
+            public List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources) {
                 return Collections.emptyList();
             }
         };

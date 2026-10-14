@@ -19,6 +19,7 @@
 package org.apache.flink.agents.api.chat.model;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
@@ -59,6 +60,11 @@ public abstract class BaseChatModelConnection extends Resource {
      * name it does not recognize. The default {@code INFEASIBLE} is correct only for a connection
      * that translates no schema at all.
      *
+     * <p>An override's native branch carries the schema whenever this answer is not {@code
+     * INFEASIBLE}. Capability only separates {@code FEASIBLE} from {@code NATIVE_RECOMMENDED} and
+     * does not change the request; whether to pass a schema at all is the caller's strategy to
+     * decide.
+     *
      * <p>An answer other than {@code INFEASIBLE} does not promise the call succeeds: a connection
      * may still raise once its native branch applies the schema, for example on a conflicting
      * caller-supplied response format.
@@ -86,7 +92,7 @@ public abstract class BaseChatModelConnection extends Resource {
      * @param modelParams the additional arguments passed to the model
      * @return the chat response containing model outputs
      */
-    public abstract ChatMessage chat(
+    public abstract ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams);
 
     /**
@@ -102,7 +108,9 @@ public abstract class BaseChatModelConnection extends Resource {
      * unconstrained response can never be mistaken for a schema-conforming one. A null {@code
      * outputSchema} delegates to {@link #chat(List, List, Map)}. A connection that does translate a
      * schema into a native provider parameter overrides this overload, and reports its support via
-     * {@link #supportsNativeStructuredOutput(Object, List, Map)}.
+     * {@link #supportsNativeStructuredOutput(Object, List, Map)}. Such an override applies the
+     * schema natively whenever that query would answer other than {@code INFEASIBLE}, whatever the
+     * effective model's capability, since the caller has already decided to send it.
      *
      * <p>No connection translates an {@link org.apache.flink.agents.api.agents.OutputSchema}, and
      * so a {@code RowTypeInfo}, natively, and what follows differs by connection. One that
@@ -134,7 +142,7 @@ public abstract class BaseChatModelConnection extends Resource {
      * @throws UnsupportedOperationException if {@code outputSchema} is non-null and this connection
      *     has no native structured-output translation
      */
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,

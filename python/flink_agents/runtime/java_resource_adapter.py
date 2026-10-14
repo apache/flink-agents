@@ -17,6 +17,8 @@
 #################################################################################
 from typing import Any
 
+from flink_agents.api.resource import Resource, ResourceDescriptor
+from flink_agents.api.resource_context import ResourceContext
 from flink_agents.runtime.flink_metric_group import FlinkMetricGroup
 
 
@@ -34,11 +36,9 @@ class JavaResourceAdapterImpl:
         """Resolve a resource from the Java resource context."""
         return self._bridge.getResource(name, resource_type)
 
-    def fromPythonChatMessage(
-        self, role: str, blocks: list[dict], tool_calls: list, extra_args: dict
-    ) -> Any:
+    def fromPythonChatMessage(self, message: dict) -> Any:
         """Convert message fields through the Java bridge."""
-        return self._bridge.fromPythonChatMessage(role, blocks, tool_calls, extra_args)
+        return self._bridge.fromPythonChatMessage(message)
 
     def fromPythonDocument(
         self, content: str, metadata: dict, document_id: str, embedding: Any, score: Any
@@ -56,6 +56,10 @@ class JavaResourceAdapterImpl:
         """Resolve the directories of Java-hosted skills."""
         return list(self._bridge.getSkillDirs(skill_names) or [])
 
+    def resolveSkillNamesForSources(self, sources: list[dict]) -> list[str]:
+        """Resolve the names of Java-hosted skills declared by source specs."""
+        return list(self._bridge.resolveSkillNamesForSources(sources) or [])
+
     def set_metric_group(self, resource: Any, metric_group: Any) -> None:
         """Forward the Java metric group without exposing runtime types to Plan."""
         if resource is None:
@@ -68,3 +72,17 @@ class JavaResourceAdapterImpl:
             msg = "Java resource metric groups must be FlinkMetricGroup or None."
             raise TypeError(msg)
         resource.setMetricGroup(java_group)
+
+    def create_subagent_resource(
+        self, descriptor: ResourceDescriptor, resource_context: ResourceContext
+    ) -> Resource:
+        """Bind Python calls to an internal sub-agent orchestrated by the operator."""
+        from flink_agents.plan.subagent import decode_plan, is_internal
+        from flink_agents.runtime.internal_subagent import InternalSubagentSetup
+
+        if not is_internal(descriptor):
+            msg = "Calling external Java sub-agents from Python is not supported"
+            raise NotImplementedError(msg)
+        arguments = dict(descriptor.arguments)
+        arguments["plan"] = decode_plan(descriptor)
+        return InternalSubagentSetup(**arguments, resource_context=resource_context)

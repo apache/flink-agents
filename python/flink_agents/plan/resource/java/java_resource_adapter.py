@@ -17,17 +17,24 @@
 #################################################################################
 from typing import Any, Protocol
 
+from flink_agents.api.resource import Resource, ResourceDescriptor
+from flink_agents.api.resource_context import ResourceContext
+
 
 class JavaResourceAdapter(Protocol):
     """Services supplied by Runtime to Java-backed Plan resources."""
+
+    def create_subagent_resource(
+        self, descriptor: ResourceDescriptor, resource_context: ResourceContext
+    ) -> Resource:
+        """Create a Python caller for a Java-orchestrated sub-agent."""
+        ...
 
     def getResource(self, name: str, resource_type: str) -> Any:
         """Resolve a resource through its owning runtime."""
         ...
 
-    def fromPythonChatMessage(
-        self, role: str, blocks: list[dict], tool_calls: list, extra_args: dict
-    ) -> Any:
+    def fromPythonChatMessage(self, message: dict) -> Any:
         """Create a Java message from Python values."""
         ...
 
@@ -47,4 +54,8 @@ class JavaResourceAdapter(Protocol):
 
     def getSkillDirs(self, skill_names: list[str]) -> list[str]:
         """Resolve materialized skill directories."""
+        ...
+
+    def resolveSkillNamesForSources(self, sources: list[dict]) -> list[str]:
+        """Resolve skill names declared by skill source specs."""
         ...

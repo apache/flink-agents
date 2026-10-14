@@ -20,10 +20,10 @@ package org.apache.flink.agents.api.subagent;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.resource.SerializableResource;
 
 import javax.annotation.Nullable;
 
@@ -33,7 +33,7 @@ import java.util.Objects;
  * Caller-facing definition of a sub-agent, registered in the agent plan as an {@code AGENT}
  * resource.
  */
-public abstract class SubagentSetup extends SerializableResource {
+public abstract class SubagentSetup extends Resource {
 
     /**
      * Prefix of the callable name a sub-agent is exposed to a chat model under. Tools are forbidden
@@ -89,6 +89,7 @@ public abstract class SubagentSetup extends SerializableResource {
      * passed alongside the descriptor.
      */
     protected SubagentSetup(ResourceDescriptor descriptor, ResourceContext resourceContext) {
+        super(descriptor, resourceContext);
         this.descriptor =
                 Objects.requireNonNull(
                         descriptor,

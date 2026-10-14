@@ -677,6 +677,18 @@ def test_ordinary_java_interruption_propagates_without_caching(
             raise interruption
         return "retried"
 
+    durable_calls = []
+
+    def durable() -> str:
+        durable_calls.append(1)
+        return "durable"
+
+    later_calls = []
+
+    def later() -> str:
+        later_calls.append(1)
+        return "later"
+
     store = _FakeJavaRunnerContext()
     ctx = _create_runner_context(store)
     try:
@@ -685,18 +697,25 @@ def test_ordinary_java_interruption_propagates_without_caching(
             handle = future
         else:
             sibling = (
-                ctx.durable_execute_async(lambda: "durable")
+                ctx.durable_execute_async(durable)
                 if mode == "mixed_batch"
                 else ctx.execute_async(lambda: "ordinary")
             )
-            handle = ctx.gather(sibling, future)
+            if mode == "mixed_batch":
+                handle = ctx.gather(sibling, future, ctx.durable_execute_async(later))
+            else:
+                handle = ctx.gather(sibling, future)
         with pytest.raises(type(interruption)) as raised:
             _run_async(handle)
         assert raised.value is interruption
         assert store.current_call_index == 0
+        # The durable sibling completed before the interruption, so its outcome is
+        # kept and recovery rereads it instead of running it again.
         assert [slot.status for slot in store.call_results] == (
-            ["PENDING"] if mode == "mixed_batch" else []
+            ["SUCCEEDED", "PENDING"] if mode == "mixed_batch" else []
         )
+        if mode == "mixed_batch":
+            assert later_calls == [1]
 
         result = _run_async(handle)
         assert (result if mode == "single" else result[1].value) == "retried"
@@ -704,8 +723,14 @@ def test_ordinary_java_interruption_propagates_without_caching(
         assert len(calls) == 2
         if mode == "mixed_batch":
             assert result[0].value == "durable"
-            assert [slot.status for slot in store.call_results] == ["SUCCEEDED"]
-            assert store.current_call_index == 1
+            assert durable_calls == [1]
+            assert result[2].value == "later"
+            assert later_calls == [1, 1]
+            assert [slot.status for slot in store.call_results] == [
+                "SUCCEEDED",
+                "SUCCEEDED",
+            ]
+            assert store.current_call_index == 2
         else:
             assert store.operations == []
     finally:

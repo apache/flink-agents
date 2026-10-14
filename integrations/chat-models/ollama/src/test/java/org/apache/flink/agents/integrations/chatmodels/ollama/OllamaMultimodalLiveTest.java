@@ -19,6 +19,7 @@
 package org.apache.flink.agents.integrations.chatmodels.ollama;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -78,7 +79,7 @@ class OllamaMultimodalLiveTest {
         // Not every vision model supports thinking (qwen2.5vl does not).
         params.put("think", false);
 
-        ChatMessage response =
+        ChatResult response =
                 connection.chat(
                         List.of(
                                 ChatMessage.user(

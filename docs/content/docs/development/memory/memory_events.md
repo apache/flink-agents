@@ -1,5 +1,5 @@
 ---
-title: Memory Events
+title: Memory Observability
 weight: 5
 type: docs
 ---

@@ -46,7 +46,7 @@ Flink Agents jobs run on Flink:
 
 We recommend creating a Python virtual environment to install the Flink Agents Python library.
 
-Follow the [instructions]({{< ref "docs/get-started/installation" >}}) to install the Flink Agents Python and Java libraries.
+Follow the [instructions]({{< ref "docs/get-started/setup" >}}) to install the Flink Agents Python and Java libraries.
 
 ### Submit to Flink Cluster
 

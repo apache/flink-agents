@@ -15,37 +15,100 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from dataclasses import dataclass
 from typing import Any
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_serializer,
+    model_validator,
+)
 
-@dataclass(frozen=True)
-class ToolResponse:
+from flink_agents.api.chat_message import DataContentBlock, TextBlock, ToolResultBlock
+
+
+class ToolResponse(BaseModel):
     """Represents the result and status of one Python tool execution.
 
-    Python tools may continue returning raw values, which the runtime treats as
-    successful results. Return ``ToolResponse.error(...)`` when a tool call
-    completed normally but the tool operation itself failed.
+    Ordinary tool return values become successful text results. Strings are used
+    directly; other values use JSON when possible, falling back to their string
+    representation. ``blocks`` is the ordered model-facing text/media content.
+    ``metadata`` holds application data
+    and is not copied into chat messages. Media requires provider/model support.
+    Return ``ToolResponse.error(...)`` when the tool operation itself failed.
     """
 
-    result: Any = None
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    blocks: tuple[DataContentBlock, ...] = ()
+    metadata: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
     execution_time_ms: int = 0
     tool_name: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def from_wire(cls, value: Any) -> Any:
+        """Read Java/Python execution results using one wire shape."""
+        if isinstance(value, dict) and "success" in value:
+            value = dict(value)
+            success = value.pop("success")
+            error = value.pop("error", None)
+            if success != (error is None):
+                msg = "ToolResponse success and error disagree"
+                raise ValueError(msg)
+            value["error_message"] = error
+        return value
+
+    @model_serializer
+    def to_wire(self) -> dict:
+        """Serialize execution data separately from its model-facing projection."""
+        return {
+            "metadata": self.metadata,
+            "success": self.is_success(),
+            "error": self.error_message,
+            "execution_time_ms": self.execution_time_ms,
+            "tool_name": self.tool_name,
+            "blocks": self.blocks,
+        }
+
+    def to_result_block(self, call_id: str) -> ToolResultBlock:
+        """Project a tool execution into model-facing content."""
+        if self.is_error():
+            return ToolResultBlock(
+                call_id=call_id,
+                blocks=[TextBlock(text=self.error_message)],
+                is_error=True,
+            )
+        return ToolResultBlock(call_id=call_id, blocks=self.blocks)
+
+    def get_text(self) -> str:
+        """Concatenate text blocks in order, excluding media and metadata."""
+        return "".join(b.text for b in self.blocks if isinstance(b, TextBlock))
+
     @classmethod
     def success(
         cls,
-        result: Any,
+        blocks: tuple[DataContentBlock, ...] | list[DataContentBlock],
         execution_time_ms: int = 0,
         tool_name: str | None = None,
     ) -> "ToolResponse":
-        """Create a successful tool response."""
+        """Create a successful response with ordered text and media blocks."""
         return cls(
-            result=result,
+            blocks=blocks,
             execution_time_ms=execution_time_ms,
             tool_name=tool_name,
         )
+
+    @classmethod
+    def text(
+        cls,
+        text: str,
+        execution_time_ms: int = 0,
+        tool_name: str | None = None,
+    ) -> "ToolResponse":
+        """Create a successful response containing one text block."""
+        return cls.success([TextBlock(text=text)], execution_time_ms, tool_name)
 
     @classmethod
     def error(
@@ -73,4 +136,4 @@ class ToolResponse:
         return not self.is_success()
 
     def __str__(self) -> str:
-        return str(self.result) if self.is_success() else str(self.error_message)
+        return self.get_text() if self.is_success() else str(self.error_message)

@@ -118,7 +118,7 @@ class LoadSkillToolTest {
     void defaultPathReturnsSkillContentEnvelope() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("github", null));
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         assertTrue(out.startsWith("<skill_content name=\"github\">"));
         assertTrue(out.contains("# Skill: github"));
         assertTrue(out.contains("Base directory for this skill: "));
@@ -129,7 +129,7 @@ class LoadSkillToolTest {
     void resourcePathReturnsRawContent() {
         LoadSkillTool t = tool(contextWithSkills());
         ToolResponse resp = t.call(args("nano-banana-pro", "scripts/generate_image.py"));
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         // The script file should be returned verbatim (not wrapped in <skill_content>).
         assertTrue(!out.startsWith("<skill_content"));
         assertTrue(out.length() > 0);
@@ -185,7 +185,7 @@ class LoadSkillToolTest {
 
         ToolResponse resp = t.call(new ToolParameters(parameters));
 
-        String out = (String) resp.getResult();
+        String out = resp.getText();
         assertTrue(out.startsWith("<skill_content name=\"github\">"));
     }
 

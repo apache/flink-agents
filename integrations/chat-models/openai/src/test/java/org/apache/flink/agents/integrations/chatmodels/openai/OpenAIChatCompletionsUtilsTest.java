@@ -51,7 +51,7 @@ class OpenAIChatCompletionsUtilsTest {
 
         ChatMessage result = OpenAIChatCompletionsUtils.convertFromOpenAIMessage(message);
 
-        assertThat(result.getExtraArgs()).containsEntry("refusal", "I cannot help with that");
+        assertThat(result.getMetadata()).containsEntry("refusal", "I cannot help with that");
     }
 
     @Test
@@ -62,7 +62,7 @@ class OpenAIChatCompletionsUtilsTest {
 
         ChatMessage result = OpenAIChatCompletionsUtils.convertFromOpenAIMessage(message);
 
-        assertThat(result.getExtraArgs()).doesNotContainKey("refusal");
+        assertThat(result.getMetadata()).doesNotContainKey("refusal");
     }
 
     @Test

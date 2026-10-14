@@ -40,10 +40,23 @@ public class InternalSubagentGuardTest {
     @EnabledForJreRange(max = JRE.JAVA_20)
     void resolvingWithoutContinuationsFailsFast() throws Exception {
         InternalSubagentSetup setup =
-                new InternalSubagentSetup("scope", new AgentPlan(new Agent()));
+                new InternalSubagentSetup(descriptor(new AgentPlan(new Agent())), null);
 
         assertThatThrownBy(() -> setup.prepare(null, "prompt", "session", "call"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("stackful suspension");
+    }
+
+    private static org.apache.flink.agents.api.resource.ResourceDescriptor descriptor(
+            AgentPlan plan) {
+        return org.apache.flink.agents.api.resource.ResourceDescriptor.Builder.newBuilder(
+                        org.apache.flink.agents.api.subagent
+                                .InternalSubagentResourceDescriptorBuilder.SETUP_CLASS)
+                .addInitialArgument("scope", "scope")
+                .addInitialArgument(
+                        "plan",
+                        new com.fasterxml.jackson.databind.ObjectMapper()
+                                .convertValue(plan, java.util.Map.class))
+                .build();
     }
 }

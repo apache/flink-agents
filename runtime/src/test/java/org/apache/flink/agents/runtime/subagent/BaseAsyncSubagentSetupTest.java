@@ -514,7 +514,7 @@ public class BaseAsyncSubagentSetupTest {
     private static AgentPlan plan(String actionMethod, MockAsyncSubagentSetup setup)
             throws Exception {
         Agent agent = new Agent();
-        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, setup);
+        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, setup.getDescriptor());
         agent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 BaseAsyncSubagentSetupTest.class.getMethod(

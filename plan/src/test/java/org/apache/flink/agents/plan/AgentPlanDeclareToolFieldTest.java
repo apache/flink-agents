@@ -158,7 +158,7 @@ class AgentPlanDeclareToolFieldTest {
                                                 "b", 3.0,
                                                 "operation", "multiply"))));
         assertTrue(r.isSuccess());
-        assertEquals(45.0, (Double) r.getResult(), 0.001);
+        assertEquals("45.0", r.getText());
     }
 
     @Test
@@ -174,8 +174,8 @@ class AgentPlanDeclareToolFieldTest {
                                                 "location", "London",
                                                 "units", "fahrenheit"))));
         assertTrue(r.isSuccess());
-        assertTrue(r.getResultAsString().contains("London"));
-        assertTrue(r.getResultAsString().contains("72.0°F"));
+        assertTrue(r.getText().contains("London"));
+        assertTrue(r.getText().contains("72.0°F"));
     }
 
     @Test

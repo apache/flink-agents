@@ -320,7 +320,7 @@ public class DeferredSubagentSubmitTest {
     private static AgentPlan plan(String actionMethod, BaseDeferredSubagentSetup setup)
             throws Exception {
         Agent agent = new Agent();
-        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, setup);
+        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, setup.getDescriptor());
         agent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 DeferredSubagentSubmitTest.class.getMethod(

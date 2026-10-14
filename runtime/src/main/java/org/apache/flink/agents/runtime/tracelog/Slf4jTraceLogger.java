@@ -76,10 +76,10 @@ public class Slf4jTraceLogger implements TraceLogger {
 
     private static final Logger TRACE_LOG = LoggerFactory.getLogger(TRACE_LOGGER_NAME);
 
-    // Trace-Log-only mapper: chat messages are logged through their sanitized projection
+    // Trace-Log-only mapper: content blocks use their sanitized projection
     // (media metadata instead of payload bytes) at every level setting.
     private static final ObjectMapper MAPPER =
-            new ObjectMapper().registerModule(ChatMessageTraceLogSerializer.module());
+            new ObjectMapper().registerModule(ContentBlockTraceLogSerializer.module());
 
     private final TraceLoggerConfig config;
     private boolean prettyPrint;

@@ -41,7 +41,6 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonResourceAdapter;
 import org.apache.flink.agents.plan.resource.python.PythonResourceWrapper;
-import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -140,12 +139,12 @@ public class ResourceCacheTest {
         private TestSerializableChatModel chatModel =
                 new TestSerializableChatModel("defaultChatModel");
 
+        @Tool private TestTool anotherTool = new TestTool("anotherTool");
+
         @ChatModelSetup
         public static ResourceDescriptor pythonChatModel() {
             return PythonResourceDescriptor.Builder.newBuilder("test.module.TestClazz").build();
         }
-
-        @Tool private TestTool anotherTool = new TestTool("anotherTool");
 
         @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
         public void handleInputEvent(Event event, RunnerContext context) {
@@ -168,6 +167,12 @@ public class ResourceCacheTest {
 
         @Override
         public Object toPythonChatMessage(ChatMessage message) {
+            return null;
+        }
+
+        @Override
+        public org.apache.flink.agents.api.chat.messages.ChatResult fromPythonChatResult(
+                Object response) {
             return null;
         }
 
@@ -297,13 +302,26 @@ public class ResourceCacheTest {
         Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
         childProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("external", pythonAgent)));
         InternalSubagentSetup setup =
-                new InternalSubagentSetup("child", new AgentPlan(Map.of(), childProviders));
+                new InternalSubagentSetup(
+                        org.apache.flink.agents.api.resource.ResourceDescriptor.Builder.newBuilder(
+                                        org.apache.flink.agents.api.subagent
+                                                .InternalSubagentResourceDescriptorBuilder
+                                                .SETUP_CLASS)
+                                .addInitialArgument("scope", "child")
+                                .addInitialArgument(
+                                        "plan",
+                                        new com.fasterxml.jackson.databind.ObjectMapper()
+                                                .convertValue(
+                                                        new AgentPlan(Map.of(), childProviders),
+                                                        Map.class))
+                                .build(),
+                        null);
 
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
         ResourceCache rootCache = new ResourceCache(new HashMap<>(), classLoader);
         PythonActionExecutor executor = mock(PythonActionExecutor.class);
         TestPythonHandle handle = new TestPythonHandle();
-        when(executor.eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson()))
+        when(executor.eagerMaterialize(ResourceType.AGENT, setup.getPlanJson()))
                 .thenReturn(Collections.singletonMap("external", handle));
         rootCache.setPythonActionExecutor(executor);
 
@@ -315,7 +333,7 @@ public class ResourceCacheTest {
         assertThat(materialized).containsExactly(handle);
         assertThat(childCache.getResource("external", ResourceType.AGENT)).isSameAs(handle);
         // The runtime is asked for the child plan's resources, keyed by the child plan JSON.
-        verify(executor).eagerMaterialize(ResourceType.AGENT, setup.getChildPlanJson());
+        verify(executor).eagerMaterialize(ResourceType.AGENT, setup.getPlanJson());
     }
 
     @Test
@@ -621,8 +639,11 @@ public class ResourceCacheTest {
         Map<String, ResourceProvider> agentProviders = new HashMap<>();
         agentProviders.put(
                 "reviewer",
-                JavaSerializableResourceProvider.createResourceProvider(
-                        "reviewer", ResourceType.AGENT, new TestAgentSetup()));
+                new org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider(
+                        "reviewer",
+                        ResourceType.AGENT,
+                        ResourceDescriptor.Builder.newBuilder(TestAgentSetup.class.getName())
+                                .build()));
         providers.put(ResourceType.AGENT, agentProviders);
 
         ResourceCache cache = new ResourceCache(providers);

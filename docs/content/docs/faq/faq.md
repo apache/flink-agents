@@ -97,47 +97,47 @@ Flink Agents provides built-in integrations for many ecosystem providers. Some i
 
 | Provider | Python | Java |
 |---|---|---|
-| [Amazon Bedrock]({{< ref "docs/development/chat_models#amazon-bedrock" >}}) | ❌ | ✅ |
-| [Anthropic]({{< ref "docs/development/chat_models#anthropic" >}}) | ✅ | ✅ |
-| [Azure OpenAI]({{< ref "docs/development/chat_models#azure-openai" >}}) | ✅ | ✅ |
-| [Gemini]({{< ref "docs/development/chat_models#gemini" >}}) | ❌ | ✅ |
-| [Ollama]({{< ref "docs/development/chat_models#ollama" >}}) | ✅ | ✅ |
-| [OpenAI]({{< ref "docs/development/chat_models#openai" >}}) | ✅ | ✅ |
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/chat_models#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
-| [vLLM]({{< ref "docs/development/chat_models#vllm" >}}) | ✅ | ✅ |
-| [Watsonx (IBM watsonx.ai)]({{< ref "docs/development/chat_models#watsonx-ibm-watsonxai" >}}) | ✅ | ✅ |
+| [Amazon Bedrock]({{< ref "docs/development/calling-llms/chat-models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
+| [Anthropic]({{< ref "docs/development/calling-llms/chat-models/providers#anthropic" >}}) | ✅ | ✅ |
+| [Azure OpenAI]({{< ref "docs/development/calling-llms/chat-models/providers#azure-openai" >}}) | ✅ | ✅ |
+| [Gemini]({{< ref "docs/development/calling-llms/chat-models/providers#gemini" >}}) | ❌ | ✅ |
+| [Ollama]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/calling-llms/chat-models/providers#openai" >}}) | ✅ | ✅ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/calling-llms/chat-models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
+| [vLLM]({{< ref "docs/development/calling-llms/chat-models/providers#vllm" >}}) | ✅ | ✅ |
+| [Watsonx (IBM watsonx.ai)]({{< ref "docs/development/calling-llms/chat-models/providers#watsonx-ibm-watsonxai" >}}) | ✅ | ✅ |
 
 **Embedding Models**
 
 | Provider | Python | Java |
 |---|---|---|
-| [Amazon Bedrock]({{< ref "docs/development/embedding_models#amazon-bedrock" >}}) | ❌ | ✅ |
-| [Ollama]({{< ref "docs/development/embedding_models#ollama" >}}) | ✅ | ✅ |
-| [OpenAI]({{< ref "docs/development/embedding_models#openai" >}}) | ✅ | ✅ |
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/embedding_models#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
+| [Amazon Bedrock]({{< ref "docs/development/vector-search/embedding_models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
+| [Ollama]({{< ref "docs/development/vector-search/embedding_models/providers#ollama" >}}) | ✅ | ✅ |
+| [OpenAI]({{< ref "docs/development/vector-search/embedding_models/providers#openai" >}}) | ✅ | ✅ |
+| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/vector-search/embedding_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
 
 **Vector Stores**
 
 | Provider | Python | Java |
 |---|---|---|
-| [Amazon OpenSearch]({{< ref "docs/development/vector_stores#amazon-opensearch" >}}) | ❌ | ✅ |
-| [Amazon S3 Vectors]({{< ref "docs/development/vector_stores#amazon-s3-vectors" >}}) | ❌ | ✅ |
-| [Chroma]({{< ref "docs/development/vector_stores#chroma" >}}) | ✅ | ❌ |
-| [Elasticsearch]({{< ref "docs/development/vector_stores#elasticsearch" >}}) | ❌ | ✅ |
-| [Mem0]({{< ref "docs/development/vector_stores#mem0" >}}) | ✅ | ❌ |
-| [Milvus]({{< ref "docs/development/vector_stores#milvus" >}}) | ❌ | ✅ |
+| [Amazon OpenSearch]({{< ref "docs/development/vector-search/vector_stores/providers#amazon-opensearch" >}}) | ❌ | ✅ |
+| [Amazon S3 Vectors]({{< ref "docs/development/vector-search/vector_stores/providers#amazon-s3-vectors" >}}) | ❌ | ✅ |
+| [Chroma]({{< ref "docs/development/vector-search/vector_stores/providers#chroma" >}}) | ✅ | ❌ |
+| [Elasticsearch]({{< ref "docs/development/vector-search/vector_stores/providers#elasticsearch" >}}) | ❌ | ✅ |
+| [Mem0]({{< ref "docs/development/vector-search/vector_stores/providers#mem0" >}}) | ✅ | ❌ |
+| [Milvus]({{< ref "docs/development/vector-search/vector_stores/providers#milvus" >}}) | ❌ | ✅ |
 
 **MCP Server**
 
 | Provider | Python | Java |
 |---|---|---|
-| [MCP Server]({{< ref "docs/development/mcp" >}}) | ✅ | ✅ |
+| [MCP Server]({{< ref "docs/development/calling-llms/mcp" >}}) | ✅ | ✅ |
 
-> **Note**: Java native MCP support requires **JDK 17+**. For JDK 11-16, the framework automatically uses the Python SDK via cross-language support, which works seamlessly without additional configuration. See [MCP]({{< ref "docs/development/mcp" >}}) for details.
+> **Note**: Java native MCP support requires **JDK 17+**. For JDK 11-16, the framework automatically uses the Python SDK via cross-language support, which works seamlessly without additional configuration. See [MCP]({{< ref "docs/development/calling-llms/mcp" >}}) for details.
 
 ## Q4: How to run agent in IDE.
 
-To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/installation#maven-dependencies-for-java" >}}) for details.
+To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/setup#maven-dependencies-for-java" >}}) for details.
 
 To run the examples in IDE, users must enable the IDE feature: `add dependencies with provided scope to classpath`.
 * For **IDEA**, edit the **`Run/Debug Configuration`** and enable **`add dependencies with provided scope to classpath`**. See [Run/Debug Configuration](https://www.jetbrains.com/help/idea/run-debug-configuration-scala.html) for details.

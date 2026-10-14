@@ -48,7 +48,6 @@ from flink_agents.plan.function import (
 )
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
-    PythonSerializableResourceProvider,
 )
 
 # python/flink_agents/plan/tests/test_*.py -> repo root is parents[4].
@@ -371,17 +370,7 @@ def test_python_can_deserialize_java_plan_with_python_action() -> None:
 
 
 def test_python_can_deserialize_java_plan_with_internal_subagent() -> None:
-    """Java compiles a directly-registered child Agent into an
-    ``InternalSubagentProvider`` that nests the child plan; Python must read it
-    back as its own internal sub-agent representation.
-
-    The snapshot is emitted by AgentPlanCrossLanguageTest on the Java side
-    (regenerate with -Dregenerate.snapshots=true). Python has no
-    ``InternalSubagentProvider`` class: it represents the same internal
-    sub-agent as a ``PythonSerializableResourceProvider`` referencing
-    ``InternalSubagentSetup``, so deserialization must convert to that form and
-    recursively rebuild the nested child plan.
-    """
+    """Both languages read the same generic descriptor with a nested child plan."""
     snapshot = _SNAPSHOT_DIR / "java" / "agent_plan_with_internal_subagent.json"
     assert snapshot.exists(), (
         f"Java internal sub-agent plan snapshot missing from {snapshot}; "
@@ -391,15 +380,13 @@ def test_python_can_deserialize_java_plan_with_internal_subagent() -> None:
     restored = AgentPlan.model_validate_json(snapshot.read_text())
 
     provider = restored.resource_providers[ResourceType.AGENT]["child"]
-    assert isinstance(provider, PythonSerializableResourceProvider), (
-        f"Expected internal sub-agent to deserialize as "
-        f"PythonSerializableResourceProvider, got {type(provider).__name__}"
-    )
-    assert provider.module == "flink_agents.runtime.internal_subagent"
-    assert provider.clazz == "InternalSubagentSetup"
-    assert provider.serialized["scope"] == "child"
-    child_plan = provider.serialized["child_plan"]
-    assert isinstance(child_plan, AgentPlan)
+    from flink_agents.plan.resource_provider import JavaResourceProvider
+    from flink_agents.plan.subagent import decode_plan
+
+    assert isinstance(provider, JavaResourceProvider)
+    assert provider.descriptor.language == "java"
+    assert provider.descriptor.arguments["scope"] == "child"
+    child_plan = decode_plan(provider.descriptor)
     assert "handle" in child_plan.actions
 
 
@@ -538,3 +525,35 @@ def test_python_can_deserialize_plan_with_java_model_router() -> None:
         restored.resource_providers[ResourceType.MODEL_ROUTER]["router"],
         JavaResourceProvider,
     )
+
+
+def _internal_subagent_plan() -> AgentPlan:
+    from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
+
+    child = Agent()
+    child.add_action(
+        name="handle",
+        trigger_conditions=[InputEvent.EVENT_TYPE],
+        func=_make_python_function_descriptor(),
+    )
+    root = Agent()
+    root.add_resource(
+        "child",
+        ResourceType.AGENT,
+        InternalSubagentResourceDescriptorBuilder()
+        .agent(child)
+        .description("Python child")
+        .input_schema('{"type":"object","properties":{"question":{"type":"string"}}}')
+        .build(),
+    )
+    return AgentPlan.from_agent(root, AgentConfiguration())
+
+
+def test_python_internal_subagent_snapshot() -> None:
+    """Java consumes the same generic descriptor emitted by Python compilation."""
+    target = _SNAPSHOT_DIR / "python" / "agent_plan_with_internal_subagent.json"
+    actual = _plan_dump_json(_internal_subagent_plan())
+    if _regenerate_enabled():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(actual + "\n")
+    assert json.loads(target.read_text()) == json.loads(actual)

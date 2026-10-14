@@ -41,12 +41,13 @@ The key features of Apache Flink Agents include:
 
 ## Getting Started
 
-To get started with Apache Flink Agents, you can checkout the following quickstarts:
+Start with [Setup]({{< ref "docs/get-started/setup" >}}), then choose a Quickstart:
 
-- [Workflow Agent Quickstart]({{< ref "docs/get-started/quickstart/workflow_agent" >}})
-- [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}})
-- [Skills Agent Quickstart]({{< ref "docs/get-started/quickstart/skills_agent" >}})
-- [YAML Agent Quickstart]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
+- [Build an Agent]({{< ref "docs/get-started/quickstart/create-agent" >}})
+- [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
+- [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
+
+For an optional authoring aid, see the [Coding-agent Skill](https://github.com/apache/flink-agents/tree/main/dev/agent-skills/flink-agents-dev).
 
 ## Preview Status
 

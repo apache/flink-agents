@@ -31,7 +31,7 @@ from flink_agents.api.agents.agent import Agent
 from flink_agents.api.decorators import action
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
-from flink_agents.api.resource import ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.subagent import SubagentResult
 from flink_agents.runtime.deferred_subagent import (
@@ -83,5 +83,11 @@ class SubagentIntegrationAgent(Agent):
 def build_agent() -> Agent:
     """Build the agent with the sub-agent registered as an AGENT resource."""
     agent = SubagentIntegrationAgent()
-    agent.add_resource("reviewer", ResourceType.AGENT, EchoSubagentSetup())
+    agent.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        ResourceDescriptor(
+            clazz=f"{EchoSubagentSetup.__module__}.{EchoSubagentSetup.__name__}"
+        ),
+    )
     return agent

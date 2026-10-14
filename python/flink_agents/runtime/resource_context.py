@@ -28,7 +28,7 @@ from flink_agents.runtime.skill.skill_manager import SkillManager
 
 if TYPE_CHECKING:
     from flink_agents.api.resource import Resource
-    from flink_agents.api.skills import Skills
+    from flink_agents.api.skills import Skills, SkillSourceSpec
     from flink_agents.runtime.resource_cache import ResourceCache
 
 
@@ -64,6 +64,15 @@ class ResourceContextImpl(ResourceContext):
         if manager is None:
             return []
         return manager.get_skill_dirs(*skill_names)
+
+    def resolve_skill_names_for_sources(
+        self, sources: list[SkillSourceSpec]
+    ) -> List[str]:
+        """Resolve skill names from the given source specifications."""
+        manager = self.get_skill_manager()
+        if manager is None:
+            return []
+        return manager.get_skill_names_for_sources(sources)
 
     def get_skill_manager(self) -> SkillManager | None:
         """Get the SkillManager (runtime-internal only).

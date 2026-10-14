@@ -75,7 +75,9 @@ def normalize_injected_args(
     if injected_args is None:
         return {}
     if not isinstance(injected_args, dict):
-        msg = "'injected_args' must be a dict mapping parameter names to injection specs."
+        msg = (
+            "'injected_args' must be a dict mapping parameter names to injection specs."
+        )
         raise TypeError(msg)
     result: dict[str, InjectedArg] = {}
     for name, spec in injected_args.items():

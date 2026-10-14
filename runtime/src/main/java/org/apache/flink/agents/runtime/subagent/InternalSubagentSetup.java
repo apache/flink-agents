@@ -26,13 +26,17 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.Resource;
+import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.async.ContinuationNativeCallable;
 import org.apache.flink.agents.runtime.condition.ActionMatcher;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
@@ -48,14 +52,16 @@ import java.util.Map;
 /**
  * Runtime setup for an internal sub-agent: a child {@link AgentPlan} compiled from an {@code Agent}
  * registered as an {@code AGENT} resource. The plan module serializes the child plan and scope
- * (through {@code InternalSubagentProvider}); this runtime class owns everything the invocation
+ * (through an ordinary resource descriptor); this runtime class owns everything the invocation
  * needs at execution time.
  *
  * <p>Execution mode is the deferred one, inherited from {@link BaseDeferredSubagentSetup}: {@link
  * #submit} returns a deferred handle whose request is prepared on first resolve. {@link #prepare}
  * then runs the mailbox-confined bootstrap — registering the call status and sending one {@code
- * InternalSubagentCallEvent} — and returns the durable callable that waits off the mailbox thread
- * for the child to quiesce, so the operator can dispatch the child agent's actions in between.
+ * InternalSubagentCallEvent} — and returns the durable callable that waits for the child to
+ * quiesce. Unlike the other deferred setups, that callable runs inline on the mailbox thread and
+ * releases it by yielding the caller's continuation, so the operator can dispatch the child agent's
+ * actions in between while no async-pool worker is held.
  *
  * <p>Orchestration state lives here, not in the operator: the per-call quiesce statuses, the
  * per-scope child resource caches, and the per-key session index used to clean up when a record
@@ -68,61 +74,53 @@ import java.util.Map;
  */
 public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
-    private static final long serialVersionUID = 1L;
-
     /**
      * Serializes the child plan with the same configuration {@code RunnerContextImpl} uses for the
      * active-scope plan JSON, so the eager materialization the operator runs at open and the lazy
      * resolution a child action performs at call time key the Python scope cache by one string.
      */
-    private static final ObjectMapper CHILD_PLAN_MAPPER =
+    private static final ObjectMapper PLAN_MAPPER =
             new ObjectMapper().registerModule(new JavaTimeModule());
 
     private final String scope;
 
-    private final AgentPlan childPlan;
+    private final AgentPlan plan;
 
     /** Nested map: sessionId → callId → callStatus. */
-    private final transient Map<String, Map<String, InternalSubagentCallStatus>> callStatuses =
+    private final Map<String, Map<String, InternalSubagentCallStatus>> callStatuses =
             new HashMap<>();
 
-    private final transient Map<String, ResourceCache> childCaches = new HashMap<>();
+    private final Map<String, ResourceCache> childCaches = new HashMap<>();
 
-    private final transient Map<Object, List<String>> keySessionIds = new HashMap<>();
+    private final Map<Object, List<String>> keySessionIds = new HashMap<>();
 
     /**
      * The runner contexts this setup registered a session-owner entry on, per session id. Used to
      * unregister those entries when the owning record finishes.
      */
-    private final transient Map<String, RunnerContextImpl> ownerContexts = new HashMap<>();
+    private final Map<String, RunnerContextImpl> ownerContexts = new HashMap<>();
 
-    /** Lazily built event-to-action matcher for the child plan; not part of the serialized form. */
-    private transient ActionMatcher actionMatcher;
+    /** Lazily built event-to-action matcher for the plan. */
+    private ActionMatcher actionMatcher;
 
-    /**
-     * Lazily serialized child plan JSON; not part of the serialized form. See {@link
-     * #getChildPlanJson()}.
-     */
-    private transient String childPlanJson;
+    /** Lazily serialized plan JSON. See {@link #getPlanJson()}. */
+    private String planJson;
 
-    public InternalSubagentSetup(String scope, AgentPlan childPlan) {
-        // An internal sub-agent is built from a compiled child plan rather than a caller
-        // descriptor, so it carries a synthetic self-named descriptor to satisfy the base
-        // rebuild contract; that contract never reads the resource context, so it stays null.
-        super(
-                ResourceDescriptor.Builder.newBuilder(InternalSubagentSetup.class.getName())
-                        .build(),
-                null);
-        this.scope = scope;
-        this.childPlan = childPlan;
+    public InternalSubagentSetup(ResourceDescriptor descriptor, ResourceContext context) {
+        super(descriptor, context);
+        this.scope = descriptor.getArgument(InternalSubagentResourceDescriptorBuilder.SCOPE);
+        if (scope == null || scope.isBlank()) {
+            throw new IllegalArgumentException("Internal sub-agent requires a scope");
+        }
+        this.plan = InternalSubagentPlans.decode(descriptor);
     }
 
     public String getScope() {
         return scope;
     }
 
-    public AgentPlan getChildPlan() {
-        return childPlan;
+    public AgentPlan getPlan() {
+        return plan;
     }
 
     /**
@@ -133,33 +131,40 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
      * resolves its resources against that plan. Both paths then key one Python scope cache, so a
      * Python-owned resource of the scope is built exactly once.
      */
-    public String getChildPlanJson() {
-        if (childPlanJson == null) {
+    public String getPlanJson() {
+        if (planJson == null) {
             try {
-                childPlanJson = CHILD_PLAN_MAPPER.writeValueAsString(childPlan);
+                planJson = PLAN_MAPPER.writeValueAsString(plan);
             } catch (JsonProcessingException e) {
                 throw new IllegalStateException(
                         "Failed to serialize the child plan for scope " + scope, e);
             }
         }
-        return childPlanJson;
+        return planJson;
     }
 
     /**
      * Matches the child plan's actions against a forwarded event, applying the same event-type and
      * condition-expression filtering the root router uses. Built lazily because the index depends
-     * only on the immutable child plan, and this class is serialized as a resource.
+     * only on the immutable child plan.
      */
     public List<Action> matchActions(Event event) {
         if (actionMatcher == null) {
-            actionMatcher = new ActionMatcher(childPlan);
+            actionMatcher = new ActionMatcher(plan);
         }
         return actionMatcher.match(event);
     }
 
     /**
-     * The mailbox-confined bootstrap plus the off-mailbox wait. Sending the bootstrap event must
-     * happen before the wait releases the mailbox, so it runs here, on the resolving thread.
+     * The mailbox-confined bootstrap plus the wait. Sending the bootstrap event must happen before
+     * the wait releases the mailbox, so it runs here, on the resolving thread.
+     *
+     * <p>The returned callable is {@link ContinuationNativeCallable}, so it runs inline inside the
+     * caller's continuation rather than on an async-pool worker, and its wait suspends by yielding
+     * that continuation. A worker-dispatched wait would hold a pool worker for the whole child call
+     * while the child's own durable calls queue behind it for a worker from the same finite pool —
+     * a self-deadlock at {@code num-async-threads=1} and under enough nested or concurrent waits at
+     * any size (issue #1213).
      */
     @Override
     protected DurableCallable<SubagentResult> prepare(
@@ -171,7 +176,7 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
             throw new IllegalStateException(
                     "Failed to bootstrap internal sub-agent call for scope " + scope, e);
         }
-        return new DurableCallable<SubagentResult>() {
+        return new ContinuationNativeCallable<SubagentResult>() {
             @Override
             public String getId() {
                 return sessionId + "#" + callId;
@@ -184,11 +189,11 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
 
             @Override
             public SubagentResult call() {
-                // Runs off the mailbox thread, so the operator can dispatch the child's
-                // actions; failures converge into a failed SubagentResult like the other
-                // deferred setups.
+                // Runs inline on the mailbox thread; the wait yields the continuation, so the
+                // operator can dispatch the child's actions without a pool worker being held.
+                // Failures converge into a failed SubagentResult like the other deferred setups.
                 try {
-                    return SubagentResult.ok(awaitSubagentCall(sessionId, callId));
+                    return SubagentResult.ok(awaitSubagentCallYielding(ctx, sessionId, callId));
                 } catch (Exception e) {
                     return SubagentResult.error(e);
                 }
@@ -251,6 +256,29 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
      * and returns its accumulated output. Must be invoked off the mailbox thread.
      */
     public List<Object> awaitSubagentCall(String sessionId, String callId) throws Exception {
+        try {
+            return requireCallStatus(sessionId, callId).getResponseFuture().get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw unwrapChildFailure(e);
+        }
+    }
+
+    /**
+     * Awaits the identified call by yielding the caller's continuation, so the wait holds no
+     * async-pool worker and the child can draw from the pool to make progress (issue #1213).
+     *
+     * <p>The wait runs inline on the mailbox thread, so the blocking {@link #awaitSubagentCall} is
+     * not an option here — it would pin the mailbox and stall the very child it waits for. Only a
+     * Java action reaches {@link #prepare}; Python bootstraps through {@code
+     * RunnerContextImpl.bootstrapSubagentCallForScope} and blocks on its own async worker instead.
+     */
+    private List<Object> awaitSubagentCallYielding(
+            RunnerContext ctx, String sessionId, String callId) throws Exception {
+        InternalSubagentCallStatus cs = requireCallStatus(sessionId, callId);
+        return ((JavaRunnerContextImpl) ctx).awaitCompletableFuture(cs.getResponseFuture());
+    }
+
+    private InternalSubagentCallStatus requireCallStatus(String sessionId, String callId) {
         InternalSubagentCallStatus cs = getCallStatus(sessionId, callId);
         if (cs == null) {
             throw new IllegalStateException(
@@ -259,17 +287,16 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
                             + ", callId="
                             + callId);
         }
-        try {
-            return cs.getResponseFuture().get();
-        } catch (java.util.concurrent.ExecutionException e) {
-            // Surface the child's failure directly, so the caller's SubagentResult carries
-            // the failing action's exception rather than the future's plumbing.
-            Throwable cause = e.getCause();
-            if (cause instanceof Exception) {
-                throw (Exception) cause;
-            }
-            throw e;
-        }
+        return cs;
+    }
+
+    /**
+     * Surfaces the child's failure directly, so the caller's {@link SubagentResult} carries the
+     * failing action's exception rather than the future's plumbing.
+     */
+    private static Exception unwrapChildFailure(java.util.concurrent.ExecutionException e) {
+        Throwable cause = e.getCause();
+        return cause instanceof Exception ? (Exception) cause : e;
     }
 
     /** The quiesce status of the identified call, or {@code null} when this setup owns none. */
@@ -314,12 +341,12 @@ public class InternalSubagentSetup extends BaseDeferredSubagentSetup {
      */
     public ResourceCache getOrCreateChildCache(
             ClassLoader userCodeClassLoader, ResourceCache rootResourceCache) {
-        String planJson = getChildPlanJson();
+        String planJson = getPlanJson();
         return childCaches.computeIfAbsent(
                 scope,
                 k ->
                         new ResourceCache(
-                                childPlan.getResourceProviders(),
+                                plan.getResourceProviders(),
                                 userCodeClassLoader,
                                 rootResourceCache,
                                 planJson));

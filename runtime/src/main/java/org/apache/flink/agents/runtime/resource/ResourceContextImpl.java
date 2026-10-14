@@ -21,6 +21,7 @@ package org.apache.flink.agents.runtime.resource;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.skill.SkillManager;
@@ -96,6 +97,13 @@ public class ResourceContextImpl implements ResourceContext, AutoCloseable {
     public List<String> getSkillDirs(List<String> skillNames) throws Exception {
         SkillManager manager = ensureSkillManager();
         return manager == null ? Collections.emptyList() : manager.getSkillDirs(skillNames);
+    }
+
+    @Override
+    public List<String> resolveSkillNamesForSources(List<SkillSourceSpec> sources)
+            throws Exception {
+        SkillManager manager = ensureSkillManager();
+        return manager == null ? Collections.emptyList() : manager.getSkillNamesForSources(sources);
     }
 
     /**

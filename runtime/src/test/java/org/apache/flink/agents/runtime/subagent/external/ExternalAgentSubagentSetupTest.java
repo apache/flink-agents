@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
+import org.apache.flink.agents.api.subagent.SubagentSetup;
 import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.operator.ActionExecutionOperator;
@@ -469,7 +470,10 @@ public class ExternalAgentSubagentSetupTest {
 
     private static AgentPlan plan(String actionMethod, Object setup) throws Exception {
         Agent agent = new Agent();
-        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, setup);
+        agent.addResource(
+                RESOURCE_NAME,
+                ResourceType.AGENT,
+                setup instanceof SubagentSetup ? ((SubagentSetup) setup).getDescriptor() : setup);
         agent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 ExternalAgentSubagentSetupTest.class.getMethod(

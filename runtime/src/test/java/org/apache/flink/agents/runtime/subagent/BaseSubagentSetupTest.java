@@ -174,8 +174,10 @@ public class BaseSubagentSetupTest {
     @Test
     void setupsSharingOneActionAllocateDisjointIds() throws Exception {
         Agent agent = new Agent();
-        agent.addResource("stream-a", ResourceType.AGENT, new AllocatingCaptureSetup());
-        agent.addResource("stream-b", ResourceType.AGENT, new AllocatingCaptureSetup());
+        agent.addResource(
+                "stream-a", ResourceType.AGENT, new AllocatingCaptureSetup().getDescriptor());
+        agent.addResource(
+                "stream-b", ResourceType.AGENT, new AllocatingCaptureSetup().getDescriptor());
         agent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 BaseSubagentSetupTest.class.getMethod(
@@ -279,7 +281,8 @@ public class BaseSubagentSetupTest {
     @Test
     void materializationInjectsSubagentNames() throws Exception {
         Agent rootAgent = new Agent();
-        rootAgent.addResource("root-setup", ResourceType.AGENT, new AllocatingCaptureSetup());
+        rootAgent.addResource(
+                "root-setup", ResourceType.AGENT, new AllocatingCaptureSetup().getDescriptor());
         ResourceCache rootCache =
                 new ResourceCache(new AgentPlan(rootAgent).getResourceProviders());
         BaseSubagentSetup rootSetup =
@@ -289,7 +292,8 @@ public class BaseSubagentSetupTest {
         // A child cache injects the local resource name as resolved in the child plan: the
         // enclosing scope is routing-level context the setup never sees.
         Agent childAgent = new Agent();
-        childAgent.addResource("nested", ResourceType.AGENT, new AllocatingCaptureSetup());
+        childAgent.addResource(
+                "nested", ResourceType.AGENT, new AllocatingCaptureSetup().getDescriptor());
         ResourceCache childCache =
                 new ResourceCache(
                         new AgentPlan(childAgent).getResourceProviders(),
@@ -311,7 +315,8 @@ public class BaseSubagentSetupTest {
 
     private static AgentPlan plan() throws Exception {
         Agent agent = new Agent();
-        agent.addResource(RESOURCE_NAME, ResourceType.AGENT, new AllocatingCaptureSetup());
+        agent.addResource(
+                RESOURCE_NAME, ResourceType.AGENT, new AllocatingCaptureSetup().getDescriptor());
         agent.addAction(
                 new String[] {InputEvent.EVENT_TYPE},
                 BaseSubagentSetupTest.class.getMethod(

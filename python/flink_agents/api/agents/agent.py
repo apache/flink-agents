@@ -161,7 +161,8 @@ class Agent(ABC):
         instance: SerializableResource | ResourceDescriptor | Agent
             The serializable resource instance, the descriptor of resource,
             or an Agent instance. For the AGENT resource type an ``Agent`` is
-            compiled into an internal sub-agent during plan construction.
+            wrapped in a descriptor here and compiled into an internal sub-agent
+            during plan construction.
 
         Returns:
         -------
@@ -173,5 +174,13 @@ class Agent(ABC):
             msg = f"{resource_type.value} {name} already defined"
             raise ValueError(msg)
 
+        if resource_type == ResourceType.AGENT and isinstance(instance, Agent):
+            from flink_agents.api.subagent import (
+                InternalSubagentResourceDescriptorBuilder,
+            )
+
+            instance = (
+                InternalSubagentResourceDescriptorBuilder().agent(instance).build()
+            )
         self._resources[resource_type][name] = instance
         return self

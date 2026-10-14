@@ -204,7 +204,10 @@ class JavaResourceProvider(ResourceProvider):
         if descriptor.language != "java":
             msg = "JavaResourceProvider requires a Java descriptor"
             raise ValueError(msg)
-        if resource_type not in JAVA_RESOURCE_MAPPING:
+        if (
+            resource_type not in JAVA_RESOURCE_MAPPING
+            and resource_type != ResourceType.AGENT
+        ):
             msg = f"Unsupported Java resource type: {resource_type}"
             raise ValueError(msg)
         return JavaResourceProvider(
@@ -218,6 +221,10 @@ class JavaResourceProvider(ResourceProvider):
         if not self._j_resource_adapter:
             err_msg = "java resource adapter is not set"
             raise RuntimeError(err_msg)
+        if self.type == ResourceType.AGENT:
+            return self._j_resource_adapter.create_subagent_resource(
+                self.descriptor, resource_context
+            )
         j_resource = self._j_resource_adapter.getResource(self.name, self.type.value)
 
         class_path = JAVA_RESOURCE_MAPPING.get(self.type)
@@ -259,18 +266,7 @@ class JavaSerializableResourceProvider(SerializableResourceProvider):
 
 
 def is_python_owned(provider: ResourceProvider) -> bool:
-    """Whether the provider materializes a resource owned by the Python runtime.
-
-    The runtime must ask that runtime to build such a resource instead of
-    resolving it on the Java side. Mirrors Java ``ResourceProvider.isPythonOwned``.
-    """
-    if isinstance(provider, PythonResourceProvider):
-        return True
-    if isinstance(provider, PythonSerializableResourceProvider):
-        # A Python-compiled internal sub-agent carries its child plan in the
-        # serialized payload and runs natively on the Java side, so it stays
-        # Java-owned; only external Python setups (no child plan) are Python-owned.
-        return not (
-            provider.type == ResourceType.AGENT and "child_plan" in provider.serialized
-        )
-    return False
+    """Whether this resource is constructed by the Python runtime."""
+    return isinstance(
+        provider, PythonResourceProvider | PythonSerializableResourceProvider
+    )

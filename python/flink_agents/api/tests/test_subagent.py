@@ -23,7 +23,7 @@ import pytest
 from pydantic import ValidationError
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.resource import ResourceType
+from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.tests.subagent_test_utils import (
     NestedTypedTestSubagentSetup,
     TestSubagentSetup,
@@ -33,33 +33,36 @@ from flink_agents.api.tests.subagent_test_utils import (
 DECLARED_SCHEMA = '{"type":"object","properties":{"path":{"type":"string"}}}'
 
 
-def test_register_subagent_setup_as_resource() -> None:
-    """A ``SubagentSetup`` registers under the AGENT resource map."""
-    agent = Agent()
-    setup = TestSubagentSetup()
-
-    agent.add_resource("reviewer", ResourceType.AGENT, setup)
-
-    agent_resources = agent.resources[ResourceType.AGENT]
-    assert len(agent_resources) == 1
-    assert agent_resources["reviewer"] is setup
-    assert setup.resource_type() == ResourceType.AGENT
-
-
 def test_duplicate_name_throws() -> None:
     """Registering a duplicate AGENT name raises."""
     agent = Agent()
-    agent.add_resource("reviewer", ResourceType.AGENT, TestSubagentSetup())
+    agent.add_resource(
+        "reviewer",
+        ResourceType.AGENT,
+        ResourceDescriptor(
+            clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup"
+        ),
+    )
 
     with pytest.raises(ValueError):
-        agent.add_resource("reviewer", ResourceType.AGENT, TestSubagentSetup())
+        agent.add_resource(
+            "reviewer",
+            ResourceType.AGENT,
+            ResourceDescriptor(
+                clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup"
+            ),
+        )
 
 
 def test_multiple_subagents_registered() -> None:
     """Multiple distinct AGENT resources coexist."""
     agent = Agent()
-    reviewer = TestSubagentSetup()
-    coder = TestSubagentSetup()
+    reviewer = ResourceDescriptor(
+        clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup"
+    )
+    coder = ResourceDescriptor(
+        clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup"
+    )
 
     agent.add_resource("reviewer", ResourceType.AGENT, reviewer)
     agent.add_resource("coder", ResourceType.AGENT, coder)
@@ -180,3 +183,21 @@ def test_the_metadata_serializes_under_the_cross_language_keys() -> None:
     assert dumped["description"] == "Reviews a file."
     assert dumped["input_schema"] == DECLARED_SCHEMA
     assert "inputSchema" not in dumped
+
+
+def test_shared_registration_accepts_descriptor() -> None:
+    from unittest.mock import Mock
+
+    from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+
+    env = Mock(spec=AgentsExecutionEnvironment)
+    env._resources = {kind: {} for kind in ResourceType}
+    descriptor = ResourceDescriptor(
+        clazz="flink_agents.api.tests.subagent_test_utils.TestSubagentSetup"
+    )
+    assert (
+        AgentsExecutionEnvironment.add_resource(
+            env, "reviewer", ResourceType.AGENT, descriptor
+        )
+        is env
+    )

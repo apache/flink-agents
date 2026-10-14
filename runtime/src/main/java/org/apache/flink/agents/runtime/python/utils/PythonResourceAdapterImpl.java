@@ -18,7 +18,7 @@
 package org.apache.flink.agents.runtime.python.utils;
 
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.Resource;
@@ -138,6 +138,21 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
         return interpreterManager.invoke(FROM_JAVA_RESOURCE, resourceType, kwargs);
     }
 
+    public List<String> resolveSkillNamesForSources(List<Map<String, Object>> sources)
+            throws Exception {
+        return javaResourceAdapter.resolveSkillNamesForSources(sources);
+    }
+
+    /** Build the {@code <available_skills>} discovery prompt for the given skill names. */
+    public String generateAvailableSkillsPrompt(List<String> skillNames) throws Exception {
+        return javaResourceAdapter.generateAvailableSkillsPrompt(skillNames);
+    }
+
+    /** Return the absolute directory paths backing the given skill names. */
+    public List<String> getSkillDirs(List<String> skillNames) throws Exception {
+        return javaResourceAdapter.getSkillDirs(skillNames);
+    }
+
     @Override
     public PyObject initPythonResource(String module, String clazz, Map<String, Object> kwargs) {
         kwargs.put(RESOURCE_CONTEXT_KEY, pythonResourceContext);
@@ -154,15 +169,15 @@ public class PythonResourceAdapterImpl implements PythonResourceAdapter, AutoClo
 
     @Override
     public ChatMessage fromPythonChatMessage(Object pythonChatMessage) {
-        // TODO: Update this method after the pemja findClass method is fixed.
-        ChatMessage chatMessage = new ChatMessage();
+        return ChatMessage.fromMap(
+                (Map<String, Object>)
+                        interpreterManager.invoke(TO_JAVA_CHAT_MESSAGE, pythonChatMessage));
+    }
 
-        String roleValue =
-                (String)
-                        interpreterManager.invoke(
-                                TO_JAVA_CHAT_MESSAGE, pythonChatMessage, chatMessage);
-        chatMessage.setRole(MessageRole.fromValue(roleValue));
-        return chatMessage;
+    @Override
+    public ChatResult fromPythonChatResult(Object response) {
+        return ChatResult.fromMap(
+                (Map<String, Object>) interpreterManager.invoke(TO_JAVA_CHAT_MESSAGE, response));
     }
 
     @Override

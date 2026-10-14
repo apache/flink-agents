@@ -20,20 +20,31 @@ package org.apache.flink.agents.plan.actions;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
+import org.apache.flink.agents.api.agents.OutputSchema;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ReasoningBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.plan.AgentConfiguration;
+import org.apache.flink.agents.plan.ChatFixtures;
+import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
+import org.apache.flink.api.common.typeinfo.TypeInformation;
+import org.apache.flink.api.java.typeutils.RowTypeInfo;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,8 +69,17 @@ import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockingDetails;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.withSettings;
 
 /**
  * Tests for {@link ChatModelAction#chat} driven end to end: retry behavior, execution reporting,
@@ -84,12 +104,14 @@ class ChatModelActionRetryTest {
 
     private MemoryObject sensoryMemory;
     private List<Event> sentEvents;
+    private List<String> durableCallIds;
     private AutoCloseable mocks;
 
     @BeforeEach
     void setUp() throws Exception {
         mocks = MockitoAnnotations.openMocks(this);
         sentEvents = new ArrayList<>();
+        durableCallIds = new ArrayList<>();
         sensoryMemory = createStatefulMemoryObject();
 
         // Wire up ChatModel
@@ -101,8 +123,8 @@ class ChatModelActionRetryTest {
         when(mockCtx.getSensoryMemory()).thenReturn(sensoryMemory);
         when(mockCtx.getActionMetricGroup()).thenReturn(mockActionMetricGroup);
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(mockCtx).sendEvent(any());
-        when(mockCtx.<ChatMessage>durableExecute(any()))
-                .thenAnswer(inv -> inv.<DurableCallable<ChatMessage>>getArgument(0).call());
+        when(mockCtx.<ChatResult>durableExecute(any()))
+                .thenAnswer(inv -> inv.<DurableCallable<ChatResult>>getArgument(0).call());
 
         // Wire up metric group chain
         when(mockActionMetricGroup.getSubGroup(anyString(), anyString()))
@@ -119,10 +141,44 @@ class ChatModelActionRetryTest {
     }
 
     @Test
+    void toolDispatchPreservesMessageMetadataWithoutInvocationMetadata() throws Exception {
+        configureRetryStrategy(0, 0);
+        ToolCallBlock call = new ToolCallBlock("provider-id", "f", Map.of("x", 1));
+        ChatResult response =
+                new ChatResult(
+                        ChatMessage.assistant(
+                                        List.of(
+                                                new ReasoningBlock(
+                                                        "private", Map.of("provider", "local")),
+                                                call))
+                                .withMetadata(Map.of("message_key", "value")),
+                        "provider-model",
+                        "response-id",
+                        null,
+                        "tool_calls",
+                        Map.of("provider_only", "opaque"));
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(response);
+        UUID requestId = UUID.randomUUID();
+        ChatMessage user = ChatMessage.user("hi");
+
+        ChatModelAction.chat(requestId, "test-model", List.of(user), Map.of(), null, mockCtx);
+
+        Map<UUID, List<ChatMessage>> context =
+                (Map<UUID, List<ChatMessage>>) sensoryMemory.get("_TOOL_CALL_CONTEXT").getValue();
+        assertThat(context.get(requestId)).containsExactly(user, response.getMessage());
+        ChatMessage assistant = context.get(requestId).get(1);
+        assertThat(assistant.getMetadata())
+                .containsExactlyEntriesOf(Map.of("message_key", "value"));
+        assertThat(assistant.getToolCalls()).containsExactly(call);
+        assertThat(sentEvents).hasSize(1);
+        assertThat(ToolRequestEvent.fromEvent(sentEvents.get(0)).getToolCalls())
+                .containsExactly(call);
+    }
+
+    @Test
     void chatSucceedsWithoutRetry_retryCountIsZero() throws Exception {
         configureRetryStrategy(3, 1);
-        when(mockChatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello"));
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("hello"));
 
         UUID requestId = UUID.randomUUID();
         ChatModelAction.chat(
@@ -149,9 +205,8 @@ class ChatModelActionRetryTest {
         FlinkAgentsMetricGroup actionB = mock(FlinkAgentsMetricGroup.class);
         when(mockCtx.getActionMetricGroup()).thenReturn(actionA, actionB);
 
-        ChatMessage response =
-                new ChatMessage(
-                        MessageRole.ASSISTANT,
+        ChatResult response =
+                ChatFixtures.response(
                         "hello",
                         Map.of(
                                 "model_name", "provider-model",
@@ -175,8 +230,7 @@ class ChatModelActionRetryTest {
     void chatReportsLlmExecution() throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
-        when(chatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello"));
+        when(chatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("hello"));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -205,7 +259,8 @@ class ChatModelActionRetryTest {
     @ParameterizedTest
     @MethodSource("responseUsageCases")
     void chatReportsUsageAndPreservesTokenMetricConditions(
-            Map<String, Object> extraArgs,
+            TokenUsage usage,
+            String responseModel,
             Map<String, Object> expectedUsage,
             boolean metricsAvailable,
             boolean recordsMetrics)
@@ -216,7 +271,14 @@ class ChatModelActionRetryTest {
             when(reportingCtx.getActionMetricGroup()).thenReturn(null);
         }
         when(chatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello", extraArgs));
+                .thenReturn(
+                        new ChatResult(
+                                ChatMessage.assistant("hello"),
+                                responseModel,
+                                null,
+                                usage,
+                                null,
+                                Map.of()));
 
         ChatModelAction.chat(
                 UUID.randomUUID(), "test-model", List.of(), Map.of(), null, reportingCtx);
@@ -239,7 +301,12 @@ class ChatModelActionRetryTest {
                         eq("test-model"),
                         eq(expectedMetadata));
         if (recordsMetrics) {
-            verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "metric-model", 100L, 50L);
+            verify(chatModel)
+                    .recordTokenMetrics(
+                            mockActionMetricGroup,
+                            responseModel,
+                            usage.getPromptTokens(),
+                            usage.getCompletionTokens());
         } else {
             verify(chatModel, never()).recordTokenMetrics(any(), anyString(), anyLong(), anyLong());
         }
@@ -248,78 +315,63 @@ class ChatModelActionRetryTest {
     }
 
     private static Stream<Arguments> responseUsageCases() {
-        Map<String, Object> complete =
-                Map.of("model_name", "metric-model", "promptTokens", 100L, "completionTokens", 50L);
-        Map<String, Object> unknown = new HashMap<>();
-        unknown.put("promptTokens", null);
-        unknown.put("completionTokens", null);
         return Stream.of(
                 Arguments.of(
-                        complete,
+                        new TokenUsage(100L, 50L),
+                        "metric-model",
                         Map.of("promptTokens", 100L, "completionTokens", 50L),
                         true,
                         true),
                 Arguments.of(
-                        Map.of(
-                                "model_name",
-                                "metric-model",
-                                "promptTokens",
-                                100,
-                                "completionTokens",
-                                50),
-                        Map.of("promptTokens", 100, "completionTokens", 50),
-                        true,
-                        true),
-                Arguments.of(
-                        complete,
+                        new TokenUsage(100L, 50L),
+                        "metric-model",
                         Map.of("promptTokens", 100L, "completionTokens", 50L),
                         false,
                         false),
                 Arguments.of(
-                        Map.of(
-                                "model_name",
-                                "metric-model",
-                                "promptTokens",
-                                "100",
-                                "completionTokens",
-                                50L),
+                        new TokenUsage(null, 50L),
+                        "metric-model",
                         Map.of("completionTokens", 50L),
                         true,
                         false),
                 Arguments.of(
-                        Map.of("model_name", "metric-model", "completionTokens", 50L),
-                        Map.of("completionTokens", 50L),
-                        true,
-                        false),
-                Arguments.of(
-                        Map.of(
-                                "model_name",
-                                "metric-model",
-                                "promptTokens",
-                                0L,
-                                "completionTokens",
-                                50L),
+                        new TokenUsage(0L, 50L),
+                        "metric-model",
                         Map.of("promptTokens", 0L, "completionTokens", 50L),
                         true,
-                        false),
+                        true),
                 Arguments.of(
-                        Map.of("model_name", "", "promptTokens", 100L, "completionTokens", 50L),
+                        new TokenUsage(100L, 50L),
+                        "",
                         Map.of("promptTokens", 100L, "completionTokens", 50L),
                         true,
-                        false),
+                        true),
                 Arguments.of(
-                        Map.of("promptTokens", 5L, "completionTokens", 0L),
+                        new TokenUsage(5L, 0L),
+                        null,
                         Map.of("promptTokens", 5L, "completionTokens", 0L),
                         true,
                         false),
                 Arguments.of(
-                        Map.of("completionTokens", 0L),
+                        new TokenUsage(5L, 0L),
+                        "metric-model",
+                        Map.of("promptTokens", 5L, "completionTokens", 0L),
+                        true,
+                        true),
+                Arguments.of(
+                        new TokenUsage(null, 0L),
+                        "metric-model",
                         Map.of("completionTokens", 0L),
                         true,
                         false),
-                Arguments.of(Map.of("promptTokens", 5L), Map.of("promptTokens", 5L), true, false),
-                Arguments.of(unknown, Map.of(), true, false),
-                Arguments.of(Map.of(), Map.of(), true, false));
+                Arguments.of(
+                        new TokenUsage(5L, null),
+                        "metric-model",
+                        Map.of("promptTokens", 5L),
+                        true,
+                        false),
+                Arguments.of(new TokenUsage(null, null), "metric-model", Map.of(), true, false),
+                Arguments.of(null, "metric-model", Map.of(), true, false));
     }
 
     @Test
@@ -327,7 +379,7 @@ class ChatModelActionRetryTest {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -360,12 +412,9 @@ class ChatModelActionRetryTest {
         when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT, "not-json", Map.of("promptTokens", 11L)),
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
-                                "{\"answer\":\"42\"}",
-                                Map.of("completionTokens", 0L)));
+                        ChatFixtures.response("not-json", Map.of("promptTokens", 11L)),
+                        ChatFixtures.response(
+                                "{\"answer\":\"42\"}", Map.of("completionTokens", 0L)));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -433,9 +482,7 @@ class ChatModelActionRetryTest {
         when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0, async));
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(new RuntimeException("transient error"))
-                .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT, "success", Map.of("completionTokens", 0L)));
+                .thenReturn(ChatFixtures.response("success", Map.of("completionTokens", 0L)));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -487,7 +534,7 @@ class ChatModelActionRetryTest {
                             if (count <= 1) {
                                 throw new RuntimeException("transient error");
                             }
-                            return new ChatMessage(MessageRole.ASSISTANT, "success");
+                            return ChatFixtures.response("success");
                         });
 
         UUID requestId = UUID.randomUUID();
@@ -547,7 +594,7 @@ class ChatModelActionRetryTest {
     @Test
     void chatResponseEventDefaultConstructorHasZeroRetryInfo() {
         UUID requestId = UUID.randomUUID();
-        ChatMessage msg = new ChatMessage(MessageRole.ASSISTANT, "test");
+        ChatResult msg = ChatFixtures.response("test");
         ChatResponseEvent event = ChatResponseEvent.success(requestId, msg);
 
         assertThat(event.getRetryCount()).isEqualTo(0);
@@ -558,7 +605,7 @@ class ChatModelActionRetryTest {
     @Test
     void chatResponseEventFullConstructorCarriesRetryInfo() {
         UUID requestId = UUID.randomUUID();
-        ChatMessage msg = new ChatMessage(MessageRole.ASSISTANT, "test");
+        ChatResult msg = ChatFixtures.response("test");
         ChatResponseEvent event = ChatResponseEvent.success(requestId, msg, 5, 31);
 
         assertThat(event.getRetryCount()).isEqualTo(5);
@@ -598,13 +645,12 @@ class ChatModelActionRetryTest {
                 new ArrayList<>(List.of(new ChatMessage(MessageRole.USER, "hi"))));
         sensoryMemory.set("_TOOL_CALL_CONTEXT", toolCallContext);
 
-        when(mockChatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "done"));
+        when(mockChatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("done"));
 
         ToolResponseEvent toolResponseEvent =
                 new ToolResponseEvent(
                         toolRequestEventId,
-                        Map.of(toolCallId, ToolResponse.success("42")),
+                        Map.of(toolCallId, ToolResponse.text("42")),
                         Map.of(toolCallId, true),
                         Map.of());
 
@@ -622,10 +668,7 @@ class ChatModelActionRetryTest {
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
-                                "partial answ",
-                                Map.of("finish_reason", "length")));
+                        ChatFixtures.response("partial answ", Map.of("finish_reason", "length")));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -648,11 +691,7 @@ class ChatModelActionRetryTest {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
-                .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
-                                "",
-                                Map.of("finish_reason", "content_filter")));
+                .thenReturn(ChatFixtures.response("", Map.of("finish_reason", "content_filter")));
 
         // Both rejection messages interpolate the finish reason, so the literal
         // content_filter appears in either one and cannot tell them apart. These
@@ -680,15 +719,14 @@ class ChatModelActionRetryTest {
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
+                        ChatFixtures.response(
                                 "",
                                 List.of(
                                         Map.of(
                                                 "id",
                                                 "call-1",
                                                 "function",
-                                                Map.of("name", "f", "arguments", ""))),
+                                                Map.of("name", "f", "arguments", Map.of()))),
                                 Map.of("finish_reason", "length")));
 
         ChatModelAction.chat(
@@ -715,8 +753,7 @@ class ChatModelActionRetryTest {
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
+                        ChatFixtures.response(
                                 "{\"answer\":\"42\"}",
                                 Map.of(
                                         "finish_reason",
@@ -775,10 +812,7 @@ class ChatModelActionRetryTest {
         when(reportingCtx.getConfig()).thenReturn(readableConfig());
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(
-                                MessageRole.ASSISTANT,
-                                "partial answ",
-                                Map.of("finish_reason", "length")));
+                        ChatFixtures.response("partial answ", Map.of("finish_reason", "length")));
 
         // A zero retry budget produces a failed event without forwarding the truncated content.
         ChatModelAction.chat(
@@ -808,7 +842,7 @@ class ChatModelActionRetryTest {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
         when(chatModel.chat(any(), any(), any()))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello", extraArgs));
+                .thenReturn(ChatFixtures.response("hello", extraArgs));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -821,6 +855,428 @@ class ChatModelActionRetryTest {
         assertThat(sentEvents).hasSize(1);
         assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getResponse().getText())
                 .isEqualTo("hello");
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).getResponse().getFinishReason())
+                .isEqualTo(extraArgs.get("finish_reason"));
+    }
+
+    /**
+     * The conversion instruction that leads the schema-carrying call's message, spelled out rather
+     * than read from the invoker so the assertion pins the exact words a provider receives.
+     */
+    private static final String FINALIZE_DIRECTIVE =
+            "Convert the response below into the required structured output format."
+                    + " Preserve its meaning and do not add or infer any new information.\n\n"
+                    + "Response:\n";
+
+    private static OutputSchema rowTypeSchema() {
+        return new OutputSchema(
+                new RowTypeInfo(
+                        new TypeInformation[] {BasicTypeInfo.STRING_TYPE_INFO},
+                        new String[] {"answer"}));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void nativeSchemaConvertsTheFinalAnswerInASeparateSchemaCarryingCall() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        ChatResult loopAnswer = ChatFixtures.response("the answer is 42");
+        when(chatModel.chat(any(), any(), any())).thenReturn(loopAnswer);
+        when(chatModel.willApplyNativeStructuredOutput(Map.class)).thenReturn(true);
+        when(chatModel.chat(any(), any(), any(), any()))
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        ArgumentCaptor<List<ChatMessage>> messages = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<List<Tool>> tools = ArgumentCaptor.forClass(List.class);
+        ArgumentCaptor<Map<String, Object>> params = ArgumentCaptor.forClass(Map.class);
+        verify(chatModel)
+                .chat(messages.capture(), tools.capture(), params.capture(), eq(Map.class));
+        // Only the directive and the answer's text: no part of the loop's request is resent.
+        List<ChatMessage> sent = messages.getValue();
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0).getRole()).isEqualTo(MessageRole.USER);
+        assertThat(sent.get(0).getText()).isEqualTo(FINALIZE_DIRECTIVE + "the answer is 42");
+        assertThat(tools.getValue()).isEmpty();
+        assertThat(params.getValue()).isEmpty();
+        verify(chatModel, times(1)).chat(any(), any(), any());
+        assertThat(durableCallIds).containsExactly("chat", "chat:final");
+
+        // The loop's prose cannot be parsed, so a structured output proves the conversion's
+        // response is the one parsed and returned.
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.isFailed()).isFalse();
+        assertThat(event.getResponse().getText()).isEqualTo("{\"answer\":\"42\"}");
+        assertThat(event.getStructuredOutput()).isEqualTo(Map.of("answer", "42"));
+
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, times(2))
+                .reportExecutionStarted(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        verify(reporter, times(2))
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 3);
+    }
+
+    @Test
+    void schemaKeptInThePromptIssuesNoFinalizationCall() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(false);
+        OutputSchema schema = rowTypeSchema();
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                schema,
+                reportingCtx);
+
+        // Consulted and answered no: without this the test cannot tell a suppressed
+        // finalization from an invoker that never asks.
+        verify(chatModel).willApplyNativeStructuredOutput(schema);
+        verify(chatModel, never()).chat(any(), any(), any(), any());
+        assertThat(durableCallIds).containsExactly("chat");
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, times(1))
+                .reportExecutionStarted(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        verify(reporter, times(1))
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isFalse();
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 2);
+    }
+
+    @Test
+    void requestWithoutSchemaDoesNotConsultTheGate() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any())).thenReturn(ChatFixtures.response("hello"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                null,
+                reportingCtx);
+
+        verify(chatModel, never()).willApplyNativeStructuredOutput(any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
+    }
+
+    @Test
+    void toolCallResponseIssuesNoFinalizationCall() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "",
+                                List.of(
+                                        Map.of(
+                                                "id",
+                                                "call-1",
+                                                "type",
+                                                "function",
+                                                "function",
+                                                Map.of("name", "lookup", "arguments", Map.of())))));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel).willApplyNativeStructuredOutput(Map.class);
+        verify(chatModel, never()).chat(any(), any(), any(), any());
+        assertThat(durableCallIds).containsExactly("chat");
+        assertThat(sentEvents).hasSize(1);
+        assertThat(sentEvents.get(0).getType()).isEqualTo(ToolRequestEvent.EVENT_TYPE);
+    }
+
+    @Test
+    void finalizationCallFailureIsAModelCallFailureThatConsumesTheRetryBudget() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("the answer is 42"));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
+        when(chatModel.chat(any(), any(), any(), any()))
+                .thenThrow(new RuntimeException("conversion call exploded"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        // The retry repeats the whole attempt, loop call included.
+        verify(chatModel, times(2)).chat(any(), any(), any());
+        verify(chatModel, times(2)).chat(any(), any(), any(), any());
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.isFailed()).isTrue();
+        assertThat(event.getRetryCount()).isEqualTo(1);
+        assertThat(event.getError())
+                .isEqualTo("java.lang.RuntimeException: conversion call exploded");
+
+        // Per attempt: the loop call starts and succeeds, the conversion starts and fails.
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, times(4))
+                .reportExecutionStarted(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        verify(reporter, times(2))
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        verify(reporter, times(2))
+                .reportExecutionFailed(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA),
+                        any(ChatModelInvoker.InvocationFailure.class),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED));
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 4);
+    }
+
+    @Test
+    void unparseableConversionConsumesTheRetryBudget() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("the answer is 42"));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
+        when(chatModel.chat(any(), any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response("not-json"),
+                        ChatFixtures.response("{\"answer\":\"42\"}"));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel, times(2)).chat(any(), any(), any());
+        verify(chatModel, times(2)).chat(any(), any(), any(), any());
+        assertThat(durableCallIds).containsExactly("chat", "chat:final", "chat", "chat:final");
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.isFailed()).isFalse();
+        assertThat(event.getRetryCount()).isEqualTo(1);
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter)
+                .reportExecutionFailed(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()),
+                        any(Exception.class),
+                        eq(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR));
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 6);
+    }
+
+    @Test
+    void gateIsEvaluatedOncePerInvocationAcrossRetries() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(2, 0));
+        when(chatModel.chat(any(), any(), any()))
+                .thenThrow(new RuntimeException("transient error"))
+                .thenThrow(new RuntimeException("transient error"))
+                .thenReturn(ChatFixtures.response("{\"answer\":\"42\"}"));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(false);
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel, times(3)).chat(any(), any(), any());
+        verify(chatModel, times(1)).willApplyNativeStructuredOutput(any());
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isFalse();
+    }
+
+    @Test
+    void gateFailureFailsTheRequestWithoutAModelCall() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(2, 0));
+        when(chatModel.willApplyNativeStructuredOutput(any()))
+                .thenThrow(new IllegalArgumentException("NATIVE cannot apply this schema"));
+
+        // The action completes the request with a failed response instead of throwing.
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel, never()).chat(any(), any(), any());
+        verify(chatModel, never()).chat(any(), any(), any(), any());
+        verify(reportingCtx, never()).durableExecute(any());
+        assertThat(sentEvents).hasSize(1);
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.isFailed()).isTrue();
+        assertThat(event.getRetryCount()).isZero();
+        assertThat(event.getError())
+                .isEqualTo("java.lang.IllegalArgumentException: NATIVE cannot apply this schema");
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, never())
+                .reportExecutionStarted(
+                        anyString(), eq(ExecutionReporter.EntityTypes.LLM), anyString(), any());
+    }
+
+    @Test
+    void finalizationResponseTokensAreRecorded() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "the answer is 42",
+                                Map.of(
+                                        "model_name", "provider-model",
+                                        "promptTokens", 10L,
+                                        "completionTokens", 5L)));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
+        when(chatModel.chat(any(), any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "{\"answer\":\"42\"}",
+                                Map.of(
+                                        "model_name", "provider-model",
+                                        "promptTokens", 100L,
+                                        "completionTokens", 50L)));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 10L, 5L);
+        verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 100L, 50L);
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 3);
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("promptTokens", 10L, "completionTokens", 5L))));
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("promptTokens", 100L, "completionTokens", 50L))));
+    }
+
+    @Test
+    void truncatedConversionIsRejectedBeforeParsing() throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(ChatFixtures.response("the answer is 42"));
+        when(chatModel.willApplyNativeStructuredOutput(any())).thenReturn(true);
+        when(chatModel.chat(any(), any(), any(), any()))
+                .thenReturn(
+                        ChatFixtures.response(
+                                "{\"answer\":\"4",
+                                Map.of(
+                                        "finish_reason",
+                                        "length",
+                                        "promptTokens",
+                                        9L,
+                                        "completionTokens",
+                                        0L,
+                                        "model_name",
+                                        "provider-model")));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(),
+                "test-model",
+                List.of(new ChatMessage(MessageRole.USER, "hi")),
+                Map.of(),
+                Map.class,
+                reportingCtx);
+
+        ChatResponseEvent event = ChatResponseEvent.fromEvent(sentEvents.get(0));
+        assertThat(event.isFailed()).isTrue();
+        assertThat(event.getError()).contains("truncated");
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter, never())
+                .reportExecutionStarted(
+                        anyString(), eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
+        assertInvocationIdentities((ExecutionReporter) reportingCtx, 2);
+        verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 9L, 0L);
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("promptTokens", 9L, "completionTokens", 0L))));
     }
 
     // --- Helper methods ---
@@ -871,14 +1327,14 @@ class ChatModelActionRetryTest {
                 .thenAnswer(
                         invocation -> {
                             DurableCallable<?> callable = invocation.getArgument(0);
-                            assertThat(callable.getId()).isEqualTo("chat");
+                            durableCallIds.add(callable.getId());
                             return callable.call();
                         });
         when(reportingCtx.durableExecuteAsync(any()))
                 .thenAnswer(
                         invocation -> {
                             DurableCallable<?> callable = invocation.getArgument(0);
-                            assertThat(callable.getId()).isEqualTo("chat");
+                            durableCallIds.add(callable.getId());
                             return new TestDurableFuture<>(callable.getId(), callable::call);
                         });
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(reportingCtx).sendEvent(any());

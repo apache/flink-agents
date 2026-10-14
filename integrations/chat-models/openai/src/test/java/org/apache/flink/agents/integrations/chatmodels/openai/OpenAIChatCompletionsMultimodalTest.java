@@ -24,6 +24,7 @@ import org.apache.flink.agents.api.chat.messages.AudioBlock;
 import org.apache.flink.agents.api.chat.messages.Base64Source;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ContentBlock;
+import org.apache.flink.agents.api.chat.messages.DataContentBlock;
 import org.apache.flink.agents.api.chat.messages.DocumentBlock;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
@@ -177,13 +178,17 @@ class OpenAIChatCompletionsMultimodalTest {
     @ParameterizedTest
     @EnumSource(
             value = MessageRole.class,
-            names = {"SYSTEM", "ASSISTANT", "TOOL"})
+            names = {"ASSISTANT", "TOOL"})
     @DisplayName("Media outside user messages fails explicitly")
     void testMediaOutsideUserMessagesFails(MessageRole role) {
+        List<DataContentBlock> blocks =
+                List.of(TextBlock.of("see"), ImageBlock.fromUrl("image/png", IMAGE_URL));
         ChatMessage message =
-                new ChatMessage(
-                        role,
-                        List.of(TextBlock.of("see"), ImageBlock.fromUrl("image/png", IMAGE_URL)));
+                role == MessageRole.TOOL
+                        ? ChatMessage.tool(
+                                new org.apache.flink.agents.api.chat.messages.ToolResultBlock(
+                                        "call-1", blocks, false))
+                        : new ChatMessage(role, blocks);
 
         assertThatThrownBy(() -> OpenAIChatCompletionsUtils.convertToOpenAIMessage(message))
                 .isInstanceOf(UnsupportedContentBlockException.class)

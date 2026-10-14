@@ -317,7 +317,7 @@ class AgentPlanCrossLanguageTest {
         assertThat(actual).isEqualTo(expected);
     }
 
-    /** A plan that nests a child agent compiled into an {@code InternalSubagentProvider}. */
+    /** A plan that nests a child agent carried by an ordinary resource descriptor. */
     private static AgentPlan compileWithInternalSubagent() throws Exception {
         Agent child = new Agent();
         child.addAction(
@@ -379,5 +379,24 @@ class AgentPlanCrossLanguageTest {
                         restored.getConfig()
                                 .get(AgentConfigOptions.CONDITION_EVALUATION_FAILURE_STRATEGY))
                 .isEqualTo(ConditionEvaluationFailureStrategy.FAIL);
+    }
+
+    @Test
+    void javaCanReadAndRewritePythonInternalSubagentDescriptor() throws Exception {
+        Path fixture = snapshotDir.resolve("python/agent_plan_with_internal_subagent.json");
+        AgentPlan plan = MAPPER.readValue(Files.readString(fixture), AgentPlan.class);
+        AgentPlan restored = MAPPER.readValue(MAPPER.writeValueAsString(plan), AgentPlan.class);
+        org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider provider =
+                (org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider)
+                        restored.getResourceProviders().get(ResourceType.AGENT).get("child");
+        assertThat(provider.getDescriptor().getInitialArguments())
+                .containsEntry("description", "Python child")
+                .containsEntry("scope", "child")
+                .doesNotContainKey("agent");
+        AgentPlan child =
+                org.apache.flink.agents.plan.subagent.InternalSubagentPlans.decode(
+                        provider.getDescriptor());
+        assertThat(child.getActions()).containsKey("handle");
+        assertThat(child.getActions().get("handle").getExec()).isInstanceOf(PythonFunction.class);
     }
 }

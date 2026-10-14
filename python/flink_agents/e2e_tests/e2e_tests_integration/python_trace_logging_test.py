@@ -39,8 +39,9 @@ from pyflink.datastream.connectors.file_system import (
 from typing_extensions import override
 
 from flink_agents.api.agents.agent import Agent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import ChatMessage
 from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
 from flink_agents.api.decorators import action, chat_model_setup
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
@@ -189,12 +190,16 @@ class TraceUsageChatModel(BaseChatModelSetup):
         return {}
 
     @override
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Read the scripted response metadata from the request."""
-        return ChatMessage.of(
-            MessageRole.ASSISTANT,
-            "reply",
-            extra_args=json.loads(messages[-1].text),
+        metadata = json.loads(messages[-1].text)
+        return ChatResult(
+            message=ChatMessage.assistant("reply"),
+            model=metadata.get("model_name"),
+            usage=TokenUsage(
+                prompt_tokens=metadata.get("promptTokens"),
+                completion_tokens=metadata.get("completionTokens"),
+            ),
         )
 
 
@@ -228,7 +233,9 @@ class PythonLlmTraceUsageAgent(Agent):
     def emit_response(event: Event, ctx: RunnerContext) -> None:
         """Expose metadata after the response Event returns through Java."""
         response = ChatResponseEvent.from_event(event).response
-        ctx.send_event(OutputEvent(output={"responseMetadata": response.extra_args}))
+        ctx.send_event(
+            OutputEvent(output={"response": response.model_dump(mode="json")})
+        )
 
 
 def test_python_trace_logging(tmp_path: Path) -> None:
@@ -672,6 +679,11 @@ def test_llm_trace_records_per_call_usage(tmp_path: Path) -> None:
 
     for output in outputs:
         input_value = input_events[output["inputRunId"]]["attributes"]["input"]
-        assert output["attributes"]["output"] == {
-            "responseMetadata": input_value["response_metadata"]
-        }
+        response = ChatResult.model_validate(output["attributes"]["output"]["response"])
+        expected = input_value["response_metadata"]
+        assert response.text == "reply"
+        assert response.model == expected["model_name"]
+        assert response.usage == TokenUsage(
+            prompt_tokens=expected.get("promptTokens"),
+            completion_tokens=expected.get("completionTokens"),
+        )

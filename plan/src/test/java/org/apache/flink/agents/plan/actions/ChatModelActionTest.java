@@ -19,25 +19,28 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
+import org.apache.flink.agents.plan.ChatFixtures;
 import org.junit.jupiter.api.Test;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
 class ChatModelActionTest {
+
+    private static final String PARSEABLE_CONTENT = "{\"answer\":\"42\"}";
 
     @Test
     void structuredOutputPreservesOriginalBlocks() throws Exception {
@@ -47,27 +50,17 @@ class ChatModelActionTest {
                         List.of(
                                 new TextBlock("```json\n{\"answer\":42}\n```"),
                                 ImageBlock.fromBase64("image/png", "aGk=")),
-                        List.of(),
                         Map.of("provider", "test"));
-        ChatMessage parsed = ChatModelAction.generateStructuredOutput(original, Map.class);
-        assertEquals(original.getBlocks(), parsed.getBlocks());
-        assertEquals(Map.of("answer", 42), parsed.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
-        assertEquals("test", parsed.getExtraArgs().get("provider"));
-        assertFalse(original.getExtraArgs().containsKey(Agent.STRUCTURED_OUTPUT));
+        Object parsed =
+                ChatModelAction.generateStructuredOutput(new ChatResult(original), Map.class);
+        assertEquals(Map.of("answer", 42), parsed);
+        assertEquals(2, original.getBlocks().size());
+        assertEquals("test", original.getMetadata().get("provider"));
+        assertFalse(original.getMetadata().containsKey(Agent.STRUCTURED_OUTPUT));
     }
-
-    private static final String PARSEABLE_CONTENT = "{\"answer\":\"42\"}";
 
     private static RunnerContext reportingContext() {
         return mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
-    }
-
-    private static ChatMessage generateStructuredOutput(
-            RunnerContext ctx, Map<String, Object> extraArgs) throws Exception {
-        return ChatModelAction.generateStructuredOutputWithReport(
-                ctx,
-                new ChatMessage(MessageRole.ASSISTANT, PARSEABLE_CONTENT, extraArgs),
-                Map.class);
     }
 
     @Test
@@ -116,22 +109,35 @@ class ChatModelActionTest {
 
     @Test
     void testStructuredOutputParsesToExpectedValue() throws Exception {
-        ChatMessage parsed = generateStructuredOutput(reportingContext(), Map.of());
+        Object parsed =
+                ChatModelAction.generateStructuredOutputWithReport(
+                        reportingContext(), ChatFixtures.response(PARSEABLE_CONTENT), Map.class);
 
-        assertEquals(Map.of("answer", "42"), parsed.getExtraArgs().get(Agent.STRUCTURED_OUTPUT));
+        assertEquals(Map.of("answer", "42"), parsed);
     }
 
     @Test
-    void testStructuredOutputPreservesInboundExtraArgs() throws Exception {
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("finish_reason", "stop");
-        extraArgs.put("promptTokens", 100L);
+    void testStructuredOutputPreservesResponseUsageAndMetadata() throws Exception {
+        TokenUsage usage = new TokenUsage(100L, 0L);
+        Map<String, Object> metadata = Map.of("provider", "test");
+        ChatResult response =
+                new ChatResult(
+                        ChatMessage.assistant(PARSEABLE_CONTENT),
+                        "provider-model",
+                        "response-id",
+                        usage,
+                        "stop",
+                        metadata);
 
-        Map<String, Object> parsedArgs =
-                generateStructuredOutput(reportingContext(), extraArgs).getExtraArgs();
+        Object parsed =
+                ChatModelAction.generateStructuredOutputWithReport(
+                        reportingContext(), response, Map.class);
 
-        assertEquals("stop", parsedArgs.get("finish_reason"));
-        assertEquals(100L, parsedArgs.get("promptTokens"));
-        assertTrue(parsedArgs.containsKey(Agent.STRUCTURED_OUTPUT), parsedArgs.toString());
+        assertEquals(Map.of("answer", "42"), parsed);
+        assertEquals(usage, response.getUsage());
+        assertEquals(metadata, response.getMetadata());
+        assertEquals("provider-model", response.getModel());
+        assertEquals("stop", response.getFinishReason());
+        assertEquals(PARSEABLE_CONTENT, response.getText());
     }
 }

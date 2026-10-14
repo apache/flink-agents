@@ -18,7 +18,9 @@
 
 package org.apache.flink.agents.api.subagent;
 
+import org.apache.flink.agents.api.AgentsExecutionEnvironment;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
 
@@ -27,38 +29,43 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.withSettings;
 
 /** Tests registering sub-agents as AGENT resources. */
 class SubagentRegisterTest {
 
     @Test
-    void registerSubagentSetupAsResource() {
+    void registerSubagentDescriptorAsResource() {
         Agent agent = new Agent();
-        TestSubagentSetup setup = new TestSubagentSetup(null);
+        ResourceDescriptor setup = new TestSubagentSetup(null).getDescriptor();
         agent.addResource("reviewer", ResourceType.AGENT, setup);
 
         Map<String, Object> agentResources = agent.getResources().get(ResourceType.AGENT);
         assertEquals(1, agentResources.size());
         assertSame(setup, agentResources.get("reviewer"));
-        assertEquals(ResourceType.AGENT, setup.getResourceType());
     }
 
     @Test
     void duplicateNameThrows() {
         Agent agent = new Agent();
-        agent.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup(null));
+        agent.addResource(
+                "reviewer", ResourceType.AGENT, new TestSubagentSetup(null).getDescriptor());
         assertThrows(
                 IllegalArgumentException.class,
                 () ->
                         agent.addResource(
-                                "reviewer", ResourceType.AGENT, new TestSubagentSetup(null)));
+                                "reviewer",
+                                ResourceType.AGENT,
+                                new TestSubagentSetup(null).getDescriptor()));
     }
 
     @Test
     void multipleSubagentsRegistered() {
         Agent agent = new Agent();
-        TestSubagentSetup reviewer = new TestSubagentSetup(null);
-        TestSubagentSetup coder = new TestSubagentSetup(null);
+        ResourceDescriptor reviewer = new TestSubagentSetup(null).getDescriptor();
+        ResourceDescriptor coder = new TestSubagentSetup(null).getDescriptor();
         agent.addResource("reviewer", ResourceType.AGENT, reviewer);
         agent.addResource("coder", ResourceType.AGENT, coder);
 
@@ -66,5 +73,31 @@ class SubagentRegisterTest {
         assertEquals(2, agentResources.size());
         assertSame(reviewer, agentResources.get("reviewer"));
         assertSame(coder, agentResources.get("coder"));
+    }
+
+    @Test
+    void rejectsSetupInstances() {
+        assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                        new Agent()
+                                .addResource(
+                                        "reviewer",
+                                        ResourceType.AGENT,
+                                        new TestSubagentSetup(null)));
+    }
+
+    @Test
+    void sharedRegistrationRejectsSetupInstances() {
+        AgentsExecutionEnvironment env =
+                mock(
+                        AgentsExecutionEnvironment.class,
+                        withSettings().useConstructor().defaultAnswer(CALLS_REAL_METHODS));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> env.addResource("reviewer", ResourceType.AGENT, new TestSubagentSetup(null)));
+        ResourceDescriptor descriptor =
+                ResourceDescriptor.Builder.newBuilder(TestSubagentSetup.class.getName()).build();
+        assertSame(env, env.addResource("reviewer", ResourceType.AGENT, descriptor));
     }
 }

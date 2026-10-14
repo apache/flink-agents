@@ -19,8 +19,8 @@
 
 import asyncio
 import time
-from typing import Any, Sequence
-from unittest.mock import ANY, MagicMock
+from typing import Any, Callable, Sequence
+from unittest.mock import ANY, MagicMock, call
 from uuid import uuid4
 
 import pytest
@@ -28,7 +28,13 @@ from pydantic import BaseModel
 
 from flink_agents.api.agents.agent import STRUCTURED_OUTPUT
 from flink_agents.api.agents.react_agent import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, ImageBlock, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    ImageBlock,
+    MessageRole,
+    ToolCallBlock,
+)
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.core_options import (
     AgentExecutionOptions,
 )
@@ -110,6 +116,28 @@ class _MockMemoryObject:
         self._store[path] = value
 
 
+def _response_fixture(role, content, extra_args=None, tool_calls=None) -> ChatResult:
+    fields = extra_args or {}
+    blocks = list(ChatMessage.assistant(content).blocks)
+    blocks.extend(
+        ToolCallBlock(
+            call_id=c["id"],
+            name=c["function"]["name"],
+            input=c["function"]["arguments"],
+        )
+        for c in tool_calls or []
+    )
+    return ChatResult(
+        message=ChatMessage.assistant(blocks),
+        model=fields.get("model_name"),
+        usage=TokenUsage(
+            prompt_tokens=fields.get("promptTokens"),
+            completion_tokens=fields.get("completionTokens"),
+        ),
+        finish_reason=fields.get("finish_reason"),
+    )
+
+
 class _StructuredResult(BaseModel):
     result: int
 
@@ -118,6 +146,8 @@ def _create_mock_runner_context(
     chat_model: Any,
     max_retries: int = 3,
     retry_wait_interval_sec: int = 1,
+    *,
+    chat_async: bool = False,
 ) -> tuple[MagicMock, list, _MockMetricGroup, _MockMemoryObject]:
     """Create a mock RunnerContext with configurable retry settings.
 
@@ -127,12 +157,17 @@ def _create_mock_runner_context(
     metric_group = _MockMetricGroup()
     sensory_memory = _MockMemoryObject()
     chat_model.model = "configured-model"
+    # An unstubbed MagicMock answers the gate with a truthy mock, which would send
+    # every schema-carrying test down the native finalization path. Tests that want
+    # that path override this after the helper returns.
+    if isinstance(chat_model, MagicMock):
+        chat_model.will_apply_native_structured_output = MagicMock(return_value=False)
 
     config = MagicMock()
     option_values = {
         id(AgentExecutionOptions.MAX_RETRIES): max_retries,
         id(AgentExecutionOptions.RETRY_WAIT_INTERVAL): retry_wait_interval_sec,
-        id(AgentExecutionOptions.CHAT_ASYNC): False,
+        id(AgentExecutionOptions.CHAT_ASYNC): chat_async,
     }
     config.get = MagicMock(
         side_effect=lambda option: option_values.get(
@@ -146,9 +181,17 @@ def _create_mock_runner_context(
     ctx.action_metric_group = metric_group
     ctx.send_event = MagicMock(side_effect=lambda e: sent_events.append(e))
     ctx.get_resource = MagicMock(return_value=chat_model)
+    # Like the runtime, the reserved durable_id keyword is not forwarded to fn.
     ctx.durable_execute = MagicMock(
-        side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)
+        side_effect=lambda fn, *args, durable_id=None, **kwargs: fn(*args, **kwargs)
     )
+
+    async def _dispatch_async(
+        fn: Any, *args: Any, durable_id: str | None = None, **kwargs: Any
+    ) -> Any:
+        return fn(*args, **kwargs)
+
+    ctx.durable_execute_async = MagicMock(side_effect=_dispatch_async)
 
     return ctx, sent_events, metric_group, sensory_memory
 
@@ -206,7 +249,7 @@ class TestChatModelActionRetry:
     @pytest.mark.parametrize("provider_fails", [False, True])
     def test_terminal_delivery_failure_propagates(self, provider_fails: bool) -> None:
         model = MagicMock()
-        model.chat.return_value = ChatMessage.of(
+        model.chat.return_value = _response_fixture(
             role=MessageRole.ASSISTANT, content="ok"
         )
         if provider_fails:
@@ -242,7 +285,7 @@ class TestChatModelActionRetry:
         """No retry needed: retry_count=0, total_retry_wait_sec=0, no metrics."""
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(MessageRole.ASSISTANT, "hello")
+            return_value=_response_fixture(MessageRole.ASSISTANT, "hello")
         )
 
         ctx, sent_events, metric_group, _ = _create_mock_runner_context(chat_model)
@@ -283,36 +326,36 @@ class TestChatModelActionRetry:
 
     @pytest.mark.parametrize("metrics_available", [False, True])
     @pytest.mark.parametrize(
-        ("extra_args", "expected_usage", "records_metrics"),
+        ("usage", "expected_usage", "records_metrics"),
         [
             (
-                {"promptTokens": 100, "completionTokens": 50},
+                TokenUsage(prompt_tokens=100, completion_tokens=50),
                 {"promptTokens": 100, "completionTokens": 50},
                 True,
             ),
             (
+                TokenUsage(prompt_tokens=5, completion_tokens=0),
                 {"promptTokens": 5, "completionTokens": 0},
-                {"promptTokens": 5, "completionTokens": 0},
-                False,
+                True,
             ),
-            ({"completionTokens": 0}, {"completionTokens": 0}, False),
-            ({"promptTokens": 5}, {"promptTokens": 5}, False),
-            ({"promptTokens": None, "completionTokens": None}, {}, False),
-            ({}, {}, False),
+            (TokenUsage(completion_tokens=0), {"completionTokens": 0}, False),
+            (TokenUsage(prompt_tokens=5), {"promptTokens": 5}, False),
+            (TokenUsage(), {}, False),
+            (None, {}, False),
         ],
     )
     def test_usage_and_token_metrics_share_response_counts(
         self,
-        extra_args: dict,
+        usage: TokenUsage | None,
         expected_usage: dict,
         records_metrics: bool,
         metrics_available: bool,
     ) -> None:
         chat_model = MagicMock()
-        chat_model.chat.return_value = ChatMessage.of(
-            MessageRole.ASSISTANT,
-            "hello",
-            extra_args={"model_name": "metric-model", **extra_args},
+        chat_model.chat.return_value = ChatResult(
+            message=ChatMessage.assistant("hello"),
+            model="metric-model",
+            usage=usage,
         )
         ctx, events, metric_group, _ = _create_mock_runner_context(chat_model)
         if not metrics_available:
@@ -329,24 +372,82 @@ class TestChatModelActionRetry:
         )
         if records_metrics and metrics_available:
             chat_model._record_token_metrics.assert_called_once_with(
-                "metric-model", 100, 50, metric_group
+                "metric-model",
+                usage.prompt_tokens,
+                usage.completion_tokens,
+                metric_group,
             )
         else:
             chat_model._record_token_metrics.assert_not_called()
         _assert_report_identities(ctx)
         assert not events[0].is_failed
 
+    @pytest.mark.parametrize("chat_async", [False, True])
+    def test_every_attempt_uses_the_chat_durable_id(self, chat_async: bool) -> None:
+        """Each attempt is keyed by "chat", not by a digest of the messages (#1190)."""
+        chat_model = MagicMock()
+        chat_model.chat = MagicMock(
+            side_effect=[
+                RuntimeError("transient"),
+                _response_fixture(MessageRole.ASSISTANT, "hello"),
+            ]
+        )
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=1, retry_wait_interval_sec=0
+        )
+        if chat_async:
+            async_option = AgentExecutionOptions.CHAT_ASYNC
+            original_get = ctx.config.get.side_effect
+            ctx.config.get = MagicMock(
+                side_effect=lambda option: True
+                if option is async_option
+                else original_get(option)
+            )
+
+            async def durable_execute_async(
+                fn: Callable[..., Any],
+                *args: Any,
+                durable_id: str | None = None,
+                **kwargs: Any,
+            ) -> Any:
+                return ctx.durable_execute(fn, *args, durable_id=durable_id, **kwargs)
+
+            ctx.durable_execute_async = MagicMock(side_effect=durable_execute_async)
+
+        asyncio.run(
+            chat(
+                uuid4(),
+                chat_model.connection,
+                [ChatMessage.of(MessageRole.USER, "hi")],
+                {},
+                None,
+                ctx,
+            )
+        )
+
+        assert len(sent_events) == 1
+        event = sent_events[0]
+        assert isinstance(event, ChatResponseEvent)
+        assert event.is_success
+        assert event.response.text == "hello"
+        assert chat_model.chat.call_count == 2
+        durable_call = ctx.durable_execute_async if chat_async else ctx.durable_execute
+        assert [call.kwargs["durable_id"] for call in durable_call.call_args_list] == [
+            "chat",
+            "chat",
+        ]
+
     def test_chat_retries_with_exponential_backoff(self) -> None:
         """Fail once then succeed: 1s interval, 1 retry -> wait 1s (1 * 2^0)."""
         call_count = 0
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             nonlocal call_count
             call_count += 1
             if call_count <= 1:
                 err_msg = "transient error"
                 raise RuntimeError(err_msg)
-            return ChatMessage.of(MessageRole.ASSISTANT, "success")
+            return _response_fixture(MessageRole.ASSISTANT, "success")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -443,10 +544,10 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             side_effect=[
-                ChatMessage.of(
+                _response_fixture(
                     MessageRole.ASSISTANT, "not-json", extra_args={"promptTokens": 11}
                 ),
-                ChatMessage.of(
+                _response_fixture(
                     MessageRole.ASSISTANT,
                     '{"result": 42}',
                     extra_args={"completionTokens": 0},
@@ -464,7 +565,9 @@ class TestChatModelActionRetry:
             else configured_value(option)
         )
 
-        async def execute_async(func: Any, *args: Any, **kwargs: Any) -> Any:
+        async def execute_async(
+            func: Any, *args: Any, durable_id: str | None = None, **kwargs: Any
+        ) -> Any:
             await asyncio.sleep(0)
             return func(*args, **kwargs)
 
@@ -483,8 +586,8 @@ class TestChatModelActionRetry:
 
         assert chat_model.chat.call_count == 2
         assert len(sent_events) == 1
-        response = sent_events[0].response
-        assert response.extra_args[STRUCTURED_OUTPUT].result == 42
+        sent_events[0].response
+        assert sent_events[0].structured_output.result == 42
 
         ctx.report_execution_failed.assert_called_once()
         failed_args = ctx.report_execution_failed.call_args.args
@@ -524,7 +627,7 @@ class TestChatModelActionFinishReason:
     def test_truncated_text_response_rejected(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -546,7 +649,7 @@ class TestChatModelActionFinishReason:
         # one and cannot tell them apart.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="",
                 extra_args={"finish_reason": "content_filter"},
@@ -565,13 +668,13 @@ class TestChatModelActionFinishReason:
     def test_truncated_tool_call_response_rejected_before_tool_dispatch(self) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="",
                 tool_calls=[
                     {
                         "id": "call-1",
-                        "function": {"name": "f", "arguments": ""},
+                        "function": {"name": "f", "arguments": {}},
                     }
                 ],
                 extra_args={"finish_reason": "length"},
@@ -604,7 +707,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="hello",
                 extra_args=extra_args,
@@ -619,21 +722,29 @@ class TestChatModelActionFinishReason:
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ChatResponseEvent)
         assert sent_events[0].response.text == "hello"
+        assert sent_events[0].response.finish_reason == extra_args.get("finish_reason")
 
     def test_accepted_finish_reason_dispatches_tool_request_event(self) -> None:
         # A response carrying tool calls passes the same finish-reason gate as a
         # text response, so an accepted reason must reach tool dispatch.
         tool_calls = [{"id": "call-1", "function": {"name": "f", "arguments": {}}}]
         chat_model = MagicMock()
-        chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
-                role=MessageRole.ASSISTANT,
-                content="",
-                tool_calls=tool_calls,
-                extra_args={"finish_reason": "tool_calls"},
-            )
+        response = _response_fixture(
+            role=MessageRole.ASSISTANT,
+            content="",
+            tool_calls=tool_calls,
+            extra_args={"finish_reason": "tool_calls"},
         )
-        ctx, sent_events, _, _ = _create_mock_runner_context(
+        response.message.metadata["message_key"] = "value"
+        response = ChatResult(
+            message=response.message,
+            model="provider-model",
+            response_id="response-id",
+            finish_reason="tool_calls",
+            metadata={"provider_only": "opaque"},
+        )
+        chat_model.chat = MagicMock(return_value=response)
+        ctx, sent_events, _, memory = _create_mock_runner_context(
             chat_model, max_retries=0, retry_wait_interval_sec=0
         )
 
@@ -641,13 +752,20 @@ class TestChatModelActionFinishReason:
 
         assert len(sent_events) == 1
         assert isinstance(sent_events[0], ToolRequestEvent)
-        assert sent_events[0].tool_calls == tool_calls
+        assert sent_events[0].tool_calls[0].call_id == "call-1"
+        assert sent_events[0].tool_calls[0].name == "f"
+        history = next(iter(memory.get("_TOOL_CALL_CONTEXT").values()))
+        assistant = ChatMessage.model_validate(history[-1])
+        assert assistant.role == MessageRole.ASSISTANT
+        assert assistant.blocks == response.message.blocks
+        assert assistant.metadata == {"message_key": "value"}
+        assert set(history[-1]) == {"role", "blocks", "metadata"}
 
     def test_default_retry_budget_returns_failed_response(self) -> None:
         # The default retry budget makes one attempt and rejects truncated content.
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content="partial answ",
                 extra_args={"finish_reason": "length"},
@@ -672,7 +790,7 @@ class TestChatModelActionFinishReason:
     ) -> None:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
-            return_value=ChatMessage.of(
+            return_value=_response_fixture(
                 role=MessageRole.ASSISTANT,
                 content='{"result": 42}',
                 extra_args={
@@ -717,7 +835,7 @@ class TestChatResponseEventRetryFields:
         """Default construction has retry_count=0, total_retry_wait_sec=0."""
         event = ChatResponseEvent.success(
             request_id=uuid4(),
-            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
+            response=_response_fixture(MessageRole.ASSISTANT, "test"),
         )
         assert event.retry_count == 0
         assert event.total_retry_wait_sec == 0
@@ -726,7 +844,7 @@ class TestChatResponseEventRetryFields:
         """Full construction carries retry info."""
         event = ChatResponseEvent.success(
             request_id=uuid4(),
-            response=ChatMessage.of(MessageRole.ASSISTANT, "test"),
+            response=_response_fixture(MessageRole.ASSISTANT, "test"),
             retry_count=5,
             total_retry_wait_sec=31,
         )
@@ -756,9 +874,9 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         captured_prompt_args: list[dict] = []
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             captured_prompt_args.append(kwargs.get("prompt_args"))
-            return ChatMessage.of(MessageRole.ASSISTANT, "done")
+            return _response_fixture(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -795,7 +913,6 @@ class TestProcessToolResponsePromptArgsForwarding:
         tool_response_event = ToolResponseEvent(
             request_id=tool_request_event_id,
             responses={tool_call_id: "42"},
-            external_ids={},
         )
 
         asyncio.run(process_chat_request_or_tool_response(tool_response_event, ctx))
@@ -812,9 +929,9 @@ class TestProcessToolResponsePromptArgsForwarding:
 
         captured_messages: list[Sequence[ChatMessage]] = []
 
-        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        def mock_chat(messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
             captured_messages.append(messages)
-            return ChatMessage.of(MessageRole.ASSISTANT, "done")
+            return _response_fixture(MessageRole.ASSISTANT, "done")
 
         chat_model = MagicMock()
         chat_model.chat = mock_chat
@@ -845,7 +962,6 @@ class TestProcessToolResponsePromptArgsForwarding:
         tool_response_event = ToolResponseEvent(
             request_id=tool_request_event_id,
             responses={tool_call_id: "Tool `query_order` execute failed."},
-            external_ids={},
             success={tool_call_id: False},
             error={
                 tool_call_id: "Missing config for injected tool parameter: tenant_id"
@@ -857,7 +973,7 @@ class TestProcessToolResponsePromptArgsForwarding:
         assert captured_messages
         tool_message = captured_messages[0][-1]
         assert tool_message.role == MessageRole.TOOL
-        assert tool_message.text == "Tool `query_order` execute failed."
+        assert tool_message.blocks[0].text == "Tool `query_order` execute failed."
 
 
 def _assert_report_identities(ctx: MagicMock) -> None:
@@ -874,3 +990,386 @@ def _assert_report_identities(ctx: MagicMock) -> None:
     assert {report.args[0] for report in terminals} == set(starts)
     for report in terminals:
         assert report.args[1:3] == starts[report.args[0]]
+
+
+# Spelled out rather than imported from the action, so the assertion pins the exact
+# words a provider receives.
+_FINALIZE_DIRECTIVE_TEXT = (
+    "Convert the response below into the required structured output format."
+    " Preserve its meaning and do not add or infer any new information.\n\n"
+    "Response:\n"
+)
+_LLM_SPAN = call(ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA)
+
+
+def _assistant(content: str, **extra_args: Any) -> ChatResult:
+    return _response_fixture(MessageRole.ASSISTANT, content, extra_args)
+
+
+def _native_chat_model(
+    loop_responses: Any = None, final_responses: Any = None
+) -> MagicMock:
+    """A chat model whose loop answer is prose and whose finalization is JSON.
+
+    Both calls go through ``chat``. The finalization is the one given ``tools``, and
+    each kind of call draws from its own response queue.
+    """
+    chat_model = MagicMock()
+    chat_model.loop_chat = MagicMock(
+        side_effect=loop_responses or [_assistant("the answer is 42")]
+    )
+    chat_model.final_chat = MagicMock(
+        side_effect=final_responses or [_assistant('{"result": 42}')]
+    )
+
+    def dispatch(*args: Any, **kwargs: Any) -> Any:
+        target = chat_model.final_chat if "tools" in kwargs else chat_model.loop_chat
+        return target(*args, **kwargs)
+
+    chat_model.chat = MagicMock(side_effect=dispatch)
+    return chat_model
+
+
+def _native_context(
+    chat_model: MagicMock, max_retries: int = 0, **kwargs: Any
+) -> tuple:
+    ctx = _create_mock_runner_context(
+        chat_model, max_retries=max_retries, retry_wait_interval_sec=0, **kwargs
+    )
+    chat_model.will_apply_native_structured_output = MagicMock(return_value=True)
+    return ctx
+
+
+def _run_chat(
+    ctx: Any, output_schema: OutputSchema | None, request_id: Any = None
+) -> None:
+    asyncio.run(
+        chat(
+            request_id or uuid4(),
+            "test-model",
+            [ChatMessage.of(MessageRole.USER, "hi")],
+            {},
+            output_schema,
+            ctx,
+        )
+    )
+
+
+class TestNativeStructuredOutputFinalization:
+    """The schema-carrying call issued once the loop settles on a final answer."""
+
+    def test_finalization_call_carries_answer_directive_and_schema(self) -> None:
+        loop_answer = _assistant("the answer is 42")
+        chat_model = _native_chat_model(loop_responses=[loop_answer])
+        ctx, _, _, _ = _native_context(chat_model)
+        schema = OutputSchema(output_schema=_StructuredResult)
+
+        _run_chat(ctx, schema)
+
+        loop_call, final_call = chat_model.chat.call_args_list
+        assert "tools" not in loop_call.kwargs
+        assert "output_schema" not in loop_call.kwargs
+        assert set(final_call.kwargs) == {"tools", "output_schema"}
+        assert final_call.kwargs["tools"] == []
+        assert final_call.kwargs["output_schema"] is schema
+        (sent_messages,) = final_call.args
+        # Only the directive and the answer's text: no part of the loop's request
+        # is resent.
+        assert [(m.role, m.text) for m in sent_messages] == [
+            (MessageRole.USER, _FINALIZE_DIRECTIVE_TEXT + "the answer is 42"),
+        ]
+
+    def test_structured_output_is_parsed_from_the_finalization_response(
+        self,
+    ) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, _, _ = _native_context(chat_model)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        # The loop answer is prose no parser could read, so only the finalization
+        # response can produce this.
+        assert len(sent_events) == 1
+        assert sent_events[0].response.text == '{"result": 42}'
+        assert sent_events[0].structured_output.result == 42
+
+    def test_gate_false_issues_no_finalization_call(self) -> None:
+        chat_model = _native_chat_model(loop_responses=[_assistant('{"result": 7}')])
+        ctx, sent_events, _, _ = _create_mock_runner_context(
+            chat_model, max_retries=0, retry_wait_interval_sec=0
+        )
+        chat_model.will_apply_native_structured_output = MagicMock(return_value=False)
+        schema = OutputSchema(output_schema=_StructuredResult)
+
+        _run_chat(ctx, schema)
+
+        chat_model.will_apply_native_structured_output.assert_called_once_with(schema)
+        chat_model.final_chat.assert_not_called()
+        assert ctx.report_execution_started.call_args_list.count(_LLM_SPAN) == 1
+        assert sent_events[0].structured_output.result == 7
+
+    def test_no_schema_does_not_consult_the_gate(self) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, _, _ = _native_context(chat_model)
+        chat_model.will_apply_native_structured_output.side_effect = TypeError(
+            "connection not resolved"
+        )
+
+        _run_chat(ctx, None)
+
+        chat_model.will_apply_native_structured_output.assert_not_called()
+        chat_model.final_chat.assert_not_called()
+        assert sent_events[0].response.text == "the answer is 42"
+
+    def test_tool_call_response_issues_no_finalization_call(self) -> None:
+        tool_calls = [{"id": "call-1", "function": {"name": "f", "arguments": {}}}]
+        chat_model = _native_chat_model(
+            loop_responses=[
+                _response_fixture(MessageRole.ASSISTANT, "", tool_calls=tool_calls)
+            ]
+        )
+        ctx, sent_events, _, _ = _native_context(chat_model)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        chat_model.final_chat.assert_not_called()
+        assert len(sent_events) == 1
+        assert isinstance(sent_events[0], ToolRequestEvent)
+
+    def test_finalization_failure_reports_its_own_llm_failure(self) -> None:
+        chat_model = _native_chat_model(
+            final_responses=RuntimeError("conversion call exploded")
+        )
+        ctx, sent_events, _, _ = _native_context(chat_model)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        ctx.report_execution_failed.assert_called_once()
+        failed_args = ctx.report_execution_failed.call_args.args
+        assert failed_args[1:4] == (
+            ExecutionEntityTypes.LLM,
+            "test-model",
+            _LLM_METADATA,
+        )
+        assert failed_args[-1] == ExecutionProblemCategories.MODEL_CALL_FAILED
+        assert ctx.report_execution_started.call_args_list.count(_LLM_SPAN) == 2
+        assert ctx.report_execution_succeeded.call_args_list.count(_LLM_SPAN) == 1
+        assert len(sent_events) == 1
+        assert sent_events[0].is_failed
+        assert "conversion call exploded" in sent_events[0].error
+        _assert_report_identities(ctx)
+
+    def test_finalization_failure_consumes_the_retry_budget(self) -> None:
+        chat_model = _native_chat_model(
+            loop_responses=[_assistant("first"), _assistant("second")],
+            final_responses=[
+                RuntimeError("conversion call exploded"),
+                _assistant('{"result": 42}'),
+            ],
+        )
+        ctx, sent_events, _, _ = _native_context(chat_model, max_retries=1)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        # The retry repeats the whole attempt, loop call included.
+        assert chat_model.loop_chat.call_count == 2
+        assert chat_model.final_chat.call_count == 2
+        assert sent_events[0].retry_count == 1
+        assert sent_events[0].structured_output.result == 42
+        _assert_report_identities(ctx)
+
+    def test_parse_failure_after_native_call_consumes_the_retry_budget(self) -> None:
+        chat_model = _native_chat_model(
+            loop_responses=[_assistant("first"), _assistant("second")],
+            final_responses=[
+                _assistant("not-json", promptTokens=11),
+                _assistant('{"result": 42}', completionTokens=0),
+            ],
+        )
+        ctx, sent_events, _, _ = _native_context(chat_model, max_retries=1)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        assert chat_model.final_chat.call_count == 2
+        assert sent_events[0].retry_count == 1
+        assert sent_events[0].structured_output.result == 42
+        _assert_report_identities(ctx)
+        ctx.report_execution_failed.assert_called_once()
+        failed_args = ctx.report_execution_failed.call_args.args
+        assert failed_args[1] == ExecutionEntityTypes.PARSER
+        assert failed_args[-1] == ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR
+
+        assert [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ] == [
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"promptTokens": 11}},
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"completionTokens": 0}},
+        ]
+
+    def test_truncated_finalization_response_is_rejected(self) -> None:
+        chat_model = _native_chat_model(
+            final_responses=[
+                _assistant(
+                    '{"result": 4',
+                    finish_reason="length",
+                    model_name="provider-model",
+                    promptTokens=10,
+                    completionTokens=5,
+                )
+            ]
+        )
+        ctx, sent_events, metric_group, _ = _native_context(chat_model)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        assert len(sent_events) == 1
+        assert sent_events[0].is_failed
+        assert "truncat" in sent_events[0].error.lower()
+        # The call itself succeeded and spent its budget before being rejected.
+        assert [
+            report.args[3] for report in ctx.report_execution_succeeded.call_args_list
+        ] == [
+            _LLM_METADATA,
+            {**_LLM_METADATA, "usage": {"promptTokens": 10, "completionTokens": 5}},
+        ]
+        _assert_report_identities(ctx)
+        chat_model._record_token_metrics.assert_called_once_with(
+            "provider-model", 10, 5, metric_group
+        )
+
+    def test_finalization_records_its_token_metrics(self) -> None:
+        chat_model = _native_chat_model(
+            loop_responses=[
+                _assistant(
+                    "the answer is 42",
+                    model_name="provider-model",
+                    promptTokens=100,
+                    completionTokens=50,
+                )
+            ],
+            final_responses=[
+                _assistant(
+                    '{"result": 42}',
+                    model_name="provider-model",
+                    promptTokens=7,
+                    completionTokens=3,
+                )
+            ],
+        )
+        ctx, _, metric_group, _ = _native_context(chat_model)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        assert chat_model._record_token_metrics.call_args_list == [
+            call("provider-model", 100, 50, metric_group),
+            call("provider-model", 7, 3, metric_group),
+        ]
+        _assert_report_identities(ctx)
+        assert [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ] == [
+            {**_LLM_METADATA, "usage": {"promptTokens": 100, "completionTokens": 50}},
+            {**_LLM_METADATA, "usage": {"promptTokens": 7, "completionTokens": 3}},
+        ]
+
+    def test_gate_is_evaluated_once_across_retries(self) -> None:
+        chat_model = _native_chat_model(
+            loop_responses=[
+                RuntimeError("transient"),
+                RuntimeError("transient"),
+                _assistant("the answer is 42"),
+            ]
+        )
+        ctx, sent_events, _, _ = _native_context(chat_model, max_retries=2)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        chat_model.will_apply_native_structured_output.assert_called_once()
+        assert sent_events[0].retry_count == 2
+        assert sent_events[0].structured_output.result == 42
+
+    def test_gate_failure_fails_the_request_without_a_model_call(self) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, metric_group, _ = _native_context(chat_model, max_retries=2)
+        chat_model.will_apply_native_structured_output.side_effect = ValueError(
+            "NATIVE cannot apply the output schema"
+        )
+        request_id = uuid4()
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult), request_id)
+
+        chat_model.chat.assert_not_called()
+        ctx.report_execution_started.assert_not_called()
+        assert len(sent_events) == 1
+        assert sent_events[0].request_id == request_id
+        assert sent_events[0].is_failed
+        assert sent_events[0].error == (
+            "ValueError: NATIVE cannot apply the output schema"
+        )
+        assert sent_events[0].retry_count == 0
+        assert len(metric_group._sub_groups) == 0
+
+    @pytest.mark.parametrize(
+        "failure",
+        [InterruptedError("cancelled"), asyncio.CancelledError()],
+    )
+    def test_gate_cancellation_propagates(self, failure: BaseException) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, _, _ = _native_context(chat_model)
+        chat_model.will_apply_native_structured_output.side_effect = failure
+
+        with pytest.raises(type(failure)):
+            _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        assert not sent_events
+        chat_model.chat.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            RuntimeError("state failed"),
+            InterruptedError("cancelled"),
+            asyncio.CancelledError(),
+        ],
+    )
+    def test_finalization_durable_failure_propagates_without_response(
+        self, failure: BaseException
+    ) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, _, _ = _native_context(chat_model)
+        calls: list = []
+
+        def dispatch(
+            fn: Any, *args: Any, durable_id: str | None = None, **kwargs: Any
+        ) -> Any:
+            calls.append(fn)
+            if len(calls) == 2:
+                raise failure
+            return fn(*args, **kwargs)
+
+        ctx.durable_execute.side_effect = dispatch
+
+        with pytest.raises(type(failure)):
+            _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        # Persistence and recovery failures escape the retry budget and the
+        # request-failure path alike.
+        assert not sent_events
+        assert len(calls) == 2
+        chat_model.final_chat.assert_not_called()
+
+    def test_finalization_runs_on_the_async_durable_seam(self) -> None:
+        chat_model = _native_chat_model()
+        ctx, sent_events, _, _ = _native_context(chat_model, chat_async=True)
+
+        _run_chat(ctx, OutputSchema(output_schema=_StructuredResult))
+
+        assert ctx.durable_execute_async.call_count == 2
+        ctx.durable_execute.assert_not_called()
+        assert sent_events[0].structured_output.result == 42

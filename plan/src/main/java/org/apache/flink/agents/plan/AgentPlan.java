@@ -58,7 +58,7 @@ import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonDeserializer;
 import org.apache.flink.agents.plan.serializer.AgentPlanJsonSerializer;
 import org.apache.flink.agents.plan.subagent.InternalSubagentCompilationHelper;
-import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
+import org.apache.flink.agents.plan.subagent.InternalSubagentPlans;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.apache.flink.agents.plan.tools.bash.BashTool;
 import org.slf4j.Logger;
@@ -487,8 +487,9 @@ public class AgentPlan implements Serializable {
     private void extractResourceProvidersFromAgent(Agent agent) throws Exception {
         Class<?> agentClass = agent.getClass();
 
-        // Collect Skills declarations from both @Skills methods and Agent.addResource(SKILLS, ...)
-        Map<String, Skills> skillsObjects = new LinkedHashMap<>();
+        // Collect @Skills methods into a sorted staging map (getDeclaredMethods() order is
+        // non-deterministic across JDKs / class layouts).
+        Map<String, Skills> annotationSkills = new java.util.TreeMap<>();
 
         // Scan all fields in the agent class for @Tool and @ChatModel annotations
         for (Field field : agentClass.getDeclaredFields()) {
@@ -574,7 +575,7 @@ public class AgentPlan implements Serializable {
                                     + method.getName()
                                     + " must return org.apache.flink.agents.api.skills.Skills");
                 }
-                skillsObjects.put(method.getName(), (Skills) value);
+                annotationSkills.put(method.getName(), (Skills) value);
             } else if (method.isAnnotationPresent(MCPServer.class)) {
                 // Check the MCPServer annotation version to determine which version to use.
                 MCPServer MCPServerAnnotation = method.getAnnotation(MCPServer.class);
@@ -607,6 +608,12 @@ public class AgentPlan implements Serializable {
             }
         }
 
+        // Seed the merge with the sorted @Skills methods: the LinkedHashMap copy constructor
+        // inserts them in annotationSkills' (method-name) order. Environment and agent resources
+        // are appended afterwards, in that order; later sources win on duplicate skill names
+        // (see {@link #addSkills(Map)}).
+        Map<String, Skills> skillsObjects = new LinkedHashMap<>(annotationSkills);
+
         for (Map.Entry<ResourceType, Map<String, Object>> entry : agent.getResources().entrySet()) {
             ResourceType type = entry.getKey();
             if (type == PROMPT) {
@@ -638,6 +645,10 @@ public class AgentPlan implements Serializable {
             } else if (type == ResourceType.SKILLS) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     if (kv.getValue() instanceof Skills) {
+                        // Re-insert instead of overwriting in place: a name already seeded from a
+                        // @Skills method would otherwise keep its annotation-time slot, and the
+                        // flattened source order decides which declaration wins.
+                        skillsObjects.remove(kv.getKey());
                         skillsObjects.put(kv.getKey(), (Skills) kv.getValue());
                     }
                 }
@@ -652,41 +663,13 @@ public class AgentPlan implements Serializable {
             } else if (type == ResourceType.AGENT) {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
                     String name = kv.getKey();
-                    Object value = kv.getValue();
-                    if (value instanceof SubagentSetup) {
-                        // A live setup registered programmatically travels as its descriptor, so a
-                        // remote task rebuilds it through the (ResourceDescriptor, ResourceContext)
-                        // constructor.
-                        addResourceProvider(
-                                createDescriptorResourceProvider(
-                                        name,
-                                        ResourceType.AGENT,
-                                        ((SubagentSetup) value).getDescriptor()));
-                    } else if (value instanceof ResourceDescriptor) {
-                        // Declared via YAML: the descriptor names a SubagentSetup subclass that is
-                        // instantiated when the resource is first resolved.
-                        addResourceProvider(
-                                createDescriptorResourceProvider(
-                                        name, ResourceType.AGENT, (ResourceDescriptor) value));
-                    } else if (value instanceof Agent) {
-                        // Compile a directly-registered child Agent into an internal sub-agent.
-                        // The child's compiled plan is reused across names and cycles are
-                        // rejected by InternalSubagentCompilationHelper. The resource name
-                        // doubles as the sub-agent scope used for runtime resolution.
-                        Agent child = (Agent) value;
-                        AgentPlan childPlan =
-                                InternalSubagentCompilationHelper.getOrCompile(
-                                        child, name, a -> new AgentPlan(a, this.config));
-                        addResourceProvider(new InternalSubagentProvider(name, childPlan));
-                    } else {
-                        throw new IllegalArgumentException(
-                                "AGENT resource '"
-                                        + name
-                                        + "' must be a SubagentSetup, a ResourceDescriptor, or an"
-                                        + " Agent, but got "
-                                        + value.getClass().getName()
-                                        + ".");
-                    }
+                    ResourceDescriptor descriptor =
+                            requireResourceDescriptor(name, type, kv.getValue());
+                    descriptor =
+                            InternalSubagentPlans.compile(
+                                    name, descriptor, child -> new AgentPlan(child, this.config));
+                    addResourceProvider(
+                            createDescriptorResourceProvider(name, ResourceType.AGENT, descriptor));
                 }
             } else {
                 for (Map.Entry<String, Object> kv : entry.getValue().entrySet()) {
@@ -727,12 +710,11 @@ public class AgentPlan implements Serializable {
                         ResourceType.TOOL,
                         new ResourceDescriptor(BashTool.class.getName(), new HashMap<>())));
 
-        // Sort by key before merging: getDeclaredMethods() makes no order guarantee, so without
-        // this the winner on a duplicate skill name would vary across JDK / class layout.
-        List<String> orderedKeys = new ArrayList<>(skillsObjects.keySet());
-        Collections.sort(orderedKeys);
+        // Merge sources in insertion order: @Skills methods (sorted by name) →
+        // environment resources → agent resources. Later sources win on duplicate
+        // skill names, matching Python's level-aware precedence.
         LinkedHashSet<SkillSourceSpec> sources = new LinkedHashSet<>();
-        for (String key : orderedKeys) {
+        for (String key : skillsObjects.keySet()) {
             sources.addAll(skillsObjects.get(key).getSources());
         }
         Skills merged = new Skills(new ArrayList<>(sources));

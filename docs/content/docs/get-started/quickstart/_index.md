@@ -2,7 +2,7 @@
 title: Quickstart
 bold: true
 bookCollapseSection: true
-weight: 2
+weight: 3
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -22,3 +22,7 @@ KIND, either express or implied.  See the License for the
 specific language governing permissions and limitations
 under the License.
 -->
+
+- [Build an Agent]({{< ref "docs/get-started/quickstart/create-agent" >}})
+- [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
+- [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})

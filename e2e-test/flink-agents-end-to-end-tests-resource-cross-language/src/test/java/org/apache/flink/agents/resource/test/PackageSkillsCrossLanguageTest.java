@@ -60,8 +60,7 @@ public class PackageSkillsCrossLanguageTest {
         if (!body.isSuccess() || !attachment.isSuccess()) {
             throw new IllegalStateException(body.getError() + ":" + attachment.getError());
         }
-        ctx.sendEvent(
-                new OutputEvent(body.getResult() + "\nAttachment: " + attachment.getResult()));
+        ctx.sendEvent(new OutputEvent(body.getText() + "\nAttachment: " + attachment.getText()));
     }
 
     @ParameterizedTest

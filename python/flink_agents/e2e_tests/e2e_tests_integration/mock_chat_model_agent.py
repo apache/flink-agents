@@ -30,11 +30,17 @@ from pyflink.datastream import KeySelector
 
 from flink_agents.api.agents.agent import Agent
 from flink_agents.api.agents.types import OutputSchema
-from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_message import (
+    ChatMessage,
+    MessageRole,
+    TextBlock,
+    ToolCallBlock,
+)
 from flink_agents.api.chat_models.chat_model import (
     BaseChatModelConnection,
     BaseChatModelSetup,
 )
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.decorators import (
     action,
     chat_model_connection,
@@ -48,7 +54,6 @@ from flink_agents.api.events.event_type import EventType
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceType
 from flink_agents.api.runner_context import RunnerContext
-from flink_agents.api.tools.tool import ToolType
 
 
 class MockChatModelInput(BaseModel):
@@ -98,7 +103,7 @@ class MockChatModelConnection(BaseChatModelConnection):
         tools: List | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Generate a tool call or a response according to input.
 
         A non-``None`` ``output_schema`` is rejected: this connection has no native
@@ -110,16 +115,33 @@ class MockChatModelConnection(BaseChatModelConnection):
             input = messages[-1].text
             # Validate the tool was bound before the model was invoked.
             assert tools[0].name == "add"
-            function = {"name": "add", "arguments": {"a": 1, "b": 2}}
-            tool_call = {
-                "id": uuid.uuid4(),
-                "type": ToolType.FUNCTION,
-                "function": function,
-            }
-            return ChatMessage.of(MessageRole.ASSISTANT, input, tool_calls=[tool_call]
+
+            tool_call = ToolCallBlock(
+                call_id=str(uuid.uuid4()), name="add", input={"a": 1, "b": 2}
             )
-        content = "\n".join([message.text for message in messages])
-        return ChatMessage.of(MessageRole.ASSISTANT, content)
+            return ChatResult(
+                message=ChatMessage.assistant(
+                    [
+                        TextBlock(text=input),
+                        tool_call,
+                    ]
+                )
+            )
+        content = "\n".join(
+            [
+                (
+                    "".join(
+                        b.text
+                        for b in message.blocks[0].blocks
+                        if isinstance(b, TextBlock)
+                    )
+                    if message.role == MessageRole.TOOL
+                    else message.text
+                )
+                for message in messages
+            ]
+        )
+        return ChatResult(message=ChatMessage.assistant(content))
 
 
 class MockChatModel(BaseChatModelSetup):
@@ -138,7 +160,7 @@ class MockChatModel(BaseChatModelSetup):
         messages: Sequence[ChatMessage],
         prompt_args: Dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Execute chat conversation."""
         server = self.resource_context.get_resource(
             self.connection, ResourceType.CHAT_MODEL_CONNECTION
@@ -232,9 +254,7 @@ class BuiltInActionAgent(Agent):
         ctx.send_event(
             ChatRequestEvent(
                 model="mock_chat_model",
-                messages=[
-                    ChatMessage.of(MessageRole.USER, input_data.content)
-                ],
+                messages=[ChatMessage.of(MessageRole.USER, input_data.content)],
                 prompt_args={"task": input_data.content},
             )
         )
@@ -246,9 +266,7 @@ class BuiltInActionAgent(Agent):
         response = ChatResponseEvent.from_event(event).response
         input_id = ctx.short_term_memory.get("input_id")
         ctx.send_event(
-            OutputEvent(
-                output=MockChatModelOutput(id=input_id, result=response.text)
-            )
+            OutputEvent(output=MockChatModelOutput(id=input_id, result=response.text))
         )
 
 
@@ -266,9 +284,10 @@ class GetResourceChatModel(BaseChatModelSetup):
         """Return model kwargs."""
         return {}
 
-    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatResult:
         """Echo the input alongside the custom descriptor fields."""
-        return ChatMessage.of(MessageRole.ASSISTANT, f"{messages[0].text} {self.host} {self.desc}",
+        return ChatResult(
+            message=ChatMessage.assistant(f"{messages[0].text} {self.host} {self.desc}")
         )
 
 
@@ -280,8 +299,7 @@ class GetResourceAgent(Agent):
     def mock_chat_model() -> ResourceDescriptor:
         """Chat model carrying custom descriptor fields."""
         return ResourceDescriptor(
-            clazz=f"{GetResourceChatModel.__module__}."
-            f"{GetResourceChatModel.__name__}",
+            clazz=f"{GetResourceChatModel.__module__}.{GetResourceChatModel.__name__}",
             host="8.8.8.8",
             desc="mock chat model just for testing.",
             connection="mock",
@@ -302,7 +320,5 @@ class GetResourceAgent(Agent):
             messages=[ChatMessage.of(MessageRole.USER, input_data.content)]
         ).text
         ctx.send_event(
-            OutputEvent(
-                output=MockChatModelOutput(id=input_data.id, result=content)
-            )
+            OutputEvent(output=MockChatModelOutput(id=input_data.id, result=content))
         )

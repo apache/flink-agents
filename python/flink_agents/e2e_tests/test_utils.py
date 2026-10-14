@@ -72,14 +72,13 @@ def collect_tool_invocations(log_dir: str | Path) -> list[dict]:
                     continue
                 attributes = record["attributes"]
                 tool_calls = attributes.get("tool_calls", [])
-                for tool_call in tool_calls:
-                    function = tool_call["function"]
-                    invocations.append(
-                        {
-                            "name": function["name"],
-                            "arguments": function["arguments"],
-                        }
-                    )
+                invocations.extend(
+                    {
+                        "name": tool_call["name"],
+                        "arguments": tool_call["input"],
+                    }
+                    for tool_call in tool_calls
+                )
     return invocations
 
 

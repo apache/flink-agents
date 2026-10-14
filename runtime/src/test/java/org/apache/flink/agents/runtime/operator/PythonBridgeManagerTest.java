@@ -25,9 +25,9 @@ import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.PythonFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
-import org.apache.flink.agents.plan.subagent.InternalSubagentProvider;
 import org.apache.flink.agents.runtime.env.PythonEnvironmentManager;
 import org.apache.flink.agents.runtime.memory.Mem0LongTermMemory;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
@@ -150,9 +150,10 @@ class PythonBridgeManagerTest {
      * {@code open()} decides whether to start the shared Python runtime by inspecting plans, and it
      * runs before sub-agent setups exist, so the inspection must walk the whole plan tree. An
      * internal sub-agent's child plan is reachable only through {@link
-     * InternalSubagentProvider#getChildPlan()}; a Java root with a Python-bearing descendant still
-     * has to initialize Python, or the descendant's eager materialization fails its "no Python
-     * runtime" guard. Pins the recursion through two nested layers and both detection paths.
+     * org.apache.flink.agents.plan.subagent.InternalSubagentPlans#plan}; a Java root with a
+     * Python-bearing descendant still has to initialize Python, or the descendant's eager
+     * materialization fails its "no Python runtime" guard. Pins the recursion through two nested
+     * layers and both detection paths.
      */
     @Test
     void planTreeRecursesThroughNestedInternalSubagentChildPlans() throws Exception {
@@ -175,8 +176,7 @@ class PythonBridgeManagerTest {
                 new AgentPlan(Map.of(pythonAction.getName(), pythonAction), grandchildProviders);
 
         // Middle layer: Java-only, wraps the grandchild as an internal sub-agent.
-        InternalSubagentProvider grandchildProvider =
-                new InternalSubagentProvider("grandchild", grandchild);
+        JavaResourceProvider grandchildProvider = childProvider("grandchild", grandchild);
         Map<ResourceType, Map<String, ResourceProvider>> childProviders = new HashMap<>();
         childProviders.put(
                 ResourceType.AGENT, new HashMap<>(Map.of("grandchild", grandchildProvider)));
@@ -184,13 +184,14 @@ class PythonBridgeManagerTest {
 
         // Root: one Java action, wraps the child as an internal sub-agent.
         Action javaAction = TestActions.noopAction();
-        InternalSubagentProvider childProvider = new InternalSubagentProvider("child", child);
+        JavaResourceProvider childProvider = childProvider("child", child);
         Map<ResourceType, Map<String, ResourceProvider>> rootProviders = new HashMap<>();
         rootProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("child", childProvider)));
         AgentPlan root = new AgentPlan(Map.of(javaAction.getName(), javaAction), rootProviders);
 
         // Depth-first pre-order: the root, then each descendant through its sub-agent provider.
-        assertThat(PythonBridgeManager.planTree(root)).containsExactly(root, child, grandchild);
+        assertThat(PythonBridgeManager.planTree(root)).hasSize(3);
+        assertThat(PythonBridgeManager.planTree(root).get(2).getActions()).containsKey("pyAction");
         // The root alone is Java-only; both Python signals live two layers down and must surface.
         assertThat(PythonBridgeManager.treeContainsPythonResource(root)).isTrue();
         assertThat(PythonBridgeManager.treeContainsPythonAction(root)).isTrue();
@@ -220,7 +221,7 @@ class PythonBridgeManagerTest {
 
         // Root is Java-only and reaches that child solely through an internal sub-agent provider.
         Action javaAction = TestActions.noopAction();
-        InternalSubagentProvider childProvider = new InternalSubagentProvider("child", child);
+        JavaResourceProvider childProvider = childProvider("child", child);
         Map<ResourceType, Map<String, ResourceProvider>> rootProviders = new HashMap<>();
         rootProviders.put(ResourceType.AGENT, new HashMap<>(Map.of("child", childProvider)));
         AgentPlan root = new AgentPlan(Map.of(javaAction.getName(), javaAction), rootProviders);
@@ -354,5 +355,20 @@ class PythonBridgeManagerTest {
         Field field = PythonBridgeManager.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(bridge, value);
+    }
+
+    private static JavaResourceProvider childProvider(String name, AgentPlan plan) {
+        return new JavaResourceProvider(
+                name,
+                ResourceType.AGENT,
+                org.apache.flink.agents.api.resource.ResourceDescriptor.Builder.newBuilder(
+                                org.apache.flink.agents.api.subagent
+                                        .InternalSubagentResourceDescriptorBuilder.SETUP_CLASS)
+                        .addInitialArgument("scope", name)
+                        .addInitialArgument(
+                                "plan",
+                                new com.fasterxml.jackson.databind.ObjectMapper()
+                                        .convertValue(plan, Map.class))
+                        .build());
     }
 }

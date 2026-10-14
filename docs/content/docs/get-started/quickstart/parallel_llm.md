@@ -2,6 +2,7 @@
 title: 'Parallel LLM Calls'
 weight: 4
 type: docs
+bookHidden: true
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one
@@ -388,7 +389,7 @@ agentsEnv.execute();
 
 #### Prepare Flink and Flink Agents
 
-Follow the [installation]({{< ref "docs/get-started/installation" >}}) instructions to setup Flink and the Flink Agents.
+Follow the [Setup]({{< ref "docs/get-started/setup" >}}) instructions to setup Flink and the Flink Agents.
 
 #### Clone the Flink Agents Repository (if not done already)
 
@@ -414,7 +415,7 @@ $FLINK_HOME/bin/start-cluster.sh
 {{< /tab >}}
 
 {{< tab "Java" >}}
-1. Build Flink Agents from source to generate example jar. See [installation]({{< ref "docs/get-started/installation" >}}) for more details.
+1. Build Flink Agents from source to generate example jar. See [Setup]({{< ref "docs/get-started/setup" >}}) for more details.
 2. Start the Flink cluster
     ```bash
     $FLINK_HOME/bin/start-cluster.sh

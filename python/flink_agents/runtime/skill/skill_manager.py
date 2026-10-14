@@ -15,12 +15,12 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import contextlib
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Mapping
 
 from flink_agents.api.skills import Skills, SkillSourceSpec, redact_skill_url
+from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.skill.agent_skill import AgentSkill, SkillOrigin
 from flink_agents.runtime.skill.repository.classpath_repository import (
     ClasspathSkillRepository,
@@ -57,6 +57,11 @@ class SkillManager:
         """Initialize the SkillManager from a Skills configuration."""
         self._skills: Dict[str, AgentSkill] = {}
         self._repos: Dict[str, SkillRepository] = {}
+        # Reverse index: for every SkillSourceSpec that was loaded, the skill names
+        # that came from it. When two sources define the same skill name the later
+        # registration wins in _skills, but both sources retain their own entries
+        # here — callers can ask "what names did this source contribute?"
+        self._source_to_skills: Dict[SkillSourceSpec, List[str]] = {}
         # Every opened repo in load order, kept separately from `_repos` because that
         # map is keyed by skill name — duplicate names overwrite the earlier repo's
         # reference, so close() iterates this list (id-deduped) instead.
@@ -83,7 +88,8 @@ class SkillManager:
             ),
             "package": SkillSourceHandler(
                 lambda p: PackageSkillRepository(
-                    _require(p, "package", "package"), _require(p, "package", "resource")
+                    _require(p, "package", "package"),
+                    _require(p, "package", "resource"),
                 ),
                 lambda p: f"{p.get('package', '')}/{p.get('resource', '')}",
             ),
@@ -181,6 +187,21 @@ class SkillManager:
         repo = self._repos.get(skill_name)
         return None if repo is None else repo.get_skill_dir(skill_name)
 
+    def get_skill_names_for_sources(
+        self, specs: list[SkillSourceSpec]
+    ) -> list[str]:
+        """Return the skill names that were loaded from the given sources.
+
+        Sources that were not loaded contribute an empty list. The order follows the
+        iteration order of *specs*; within each source, names follow load order.
+        """
+        result: list[str] = []
+        for spec in specs:
+            names = self._source_to_skills.get(spec)
+            if names:
+                result.extend(names)
+        return result
+
     def _load_skills(self) -> None:
         try:
             for spec in self._config.sources:
@@ -197,16 +218,29 @@ class SkillManager:
                     msg = f"Failed to load skills from {source_identity}"
                     raise RuntimeError(msg) from e
                 assert origin is not None
-                self._register_repo(repo, origin)
+                self._register_repo(repo, spec, origin)
         except BaseException:
             # Release every repo opened so far — the caller never receives a
             # SkillManager reference to clean them up via close() itself, so
             # without this their temp dirs / atexit handlers leak until
             # interpreter exit.
-            self.close()
+            try:
+                self.close()
+            except Exception as close_failure:
+                # close() surfaces repository failures now, so it can raise here
+                # and would otherwise replace the load failure this cleanup is
+                # running for. Java attaches it with addSuppressed; ExceptionGroup
+                # needs Python 3.11 and this package supports 3.10, so log it.
+                logger.warning(
+                    "Suppressed failure closing skill repositories after a failed load.",
+                    exc_info=close_failure,
+                )
             raise
 
-    def _register_repo(self, repo: "SkillRepository", origin: SkillOrigin) -> None:
+    def _register_repo(
+        self, repo: "SkillRepository", spec: SkillSourceSpec, origin: SkillOrigin
+    ) -> None:
+        names: list[str] = []
         for skill in repo.get_skills():
             skill.set_resource_loader(
                 lambda name=skill.name, r=repo: r.get_resources(name)
@@ -222,23 +256,43 @@ class SkillManager:
                 )
             self._skills[skill.name] = skill
             self._repos[skill.name] = repo
+            names.append(skill.name)
+        self._source_to_skills[spec] = names
 
     def close(self) -> None:
         """Close every opened :class:`SkillRepository`, releasing any temp directory
-        materialized for URL / classpath-zip / package sources. Idempotent.
+        materialized for URL / classpath-zip / package sources.
 
         Iterates ``_opened_repos`` rather than ``_repos.values()``: duplicate skill
         names overwrite the earlier repo's reference in ``_repos``, but the displaced
         repo is still owned and must be closed. Dedup by identity in case the same
         repo contributes multiple skills.
+
+        Mirrors the Java ``SkillManager.closeRepos()`` contract from #987 and the
+        Python ``ResourceCache.close()``: every repository is attempted even when an
+        earlier one fails, and the first failure is re-raised after the loop, so a
+        real shutdown bug (locked file, permission denied, disk full) reaches the
+        caller instead of being swallowed. Later failures are logged rather than
+        attached, because ``ExceptionGroup`` needs Python 3.11 and this package
+        supports 3.10.
+
+        Idempotent to the extent repository ``close()`` implementations are: one
+        that fails does so again on a second call, exactly as in Java.
+
+        Only ``Exception`` is caught, matching ``ResourceCache.close()``: cleanup
+        must not swallow ``KeyboardInterrupt`` or ``SystemExit``.
         """
         seen: set[int] = set()
+        first_failure: Exception | None = None
         for repo in self._opened_repos:
             if id(repo) in seen:
                 continue
             seen.add(id(repo))
-            with contextlib.suppress(Exception):
-                repo.close()
+            first_failure = first_or_logged(
+                failure_of(repo.close), first_failure, "skill repository"
+            )
+        if first_failure is not None:
+            raise first_failure
 
     def __enter__(self) -> "SkillManager":
         return self

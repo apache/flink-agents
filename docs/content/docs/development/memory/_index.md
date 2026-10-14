@@ -1,8 +1,8 @@
 ---
-title: Memory
+title: "Memory"
 bold: true
 bookCollapseSection: true
-weight: 9
+weight: 3
 ---
 <!--
 Licensed to the Apache Software Foundation (ASF) under one

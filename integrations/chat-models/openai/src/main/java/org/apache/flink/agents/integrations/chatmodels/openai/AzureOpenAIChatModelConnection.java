@@ -25,17 +25,17 @@ import com.openai.azure.AzureUrlPathMode;
 import com.openai.azure.credential.AzureApiKeyCredential;
 import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
-import com.openai.core.JsonSchemaLocalValidation;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
 import com.openai.models.FunctionDefinition;
 import com.openai.models.FunctionParameters;
-import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletion;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import com.openai.models.chat.completions.ChatCompletionFunctionTool;
 import com.openai.models.chat.completions.ChatCompletionTool;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
 import org.apache.flink.agents.api.resource.ResourceContext;
@@ -115,8 +115,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
     // as separate properties, so a name carries no version to discriminate on. The documented list
     // includes gpt-4o only at versions 2024-08-06 and 2024-11-20 while version 2024-05-13 is
     // unsupported, so a bare "gpt-4o" is ambiguous and is deliberately absent from the set below.
-    // An unrecognized name reports not-capable and degrades to the prompt fallback rather than
-    // failing at the provider.
+    // An unrecognized name reports not-capable, which the structured-output query reports as
+    // FEASIBLE rather than NATIVE_RECOMMENDED.
     private static final Set<String> NATIVE_STRUCTURED_OUTPUT_MODELS =
             Set.of(
                     "gpt-5.1",
@@ -221,8 +221,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      *
      * <p>{@code effectiveModel} is the model backing an Azure deployment, not the deployment name.
      * See the allowlist above for the source of truth and for why the match is exact. An
-     * unrecognized model reports {@code false} so it degrades to the prompt-engineering fallback
-     * rather than failing at the provider.
+     * unrecognized model reports {@code false}. The answer shapes only the structured-output query;
+     * the request carries a schema it is handed whatever this reports.
      *
      * <p>Reads no instance state, so capability stays answerable independently of how the
      * connection was configured.
@@ -240,8 +240,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      * <p>The {@code model} parameter carries the deployment name the request is issued against.
      * That name is chosen by the user, and although it commonly echoes the model behind it, nothing
      * keeps the two in step once the deployment is repointed, so it is never the answer here.
-     * Leaving the backing model unset keeps even a capable deployment on the prompt-engineering
-     * fallback rather than classifying a deployment name on its spelling.
+     * Leaving the backing model unset reports even a capable deployment {@code FEASIBLE} rather
+     * than classifying a deployment name on its spelling.
      */
     private String effectiveModelFor(Map<String, Object> modelParams) {
         return modelParams == null ? null : (String) modelParams.get("model_of_azure_deployment");
@@ -311,29 +311,23 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
     /**
      * Returns the model response. When the provider reports a finish reason it is carried verbatim
-     * in {@code extraArgs} under {@code finish_reason}, including values outside the documented
-     * set, and the entry is absent when the provider reports none.
+     * in {@link ChatResult#getFinishReason()}, including values outside the documented set, and the
+     * entry is absent when the provider reports none.
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
         return doChat(messages, tools, modelParams, null);
     }
 
     /**
      * Translates {@code outputSchema} into Azure's native strict {@code response_format}
-     * json_schema when it is a POJO {@link Class}, the model backing the deployment is one Azure
-     * documents json_schema strict support for, and the configured api-version reaches {@code
-     * 2024-08-01-preview}. Any other combination leaves the request unconstrained so that the
-     * prompt-engineering fallback still governs the response, rather than failing at the provider.
+     * json_schema when it is a POJO {@link Class} and the configured api-version reaches {@code
+     * 2024-08-01-preview}, whatever model backs the deployment. Any other combination leaves the
+     * request unconstrained.
      *
-     * <p>Capability is keyed on the {@code model_of_azure_deployment} model parameter rather than
-     * on the deployment the request targets, because a deployment name is chosen by the user and
-     * carries no model information. Leaving that parameter unset therefore keeps even a capable
-     * deployment on the fallback.
-     *
-     * <p>When the provider reports a finish reason it is carried verbatim in {@code extraArgs}
-     * under {@code finish_reason}, including values outside the documented set, and the entry is
+     * <p>When the provider reports a finish reason it is carried verbatim in {@link
+     * ChatResult#getFinishReason()}, including values outside the documented set, and the entry is
      * absent when the provider reports none.
      *
      * @throws IllegalArgumentException if the schema is applied natively while {@code
@@ -341,7 +335,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
      *     compete on the same request
      */
     @Override
-    public ChatMessage chat(
+    public ChatResult chat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -349,7 +343,7 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         return doChat(messages, tools, modelParams, outputSchema);
     }
 
-    private ChatMessage doChat(
+    private ChatResult doChat(
             List<ChatMessage> messages,
             List<Tool> tools,
             Map<String, Object> modelParams,
@@ -361,12 +355,12 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
 
     // Package-private so response handling can be asserted against a constructed completion without
     // issuing a live API call through the final OpenAI client.
-    ChatMessage toResponse(ChatCompletion completion, Map<String, Object> modelParams) {
+    ChatResult toResponse(ChatCompletion completion, Map<String, Object> modelParams) {
         // Read from the caller's map rather than the copy buildRequest consumed, and read without
         // consuming: a caller may reuse the same map across calls. The map is assembled fresh for
         // each call and no one retains it, so reading it once the response has arrived yields the
         // same value as reading it before the request was issued. Token metrics report the model
-        // backing the deployment, which buildRequest only uses to decide capability.
+        // backing the deployment.
         String modelOfAzureDeployment =
                 modelParams != null ? (String) modelParams.get("model_of_azure_deployment") : null;
 
@@ -374,23 +368,19 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         ChatMessage response =
                 OpenAIChatCompletionsUtils.convertFromOpenAIMessage(choice.message());
 
-        // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException when the member is
-        // absent or null, so the value is read through the raw field.
-        choice._finishReason()
-                .asKnown()
-                .ifPresent(
-                        reason -> response.getExtraArgs().put("finish_reason", reason.asString()));
-
-        if (modelOfAzureDeployment != null
-                && !modelOfAzureDeployment.isBlank()
-                && completion.usage().isPresent()) {
-            response.getExtraArgs().put("model_name", modelOfAzureDeployment);
-            response.getExtraArgs().put("promptTokens", completion.usage().get().promptTokens());
-            response.getExtraArgs()
-                    .put("completionTokens", completion.usage().get().completionTokens());
-        }
-
-        return response;
+        return new ChatResult(
+                response,
+                modelOfAzureDeployment,
+                completion.id(),
+                completion
+                        .usage()
+                        .map(
+                                usage ->
+                                        new TokenUsage(
+                                                usage.promptTokens(), usage.completionTokens()))
+                        .orElse(null),
+                choice._finishReason().asKnown().map(reason -> reason.asString()).orElse(null),
+                null);
     }
 
     // Package-private so the request body (including the native response_format) can be asserted
@@ -407,7 +397,8 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         if (azureDeployment == null || azureDeployment.isBlank()) {
             throw new IllegalArgumentException("model is required for Azure OpenAI API calls");
         }
-        String modelOfAzureDeployment = (String) mutableArgs.remove("model_of_azure_deployment");
+        // Read by the structured-output query and the token metrics, never sent to the provider.
+        mutableArgs.remove("model_of_azure_deployment");
 
         ChatCompletionCreateParams.Builder builder =
                 ChatCompletionCreateParams.builder()
@@ -418,19 +409,16 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
             builder.tools(convertTools(tools));
         }
 
-        // Capability belongs to the model backing the deployment, so it is the input to the check;
-        // the deployment name is chosen by the user and carries none. Native structured output
-        // applies only for a POJO Class schema — a RowTypeInfo (wrapped in OutputSchema) keeps the
-        // prompt-engineering fallback, as do an incapable model and an api-version below the floor.
+        // Native structured output applies only for a POJO Class schema on an api-version at or
+        // above the floor; a RowTypeInfo (wrapped in OutputSchema) carries no response_format.
         //
-        // The feasibility check (schema form and api-version floor) and the capability check are
-        // shared with the structured-output query rather than restated, so the query answers what
-        // this branch acts on. Both read the parameters as they arrived.
+        // The feasibility check is shared with the structured-output query rather than restated,
+        // so the branch applies whenever the query answers other than INFEASIBLE. Model capability
+        // is not asked: a caller that hands this connection a schema has already chosen to send it.
         String nativeSchemaName = null;
-        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)
-                && modelSupportsNativeStructuredOutput(modelOfAzureDeployment)) {
+        if (canApplyNativeStructuredOutput(outputSchema, tools, rawModelParams)) {
             Class<?> schemaClass = (Class<?>) outputSchema;
-            builder.responseFormat(toNativeResponseFormat(schemaClass));
+            builder.responseFormat(OpenAIChatCompletionsUtils.toNativeResponseFormat(schemaClass));
             nativeSchemaName = schemaClass.getSimpleName();
         }
 
@@ -479,26 +467,6 @@ public class AzureOpenAIChatModelConnection extends BaseChatModelConnection {
         }
 
         return builder.build();
-    }
-
-    // Derives the strict json_schema response format from a POJO class via the SDK's typed
-    // structured-output builder. The Kotlin-facade StructuredOutputsKt.responseFormatFromClass is
-    // not callable from Java, so the response format is extracted through the typed builder, which
-    // generates the same strict draft-2020-12 schema, and then reattached to the standard builder.
-    private static <T> ResponseFormatJsonSchema toNativeResponseFormat(Class<T> schemaClass) {
-        return ChatCompletionCreateParams.builder()
-                .model(ChatModel.of(""))
-                .addUserMessage("")
-                .responseFormat(schemaClass, JsonSchemaLocalValidation.NO)
-                .build()
-                .rawParams()
-                .responseFormat()
-                .orElseThrow(
-                        () ->
-                                new IllegalStateException(
-                                        "OpenAI SDK did not produce a response_format for schema "
-                                                + schemaClass.getName()))
-                .asJsonSchema();
     }
 
     @Override

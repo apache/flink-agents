@@ -46,6 +46,7 @@ from flink_agents.api.runner_context import (
     RunnerContext,
 )
 from flink_agents.api.trace import ExecutionReporter
+from flink_agents.runtime.close_utils import failure_of, first_or_logged
 from flink_agents.runtime.durable_exception import (
     deserialize_durable_exception,
     durable_exception_message,
@@ -66,11 +67,7 @@ from flink_agents.runtime.memory.internal_base_long_term_memory import (
 from flink_agents.runtime.memory.mem0.mem0_long_term_memory import (
     Mem0LongTermMemory,
 )
-from flink_agents.runtime.resource_cache import (
-    ResourceCache,
-    _failure_of,
-    _first_or_logged,
-)
+from flink_agents.runtime.resource_cache import ResourceCache
 from flink_agents.runtime.task_lifecycle_listener import TaskLifecycleListener
 
 logger = logging.getLogger(__name__)
@@ -389,10 +386,10 @@ class _BatchAsyncExecutionResult:
                 execution_indexes.append(index)
                 suppliers.append(future._callable)
 
-        parallelism = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_PARALLELISM)
-        timeout_ms = self._ctx.config.get(
-            AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS
+        parallelism = self._ctx.config.get(
+            AgentExecutionOptions.ASYNC_BATCH_PARALLELISM
         )
+        timeout_ms = self._ctx.config.get(AgentExecutionOptions.ASYNC_BATCH_TIMEOUT_MS)
         deadline = time.monotonic() + timeout_ms / 1000 if timeout_ms > 0 else None
         batch_futures: list[Any | None] = [None] * len(suppliers)
         started: list[bool] = [False] * len(suppliers)
@@ -410,11 +407,38 @@ class _BatchAsyncExecutionResult:
             executed = _collect_sliding_window_outcomes_on_timeout(
                 batch_futures, exception
             )
+        # An ordinary interruption must not be cached as a business failure either.
+        # Durable children before it in input order are still finalized, as in a
+        # durable-only batch, so recovery does not run a call whose outcome is known.
+        interrupted = next(
+            (
+                position
+                for position, (index, outcome) in enumerate(
+                    zip(execution_indexes, executed, strict=True)
+                )
+                if isinstance(self._futures[index], _SingleAsyncFuture)
+                and is_java_interruption(outcome.error)
+            ),
+            None,
+        )
+        if interrupted is not None:
+            if plan is not None:
+                prefix = [
+                    position
+                    for position in durable_execution_indexes
+                    if position < interrupted
+                ]
+                # The call index stays at the batch base, so re-awaiting rereads
+                # the saved prefix.
+                self._ctx._finalize_batch_execution(
+                    durable_calls,
+                    plan,
+                    [started[position] for position in prefix],
+                    [executed[position] for position in prefix],
+                    advance_call_index=False,
+                )
+            raise executed[interrupted].error
         for index, outcome in zip(execution_indexes, executed, strict=True):
-            if isinstance(self._futures[index], _SingleAsyncFuture) and is_java_interruption(
-                outcome.error
-            ):
-                raise outcome.error
             outcomes[index] = outcome
         if plan is not None:
             durable_outcomes = self._ctx._finalize_batch_execution(
@@ -551,9 +575,7 @@ def _execute_sliding_window_batch(
 
     while completed < batch_size:
         if deadline is not None and time.monotonic() >= deadline:
-            timeout_message = (
-                f"Async batch execution timed out after {timeout_ms} ms"
-            )
+            timeout_message = f"Async batch execution timed out after {timeout_ms} ms"
             raise _BatchTimeoutError(timeout_message)
 
         while next_to_submit < batch_size and in_flight() < parallelism_limit:
@@ -728,6 +750,20 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             self.__scoped_resource_caches[plan_json] = entry
         return entry
 
+    def __active_plan(self) -> Any:
+        """The plan in effect: the child plan's while inside a sub-agent call, else
+        the root plan's.
+
+        Mirrors the Java context's ``currentPlan()``: action-config lookups must
+        resolve against the plan whose action is executing, so a child agent's
+        action reads its own config instead of failing on the root plan, which
+        does not carry that action.
+        """
+        plan_json = self._j_runner_context.getActiveScopePlanJson()
+        if plan_json is None:
+            return self.__agent_plan
+        return self.__scoped_plan_and_cache(plan_json)[0]
+
     def __observe_subagent_setup(self, resource: Any) -> None:
         """Wire a lazily materialized sub-agent handle into the task lifecycle.
 
@@ -863,14 +899,14 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     @override
     def action_config(self) -> Dict[str, Any]:
         """Get config of the action."""
-        return self.__agent_plan.get_action_config(
+        return self.__active_plan().get_action_config(
             self._j_runner_context.getActionName()
         )
 
     @override
     def get_action_config_value(self, key: str) -> Any:
         """Get config of the action."""
-        return self.__agent_plan.get_action_config_value(
+        return self.__active_plan().get_action_config_value(
             action_name=self._j_runner_context.getActionName(), key=key
         )
 
@@ -1405,9 +1441,7 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
     def _durable_identity(self, call: _DurableCall) -> str:
         return durable_identity_for_call(call.func, call.args, call.kwargs)
 
-    def _call_matches(
-        self, current: _PersistedCallResult, call: _DurableCall
-    ) -> bool:
+    def _call_matches(self, current: _PersistedCallResult, call: _DurableCall) -> bool:
         function_id = self._durable_identity(call)
         return current.function_id == function_id
 
@@ -1427,7 +1461,9 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         kwargs = call.kwargs or {}
         return partial(call.func, *call.args, **kwargs)
 
-    def _prepare_batch_execution(self, calls: list[_DurableCall]) -> _BatchExecutionPlan:
+    def _prepare_batch_execution(
+        self, calls: list[_DurableCall]
+    ) -> _BatchExecutionPlan:
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes: list[Outcome | None] = []
         suppliers: list[tuple[int, Callable[[], Any]]] = []
@@ -1492,11 +1528,15 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         plan: _BatchExecutionPlan,
         started: list[bool],
         executed: list[Outcome],
+        *,
+        advance_call_index: bool = True,
     ) -> list[Outcome]:
+        # ``executed`` may be a prefix of ``plan.suppliers`` when an ordinary
+        # child in the same batch was interrupted.
         base = self._j_runner_context.getCurrentCallIndex()
         outcomes = list(plan.outcomes)
         for i, ((call_index, _), outcome) in enumerate(
-            zip(plan.suppliers, executed, strict=True)
+            zip(plan.suppliers[: len(executed)], executed, strict=True)
         ):
             call = calls[call_index]
             function_id = self._durable_identity(call)
@@ -1522,7 +1562,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
             except Exception as e:
                 outcome = Outcome.failure(e)
             outcomes[call_index] = outcome
-        self._j_runner_context.advanceCallIndexBy(len(calls))
+        if advance_call_index:
+            self._j_runner_context.advanceCallIndexBy(len(calls))
         return outcomes
 
     @override
@@ -1717,12 +1758,12 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         ltm = self.__ltm
         self.__ltm = None
 
-        first_failure = _failure_of(ltm.close) if ltm is not None else None
+        first_failure = failure_of(ltm.close) if ltm is not None else None
 
         resource_cache = self.__resource_cache
         self.__resource_cache = None
-        first_failure = _first_or_logged(
-            _failure_of(resource_cache.close) if resource_cache is not None else None,
+        first_failure = first_or_logged(
+            failure_of(resource_cache.close) if resource_cache is not None else None,
             first_failure,
             "runner context resource cache",
         )
@@ -1734,8 +1775,8 @@ class FlinkRunnerContext(RunnerContext, ExecutionReporter):
         scoped_caches = self.__scoped_resource_caches
         self.__scoped_resource_caches = {}
         for scoped in scoped_caches.values():
-            first_failure = _first_or_logged(
-                _failure_of(scoped[1].close),
+            first_failure = first_or_logged(
+                failure_of(scoped[1].close),
                 first_failure,
                 "sub-agent scope resource cache",
             )

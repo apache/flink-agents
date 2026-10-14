@@ -25,6 +25,7 @@ import javax.annotation.Nullable;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 /**
@@ -134,6 +135,16 @@ public class ContinuationActionExecutor {
             parallelExecutionLock.acquireByWorker(context.getRecordIndex(), context.getTaskIndex());
             contextRestorer.restore(context.getKey(), context.getActionTask());
         }
+    }
+
+    /**
+     * Awaits a {@link CompletableFuture} by blocking the calling thread. On JDK 21+ the
+     * multi-release variant yields the continuation instead, avoiding async-pool exhaustion (issue
+     * #1213).
+     */
+    public <T> T awaitFuture(ContinuationContext context, CompletableFuture<T> future)
+            throws Exception {
+        return future.get();
     }
 
     /** Stops async work without waiting for worker exit cleanup. */

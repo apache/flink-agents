@@ -408,9 +408,10 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
         }
     }
 
-    void snapshotRecoveryMarker() throws Exception {
+    void snapshotRecoveryMarker(Map<Object, Long> lastCompletedSequenceNumbers) throws Exception {
         if (actionStateStore != null) {
-            Object recoveryMarker = actionStateStore.getRecoveryMarker();
+            Object recoveryMarker =
+                    actionStateStore.getRecoveryMarker(lastCompletedSequenceNumbers);
             if (recoveryMarker != null) {
                 recoveryMarkerOpState.update(List.of(recoveryMarker));
             }
@@ -437,12 +438,13 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
      *
      * @param keyedStateBackend the keyed state backend to scan.
      * @param checkpointId the id of the checkpoint being snapshotted.
+     * @return the completed sequence numbers captured for the checkpoint.
      */
     @SuppressWarnings("unchecked")
-    void snapshotLastCompletedSequenceNumbers(
+    Map<Object, Long> snapshotLastCompletedSequenceNumbers(
             KeyedStateBackend<?> keyedStateBackend, long checkpointId) throws Exception {
         if (actionStateStore == null) {
-            return;
+            return Map.of();
         }
         HashMap<Object, Long> keyToSeqNum = new HashMap<>();
         ((KeyedStateBackend<Object>) keyedStateBackend)
@@ -458,6 +460,7 @@ class DurableExecutionManager implements ActionStatePersister, AutoCloseable {
                             }
                         });
         checkpointIdToSeqNums.put(checkpointId, keyToSeqNum);
+        return keyToSeqNum;
     }
 
     // --- Durable execution context map accessors ---

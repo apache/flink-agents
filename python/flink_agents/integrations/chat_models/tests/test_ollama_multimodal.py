@@ -33,6 +33,7 @@ from flink_agents.api.chat_message import (
     ImageBlock,
     MessageRole,
     TextBlock,
+    ToolResultBlock,
     UnsupportedContentBlockError,
     VideoBlock,
 )
@@ -54,6 +55,7 @@ def _sent_messages(message: ChatMessage) -> List[Dict[str, Any]]:
     response.message.tool_calls = None
     response.prompt_eval_count = 1
     response.eval_count = 2
+    response.done_reason = "stop"
     mock_client = MagicMock()
     mock_client.chat.return_value = response
     conn._OllamaChatModelConnection__client = mock_client
@@ -117,9 +119,15 @@ def test_unsupported_media_fails_explicitly(block: ContentBlock) -> None:
 )
 def test_images_outside_user_messages_fail(role: MessageRole) -> None:
     """Only user messages can carry images."""
-    message = ChatMessage(
-        role=role,
-        blocks=[TextBlock(text="see"), ImageBlock.from_base64("image/png", FIRST)],
+    blocks = [TextBlock(text="see"), ImageBlock.from_base64("image/png", FIRST)]
+    if role == MessageRole.SYSTEM:
+        with pytest.raises(ValueError, match="SYSTEM messages accept only text"):
+            ChatMessage(role=role, blocks=blocks)
+        return
+    message = (
+        ChatMessage.tool(ToolResultBlock(call_id="call", blocks=blocks))
+        if role == MessageRole.TOOL
+        else ChatMessage(role=role, blocks=blocks)
     )
 
     with pytest.raises(UnsupportedContentBlockError, match="only user messages"):

@@ -19,10 +19,11 @@ package org.apache.flink.agents.runtime.python.utils;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.resource.Resource;
 import org.apache.flink.agents.api.resource.ResourceContext;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.SkillSourceSpec;
 import org.apache.flink.agents.api.tools.ToolMetadata;
 import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.api.tools.ToolParameters;
@@ -94,6 +95,31 @@ public class JavaResourceAdapter {
     }
 
     /**
+     * Resolve the skill names declared by a set of skill source specs. Used by the Python {@code
+     * JavaResourceContextWrapper} when a Python chat model running in a Java agent was constructed
+     * with a {@code Skills} object: the descriptor carries its sources as a marker, and expanding
+     * that marker into names requires the agent's skill manager, which only the Java side owns.
+     *
+     * <p>The specs cross the boundary as plain {@code {"scheme": ..., "params": {...}}} maps, per
+     * the bridge rule that values crossing into Java stay flattened to primitives, strings, lists,
+     * and maps.
+     *
+     * @param sources the source specs as flat maps
+     * @return the resolved skill names
+     */
+    public List<String> resolveSkillNamesForSources(List<Map<String, Object>> sources)
+            throws Exception {
+        List<SkillSourceSpec> specs = new java.util.ArrayList<>();
+        if (sources != null) {
+            ObjectMapper mapper = new ObjectMapper();
+            for (Map<String, Object> source : sources) {
+                specs.add(mapper.convertValue(source, SkillSourceSpec.class));
+            }
+        }
+        return resourceContext.resolveSkillNamesForSources(specs);
+    }
+
+    /**
      * Convert a Python chat message to a Java chat message. This method is intended for use by the
      * Python interpreter.
      *
@@ -101,23 +127,15 @@ public class JavaResourceAdapter {
      * method Java-only avoids an unnecessary Python→Java→Python callback while constructing the
      * Java value.
      *
-     * @param roleValue the Python message role value
-     * @param blocks the content blocks as plain maps in the wire shape (see {@link
-     *     ChatMessage#setBlocksFromMaps(List)})
-     * @param toolCalls the normalized tool calls
-     * @param extraArgs additional message arguments
+     * @param message the canonical message map extracted in Python
      * @return the Java chat message
      */
-    public ChatMessage fromPythonChatMessage(
-            String roleValue,
-            List<Map<String, Object>> blocks,
-            List<Map<String, Object>> toolCalls,
-            Map<String, Object> extraArgs) {
-        // TODO: Delete this method after the pemja findClass method is fixed.
-        ChatMessage message =
-                new ChatMessage(MessageRole.fromValue(roleValue), List.of(), toolCalls, extraArgs);
-        message.setBlocksFromMaps(blocks);
-        return message;
+    public ChatMessage fromPythonChatMessage(Map<String, Object> message) {
+        return ChatMessage.fromMap(message);
+    }
+
+    public ChatResult fromPythonChatResult(Map<String, Object> response) {
+        return ChatResult.fromMap(response);
     }
 
     /**
@@ -194,11 +212,12 @@ public class JavaResourceAdapter {
         ToolResponse response = functionTool(method, List.of()).call(new ToolParameters(arguments));
         Map<String, Object> result = new HashMap<>();
         result.put(TOOL_RESULT_MARKER, "response");
-        result.put("result", response.getResult());
+        result.put("metadata", response.getMetadata());
         result.put("success", response.isSuccess());
         result.put("error", response.getError());
         result.put("execution_time_ms", response.getExecutionTimeMs());
         result.put("tool_name", response.getToolName());
+        result.put("blocks", new ObjectMapper().convertValue(response.getBlocks(), List.class));
         return result;
     }
 

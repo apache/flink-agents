@@ -23,6 +23,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.chat.messages.ImageBlock;
+import org.apache.flink.agents.api.chat.messages.TextBlock;
+import org.apache.flink.agents.api.chat.messages.UrlSource;
 import org.apache.flink.agents.api.configuration.AgentConfigOptions;
 import org.apache.flink.agents.api.logger.LoggerType;
 import org.apache.flink.agents.api.logger.TraceLogLevel;
@@ -56,7 +59,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
 class Slf4jTraceLoggerTest {
@@ -306,6 +313,54 @@ class Slf4jTraceLoggerTest {
         assertTrue(json.contains("\n"), "Pretty-printed output should span multiple lines");
         assertDoesNotThrow(
                 () -> objectMapper.readTree(json), "Pretty-printed output should be valid JSON");
+    }
+
+    @Test
+    void testContentBlocksInGenericEventAreSanitized() throws Exception {
+        TraceLoggerConfig config = TraceLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
+        logger = new Slf4jTraceLogger(config);
+        logger.open(openParams);
+
+        String payload = "aW5saW5lLXBheWxvYWQtYnl0ZXM=";
+        append(
+                new InputEvent(
+                        Map.of(
+                                "content",
+                                List.of(
+                                        TextBlock.of("picture"),
+                                        ImageBlock.fromBase64("image/png", payload),
+                                        new ImageBlock(
+                                                "image/png",
+                                                new UrlSource(
+                                                        "https://user:secret@example.org/cat.png?signature=abc"),
+                                                null,
+                                                null,
+                                                null)))),
+                null,
+                TraceLogLevel.VERBOSE);
+
+        assertEquals(1, testAppender.getMessages().size());
+        String logged = testAppender.getMessages().get(0);
+        assertFalse(logged.contains(payload));
+        assertFalse(logged.contains("secret"));
+        assertFalse(logged.contains("signature"));
+        JsonNode blocks = objectMapper.readTree(logged).at("/attributes/input/content");
+        assertEquals("text", blocks.at("/0/type").asText());
+        assertEquals("picture", blocks.at("/0/text").asText());
+        assertEquals("image", blocks.at("/1/type").asText());
+        assertEquals("base64", blocks.at("/1/source/type").asText());
+        assertFalse(blocks.get(1).get("source").has("data"));
+        assertEquals("https://example.org/cat.png", blocks.at("/2/source/url").asText());
+    }
+
+    @Test
+    void testFlushAndCloseAreNoOps() throws Exception {
+        TraceLoggerConfig config = TraceLoggerConfig.builder().loggerType(LoggerType.SLF4J).build();
+        logger = new Slf4jTraceLogger(config);
+        logger.open(openParams);
+
+        assertDoesNotThrow(() -> logger.flush(), "flush() should not throw");
+        assertDoesNotThrow(() -> logger.close(), "close() should not throw");
     }
 
     private void append(Event event, TraceContext sourceContext, TraceLogLevel level)

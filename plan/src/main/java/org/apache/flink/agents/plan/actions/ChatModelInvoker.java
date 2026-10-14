@@ -19,6 +19,8 @@ package org.apache.flink.agents.plan.actions;
 
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
+import org.apache.flink.agents.api.chat.messages.TokenUsage;
 import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -53,18 +55,38 @@ public final class ChatModelInvoker {
 
     private static final Logger LOG = LoggerFactory.getLogger(ChatModelInvoker.class);
 
+    /**
+     * Leads the schema-carrying call's only message, followed by the answer to convert. The schema
+     * travels in the request itself, so this says what to do with the answer rather than restating
+     * the shape.
+     */
+    private static final String FINALIZE_DIRECTIVE =
+            "Convert the response below into the required structured output format."
+                    + " Preserve its meaning and do not add or infer any new information.\n\n"
+                    + "Response:\n";
+
     private ChatModelInvoker() {}
 
     /** JSON-serializable result of provider execution, including ordinary failures. */
     public static final class InvocationOutcome {
-        public ChatMessage response;
+        public ChatResult response;
         public String error;
 
         public InvocationOutcome() {}
 
-        InvocationOutcome(ChatMessage response, String error) {
+        InvocationOutcome(ChatResult response, String error) {
             this.response = response;
             this.error = error;
+        }
+    }
+
+    /** Carries a durable-execution failure past the attempt's retry handling, unconverted. */
+    private static final class DurableExecutionFailure extends Exception {
+        private final Exception failure;
+
+        DurableExecutionFailure(Exception failure) {
+            super(failure);
+            this.failure = failure;
         }
     }
 
@@ -91,14 +113,15 @@ public final class ChatModelInvoker {
     public static final class ChatAttemptResult {
         public final String model;
         public final BaseChatModelSetup chatModel;
-        public final ChatMessage response;
+        public final ChatResult response;
+        public Object structuredOutput;
         public final int retryCount;
         public final int totalRetryWaitSec;
 
         ChatAttemptResult(
                 String model,
                 BaseChatModelSetup chatModel,
-                ChatMessage response,
+                ChatResult response,
                 int retryCount,
                 int totalRetryWaitSec) {
             this.model = model;
@@ -168,6 +191,24 @@ public final class ChatModelInvoker {
             // the previous candidate's real error.
             throw new ChatAttemptFailed(model, null, e, 0, 0);
         }
+        // The answer depends only on this chat model and this schema, so it is settled once
+        // rather than per attempt; it is then also evaluated for a request that ends in tool
+        // calls, which costs no model call.
+        boolean nativeSchema;
+        try {
+            nativeSchema =
+                    outputSchema != null && chatModel.willApplyNativeStructuredOutput(outputSchema);
+        } catch (Exception e) {
+            if (Thread.currentThread().isInterrupted() || CancellationUtils.isCancellation(e)) {
+                if (CancellationUtils.isInterruption(e)) {
+                    Thread.currentThread().interrupt();
+                }
+                throw e;
+            }
+            // A schema this candidate can never carry is the candidate failing, so the fallback
+            // loop sees it like any other attempt failure.
+            throw new ChatAttemptFailed(model, chatModel, e, 0, 0);
+        }
         FlinkAgentsMetricGroup requestMetricGroup = ctx.getActionMetricGroup();
 
         boolean chatAsync = ctx.getConfig().get(AgentExecutionOptions.CHAT_ASYNC);
@@ -178,7 +219,7 @@ public final class ChatModelInvoker {
 
         int actualRetryCount = 0;
         int totalWaitTimeSec = 0;
-        ChatMessage response;
+        ChatResult response;
 
         DurableCallable<InvocationOutcome> callable =
                 new DurableCallable<>() {
@@ -258,14 +299,32 @@ public final class ChatModelInvoker {
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
-                // only generate structured output for final response.
+                Object structuredOutput = null;
                 if (outputSchema != null && response.getToolCalls().isEmpty()) {
-                    response =
+                    if (nativeSchema) {
+                        response =
+                                finalizeWithNativeSchema(
+                                        chatModel,
+                                        model,
+                                        durableCallId,
+                                        response,
+                                        outputSchema,
+                                        llmMetadata,
+                                        ctx,
+                                        chatAsync,
+                                        requestMetricGroup);
+                    }
+                    structuredOutput =
                             ChatModelAction.generateStructuredOutputWithReport(
                                     ctx, response, outputSchema);
                 }
-                return new ChatAttemptResult(
-                        model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                ChatAttemptResult result =
+                        new ChatAttemptResult(
+                                model, chatModel, response, actualRetryCount, totalWaitTimeSec);
+                result.structuredOutput = structuredOutput;
+                return result;
+            } catch (DurableExecutionFailure e) {
+                throw e.failure;
             } catch (InterruptedException e) {
                 // A cancellation signal, not a model failure: restore the interrupt status and
                 // propagate immediately so task shutdown isn't delayed by retry backoff or an
@@ -311,27 +370,120 @@ public final class ChatModelInvoker {
         throw new IllegalStateException("Unreachable chat retry state.");
     }
 
+    /**
+     * Issues the tool-free call that carries {@code outputSchema}: the loop call binds tools, and a
+     * provider may drop a native schema from a request that also binds tools. It sends one user
+     * message holding an instruction to convert the answer followed by the loop's final answer
+     * text, and returns the response to parse.
+     *
+     * <p>It holds its own durable slot after the loop call's, and reports its own LLM span.
+     */
+    private static ChatResult finalizeWithNativeSchema(
+            BaseChatModelSetup chatModel,
+            String model,
+            String durableCallId,
+            ChatResult loopResponse,
+            Object outputSchema,
+            Map<String, Object> llmMetadata,
+            RunnerContext ctx,
+            boolean chatAsync,
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup)
+            throws Exception {
+        // A fresh user message rather than resending the response object: it carries no
+        // provider-specific fields of the loop response, and a single user turn avoids provider
+        // rules on turn order and on empty assistant content.
+        List<ChatMessage> finalizeMessages =
+                List.of(ChatMessage.user(FINALIZE_DIRECTIVE + loopResponse.getText()));
+
+        DurableCallable<InvocationOutcome> callable =
+                new DurableCallable<>() {
+                    @Override
+                    public String getId() {
+                        return durableCallId + ":final";
+                    }
+
+                    @Override
+                    public Class<InvocationOutcome> getResultClass() {
+                        return InvocationOutcome.class;
+                    }
+
+                    @Override
+                    public InvocationOutcome call() throws Exception {
+                        try {
+                            return new InvocationOutcome(
+                                    chatModel.chat(
+                                            finalizeMessages, List.of(), Map.of(), outputSchema),
+                                    null);
+                        } catch (Exception e) {
+                            if (Thread.currentThread().isInterrupted()
+                                    || CancellationUtils.isCancellation(e)) {
+                                if (CancellationUtils.isInterruption(e)) {
+                                    Thread.currentThread().interrupt();
+                                }
+                                throw e;
+                            }
+                            LOG.debug("Structured output provider call failed", e);
+                            return new InvocationOutcome(null, errorText(e));
+                        }
+                    }
+                };
+
+        String executionId =
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+        InvocationOutcome outcome;
+        try {
+            outcome =
+                    chatAsync
+                            ? ctx.durableExecuteAsync(callable).await()
+                            : ctx.durableExecute(callable);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
+        } catch (Exception e) {
+            // Persistence and recovery failures are not request failures, as for the loop call.
+            throw new DurableExecutionFailure(e);
+        }
+        ChatResult response;
+        try {
+            if (outcome.error != null) {
+                throw new InvocationFailure(outcome.error);
+            }
+            response =
+                    Objects.requireNonNull(outcome.response, "ChatModel returned a null response.");
+        } catch (Throwable modelError) {
+            throw ChatModelAction.reportFailedAndPropagate(
+                    ctx,
+                    executionId,
+                    ExecutionReporter.EntityTypes.LLM,
+                    model,
+                    llmMetadata,
+                    modelError,
+                    ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
+        }
+        reportSuccessfulResponse(
+                ctx, executionId, model, llmMetadata, chatModel, response, requestMetricGroup);
+        ChatModelAction.rejectIncompleteResponse(response);
+        return response;
+    }
+
     private static void reportSuccessfulResponse(
             RunnerContext ctx,
             String executionId,
             String model,
             Map<String, Object> llmMetadata,
             BaseChatModelSetup chatModel,
-            ChatMessage response,
+            ChatResult response,
             @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
-        Map<String, Object> extraArgs = response.getExtraArgs();
-        Object promptTokens = extraArgs.get("promptTokens");
-        Object completionTokens = extraArgs.get("completionTokens");
+        TokenUsage responseUsage = response.getUsage();
+        Long prompt = responseUsage == null ? null : responseUsage.getPromptTokens();
+        Long completion = responseUsage == null ? null : responseUsage.getCompletionTokens();
         Map<String, Object> usage = new HashMap<>();
-        long prompt = 0;
-        long completion = 0;
-        if (promptTokens instanceof Number) {
-            usage.put("promptTokens", promptTokens);
-            prompt = ((Number) promptTokens).longValue();
+        if (prompt != null) {
+            usage.put("promptTokens", prompt);
         }
-        if (completionTokens instanceof Number) {
-            usage.put("completionTokens", completionTokens);
-            completion = ((Number) completionTokens).longValue();
+        if (completion != null) {
+            usage.put("completionTokens", completion);
         }
         Map<String, Object> metadata = new HashMap<>(llmMetadata);
         if (!usage.isEmpty()) {
@@ -339,14 +491,12 @@ public final class ChatModelInvoker {
         }
         ExecutionReporters.succeeded(
                 ctx, executionId, ExecutionReporter.EntityTypes.LLM, model, metadata);
-        Object modelName = extraArgs.get("model_name");
         if (requestMetricGroup != null
-                && modelName != null
-                && !modelName.toString().isEmpty()
-                && prompt > 0
-                && completion > 0) {
+                && response.getModel() != null
+                && prompt != null
+                && completion != null) {
             chatModel.recordTokenMetrics(
-                    requestMetricGroup, modelName.toString(), prompt, completion);
+                    requestMetricGroup, response.getModel(), prompt, completion);
         }
     }
 }

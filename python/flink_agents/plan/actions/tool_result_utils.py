@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-"""Turns a sub-agent result into something a chat model can be told.
+"""Convert ordinary tool returns to text responses and normalize sub-agent results.
 
 A sub-agent result reaches the caller as an opaque object, but from here on it is
 carried in a tool message and re-bound after a failover, so it must hold nothing
@@ -27,12 +27,47 @@ interpret a result the checks below would refuse, and what comes out is only wha
 the type declares.
 """
 
+import base64
 import json
 import math
 from functools import cache
 from typing import Any
 
 from pydantic import TypeAdapter
+
+from flink_agents.api.tools import ToolResponse
+
+
+def to_tool_response(value: Any) -> ToolResponse:
+    """Convert ordinary tool returns to text, preserving explicit responses.
+
+    Strings are used directly. Other values are serialized as JSON, with bytes
+    and bytearrays represented as Base64 strings, including in nested values.
+    If serialization fails, the value's string representation is used.
+    """
+    if isinstance(value, ToolResponse):
+        return value
+    try:
+        text = (
+            value
+            if isinstance(value, str)
+            else json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                default=_tool_result_json_default,
+            )
+        )
+    except (TypeError, ValueError):
+        text = str(value)
+    return ToolResponse.text(text)
+
+
+def _tool_result_json_default(value: Any) -> str:
+    if isinstance(value, bytes | bytearray):
+        return base64.b64encode(value).decode("ascii")
+    msg = f"Object of type {type(value).__name__} is not JSON serializable"
+    raise TypeError(msg)
 
 
 def normalize_agent_result(raw: Any, result_type: type = object) -> Any:

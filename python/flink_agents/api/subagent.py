@@ -23,9 +23,15 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, field_validator, model_validator
 
-from flink_agents.api.resource import ResourceType, SerializableResource
+from flink_agents.api.resource import (
+    JavaResourceDescriptor,
+    Resource,
+    ResourceDescriptor,
+    ResourceType,
+)
 
 if TYPE_CHECKING:
+    from flink_agents.api.agents.agent import Agent
     from flink_agents.api.runner_context import RunnerContext
 
 _LOG = logging.getLogger(__name__)
@@ -201,7 +207,7 @@ class SubagentFutures(ABC):
         """
 
 
-class SubagentSetup(SerializableResource):
+class SubagentSetup(Resource):
     """Caller-facing definition of a sub-agent, registered as an AGENT resource.
 
     Attributes:
@@ -290,3 +296,78 @@ class SubagentSetup(SerializableResource):
         The complete ``(session_id, call_id)`` identity is reserved for
         implementation use.
         """
+
+
+INTERNAL_SUBAGENT_SETUP_CLASS = (
+    "org.apache.flink.agents.runtime.subagent.InternalSubagentSetup"
+)
+
+
+class InternalSubagentResourceDescriptorBuilder:
+    """Build an ordinary resource descriptor declaring an internal child agent."""
+
+    def __init__(self) -> None:
+        """Start an internal sub-agent descriptor declaration."""
+        self._agent = None
+        self._description = ""
+        self._input_type = None
+        self._input_schema = None
+
+    def agent(self, agent: "Agent") -> "InternalSubagentResourceDescriptorBuilder":
+        """Set the child agent to compile."""
+        from flink_agents.api.agents.agent import Agent
+
+        if not isinstance(agent, Agent):
+            msg = "An internal sub-agent requires an Agent"
+            raise TypeError(msg)
+        self._agent = agent
+        return self
+
+    def description(
+        self, description: str
+    ) -> "InternalSubagentResourceDescriptorBuilder":
+        """Describe when the caller should delegate to this agent."""
+        if not isinstance(description, str):
+            msg = "description must be a string"
+            raise TypeError(msg)
+        self._description = description
+        return self
+
+    def input_type(
+        self, input_type: type
+    ) -> "InternalSubagentResourceDescriptorBuilder":
+        """Derive the input schema from a Pydantic model."""
+        if not isinstance(input_type, type):
+            msg = "input_type must be a type"
+            raise TypeError(msg)
+        self._input_type = input_type
+        return self
+
+    def input_schema(self, schema: str) -> "InternalSubagentResourceDescriptorBuilder":
+        """Declare the input JSON schema explicitly."""
+        if not isinstance(schema, str) or not schema.strip():
+            msg = "Sub-agent input schema must not be blank"
+            raise ValueError(msg)
+        self._input_schema = schema
+        return self
+
+    def build(self) -> ResourceDescriptor:
+        """Return a descriptor whose Agent is compiled by the parent plan."""
+        if self._agent is None:
+            msg = "An internal sub-agent requires an Agent"
+            raise ValueError(msg)
+        if self._input_type is not None and self._input_schema is not None:
+            msg = "Declare either input_type or input_schema, not both"
+            raise ValueError(msg)
+        schema = self._input_schema
+        if self._input_type is not None:
+            schema = _input_schema_from(self._input_type)
+            if schema is None:
+                msg = "Sub-agent input_type must describe an object"
+                raise ValueError(msg)
+        arguments = {"agent": self._agent, "description": self._description}
+        if schema is not None:
+            arguments["input_schema"] = schema
+        return JavaResourceDescriptor(
+            clazz=INTERNAL_SUBAGENT_SETUP_CLASS, arguments=arguments
+        )

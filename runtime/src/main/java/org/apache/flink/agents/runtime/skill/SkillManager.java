@@ -66,6 +66,14 @@ public class SkillManager implements AutoCloseable {
     private final Map<String, SkillRepository> repos = new HashMap<>();
 
     /**
+     * Reverse index: for every {@link SkillSourceSpec} that was loaded, the skill names that came
+     * from it. When two sources define the same skill name the later registration wins in {@link
+     * #skills}, but both sources still own their own names in this map — callers can ask "what
+     * names did this specific source contribute?" at any point after load.
+     */
+    private final Map<SkillSourceSpec, List<String>> sourceToSkills = new LinkedHashMap<>();
+
+    /**
      * Every {@link SkillRepository} this manager has opened, in load order. Kept separately from
      * {@link #repos} because that map is keyed by skill name — when two sources register the same
      * skill name, the second {@code put} drops the first repo's reference. Close logic iterates
@@ -262,6 +270,24 @@ public class SkillManager implements AutoCloseable {
         return repo == null ? null : repo.getSkillDir(skillName);
     }
 
+    /**
+     * Return the skill names that were loaded from the given sources.
+     *
+     * <p>Sources that were not loaded (e.g. because they failed before any skill was registered)
+     * contribute an empty list. The order of returned names follows the load order within each
+     * source; the order across sources follows the iteration order of {@code specs}.
+     */
+    public List<String> getSkillNamesForSources(List<SkillSourceSpec> specs) {
+        List<String> result = new ArrayList<>();
+        for (SkillSourceSpec spec : specs) {
+            List<String> names = sourceToSkills.get(spec);
+            if (names != null) {
+                result.addAll(names);
+            }
+        }
+        return result;
+    }
+
     private void loadAll() {
         try {
             for (SkillSourceSpec spec : config.getSources()) {
@@ -271,7 +297,7 @@ public class SkillManager implements AutoCloseable {
                     SkillRepository repo =
                             getHandler(spec.getScheme()).open(spec.getParams(), classLoader);
                     openedRepos.add(repo);
-                    registerRepo(repo, origin);
+                    registerRepo(repo, spec, origin);
                 } catch (IOException | IllegalArgumentException e) {
                     String sourceIdentity =
                             origin == null ? spec.getScheme() + " source" : origin.toString();
@@ -346,7 +372,8 @@ public class SkillManager implements AutoCloseable {
         }
     }
 
-    private void registerRepo(SkillRepository repo, SkillOrigin origin) {
+    private void registerRepo(SkillRepository repo, SkillSourceSpec spec, SkillOrigin origin) {
+        List<String> namesFromSource = new ArrayList<>();
         for (AgentSkill skill : repo.getSkills()) {
             final String skillName = skill.getName();
             skill.setResourceLoader(() -> repo.getResources(skillName));
@@ -360,6 +387,8 @@ public class SkillManager implements AutoCloseable {
                         previous.getOrigin() == null ? "<unknown>" : previous.getOrigin());
             }
             repos.put(skillName, repo);
+            namesFromSource.add(skillName);
         }
+        sourceToSkills.put(spec, namesFromSource);
     }
 }

@@ -1,6 +1,6 @@
 ---
-title: ReAct Agent
-weight: 2
+title: "Built-in ReAct Agent"
+weight: 6
 type: docs
 ---
 <!--
@@ -24,6 +24,8 @@ under the License.
 
 ## Overview
 
+Flink Agents provides `ReActAgent` as a built-in subclass of `Agent` that implements the ReAct pattern.
+
 ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously.
 
 {{< hint info >}}
@@ -31,7 +33,7 @@ For guidance on choosing Java or Python, see [Should I choose Java or Python?]({
 {{< /hint >}}
 
 {{< hint info >}}
-The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [ReAct Agent Quickstart]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
+The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
 {{< /hint >}}
 
 The snippets below assume the following imports:
@@ -110,7 +112,7 @@ ReActAgent myReActAgent =
 ### Chat Model
 User should specify the chat model used in the ReAct Agent.
 
-We use `ResourceDescriptor` to describe the chat model, includes chat model type and chat model arguments. See [Chat Model]({{< ref "docs/development/chat_models" >}}) for more details.
+We use `ResourceDescriptor` to describe the chat model, includes chat model type and chat model arguments. See [Chat Model]({{< ref "docs/development/calling-llms/chat-models" >}}) for more details.
 
 {{< tabs "ChatModel ResourceDescriptor" >}}
 
@@ -143,7 +145,7 @@ ResourceDescriptor chatModelDescriptor =
 The tools listed in `tools=[...]` must be registered on the `AgentsExecutionEnvironment` **before** the agent runs, using a name that matches the entry in the list — otherwise the agent fails at runtime with a "resource not found" error.
 {{< /hint >}}
 
-Register the referenced tools (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
+Register the referenced tools (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/calling-llms/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
 
 {{< tabs "Register Tools" >}}
 
@@ -252,7 +254,7 @@ new ChatMessage(MessageRole.USER, "{input}")
 
 {{< /tabs >}}
 
-See [Prompt]({{< ref "docs/development/prompts" >}}) for more details.
+See [Prompt]({{< ref "docs/development/calling-llms/prompts" >}}) for more details.
 
 ### Output Schema
 User can set output schema to configure the ReAct Agent output type. If output schema is set, the ReAct Agent will deserialize the llm response to expected type. 
@@ -331,4 +333,73 @@ RowTypeInfo myRowTypeInfo =
 {{< /tab >}}
 
 {{< /tabs >}}
+
+### Skills
+User can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor instead of adding a `skills` argument to the chat model descriptor. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
+
+**Skill names.** Pass the names of skills that are already declared to the agent:
+
+{{< tabs "Skills" >}}
+
+{{< tab "Python" >}}
+```python
+my_react_agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    prompt=my_prompt,
+    skills=["math-calculator"],
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+ReActAgent myReActAgent =
+        new ReActAgent(chatModelDescriptor, myPrompt, null, List.of("math-calculator"));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The constructor skills are combined with any `skills` already set on the chat model descriptor:
+
+- The descriptor's skills come first, followed by the constructor skills; a name listed more than once is kept only at its first occurrence.
+- Passing no skills, or an empty list, adds nothing: the descriptor is used exactly as given.
+- The descriptor you pass in is not modified; the agent uses a copy with the combined skills.
+- Only skill names are combined. The command policy of the built-in `bash` tool, such as `allowed_commands`, is always taken from the chat model descriptor, so set it there.
+- The sources behind those names have to be declared somewhere the agent can see them: a `@Skills`/`@skills` method, the execution environment, or the agent itself.
+
+**Skill sources.** Pass a `Skills` object to declare the sources and let the framework resolve the skill names at runtime:
+
+{{< tabs "Skill Sources" >}}
+
+{{< tab "Python" >}}
+```python
+my_react_agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    prompt=my_prompt,
+    skills=Skills.from_local_dir("./skills"),
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+ReActAgent myReActAgent =
+        new ReActAgent(
+                chatModelDescriptor,
+                myPrompt,
+                null,
+                Skills.fromLocalDir("./skills"));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The constructor registers those sources on the agent, so they do not also need `add_resource(..., ResourceType.SKILLS, ...)` on the execution environment. Every skill found in the sources becomes available, and the resolved names are appended after any explicitly named ones. A single `Skills` object may declare several sources; to combine sources held in separate objects, gather them into one `Skills`, declare further `@Skills`/`@skills` methods, or register them on the agent with `addResource(..., ResourceType.SKILLS, ...)`.
+
+**Which declaration wins.** Sources reach the agent from three levels. `@Skills`/`@skills` methods are merged first, then the execution environment's `SKILLS` resources, then the agent's own. A declaration from a later level wins when two of them resolve to the same skill name.
+
+## As a Sub-Agent
+
+A ReActAgent can run as a sub-agent of another agent, delegated to by the parent's chat model or called from the parent's actions. See [Use a ReActAgent as the child]({{< ref "docs/development/multi-agent/subagents#use-a-reactagent-as-the-child" >}}).
 

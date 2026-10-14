@@ -36,5 +36,11 @@ def test_builtin_constants_match_event_class_constants() -> None:
     assert EventType.ChatResponseEvent == ChatResponseEvent.EVENT_TYPE
     assert EventType.ToolRequestEvent == ToolRequestEvent.EVENT_TYPE
     assert EventType.ToolResponseEvent == ToolResponseEvent.EVENT_TYPE
-    assert EventType.ContextRetrievalRequestEvent == ContextRetrievalRequestEvent.EVENT_TYPE
-    assert EventType.ContextRetrievalResponseEvent == ContextRetrievalResponseEvent.EVENT_TYPE
+    assert (
+        EventType.ContextRetrievalRequestEvent
+        == ContextRetrievalRequestEvent.EVENT_TYPE
+    )
+    assert (
+        EventType.ContextRetrievalResponseEvent
+        == ContextRetrievalResponseEvent.EVENT_TYPE
+    )

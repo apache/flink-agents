@@ -32,13 +32,13 @@ It provides a step by step introduction on how to install Flink Agents and build
 
 ### Quickstart
 
-* [Workflow Agent]({{< ref "docs/get-started/quickstart/workflow_agent" >}}) - Define agent logic as an explicit event-driven workflow
-* [ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) - Let the model plan and call tools in a reason-act loop
-* [YAML Agent]({{< ref "docs/get-started/quickstart/yaml_agent" >}}) - Configure an agent declaratively in YAML
+- [Build an Agent]({{< ref "docs/get-started/quickstart/create-agent" >}})
+- [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}})
+- [Define an Agent with YAML]({{< ref "docs/get-started/quickstart/yaml_agent" >}})
 
 ### Build and Operate
 
-* [Chat Models]({{< ref "docs/development/chat_models" >}}), [Tools]({{< ref "docs/development/tool_use" >}}) and [Memory]({{< ref "docs/development/memory/overview" >}}) - The building blocks of an agent
+* [Calling LLMs]({{< ref "docs/development/calling-llms" >}}), [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) and [Memory]({{< ref "docs/development/memory/overview" >}}) - The building blocks of an agent
 * [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) - Run an agent inside a Flink job
 * [Deployment]({{< ref "docs/operations/deployment" >}}) and [Monitoring]({{< ref "docs/operations/monitoring" >}}) - Take an agent to production
 

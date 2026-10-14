@@ -27,6 +27,7 @@ import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.annotation.ChatModelConnection;
 import org.apache.flink.agents.api.annotation.ChatModelSetup;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -56,7 +57,7 @@ public class ConcurrentChatModelCrossLanguageAgent extends Agent {
         }
 
         @Override
-        public ChatMessage chat(
+        public ChatResult chat(
                 List<ChatMessage> messages, List<Tool> tools, Map<String, Object> modelParams) {
             concurrentCalls.countDown();
             try {
@@ -71,7 +72,7 @@ public class ConcurrentChatModelCrossLanguageAgent extends Agent {
             }
 
             ChatMessage request = messages.get(messages.size() - 1);
-            return new ChatMessage(MessageRole.ASSISTANT, "java-connection:" + request.getText());
+            return new ChatResult(ChatMessage.assistant("java-connection:" + request.getText()));
         }
     }
 

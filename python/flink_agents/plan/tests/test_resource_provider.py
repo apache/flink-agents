@@ -24,7 +24,6 @@ from flink_agents.api.resource import Resource, ResourceDescriptor, ResourceType
 from flink_agents.plan.resource_provider import (
     JavaResourceProvider,
     PythonResourceProvider,
-    PythonSerializableResourceProvider,
     ResourceProvider,
     is_python_owned,
 )
@@ -105,37 +104,23 @@ def test_python_can_deserialize_java_resource_provider_wire_shape() -> None:
     assert provider.descriptor.arguments["max_tokens"] == 1024
 
 
-def test_is_python_owned_mirrors_java_child_plan_exclusion(
-    resource_provider: ResourceProvider,
+def test_internal_descriptor_is_java_owned(
+    resource_provider: PythonResourceProvider,
 ) -> None:
-    """A Python-compiled internal sub-agent must stay Java-owned on both sides.
+    """Runtime ownership follows the provider language, without payload heuristics."""
+    from flink_agents.api.agents.agent import Agent
+    from flink_agents.api.subagent import InternalSubagentResourceDescriptorBuilder
+    from flink_agents.plan.agent_plan import AgentPlan
+    from flink_agents.plan.configuration import AgentConfiguration
 
-    ``agent_plan`` builds it as a ``PythonSerializableResourceProvider`` of type
-    ``AGENT`` whose serialized payload carries ``child_plan``. ``is_python_owned``
-    has to exclude it exactly like Java ``ResourceProvider.isPythonOwned``; otherwise
-    Python ``eager_materialize`` returns a resource the Java cache already built
-    natively and overwrites the Java ``InternalSubagentSetup``.
-    """
-    # A plain Python resource descriptor is Python-owned.
-    assert is_python_owned(resource_provider) is True
-
-    # An internal sub-agent (type AGENT, serialized child_plan) is Java-owned even
-    # though it is a PythonSerializableResourceProvider.
-    internal_subagent = PythonSerializableResourceProvider(
-        name="child",
-        type=ResourceType.AGENT,
-        module="flink_agents.runtime.internal_subagent",
-        clazz="InternalSubagentSetup",
-        serialized={"child_plan": {}, "scope": "child"},
+    assert is_python_owned(resource_provider)
+    root = Agent()
+    root.add_resource(
+        "child",
+        ResourceType.AGENT,
+        InternalSubagentResourceDescriptorBuilder().agent(Agent()).build(),
     )
-    assert is_python_owned(internal_subagent) is False
-
-    # An external Python setup serialized without a child plan stays Python-owned.
-    external_setup = PythonSerializableResourceProvider(
-        name="external",
-        type=ResourceType.AGENT,
-        module="some.module",
-        clazz="ExternalSubagent",
-        serialized={"scope": "external"},
-    )
-    assert is_python_owned(external_setup) is True
+    provider = AgentPlan.from_agent(root, AgentConfiguration()).resource_providers[
+        ResourceType.AGENT
+    ]["child"]
+    assert not is_python_owned(provider)

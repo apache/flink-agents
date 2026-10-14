@@ -639,4 +639,92 @@ class SkillManagerTest {
         assertTrue(first.closed.get(), "displaced repo must still be closed");
         assertTrue(second.closed.get(), "winning repo must be closed");
     }
+
+    @Test
+    void getSkillNamesForSourcesReturnsNamesFromLoadedSpecs() {
+        FakeRepo repoA = new FakeRepo("alpha");
+        FakeRepo repoB = new FakeRepo("beta");
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-get-spec-a", (params, cl) -> repoA);
+        handlers.put("test-get-spec-b", (params, cl) -> repoB);
+
+        SkillSourceSpec specA = new SkillSourceSpec("test-get-spec-a", Map.of());
+        SkillSourceSpec specB = new SkillSourceSpec("test-get-spec-b", Map.of());
+        Skills config = new Skills(List.of(specA, specB));
+        SkillManager manager = new SkillManager(config, handlers);
+
+        assertEquals(List.of("alpha"), manager.getSkillNamesForSources(List.of(specA)));
+        assertEquals(List.of("beta"), manager.getSkillNamesForSources(List.of(specB)));
+        assertEquals(
+                List.of("alpha", "beta"), manager.getSkillNamesForSources(List.of(specA, specB)));
+    }
+
+    @Test
+    void getSkillNamesForSourcesPreservesSpecOrder() {
+        // Register the same scheme for both — each call creates a new FakeRepo with its own name.
+        AtomicInteger seq = new AtomicInteger();
+        FakeRepo repoA = new FakeRepo("alpha");
+        FakeRepo repoB = new FakeRepo("beta");
+        List<FakeRepo> ordered = List.of(repoA, repoB);
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-spec-order", (params, cl) -> ordered.get(seq.getAndIncrement()));
+
+        SkillSourceSpec specA = new SkillSourceSpec("test-spec-order", Map.of("order", "a"));
+        SkillSourceSpec specB = new SkillSourceSpec("test-spec-order", Map.of("order", "b"));
+        Skills config = new Skills(List.of(specA, specB));
+        SkillManager manager = new SkillManager(config, handlers);
+
+        // specB → specA: the result must follow the argument list order, not load order.
+        assertEquals(
+                List.of("beta", "alpha"), manager.getSkillNamesForSources(List.of(specB, specA)));
+    }
+
+    @Test
+    void getSkillNamesForSourcesReturnsEmptyForUnknownSpecs() {
+        Skills config =
+                Skills.fromLocalDir(
+                        Path.of("src/test/resources/skills").toAbsolutePath().toString());
+        SkillManager manager = new SkillManager(config);
+
+        List<String> result =
+                manager.getSkillNamesForSources(
+                        List.of(new SkillSourceSpec("local", Map.of("path", "/nonexistent"))));
+        assertTrue(result.isEmpty());
+    }
+
+    @Test
+    void getSkillNamesForSourcesReturnsAllNamesForMultiSkillRepo() {
+        FakeRepo multi = new FakeRepo("alpha");
+        // Override getSkills to return two skills from one repo.
+        AgentSkill skillA = new AgentSkill("alpha", "a-desc", "a-body", null, null, null);
+        AgentSkill skillB = new AgentSkill("beta", "b-desc", "b-body", null, null, null);
+        SkillRepository multiSkillRepo =
+                new SkillRepository() {
+                    @Override
+                    public AgentSkill getSkill(String name) {
+                        return "alpha".equals(name) ? skillA : "beta".equals(name) ? skillB : null;
+                    }
+
+                    @Override
+                    public List<AgentSkill> getSkills() {
+                        return List.of(skillA, skillB);
+                    }
+
+                    @Override
+                    public Map<String, String> getResources(String name) {
+                        return Map.of();
+                    }
+
+                    @Override
+                    public void close() {}
+                };
+        Map<String, SkillSourceHandler> handlers = new java.util.HashMap<>();
+        handlers.put("test-multi-skill-repo", (params, cl) -> multiSkillRepo);
+
+        SkillSourceSpec spec = new SkillSourceSpec("test-multi-skill-repo", Map.of());
+        Skills config = new Skills(List.of(spec));
+        SkillManager manager = new SkillManager(config, handlers);
+
+        assertEquals(List.of("alpha", "beta"), manager.getSkillNamesForSources(List.of(spec)));
+    }
 }

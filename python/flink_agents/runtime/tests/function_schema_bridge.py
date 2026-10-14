@@ -78,7 +78,7 @@ def call_java(adapter, class_name: str, payload: str) -> str:
     return json.dumps(
         {
             "success": result.is_success(),
-            "result": result.result,
+            "result": result.get_text() if result.is_success() else None,
             "error": result.error_message,
         }
     )

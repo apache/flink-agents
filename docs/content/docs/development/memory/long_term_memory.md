@@ -31,9 +31,9 @@ Long-Term Memory currently supports the [Mem0](https://github.com/mem0ai/mem0) b
 ## Prerequisites
 
 Declare the following resources in your agent plan:
-- A [ChatModel]({{< ref "docs/development/chat_models" >}}) for memory extraction and management
-- An [EmbeddingModel]({{< ref "docs/development/embedding_models" >}}) for vector generation
-- A [VectorStore]({{< ref "docs/development/vector_stores" >}}) for persistent storage
+- A [ChatModel]({{< ref "docs/development/calling-llms/chat-models" >}}) for memory extraction and management
+- An [EmbeddingModel]({{< ref "docs/development/vector-search/embedding_models" >}}) for vector generation
+- A [VectorStore]({{< ref "docs/development/vector-search/vector_stores" >}}) for persistent storage
 
 > **Java prerequisite:** Mem0 invokes the chat and embedding models on its own thread executor, which relies on the async-friendly pemja fix. When Mem0 Long-Term Memory is configured together with Java actions, the runtime requires a Flink version of `1.20.5`, `2.0.2`, `2.1.3`, `2.2.1`, `2.3.0` or higher; otherwise it throws at startup. Either upgrade Flink or use the Python API.
 

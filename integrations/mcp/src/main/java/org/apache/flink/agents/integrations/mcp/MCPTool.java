@@ -21,6 +21,7 @@ package org.apache.flink.agents.integrations.mcp;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.agents.api.tools.ToolExecutionMetadataProvider;
 import org.apache.flink.agents.api.tools.ToolMetadata;
@@ -105,8 +106,11 @@ public class MCPTool extends Tool implements ToolExecutionMetadataProvider {
 
             long executionTime = System.currentTimeMillis() - startTime;
 
-            // Return the result (could be text, images, or other content)
-            return ToolResponse.success(result, executionTime, metadata.getName());
+            // Preserve the existing textual MCP result representation.
+            return ToolResponse.text(
+                    new ObjectMapper().writeValueAsString(result),
+                    executionTime,
+                    metadata.getName());
 
         } catch (Exception e) {
             long executionTime = System.currentTimeMillis() - startTime;

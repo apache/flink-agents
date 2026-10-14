@@ -15,11 +15,10 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-import contextlib
 import json
 import os
 import uuid
-from typing import Any, Dict, List, Mapping, Sequence, cast
+from typing import Any, Dict, List, Mapping, Sequence
 
 from dashscope import Generation
 from pydantic import BaseModel, Field
@@ -29,6 +28,9 @@ from flink_agents.api.agents.types import OutputSchema, render_output_schema
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
+    ReasoningBlock,
+    TextBlock,
+    ToolCallBlock,
     UnsupportedContentBlockError,
 )
 from flink_agents.api.chat_models.chat_model import (
@@ -36,6 +38,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
     NativeStructuredOutputSupport,
 )
+from flink_agents.api.chat_result import ChatResult, TokenUsage
 from flink_agents.api.tools.tool import Tool, ToolMetadata
 
 DEFAULT_REQUEST_TIMEOUT = 60.0
@@ -53,8 +56,8 @@ DEFAULT_MODEL = "qwen-plus"
 # text- vs multimodal-interface routing:
 #   https://help.aliyun.com/zh/model-studio/text-generation
 #
-# A name outside the set reports not-capable and degrades to the prompt-engineering
-# fallback rather than failing at the provider.
+# A name outside the set reports not-capable, which the structured-output query
+# reports as FEASIBLE rather than NATIVE_RECOMMENDED.
 _NATIVE_STRUCTURED_OUTPUT_MODELS = frozenset(
     {
         "qwen3.7-max",
@@ -179,10 +182,11 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None,
         model_kwargs: Mapping[str, Any] | None,
     ) -> NativeStructuredOutputSupport:
-        """Answers from the same two helpers ``chat`` uses to decide its native branch.
+        """``INFEASIBLE`` exactly when ``chat`` skips its native branch.
 
-        The effective model is the ``model`` parameter, or ``DEFAULT_MODEL`` when it
-        is absent.
+        Feasibility is the helper the native branch asks; capability only separates
+        ``FEASIBLE`` from ``NATIVE_RECOMMENDED``, judged on the ``model`` parameter,
+        or ``DEFAULT_MODEL`` when it is absent.
         """
         if not self._can_apply_native_structured_output(
             output_schema, tools, model_kwargs
@@ -200,8 +204,9 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         """Whether DashScope documents structured output for ``effective_model``.
 
         See the module-level allowlist for the source of truth and for why names are
-        matched exactly. A name outside it reports ``False`` so it degrades to the
-        prompt-engineering fallback rather than failing at the provider.
+        matched exactly. A name outside it reports ``False``. The answer shapes only
+        the structured-output query; the request carries a schema it is handed
+        whatever this reports.
 
         Args:
             effective_model: The model the request will be issued against, may be
@@ -276,7 +281,7 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Process a sequence of messages, and return a response.
 
         Parameters
@@ -287,18 +292,17 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             List of tools that can be called by the model
         output_schema : OutputSchema | None
             The schema the response should conform to, or ``None`` for an
-            unconstrained response. Native structured output is applied only for a
-            ``BaseModel`` schema on a model the provider documents as capable; a
-            ``RowTypeInfo`` schema or an incapable model keeps the prompt-engineering
-            fallback. A ``response_format`` supplied alongside a schema is refused
-            rather than resolved.
+            unconstrained response. Native structured output is applied for a
+            ``BaseModel`` schema whatever the model; a ``RowTypeInfo`` schema keeps the
+            prompt-engineering fallback. A ``response_format`` supplied alongside a
+            schema is refused rather than resolved.
         **kwargs : Any
             Additional parameters passed to the model service (e.g., temperature,
             max_tokens, etc.)
 
         Returns:
         -------
-        ChatMessage
+        ChatResult
             Model response message.
         """
         # Media blocks are not sent yet; fail rather than drop them (#1059).
@@ -322,18 +326,14 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
 
         model_name = kwargs.pop("model", DEFAULT_MODEL)
 
-        # The predicate reads model_name rather than kwargs.get("model"): the key was
-        # popped on the line above, so a kwargs lookup would yield None on every call
-        # and report every model incapable.
-        #
-        # The feasibility half is asked rather than restated, so a caller asking the
-        # same question gets the answer this branch acts on. A payload with no native
+        # The feasibility check is shared with the structured-output query rather than
+        # restated, so the branch applies whenever the query answers other than
+        # INFEASIBLE. Model capability is not asked: a caller that hands this
+        # connection a schema has already chosen to send it. A payload with no native
         # translation is reported infeasible there, so it never reaches the conflict
         # test below and cannot raise over a response_format this branch was never
         # going to write.
-        if self._can_apply_native_structured_output(
-            output_schema, tools, raw_kwargs
-        ) and self._model_supports_native_structured_output(model_name):
+        if self._can_apply_native_structured_output(output_schema, tools, raw_kwargs):
             # Tested before the schema is rendered, because a caller who supplies both
             # a schema and a response_format has a conflict to resolve whatever the
             # schema turns out to render to, and reporting a render failure instead
@@ -364,96 +364,74 @@ class DashScopeChatModelConnection(BaseChatModelConnection):
             msg = f"DashScope call failed: {response.message}"
             raise RuntimeError(msg)
 
-        extra_args: Dict[str, Any] = {}
-
-        # Record token metrics if model name and usage are available
-        if model_name and response.usage:
-            extra_args["model_name"] = model_name
-            extra_args["promptTokens"] = response.usage.input_tokens
-            extra_args["completionTokens"] = response.usage.output_tokens
-
         choice = response.output["choices"][0]
-        response_message: Dict[str, Any] = choice["message"]
-
-        tool_calls: List[Dict[str, Any]] = []
-        for tc in response_message.get("tool_calls", []) or []:
-            fn = tc.get("function", {}) or {}
-            args = fn.get("arguments")
-            if isinstance(args, str):
-                with contextlib.suppress(Exception):
-                    args = json.loads(args)
-            tool_call_dict = {
-                "id": uuid.uuid4(),
-                # The provider's id, under the key the tool call action reads to
-                # pass it back as the tool result's external_id.
-                "original_id": tc.get("id"),
-                "type": "function",
-                "function": {
-                    "name": fn.get("name"),
-                    "arguments": args,
-                },
-                "additional_kwargs": {"original_tool_call_id": tc.get("id")},
-            }
-            tool_calls.append(tool_call_dict)
-
-        content = response_message.get("content") or ""
-
-        reasoning_content = response_message.get("reasoning_content") or ""
-        if extract_reasoning and reasoning_content:
-            extra_args["reasoning"] = reasoning_content
-
-        return ChatMessage.of(
-            MessageRole(response_message.get("role", "assistant")),
-            content,
-            tool_calls=tool_calls,
-            extra_args=extra_args,
+        message = choice["message"]
+        blocks = []
+        if extract_reasoning and message.get("reasoning_content"):
+            blocks.append(ReasoningBlock(text=message["reasoning_content"]))
+        if message.get("content"):
+            blocks.append(TextBlock(text=message["content"]))
+        for call in message.get("tool_calls") or []:
+            function = call["function"]
+            arguments = function.get("arguments") or {}
+            if isinstance(arguments, str):
+                arguments = json.loads(arguments)
+            blocks.append(
+                ToolCallBlock(
+                    call_id=call.get("id") or str(uuid.uuid4()),
+                    name=function["name"],
+                    input=arguments,
+                )
+            )
+        return ChatResult(
+            message=ChatMessage.assistant(blocks),
+            model=str(model_name) if model_name is not None else None,
+            usage=TokenUsage(
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+            )
+            if response.usage
+            else None,
+            finish_reason=choice.get("finish_reason"),
         )
 
     @staticmethod
     def __convert_to_dashscope_messages(
         messages: Sequence[ChatMessage],
     ) -> List[Dict[str, Any]]:
-        dashscope_messages: List[Dict[str, Any]] = []
+        result = []
         for message in messages:
-            msg_dict: Dict[str, Any] = {
-                "role": message.role.value,
-                "content": message.text,
-            }
-
-            if message.tool_calls:
-                if message.role == MessageRole.ASSISTANT:
-                    msg_dict["tool_calls"] = [
-                        {
-                            "id": _provider_tool_call_id(tc),
-                            "type": "function",
-                            "function": {
-                                "name": tc["function"]["name"],
-                                "arguments": json.dumps(tc["function"]["arguments"]),
-                            },
-                        }
-                        for tc in message.tool_calls
-                    ]
-                elif message.role == MessageRole.TOOL:
-                    msg_dict["tool_call_id"] = _provider_tool_call_id(
-                        message.tool_calls[0]
+            blocks = (
+                message.blocks[0].blocks
+                if message.role == MessageRole.TOOL
+                else message.blocks
+            )
+            for block in blocks:
+                if not isinstance(block, TextBlock | ReasoningBlock | ToolCallBlock):
+                    provider = "DashScope"
+                    raise UnsupportedContentBlockError.for_block(
+                        provider, block, "unsupported message content"
                     )
-
-            if message.role == MessageRole.TOOL and message.extra_args.get(
-                "external_id"
-            ):
-                # The tool call action records the provider's call id here.
-                msg_dict["tool_call_id"] = str(message.extra_args["external_id"])
-
-            dashscope_messages.append(msg_dict)
-        return cast("List[Dict[str, Any]]", dashscope_messages)
-
-
-def _provider_tool_call_id(tool_call: Dict[str, Any]) -> str:
-    """Return the DashScope id of a tool call, falling back to the framework id."""
-    original_id = tool_call.get("original_id") or tool_call.get(
-        "additional_kwargs", {}
-    ).get("original_tool_call_id")
-    return str(original_id) if original_id else str(tool_call.get("id", ""))
+            native = {
+                "role": message.role.value,
+                "content": "".join(b.text for b in blocks if isinstance(b, TextBlock)),
+            }
+            if message.tool_calls:
+                native["tool_calls"] = [
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(call.input),
+                        },
+                    }
+                    for call in message.tool_calls
+                ]
+            if message.role == MessageRole.TOOL:
+                native["tool_call_id"] = message.blocks[0].call_id
+            result.append(native)
+        return result
 
 
 class DashScopeChatModelSetup(BaseChatModelSetup):

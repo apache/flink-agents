@@ -18,13 +18,18 @@
 
 package org.apache.flink.agents.runtime.subagent;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.chat.messages.ToolCallBlock;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.RunnerContext;
+import org.apache.flink.agents.api.event.ToolRequestEvent;
+import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.agents.api.subagent.SubagentFuture;
 import org.apache.flink.agents.api.subagent.SubagentResult;
 import org.apache.flink.agents.api.subagent.SubagentSetup;
@@ -43,6 +48,7 @@ import org.junit.jupiter.api.condition.JRE;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -297,6 +303,56 @@ public class InternalSubagentCallTest {
                 runRecords(plan("writeMemoryThenCall", new MemoryProbeChildAgent()), 2);
 
         assertThat(output).containsExactly("saw:<missing>", "saw:<missing>");
+    }
+
+    public static void requestChildTool(Event event, RunnerContext ctx) {
+        ctx.sendEvent(
+                new ToolRequestEvent(
+                        "model",
+                        List.of(
+                                new ToolCallBlock(
+                                        "call-1",
+                                        "_subagent_child",
+                                        Map.of("question", "hello")))));
+    }
+
+    public static void receiveChildTool(Event event, RunnerContext ctx) {
+        ToolResponseEvent response = ToolResponseEvent.fromEvent(event);
+        ctx.sendEvent(new OutputEvent(response.getResponses().get("call-1").getText()));
+    }
+
+    @Test
+    @Timeout(60)
+    void modelToolCallExecutesInternalDescriptorAfterPlanTransfer() throws Exception {
+        Agent root = new Agent();
+        root.addResource(
+                "child",
+                ResourceType.AGENT,
+                new InternalSubagentResourceDescriptorBuilder()
+                        .agent(new EchoChildAgent())
+                        .description("Answers questions")
+                        .inputSchema(
+                                "{\"type\":\"object\",\"properties\":{\"question\":{\"type\":\"string\"}}}")
+                        .build());
+        root.addAction(
+                new String[] {InputEvent.EVENT_TYPE},
+                InternalSubagentCallTest.class.getMethod(
+                        "requestChildTool", Event.class, RunnerContext.class));
+        root.addAction(
+                new String[] {ToolResponseEvent.EVENT_TYPE},
+                InternalSubagentCallTest.class.getMethod(
+                        "receiveChildTool", Event.class, RunnerContext.class));
+        AgentPlan compiled = new AgentPlan(root);
+        // The test supplies the model's tool request and consumes its response itself.
+        Map<String, org.apache.flink.agents.plan.actions.Action> actions =
+                new java.util.LinkedHashMap<>(compiled.getActions());
+        actions.remove("chat_model_action");
+        compiled = new AgentPlan(actions, compiled.getResourceProviders(), compiled.getConfig());
+        ObjectMapper mapper = new ObjectMapper();
+        AgentPlan transferred =
+                mapper.readValue(mapper.writeValueAsString(compiled), AgentPlan.class);
+        assertThat(run(transferred, 1L)).containsExactly("[\"echo:{question=hello}\"]");
+        assertThat(CHILD_INVOCATIONS).containsExactly("{question=hello}");
     }
 
     // --- helpers ---

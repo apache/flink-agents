@@ -40,9 +40,10 @@ def _tool_request_record(tool_calls: list) -> dict:
 
 def _function_tool_call(name: str, arguments: object) -> dict:
     return {
-        "id": "00000000-0000-0000-0000-0000000000aa",
-        "type": "function",
-        "function": {"name": name, "arguments": arguments},
+        "call_id": "00000000-0000-0000-0000-0000000000aa",
+        "type": "tool_call",
+        "name": name,
+        "input": arguments,
     }
 
 

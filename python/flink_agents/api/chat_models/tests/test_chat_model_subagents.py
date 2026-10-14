@@ -30,6 +30,7 @@ from flink_agents.api.chat_models.chat_model import (
     BaseChatModelSetup,
 )
 from flink_agents.api.chat_models.subagent_tool import SubagentTool
+from flink_agents.api.chat_result import ChatResult
 from flink_agents.api.resource import Resource, ResourceType
 from flink_agents.api.resource_context import ResourceContext
 from flink_agents.api.subagent import SubagentSetup
@@ -50,11 +51,11 @@ class _RecordingConnection(BaseChatModelConnection):
         tools: List[Tool] | None = None,
         output_schema: OutputSchema | None = None,
         **kwargs: Any,
-    ) -> ChatMessage:
+    ) -> ChatResult:
         """Record the request and answer with a fixed message."""
         self.captured_messages = list(messages)
         self.captured_tools = list(tools or [])
-        return ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
+        return ChatResult(message=ChatMessage.assistant("ok"))
 
 
 class _StubSetup(BaseChatModelSetup):

@@ -34,7 +34,7 @@ from flink_agents.api.skills import (
     LOAD_SKILL_TOOL,
     Skills,
 )
-from flink_agents.api.subagent import CALLABLE_NAME_PREFIX, SubagentSetup
+from flink_agents.api.subagent import CALLABLE_NAME_PREFIX
 from flink_agents.api.tools.function_tool import FunctionTool as ApiFunctionTool
 from flink_agents.api.tools.tool import Tool
 from flink_agents.plan import subagent as _subagent
@@ -136,31 +136,6 @@ class AgentPlan(BaseModel):
                                 self["resource_providers"][type][name] = (
                                     JavaSerializableResourceProvider.model_validate(
                                         provider
-                                    )
-                                )
-                            elif provider_type == "InternalSubagentProvider":
-                                # Java compiles a directly-registered child Agent
-                                # into an InternalSubagentProvider that nests the
-                                # child plan. Python models the same internal
-                                # sub-agent as a PythonSerializableResourceProvider
-                                # pointing at InternalSubagentSetup, so convert to
-                                # that shape and rebuild the nested child plan
-                                # recursively.
-                                child_plan = AgentPlan.model_validate(
-                                    provider["childPlan"]
-                                )
-                                self["resource_providers"][type][name] = (
-                                    PythonSerializableResourceProvider(
-                                        name=provider["name"],
-                                        type=ResourceType(provider["type"]),
-                                        module=(
-                                            "flink_agents.runtime.internal_subagent"
-                                        ),
-                                        clazz="InternalSubagentSetup",
-                                        serialized={
-                                            "child_plan": child_plan,
-                                            "scope": provider["scope"],
-                                        },
                                     )
                                 )
         return self
@@ -471,59 +446,33 @@ def _get_resource_providers(
     for name, descriptor in agent.resources[ResourceType.MCP_SERVER].items():
         _add_mcp_server(name, resource_providers, descriptor, config)
 
-    # Merge decorator-based and programmatic skills
-    all_skills: Dict[str, Skills] = dict(
-        {**skills_descriptors, **agent.resources[ResourceType.SKILLS]}.items()
-    )
+    # Merge decorator-based and programmatic skills. A name declared both ways resolves
+    # to the programmatic declaration and moves to the end: the flattened source order
+    # decides which declaration wins, and decorator declarations are the lowest level.
+    all_skills: Dict[str, Skills] = dict(skills_descriptors)
+    for name, skills in agent.resources[ResourceType.SKILLS].items():
+        all_skills.pop(name, None)
+        all_skills[name] = skills
     _add_skills(all_skills, resource_providers)
 
-    for name, value in agent.resources[ResourceType.AGENT].items():
-        if isinstance(value, SubagentSetup):
-            # A live setup travels as its descriptor, so a remote task rebuilds
-            # it from the class name and configuration.
-            descriptor = ResourceDescriptor(
-                clazz=f"{value.__class__.__module__}.{value.__class__.__name__}",
-                arguments=value.model_dump(),
-            )
-        elif isinstance(value, ResourceDescriptor):
-            # Declared via YAML: the descriptor names a SubagentSetup subclass
-            # that is instantiated when the resource is first resolved.
-            descriptor = value
-        elif isinstance(value, Agent):
-            # Compile a directly-registered child Agent into an internal
-            # sub-agent. The child's compiled plan is reused across names and
-            # cycles are rejected by the compilation helper. The resource
-            # name doubles as the sub-agent scope used for runtime resolution.
-            child_plan = _subagent.get_or_compile(
-                value,
-                name,
-                lambda child: AgentPlan.from_agent(child, config),
-            )
-            # Reference the runtime setup by name to keep the plan -> runtime
-            # dependency direction; the provider materializes
-            # flink_agents.runtime.internal_subagent.InternalSubagentSetup at
-            # runtime. The live child plan rides in the serialized map and is
-            # dumped lazily. This branch carries the child plan itself, so it
-            # appends its own provider instead of the shared descriptor one.
-            resource_providers.append(
-                PythonSerializableResourceProvider(
-                    name=name,
-                    type=ResourceType.AGENT,
-                    module="flink_agents.runtime.internal_subagent",
-                    clazz="InternalSubagentSetup",
-                    serialized={"child_plan": child_plan, "scope": name},
-                )
-            )
-            continue
-        else:
+    for name, descriptor in agent.resources[ResourceType.AGENT].items():
+        if not isinstance(descriptor, ResourceDescriptor):
             msg = (
-                f"AGENT resource '{name}' must be a SubagentSetup, a "
-                f"ResourceDescriptor, or an Agent, but got "
-                f"{type(value).__name__}."
+                f"AGENT resource '{name}' must be a ResourceDescriptor; "
+                "setup instances cannot be registered"
             )
             raise TypeError(msg)
+        descriptor = _subagent.compile_descriptor(
+            name, descriptor, lambda child: AgentPlan.from_agent(child, config)
+        )
         resource_providers.append(
-            PythonResourceProvider.get(name=name, descriptor=descriptor)
+            JavaResourceProvider(
+                name=name, type=ResourceType.AGENT, descriptor=descriptor
+            )
+            if descriptor.language == "java"
+            else PythonResourceProvider.get(
+                name=name, descriptor=descriptor, resource_type=ResourceType.AGENT
+            )
         )
 
     for resource_type in [

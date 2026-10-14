@@ -23,12 +23,12 @@ import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.resource.SerializableResource;
+import org.apache.flink.agents.api.subagent.InternalSubagentResourceDescriptorBuilder;
 import org.apache.flink.api.java.tuple.Tuple3;
 
 import javax.annotation.Nullable;
 
 import java.lang.reflect.Method;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -39,9 +39,9 @@ public class Agent {
     private final Map<ResourceType, Map<String, Object>> resources;
 
     public Agent() {
-        this.resources = new HashMap<>();
+        this.resources = new LinkedHashMap<>();
         for (ResourceType type : ResourceType.values()) {
-            this.resources.put(type, new HashMap<>());
+            this.resources.put(type, new LinkedHashMap<>());
         }
         this.actions = new LinkedHashMap<>();
     }
@@ -101,10 +101,34 @@ public class Agent {
         return this;
     }
 
+    /**
+     * Merge environment-level resources into this agent. Entries already present at the agent level
+     * are kept (agent wins on duplicates). Environment entries are placed before agent entries in
+     * iteration order, so downstream merging sees env-then-agent precedence.
+     *
+     * <p>Order is load-bearing, not cosmetic: downstream consumers derive precedence from it.
+     * {@code AgentPlan} flattens these entries into an ordered source list, and later entries win
+     * on duplicate names. Overwriting an environment entry in place would leave the agent's
+     * replacement in the environment's slot, so an unrelated environment entry could end up last
+     * and win instead — the opposite of the contract above. Environment entries the agent overrides
+     * are therefore dropped, and the agent's own entries are appended as a block.
+     */
     public void addResourcesIfAbsent(Map<ResourceType, Map<String, Object>> resources) {
         for (ResourceType type : resources.keySet()) {
-            Map<String, Object> typedResources = resources.get(type);
-            typedResources.forEach(this.resources.get(type)::putIfAbsent);
+            Map<String, Object> envTyped = resources.get(type);
+            if (envTyped == null || envTyped.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> existing = this.resources.get(type);
+            Map<String, Object> merged = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> envEntry : envTyped.entrySet()) {
+                if (!existing.containsKey(envEntry.getKey())) {
+                    merged.put(envEntry.getKey(), envEntry.getValue());
+                }
+            }
+            // Appended as a block so agent entries stay last and keep winning on duplicates.
+            merged.putAll(existing);
+            this.resources.put(type, merged);
         }
     }
 
@@ -114,7 +138,8 @@ public class Agent {
      * @param name The name indicate the resource.
      * @param type The type of the resource.
      * @param instance The serializable resource object, the resource descriptor, or — for an {@code
-     *     AGENT} resource — an {@link Agent} to compile into an internal sub-agent.
+     *     AGENT} resource — an {@link Agent} wrapped in a descriptor and compiled into an internal
+     *     sub-agent during plan construction.
      */
     public Agent addResource(String name, ResourceType type, Object instance) {
         if (resources.get(type).containsKey(name)) {
@@ -122,11 +147,13 @@ public class Agent {
         }
         checkNoChatModelRouterNameClash(name, type, resources);
 
+        if (type == ResourceType.AGENT && instance instanceof Agent) {
+            instance =
+                    new InternalSubagentResourceDescriptorBuilder().agent((Agent) instance).build();
+        }
         if (instance instanceof SerializableResource) {
             resources.get(type).put(name, instance);
         } else if (instance instanceof ResourceDescriptor) {
-            resources.get(type).put(name, instance);
-        } else if (instance instanceof Agent) {
             resources.get(type).put(name, instance);
         } else {
             throw new IllegalArgumentException(

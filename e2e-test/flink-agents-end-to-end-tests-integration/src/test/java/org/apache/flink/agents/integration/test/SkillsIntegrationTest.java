@@ -161,12 +161,13 @@ public class SkillsIntegrationTest {
 
         agentsEnv.getConfig().set(MAX_RETRIES, 3);
 
+        // The skill is named on the ReActAgent constructor below, while the bash command policy
+        // stays on the chat model descriptor that owns it.
         ResourceDescriptor chatModelDescriptor =
                 ResourceDescriptor.Builder.newBuilder(
                                 ResourceName.ChatModel.OPENAI_COMPLETIONS_SETUP)
                         .addInitialArgument("connection", "openai")
                         .addInitialArgument("model", SkillsIntegrationAgent.MODEL)
-                        .addInitialArgument("skills", List.of("math-calculator"))
                         .addInitialArgument("allowed_commands", List.of("echo", "bc"))
                         .build();
 
@@ -188,7 +189,9 @@ public class SkillsIntegrationTest {
                         new TypeInformation[] {BasicTypeInfo.INT_TYPE_INFO},
                         new String[] {"result"});
 
-        Agent agent = new ReActAgent(chatModelDescriptor, prompt, outputTypeInfo);
+        Agent agent =
+                new ReActAgent(
+                        chatModelDescriptor, prompt, outputTypeInfo, List.of("math-calculator"));
 
         Table inputTable =
                 tableEnv.fromValues(

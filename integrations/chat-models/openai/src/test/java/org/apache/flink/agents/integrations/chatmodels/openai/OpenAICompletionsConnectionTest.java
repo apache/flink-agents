@@ -18,12 +18,19 @@
 
 package org.apache.flink.agents.integrations.chatmodels.openai;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.annotation.JsonValue;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openai.core.ObjectMappers;
 import com.openai.errors.BadRequestException;
+import com.openai.models.ChatModel;
 import com.openai.models.ResponseFormatJsonSchema;
 import com.openai.models.chat.completions.ChatCompletionCreateParams;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
+import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.model.BaseChatModelConnection;
 import org.apache.flink.agents.api.chat.model.NativeStructuredOutputSupport;
@@ -39,10 +46,12 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -58,13 +67,15 @@ class OpenAICompletionsConnectionTest {
 
     private static final ResourceContext NOOP = ResourceContext.fromGetResource((a, b) -> null);
 
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /** A representative POJO output schema. */
     public static class Person {
         public String name;
         public int age;
     }
 
-    /** A polymorphic member, which the SDK renders as a discriminated union. */
+    /** A polymorphic member, which the derived schema states as a discriminated union. */
     @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "kind")
     @JsonSubTypes({
         @JsonSubTypes.Type(value = Dog.class, name = "dog"),
@@ -86,6 +97,65 @@ class OpenAICompletionsConnectionTest {
     public static class Owner {
         public String name;
         public Pet pet;
+    }
+
+    /**
+     * Output schema fixture whose enum constants are deserialized from values other than their
+     * names, one through {@code @JsonProperty} on the constants and one through a
+     * {@code @JsonValue} method.
+     */
+    public static class Ticket {
+        public Status status;
+        public Phase phase;
+    }
+
+    /** Enum constants deserialized from their {@code @JsonProperty} values. */
+    public enum Status {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        @JsonProperty("done")
+        DONE
+    }
+
+    /** Enum constants deserialized from their {@code @JsonValue} method. */
+    public enum Phase {
+        STARTED("started"),
+        FINISHED("finished");
+
+        private final String wire;
+
+        Phase(String wire) {
+            this.wire = wire;
+        }
+
+        @JsonValue
+        public String wire() {
+            return wire;
+        }
+    }
+
+    /** Output schema fixture with an {@code Optional} field and a nested object. */
+    public static class Draft {
+        public String title;
+        public Optional<String> note;
+        public Person author;
+    }
+
+    /** The JSON Schema the request carries, as a JSON tree. */
+    private static JsonNode nativeSchema(ChatCompletionCreateParams params) {
+        return ObjectMappers.jsonMapper()
+                .valueToTree(
+                        params.responseFormat()
+                                .orElseThrow()
+                                .asJsonSchema()
+                                .jsonSchema()
+                                ._schema());
+    }
+
+    private static List<String> textValues(JsonNode array) {
+        List<String> values = new ArrayList<>();
+        array.forEach(value -> values.add(value.asText()));
+        return values;
     }
 
     /** The JSON Schema the request carries, as the SDK holds it on the response format. */
@@ -154,19 +224,25 @@ class OpenAICompletionsConnectionTest {
     @Test
     @DisplayName("A request-building failure reaches the caller as its own type, not a wrapper")
     void testRequestBuildingFailurePropagatesUnwrapped() {
-        List<ChatMessage> toolMessageWithoutExternalId =
-                List.of(new ChatMessage(MessageRole.TOOL, "result", Map.of()));
+        List<ChatMessage> unsupportedMessage =
+                List.of(
+                        ChatMessage.assistant(
+                                List.of(
+                                        org.apache.flink.agents.api.chat.messages.ImageBlock
+                                                .fromUrl(
+                                                        "image/png",
+                                                        "https://example.com/image.png"))));
 
         assertThatThrownBy(
                         () ->
                                 connection()
                                         .chat(
-                                                toolMessageWithoutExternalId,
+                                                unsupportedMessage,
                                                 List.of(),
                                                 params("gpt-4o"),
                                                 null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("externalId");
+                .hasMessageContaining("image");
     }
 
     @Test
@@ -192,11 +268,11 @@ class OpenAICompletionsConnectionTest {
     void testResponseCarriesFinishReason() throws IOException {
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("length")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "length");
+            assertThat(response.getFinishReason()).isEqualTo("length");
         }
     }
 
@@ -205,12 +281,11 @@ class OpenAICompletionsConnectionTest {
     void testResponseCarriesUnknownFinishReasonVerbatim() throws IOException {
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("some_vendor_reason")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs())
-                    .containsEntry("finish_reason", "some_vendor_reason");
+            assertThat(response.getFinishReason()).isEqualTo("some_vendor_reason");
         }
     }
 
@@ -220,11 +295,11 @@ class OpenAICompletionsConnectionTest {
         // The choice carries a value, so it is recorded; emptiness is not treated as absence.
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReason("")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs()).containsEntry("finish_reason", "");
+            assertThat(response.getFinishReason()).isEqualTo("");
         }
     }
 
@@ -235,13 +310,12 @@ class OpenAICompletionsConnectionTest {
         // promptTokens proves that branch did not run and could not have written the reason.
         try (FakeOpenAICompletionsEndpoint endpoint =
                 FakeOpenAICompletionsEndpoint.servingFinishReasonWithoutUsage("tool_calls")) {
-            ChatMessage response =
+            ChatResult response =
                     connection(endpoint.baseUrl())
                             .chat(userMessage(), List.of(), params("gpt-4o"), null);
 
-            assertThat(response.getExtraArgs())
-                    .containsEntry("finish_reason", "tool_calls")
-                    .doesNotContainKey("promptTokens");
+            assertThat(response.getFinishReason()).isEqualTo("tool_calls");
+            assertThat(response.getUsage()).isNull();
         }
     }
 
@@ -267,7 +341,7 @@ class OpenAICompletionsConnectionTest {
         // ChatCompletion.Choice#finishReason throws OpenAIInvalidDataException for both of these
         // response shapes, so reading the value has to go through the raw field.
         OpenAICompletionsConnection connection = connection(endpoint.baseUrl());
-        AtomicReference<ChatMessage> response = new AtomicReference<>();
+        AtomicReference<ChatResult> response = new AtomicReference<>();
 
         assertThatCode(
                         () ->
@@ -276,7 +350,7 @@ class OpenAICompletionsConnectionTest {
                                                 userMessage(), List.of(), params("gpt-4o"), null)))
                 .doesNotThrowAnyException();
 
-        assertThat(response.get().getExtraArgs()).doesNotContainKey("finish_reason");
+        assertThat(response.get().getFinishReason()).isNull();
     }
 
     @Test
@@ -296,10 +370,11 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("A polymorphic member is sent as the discriminated union the SDK derives")
+    @DisplayName("A polymorphic member is sent as a discriminated union")
     void testPolymorphicMemberSchemaIsSent() {
-        // Jackson renders this member as an object declaring no properties, while the SDK derives
-        // the full union the provider accepts. Reading a Jackson-rendered schema here would refuse
+        // Jackson renders this member as an object declaring no properties, while the schema
+        // generator derives the full union the provider accepts. Reading a Jackson-rendered schema
+        // here would refuse
         // a request that works.
         ChatCompletionCreateParams request =
                 connection().buildRequest(userMessage(), List.of(), params("gpt-4o"), Owner.class);
@@ -311,30 +386,53 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("Native NOT applied for a POJO on an incapable model (prompt fallback)")
-    void testNativeNotAppliedForIncapableModel() {
-        ChatCompletionCreateParams params =
-                connection()
-                        .buildRequest(
-                                userMessage(), List.of(), params("gpt-3.5-turbo"), Person.class);
+    @DisplayName("The derived schema lists enum constants the way Jackson deserializes them")
+    void derivedSchemaFollowsJacksonEnumValues() throws Exception {
+        JsonNode properties =
+                nativeSchema(
+                                connection()
+                                        .buildRequest(
+                                                userMessage(),
+                                                List.of(),
+                                                params("gpt-4o"),
+                                                Ticket.class))
+                        .path("properties");
 
-        assertThat(params.responseFormat()).isEmpty();
+        // Strict mode confines the model to the listed values, so each has to deserialize into
+        // the enum. Listed by constant name instead, a plain mapper refuses every value the schema
+        // allows.
+        List<Status> statuses = new ArrayList<>();
+        for (JsonNode value : properties.path("status").path("enum")) {
+            statuses.add(MAPPER.treeToValue(value, Status.class));
+        }
+        assertThat(statuses).containsExactlyInAnyOrder(Status.values());
+
+        List<Phase> phases = new ArrayList<>();
+        for (JsonNode value : properties.path("phase").path("enum")) {
+            phases.add(MAPPER.treeToValue(value, Phase.class));
+        }
+        assertThat(phases).containsExactlyInAnyOrder(Phase.values());
     }
 
     @Test
-    @DisplayName("Native NOT applied for a pre-cutoff same-family gpt-4o snapshot")
-    void testNativeNotAppliedForPreCutoffSnapshot() {
-        // gpt-4o-2024-05-13 predates the Structured Outputs cutoff even though it shares the gpt-4o
-        // prefix; treating it as capable would fail silently at the provider.
-        ChatCompletionCreateParams params =
-                connection()
-                        .buildRequest(
-                                userMessage(),
-                                List.of(),
-                                params("gpt-4o-2024-05-13"),
-                                Person.class);
+    @DisplayName("The derived schema requires every field and forbids extras at every level")
+    void derivedSchemaRequiresEveryFieldAndForbidsExtras() {
+        JsonNode schema =
+                nativeSchema(
+                        connection()
+                                .buildRequest(
+                                        userMessage(), List.of(), params("gpt-4o"), Draft.class));
 
-        assertThat(params.responseFormat()).isEmpty();
+        // Strict mode rejects a schema that leaves a property out of the required set or admits
+        // additional properties, so the Optional field is required too and admits null instead.
+        assertThat(textValues(schema.path("required")))
+                .containsExactlyInAnyOrder("title", "note", "author");
+        assertThat(textValues(schema.path("properties").path("note").path("type")))
+                .contains("null");
+        assertThat(schema.path("additionalProperties").asBoolean(true)).isFalse();
+        JsonNode author = schema.path("properties").path("author");
+        assertThat(textValues(author.path("required"))).containsExactlyInAnyOrder("name", "age");
+        assertThat(author.path("additionalProperties").asBoolean(true)).isFalse();
     }
 
     @Test
@@ -349,9 +447,9 @@ class OpenAICompletionsConnectionTest {
     @Test
     @DisplayName("The query judges the connection default when the model parameter is unset")
     void testQueryFallsBackToTheDefaultModel() {
-        // buildRequest applies the same fallback before judging capability, so an answer taken
-        // without it would disagree with the model the request is issued against. The default
-        // gpt-4o is capable, whereas an unresolved model is not.
+        // buildRequest applies the same fallback to pick the model the request is issued against,
+        // so an answer taken without it would judge a different model. The default gpt-4o is
+        // capable, whereas an unresolved model is not.
         for (Map<String, Object> modelParams :
                 List.<Map<String, Object>>of(new HashMap<>(), params(null), params("   "))) {
             assertThat(support(connection(), modelParams))
@@ -360,11 +458,12 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("The model the request builder judges is the one the query judges")
+    @DisplayName("The model the query judges is the one the request is issued against")
     void testQueryJudgesTheModelTheBuilderJudges() {
         // The query duplicates the builder's own model resolution rather than centralizing it, so
-        // capturing what each feeds the capability check is the only thing that keeps the two from
-        // drifting apart. Asserting each against a literal would let them drift in step.
+        // comparing the model it judges with the model the request names is the only thing that
+        // keeps the two from drifting apart. Asserting each against a literal would let them drift
+        // in step.
         AtomicReference<String> judged = new AtomicReference<>();
         OpenAICompletionsConnection connection =
                 new OpenAICompletionsConnection(
@@ -388,10 +487,11 @@ class OpenAICompletionsConnectionTest {
             support(connection, modelParams);
             String queried = judged.get();
 
-            connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
+            ChatCompletionCreateParams request =
+                    connection.buildRequest(userMessage(), List.of(), modelParams, Person.class);
 
             assertThat(queried).isNotNull();
-            assertThat(judged.get()).isEqualTo(queried);
+            assertThat(request.model()).isEqualTo(ChatModel.of(queried));
         }
     }
 
@@ -521,11 +621,11 @@ class OpenAICompletionsConnectionTest {
     }
 
     @Test
-    @DisplayName("An incapable model leaves the request feasible rather than infeasible")
+    @DisplayName("An unlisted model answers FEASIBLE and its request still carries the schema")
     void testQuerySeparatesCapabilityFromFeasibility() {
-        // A POJO is feasible here even on a model the allowlist rejects, and it is the branch's
-        // separate capability conjunct that keeps that request unconstrained. Folding capability
-        // into feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule.
+        // gpt-4o-2024-05-13 shares the gpt-4o prefix but predates the cutoff. Folding capability
+        // into feasibility would report INFEASIBLE, which a NATIVE policy cannot overrule; folding
+        // it into the request would drop a schema that policy chose to send.
         Map<String, Object> incapable = params("gpt-4o-2024-05-13");
 
         assertThat(support(connection(), incapable))
@@ -534,7 +634,7 @@ class OpenAICompletionsConnectionTest {
                         connection()
                                 .buildRequest(userMessage(), List.of(), incapable, Person.class)
                                 .responseFormat())
-                .isEmpty();
+                .isPresent();
     }
 
     @Test
@@ -565,7 +665,7 @@ class OpenAICompletionsConnectionTest {
 
         @Override
         public ToolResponse call(ToolParameters parameters) {
-            return ToolResponse.success(null);
+            return ToolResponse.success(List.of());
         }
     }
 }
