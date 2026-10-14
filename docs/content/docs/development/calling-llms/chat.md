@@ -183,7 +183,8 @@ In the request, `ollama_chat_model` (Python) or `ollamaChatModel` (Java) names t
   response: accessing the response of a failed event raises an exception.
 
 If you requested structured output, read the parsed result from
-`event.getStructuredOutput()` (Java) or `event.structured_output` (Python).
+`event.getStructuredOutput()` (Java) or `event.structured_output` (Python). See
+[Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) for how to declare a schema and which providers enforce it natively.
 
 Applications that need to recover from a failed chat request should handle the
 failed event explicitly. The built-in ReAct agent propagates the failure.
@@ -315,5 +316,6 @@ The built-in `chat_model_action` and `tool_call_action` coordinate this cycle. F
 
 - Use [Prompts]({{< ref "docs/development/calling-llms/prompts" >}}) to reuse message templates across requests.
 - Add [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) or [Skills]({{< ref "docs/development/calling-llms/skills" >}}) when the model needs to perform operations beyond generating an answer.
+- Use [Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) to get a typed object instead of free text.
 - Use [Model Routing]({{< ref "docs/development/calling-llms/model_routing" >}}) to choose among registered models for each request.
 - Consult [Built-in Chat Model Providers]({{< ref "docs/development/calling-llms/chat-models/providers" >}}) for provider-specific configuration and media support.

@@ -26,6 +26,8 @@ under the License.
 
 ## Built-in Providers
 
+For which providers and models enforce an `output_schema` natively, see [Structured Output]({{< ref "docs/development/calling-llms/structured-output#provider-support" >}}).
+
 ### Amazon Bedrock
 
 Amazon Bedrock provides access to a wide range of foundation models from leading AI providers through a unified API. The Flink Agents Bedrock integration uses the [Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html), which provides a consistent interface across all supported models with native tool calling support. Authentication is handled via SigV4 using the AWS default credentials chain. No API keys are required.

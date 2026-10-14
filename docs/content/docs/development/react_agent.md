@@ -261,6 +261,8 @@ User can set output schema to configure the ReAct Agent output type. If output s
 
 The output schema should be a `BaseModel` subclass (Python) / a Pojo class (Java), or a `RowTypeInfo` (both).
 
+When the chat model's provider supports it, the schema is enforced natively by the provider rather than only described in the prompt. See [Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) for the strategies, supported providers and schema rules.
+
 {{< tabs "Output Schema" >}}
 
 {{< tab "Python" >}}
