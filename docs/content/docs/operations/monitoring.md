@@ -401,13 +401,14 @@ Observations with the same Event ID and type share one node and deduplicated edg
 
 Malformed records, conflicting Event identities, missing upstream Events, and cycles produce warnings. Recoverable records remain available in the JSON result, and cycle edges are removed before rendering. If recording targets filtered an upstream Event, the reader cannot reconstruct that missing part of the tree. Historical formats using `eventType`/`eventAttributes` or a nested `event` object are unsupported.
 
-### Migration Notes
+### Compatibility Notes
 
-- The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`, and the current output settings.
-- Each record now includes `schemaVersion: 1`. Unversioned records are not treated as version `1`; the built-in reader skips them with a warning.
-- Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `level`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
-- Custom Java and Python `ExecutionReporter` implementations and callers must accept and pass an explicit `executionId` for each component call's lifecycle reports. Callers can obtain it from a creation or start helper and must retain it across reports, using a new ID for each invocation or retry attempt. This requirement uses the existing JSON fields.
-- File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
-- The log metrics are `traceLogTruncatedRecords` and `traceLogWriteFailures`. Update dashboards and alert queries using their old names.
-- Python Event IDs identify occurrences using UUID4. Equal payloads do not imply equal Event IDs.
-- For checkpoint and savepoint compatibility, see [Exactly-Once Action Consistency]({{< ref "docs/operations/deployment#exactly-once-action-consistency" >}}).
+These notes compare Trace Log with the original Event Log, which recorded Events only.
+
+- **Configuration keys.** The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Configure Event selection and recording levels through `trace-log.targets`, truncation through `trace-log.standard.*`, and output through `trace-log.output-type`, `trace-log.base-dir`, and `trace-log.pretty-print`. See [Trace Log Configuration]({{< ref "docs/operations/configuration#trace-log-targets" >}}).
+- **Log format.** Records use the Trace Log JSON format with `schemaVersion: 1`; the old nested `event` object is removed.
+- **Consumer field mappings.** Update parsers and queries from `logLevel` to `level`, from `eventType` to `entityName` for Events, from `event.id` to `entityMetadata.eventId`, and from `event.attributes` to `attributes`.
+- **Output names.** File names change from `events-*.log` to `traces-*.log`. The SLF4J category changes from `org.apache.flink.agents.EventLog` to `org.apache.flink.agents.TraceLog`, the appender from `FlinkAgentsEventLogAppender` to `FlinkAgentsTraceLogAppender`, and the file suffix from `.event-log.log` to `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
+- **Custom loggers.** Custom `EventLogger` implementations and factory registrations must adapt to `TraceLogger` and `TraceLoggerFactory`. The append contract changes from `append(EventContext, Event)` to `append(TraceRecord, TraceLogLevel)`.
+- **Write failures and metrics.** An `append` or `flush` failure no longer propagates into Event processing or fails the job; it is logged and counted in `traceLogWriteFailures`. The truncation metric changes from `eventLogTruncatedEvents` to `traceLogTruncatedRecords` and covers all selected record types. Update dashboards and alert queries accordingly.
+- **Python Event identity.** Automatically generated Event IDs now use UUID4 rather than a content-derived UUID. Changing an Event's payload no longer regenerates its ID, and `id` is immutable. Code that relies on equal payloads producing equal IDs or assigns to `event.id` must be updated.
