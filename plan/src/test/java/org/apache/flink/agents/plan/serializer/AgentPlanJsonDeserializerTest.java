@@ -32,6 +32,7 @@ import org.apache.flink.agents.api.tools.ToolParameterInjection;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
+import org.apache.flink.agents.plan.resourceprovider.PythonResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.ResourceProvider;
 import org.apache.flink.agents.plan.tools.FunctionTool;
 import org.junit.jupiter.api.Test;
@@ -59,6 +60,47 @@ public class AgentPlanJsonDeserializerTest {
 
         AgentPlan empty = mapper.readValue("{\"actions\":{}}", AgentPlan.class);
         assertTrue(empty.getActions().isEmpty());
+    }
+
+    @Test
+    public void testDeserializePythonDecisionResources() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        for (Map.Entry<String, ResourceType> entry :
+                Map.of(
+                                "decision_model", ResourceType.DECISION_MODEL,
+                                "decision_model_connection", ResourceType.DECISION_MODEL_CONNECTION)
+                        .entrySet()) {
+            Map<String, Object> provider =
+                    Map.of(
+                            "name",
+                            "decision",
+                            "type",
+                            entry.getKey(),
+                            "__resource_provider_type__",
+                            "PythonResourceProvider",
+                            "descriptor",
+                            Map.of(
+                                    "language", "python",
+                                    "target_module", "example.decisions",
+                                    "target_clazz", "DecisionResource",
+                                    "arguments", Map.of("model", "test-model")));
+            String json =
+                    mapper.writeValueAsString(
+                            Map.of(
+                                    "actions", Map.of(),
+                                    "resource_providers",
+                                            Map.of(entry.getKey(), Map.of("decision", provider))));
+
+            AgentPlan plan = mapper.readValue(json, AgentPlan.class);
+            ResourceProvider restored =
+                    plan.getResourceProviders().get(entry.getValue()).get("decision");
+            assertInstanceOf(PythonResourceProvider.class, restored);
+            assertEquals(entry.getValue(), restored.getType());
+            assertTrue(ResourceProvider.isPythonOwned(restored));
+            assertEquals(
+                    Map.of("model", "test-model"),
+                    ((PythonResourceProvider) restored).getDescriptor().getInitialArguments());
+        }
     }
 
     @Test

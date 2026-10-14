@@ -103,6 +103,18 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "watsonx": ResourceName.ChatModel.Java.WATSONX_SETUP,
         },
     },
+    ResourceType.DECISION_MODEL_CONNECTION: {
+        "python": {
+            "typesafe": ResourceName.DecisionModel.TYPESAFE_CONNECTION,
+            "openai": ResourceName.DecisionModel.OPENAI_CONNECTION,
+        },
+    },
+    ResourceType.DECISION_MODEL: {
+        "python": {
+            "typesafe": ResourceName.DecisionModel.TYPESAFE_SETUP,
+            "openai": ResourceName.DecisionModel.OPENAI_SETUP,
+        },
+    },
     ResourceType.EMBEDDING_MODEL_CONNECTION: {
         "python": {
             "ollama": ResourceName.EmbeddingModel.OLLAMA_CONNECTION,

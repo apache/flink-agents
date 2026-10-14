@@ -20,6 +20,7 @@ import os
 from unittest.mock import MagicMock
 
 import httpx
+import httpx2
 import pytest
 from pydantic import ValidationError
 
@@ -36,13 +37,12 @@ from flink_agents.integrations.chat_models.openai.openai_chat_model import (
 from flink_agents.plan.function import PythonFunction
 from flink_agents.plan.tools.function_tool import FunctionTool
 
-pytestmark = pytest.mark.integration
-
 test_model = os.environ.get("TEST_MODEL")
 api_key = os.environ.get("TEST_API_KEY")
 api_base_url = os.environ.get("TEST_API_BASE_URL")
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_openai_chat_model() -> None:
     connection = OpenAIChatModelConnection(api_key=api_key, api_base_url=api_base_url)
@@ -82,6 +82,7 @@ def add(a: int, b: int) -> int:
     return a + b
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(api_key is None, reason="TEST_API_KEY is not set")
 def test_openai_chat_with_tools() -> None:
     connection = OpenAIChatModelConnection(api_key=api_key, api_base_url=api_base_url)
@@ -144,8 +145,9 @@ def test_zero_timeout_disables_client_timeout() -> None:
     assert transport_timeout.pool is None
 
 
-def test_zero_timeout_disables_custom_http_client_timeout() -> None:
-    http_client = httpx.Client(timeout=10.0)
+@pytest.mark.parametrize("http_module", [httpx, httpx2], ids=["httpx", "httpx2"])
+def test_zero_timeout_disables_custom_http_client_timeout(http_module) -> None:
+    http_client = http_module.Client(timeout=10.0)
     conn = OpenAIChatModelConnection(
         api_key="fake",
         api_base_url="http://localhost",
@@ -154,7 +156,7 @@ def test_zero_timeout_disables_custom_http_client_timeout() -> None:
     )
 
     assert conn.client.timeout is None
-    assert http_client.timeout == httpx.Timeout(None)
+    assert http_client.timeout == http_module.Timeout(None)
 
     http_client.close()
 

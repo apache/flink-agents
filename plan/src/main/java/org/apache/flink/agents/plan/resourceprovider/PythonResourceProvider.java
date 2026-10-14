@@ -25,6 +25,8 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonChatModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonCollectionManageableVectorStore;
+import org.apache.flink.agents.plan.resource.python.PythonDecisionModelConnection;
+import org.apache.flink.agents.plan.resource.python.PythonDecisionModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelConnection;
 import org.apache.flink.agents.plan.resource.python.PythonEmbeddingModelSetup;
 import org.apache.flink.agents.plan.resource.python.PythonMCPServer;
@@ -54,6 +56,8 @@ public class PythonResourceProvider extends ResourceProvider {
             Map.of(
                     ResourceType.CHAT_MODEL, PythonChatModelSetup.class,
                     ResourceType.CHAT_MODEL_CONNECTION, PythonChatModelConnection.class,
+                    ResourceType.DECISION_MODEL, PythonDecisionModelSetup.class,
+                    ResourceType.DECISION_MODEL_CONNECTION, PythonDecisionModelConnection.class,
                     ResourceType.EMBEDDING_MODEL, PythonEmbeddingModelSetup.class,
                     ResourceType.EMBEDDING_MODEL_CONNECTION, PythonEmbeddingModelConnection.class,
                     ResourceType.VECTOR_STORE, PythonCollectionManageableVectorStore.class,
