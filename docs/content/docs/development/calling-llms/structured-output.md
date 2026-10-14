@@ -44,7 +44,12 @@ A schema is one of:
 
 Only a typed class can be applied natively. A `RowTypeInfo` always uses the prompt path.
 
-Pass the schema to a [ReAct Agent]({{< ref "docs/development/react_agent" >}}) with `output_schema`, or put it on a `ChatRequestEvent` (in Python, wrapped in `OutputSchema`) when you [send chat requests yourself]({{< ref "docs/development/calling-llms/chat" >}}).
+Pass the schema to a [ReAct Agent]({{< ref "docs/development/react_agent" >}}) with `output_schema`, or put it on a `ChatRequestEvent` when you [send chat requests yourself]({{< ref "docs/development/calling-llms/chat" >}}).
+
+On a `ChatRequestEvent`:
+
+- **Python:** wrap the schema in `OutputSchema`, as in the example below.
+- **Java:** pass a POJO class directly. Wrap a `RowTypeInfo` with `new OutputSchema(rowTypeInfo)`. Only the ReAct Agent wraps it for you. A bare `RowTypeInfo` on the event fails with `Unsupported output schema`.
 
 {{< tabs "Declare a Schema" >}}
 
@@ -139,8 +144,8 @@ Set `structured_output_strategy` on the chat model **setup** (not the connection
 
 | Strategy | Behavior |
 |---|---|
-| `AUTO` (default) | Native only when the connection recommends it for the model. Otherwise the prompt path, silently. |
-| `NATIVE` | Native whenever the request can carry the schema, even for a model that is not on the connection's recommended list. Fails before any model call if it cannot. |
+| `AUTO` (default) | Native when the connection recommends native output for the model (see [Provider Support](#provider-support)). Otherwise the prompt path, silently. This includes a request that cannot carry the schema. |
+| `NATIVE` | Native whenever the request can carry the schema, even for a model that is not on the recommended list. If it cannot (for example a `RowTypeInfo` schema, or a blocker listed in [Provider Support](#provider-support)), it raises `IllegalArgumentException` (Java) or `ValueError` (Python) before any model call. |
 | `PROMPT` | Never native. |
 
 {{< tabs "Choose a Strategy" >}}
@@ -168,47 +173,34 @@ ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OPENAI_COMPLETIONS_
 
 {{< /tabs >}}
 
-Each connection answers one of three things for a request:
-
-- **Infeasible:** the connection cannot carry this schema. The schema is not a typed class, or a provider-specific blocker applies (see [Provider Support](#provider-support)). `AUTO` and `PROMPT` use the prompt path. `NATIVE` raises `IllegalArgumentException` (Java) or `ValueError` (Python) before the model is called.
-- **Feasible:** the request can carry the schema, but the model is not on the connection's recommended list. `AUTO` uses the prompt path. `NATIVE` goes native.
-- **Native recommended:** the model is known to honor the schema. `AUTO` and `NATIVE` both go native.
-
 {{< hint info >}}
 `AUTO` falling back is silent. If a request you expect to be native is not, check the model name against [Provider Support](#provider-support), or set `NATIVE` to get an error that names the reason.
 {{< /hint >}}
 
-## How a Native Request Runs
+## How Native Output Behaves
 
-When a request carries a schema, the two paths differ only inside the built-in `chat_model_action`. Your actions send and handle the same events either way:
+The events your actions send and handle are the same on both paths. These points differ:
 
 ```text
 Prompt path:  ChatRequestEvent → model call (tool loop)
                                → parse JSON answer → ChatResponseEvent
 
-Native path:  ChatRequestEvent → model call (no schema, tool loop)
-                               → conversion call (schema, no tools)
+Native path:  ChatRequestEvent → model call (tool loop, no schema)
+                               → one conversion call (schema, no tools)
                                → parse answer → ChatResponseEvent
 ```
 
-When the strategy resolves to native, the built-in `chat_model_action` makes up to two model calls:
-
-1. **Loop call.** The model runs with its tools and **no schema**, so it can call tools freely. The tool loop works as usual.
-2. **Conversion call.** When the model stops calling tools, the framework sends one tool-free request that carries the schema. Its only message asks the model to convert the loop's answer into the required format without adding information.
-
-The conversion response is parsed into the structured output, and is also the `response` on the `ChatResponseEvent`. The conversion call has its own durable-execution record and its own tracing span, separate from the loop call.
-
-On the prompt path there is a single call, and the framework parses the JSON text of the answer. The framework does not add the schema to your messages. The ReAct Agent adds its own instruction (below); in a custom action, ask for JSON matching the schema in your own prompt. Do this even under `AUTO`, because the request falls back to the prompt path whenever native output does not apply.
-
-The [ReAct Agent]({{< ref "docs/development/react_agent" >}}) adjusts its schema prompt to match. On the prompt path it tells the model to answer in JSON that matches the schema. On the native path the model only needs to put the information for every required field in its answer, in any format, because the conversion call formats it. If it cannot determine whether the call will be native, it keeps the JSON instruction.
-
-If the answer cannot be parsed, the request fails with a failed `ChatResponseEvent` after the configured retries. See [Failures and Recovery]({{< ref "docs/development/calling-llms/chat#failures-and-recovery" >}}).
+- **The schema applies to the final answer only.** Tool-calling turns run without it, so tools work as usual.
+- **Native output adds one conversion call after the tool loop.** The model is asked to convert its answer into the schema's format without adding information. This adds latency and cost to each request. The conversion response is the `response` on the `ChatResponseEvent`.
+- **The prompt path has no conversion call.** The framework does not add the schema to your messages. The ReAct Agent adds its own instruction. In a custom action, ask for JSON that matches the schema in your own prompt. Do this even under `AUTO`, because the request falls back to the prompt path whenever native output does not apply.
+- **The ReAct Agent adjusts its prompt to the path.** On the native path it only asks the model to include the information for every required field, because the conversion call formats it. If it cannot tell whether the call will be native, it keeps the JSON instruction.
+- **A reply that cannot be parsed fails the request.** You get a failed `ChatResponseEvent` after the configured retries. See [Failures and Recovery]({{< ref "docs/development/calling-llms/chat#failures-and-recovery" >}}).
 
 ## Provider Support
 
-"Recommended" is what `AUTO` needs to go native. Models outside it still go native under `NATIVE` unless the table says the request is infeasible.
+"Recommended" is what `AUTO` needs to go native. Models outside it still go native under `NATIVE`, unless the last column lists a blocker. A blocked request uses the prompt path under `AUTO` and `PROMPT`, and fails under `NATIVE`.
 
-| Provider | Languages | Recommended models (`AUTO` goes native) | Infeasible (besides a non-typed-class schema) |
+| Provider | Languages | Recommended models (`AUTO` goes native) | Blocked (besides a non-typed-class schema) |
 |---|---|---|---|
 | OpenAI | Java, Python | `gpt-4o-mini`, `gpt-4o-search-preview`, `gpt-4.1`, `gpt-5` and `o3`, `o4-mini` families (names that start with these), plus `gpt-4o`, `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20`, `o1`, `o1-2024-12-17`. Audio, realtime, TTS and transcribe variants are excluded. | |
 | OpenAI Responses | Java | none | Always. Use the prompt path. |
@@ -223,11 +215,11 @@ If the answer cannot be parsed, the request fails with a failed `ChatResponseEve
 
 Notes:
 
-- **Azure OpenAI** matches `model_of_azure_deployment`, not the deployment name, because a deployment name can be anything. If you do not set it, the answer is "feasible", so `AUTO` stays on the prompt path. Set it to get `AUTO` native on Azure, as in the example below.
-- **Gemini** reports infeasible when the request binds tools. The conversion call is tool-free, so this only affects direct connection calls. A newer model that does not support the schema field fails with `400 INVALID_ARGUMENT`. Constraints such as `pattern` and `minLength` are ignored by the server.
+- **Azure OpenAI** matches `model_of_azure_deployment`, not the deployment name, because a deployment name can be anything. If you do not set it, `AUTO` stays on the prompt path (`NATIVE` still goes native). Set it to get `AUTO` native on Azure, as in the example below.
+- **Gemini** blocks native output when the request binds tools. The conversion call is tool-free, so this only affects direct connection calls. A newer model that does not support the schema field fails with `400 INVALID_ARGUMENT`. Constraints such as `pattern` and `minLength` are ignored by the server.
 - **Ollama** needs a server at v0.5.0 or later. Ollama Cloud and the MLX runner accept the schema but do not enforce it.
 - **Bedrock** rejects recursive schemas, and map values are untyped.
-- **A native parameter you set yourself conflicts.** Do not put `response_format` (OpenAI-compatible providers) or `output_config` (Anthropic) in `additional_kwargs` or model parameters when you use an output schema. Azure OpenAI, watsonx and DashScope raise an error when the schema would overwrite your value. Anthropic treats the request as infeasible.
+- **A native parameter you set yourself conflicts.** Do not put `response_format` (OpenAI-compatible providers) or `output_config` (Anthropic) in `additional_kwargs` or model parameters when you use an output schema. Azure OpenAI, watsonx and DashScope raise an error when the schema would overwrite your value. Anthropic treats the request as blocked.
 - **Cross-language setups never go native.** A chat model from the other language, reached through a [cross-language resource]({{< ref "docs/development/calling-llms/chat-models#using-cross-language-providers" >}}), cannot carry a schema across the bridge. `AUTO` and `PROMPT` use the prompt path, and `NATIVE` raises. To use a provider natively, declare the agent in that provider's language.
 
 For example, this Azure OpenAI setup goes native under `AUTO`, because the deployment's model is `gpt-4o-mini`. Without `model_of_azure_deployment`, the same setup would use the prompt path.
