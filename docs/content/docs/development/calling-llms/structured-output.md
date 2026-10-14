@@ -29,7 +29,7 @@ Structured output makes a chat model return an object that matches a schema you 
 There are two ways to get the model to follow the schema:
 
 - **Native:** the schema is sent in the provider's own structured-output parameter (for example OpenAI `response_format` or Anthropic `output_config`). The provider constrains the model's output to the schema.
-- **Prompt:** the schema is described in the prompt text, and the model is asked to reply in JSON. This works with every model, but nothing enforces the shape.
+- **Prompt:** the model is asked in the prompt text to reply in JSON that matches the schema, and the framework parses the reply. This works with every model, but nothing enforces the shape.
 
 You choose a *strategy*, and each provider connection reports whether it can apply the schema natively. The framework combines the two for every request.
 
@@ -61,7 +61,12 @@ agent = ReActAgent(chat_model=chat_model_descriptor, output_schema=Review)
 ctx.send_event(
     ChatRequestEvent(
         model="my_chat_model",
-        messages=[ChatMessage.user(text)],
+        messages=[
+            ChatMessage.user(
+                "Review the text below. Reply in JSON with the fields"
+                f" summary and sentiment.\n\n{text}"
+            )
+        ],
         output_schema=OutputSchema(output_schema=Review),
     )
 )
@@ -81,7 +86,13 @@ ReActAgent agent = new ReActAgent(chatModelDescriptor, prompt, Review.class);
 // Custom action
 ctx.sendEvent(
         new ChatRequestEvent(
-                "myChatModel", List.of(ChatMessage.user(text)), Review.class));
+                "myChatModel",
+                List.of(
+                        ChatMessage.user(
+                                "Review the text below. Reply in JSON with the fields"
+                                        + " summary and sentiment.\n\n"
+                                        + text)),
+                Review.class));
 ```
 {{< /tab >}}
 
@@ -169,14 +180,25 @@ Each connection answers one of three things for a request:
 
 ## How a Native Request Runs
 
-When a request carries a schema and the strategy resolves to native, the built-in `chat_model_action` makes up to two model calls:
+When a request carries a schema, the two paths differ only inside the built-in `chat_model_action`. Your actions send and handle the same events either way:
+
+```text
+Prompt path:  ChatRequestEvent → model call (tool loop)
+                               → parse JSON answer → ChatResponseEvent
+
+Native path:  ChatRequestEvent → model call (no schema, tool loop)
+                               → conversion call (schema, no tools)
+                               → parse answer → ChatResponseEvent
+```
+
+When the strategy resolves to native, the built-in `chat_model_action` makes up to two model calls:
 
 1. **Loop call.** The model runs with its tools and **no schema**, so it can call tools freely. The tool loop works as usual.
 2. **Conversion call.** When the model stops calling tools, the framework sends one tool-free request that carries the schema. Its only message asks the model to convert the loop's answer into the required format without adding information.
 
 The conversion response is parsed into the structured output, and is also the `response` on the `ChatResponseEvent`. The conversion call has its own durable-execution record and its own tracing span, separate from the loop call.
 
-On the prompt path there is a single call, and the framework parses the JSON text of the answer.
+On the prompt path there is a single call, and the framework parses the JSON text of the answer. The framework does not add the schema to your messages. The ReAct Agent adds its own instruction (below); in a custom action, ask for JSON matching the schema in your own prompt. Do this even under `AUTO`, because the request falls back to the prompt path whenever native output does not apply.
 
 The [ReAct Agent]({{< ref "docs/development/react_agent" >}}) adjusts its schema prompt to match. On the prompt path it tells the model to answer in JSON that matches the schema. On the native path the model only needs to put the information for every required field in its answer, in any format, because the conversion call formats it. If it cannot determine whether the call will be native, it keeps the JSON instruction.
 
@@ -201,12 +223,47 @@ If the answer cannot be parsed, the request fails with a failed `ChatResponseEve
 
 Notes:
 
-- **Azure OpenAI** matches `model_of_azure_deployment`, not the deployment name, because a deployment name can be anything. If you do not set it, the answer is "feasible", so `AUTO` stays on the prompt path. Set it to get `AUTO` native on Azure.
+- **Azure OpenAI** matches `model_of_azure_deployment`, not the deployment name, because a deployment name can be anything. If you do not set it, the answer is "feasible", so `AUTO` stays on the prompt path. Set it to get `AUTO` native on Azure, as in the example below.
 - **Gemini** reports infeasible when the request binds tools. The conversion call is tool-free, so this only affects direct connection calls. A newer model that does not support the schema field fails with `400 INVALID_ARGUMENT`. Constraints such as `pattern` and `minLength` are ignored by the server.
 - **Ollama** needs a server at v0.5.0 or later. Ollama Cloud and the MLX runner accept the schema but do not enforce it.
 - **Bedrock** rejects recursive schemas, and map values are untyped.
 - **A native parameter you set yourself conflicts.** Do not put `response_format` (OpenAI-compatible providers) or `output_config` (Anthropic) in `additional_kwargs` or model parameters when you use an output schema. Azure OpenAI, watsonx and DashScope raise an error when the schema would overwrite your value. Anthropic treats the request as infeasible.
 - **Cross-language setups never go native.** A chat model from the other language, reached through a [cross-language resource]({{< ref "docs/development/calling-llms/chat-models#using-cross-language-providers" >}}), cannot carry a schema across the bridge. `AUTO` and `PROMPT` use the prompt path, and `NATIVE` raises. To use a provider natively, declare the agent in that provider's language.
+
+For example, this Azure OpenAI setup goes native under `AUTO`, because the deployment's model is `gpt-4o-mini`. Without `model_of_azure_deployment`, the same setup would use the prompt path.
+
+{{< tabs "Azure OpenAI Example" >}}
+
+{{< tab "Python" >}}
+```python
+@chat_model_setup
+@staticmethod
+def azure_openai_chat_model() -> ResourceDescriptor:
+    return ResourceDescriptor(
+        clazz=ResourceName.ChatModel.AZURE_OPENAI_SETUP,
+        connection="azure_openai_connection",
+        model="my-deployment",  # Your Azure deployment name
+        model_of_azure_deployment="gpt-4o-mini",  # The model behind it
+    )
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+@ChatModelSetup
+public static ResourceDescriptor azureOpenAIChatModel() {
+    return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.AZURE_OPENAI_SETUP)
+            .addInitialArgument("connection", "azureOpenAIConnection")
+            .addInitialArgument("model", "my-deployment") // Your Azure deployment name
+            .addInitialArgument("model_of_azure_deployment", "gpt-4o-mini") // The model behind it
+            .build();
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+The connection's `api_version` must be `2024-08-01` or later, for example `2024-10-21`.
 
 ## Schema Rules
 
