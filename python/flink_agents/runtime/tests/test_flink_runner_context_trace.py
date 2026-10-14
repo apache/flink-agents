@@ -18,6 +18,8 @@
 #################################################################################
 from unittest.mock import MagicMock
 
+import pytest
+
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
     ExecutionProblemCategories,
@@ -30,84 +32,24 @@ def test_flink_runner_context_is_execution_reporter() -> None:
     assert issubclass(FlinkRunnerContext, ExecutionReporter)
 
 
-def test_timestamped_execution_reports_forward_to_java_context() -> None:
+@pytest.mark.parametrize(
+    ("chain_attribute", "error_type", "error_message"),
+    [
+        ("__cause__", "builtins.ValueError", "invalid model response"),
+        ("__context__", "builtins.RuntimeError", "structured output failed"),
+    ],
+)
+def test_failed_execution_reports_explicit_cause_only(
+    chain_attribute: str, error_type: str, error_message: str
+) -> None:
     java_context = MagicMock()
     ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
     ctx._j_runner_context = java_context
-
-    ctx.report_execution_created(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        {"toolCallId": "call-1"},
-    )
-    ctx.report_execution_started_at(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        {"toolCallId": "call-1"},
-        "2026-01-01T00:00:00.001Z",
-    )
-    ctx.report_execution_succeeded_at(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        {"toolCallId": "call-1"},
-        "2026-01-01T00:00:00.025Z",
-    )
-
-    java_context.reportExecutionCreatedJson.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        '{"toolCallId": "call-1"}',
-    )
-    java_context.reportExecutionStartedAtJson.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        '{"toolCallId": "call-1"}',
-        "2026-01-01T00:00:00.001Z",
-    )
-    java_context.reportExecutionSucceededAtJson.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        '{"toolCallId": "call-1"}',
-        "2026-01-01T00:00:00.025Z",
-    )
-
-
-def test_failed_execution_reports_deepest_explicit_cause() -> None:
-    java_context = MagicMock()
-    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
-    ctx._j_runner_context = java_context
-    root_error = ValueError("invalid model response")
-    wrapped_error = RuntimeError("structured output failed")
-    wrapped_error.__cause__ = root_error
-
-    ctx.report_execution_failed(
-        ExecutionEntityTypes.PARSER,
-        "structured_output",
-        {},
-        wrapped_error,
-        ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
-    )
-
-    java_context.reportExecutionFailedJson.assert_called_once_with(
-        ExecutionEntityTypes.PARSER,
-        "structured_output",
-        "{}",
-        "builtins.ValueError",
-        "invalid model response",
-        ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
-    )
-
-
-def test_failed_execution_does_not_follow_implicit_context() -> None:
-    java_context = MagicMock()
-    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
-    ctx._j_runner_context = java_context
-    context_error = ValueError("invalid model response")
     reported_error = RuntimeError("structured output failed")
-    reported_error.__context__ = context_error
-    assert reported_error.__cause__ is None
+    setattr(reported_error, chain_attribute, ValueError("invalid model response"))
 
     ctx.report_execution_failed(
+        "execution-1",
         ExecutionEntityTypes.PARSER,
         "structured_output",
         {},
@@ -116,10 +58,42 @@ def test_failed_execution_does_not_follow_implicit_context() -> None:
     )
 
     java_context.reportExecutionFailedJson.assert_called_once_with(
+        "execution-1",
         ExecutionEntityTypes.PARSER,
         "structured_output",
         "{}",
-        "builtins.RuntimeError",
-        "structured output failed",
+        error_type,
+        error_message,
         ExecutionProblemCategories.MODEL_OUTPUT_PARSE_ERROR,
     )
+
+
+@pytest.mark.parametrize(
+    ("python_method", "java_method"),
+    [
+        ("created", "Created"),
+        ("started", "Started"),
+        ("started_at", "StartedAt"),
+        ("succeeded", "Succeeded"),
+        ("succeeded_at", "SucceededAt"),
+        ("failed_at", "FailedAt"),
+    ],
+)
+def test_execution_reports_forward_identity_and_payload(
+    python_method, java_method
+) -> None:
+    java_context = MagicMock()
+    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
+    ctx._j_runner_context = java_context
+    args = ["execution-1", "tool", "search", {"key": "value"}]
+    expected = ["execution-1", "tool", "search", '{"key": "value"}']
+    if python_method == "failed_at":
+        args.extend([ValueError("boom"), "tool_call_failed"])
+        expected.extend(["builtins.ValueError", "boom", "tool_call_failed"])
+    if python_method.endswith("_at"):
+        args.append("2026-01-01T00:00:00Z")
+        expected.append("2026-01-01T00:00:00Z")
+    getattr(ctx, "report_execution_" + python_method)(*args)
+    getattr(
+        java_context, "reportExecution" + java_method + "Json"
+    ).assert_called_once_with(*expected)

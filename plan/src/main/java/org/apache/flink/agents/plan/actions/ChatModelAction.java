@@ -485,7 +485,8 @@ public class ChatModelAction {
                 }
                 lastError = e.error;
                 LOG.debug(
-                        "Chat request {} failed for model {} with error: {}. The input chat messages are {}.",
+                        "Chat request {} failed for model {} with error: {}. The input chat"
+                                + " messages are {}.",
                         initialRequestId,
                         e.model,
                         e.error.toString(),
@@ -618,15 +619,18 @@ public class ChatModelAction {
 
     static ChatMessage generateStructuredOutputWithReport(
             RunnerContext ctx, ChatMessage response, Object outputSchema) throws Exception {
-        ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+        String executionId =
+                ExecutionReporters.started(
+                        ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
         try {
             ChatMessage structuredResponse = generateStructuredOutput(response, outputSchema);
             ExecutionReporters.succeeded(
-                    ctx, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
+                    ctx, executionId, ExecutionReporter.EntityTypes.PARSER, STRUCTURED_OUTPUT);
             return structuredResponse;
         } catch (Throwable e) {
             throw reportFailedAndPropagate(
                     ctx,
+                    executionId,
                     ExecutionReporter.EntityTypes.PARSER,
                     STRUCTURED_OUTPUT,
                     null,
@@ -749,6 +753,7 @@ public class ChatModelAction {
      */
     static Exception reportFailedAndPropagate(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             @Nullable Map<String, Object> entityMetadata,
@@ -756,10 +761,17 @@ public class ChatModelAction {
             String problemCategory)
             throws Exception {
         if (entityMetadata == null) {
-            ExecutionReporters.failed(ctx, entityType, entityName, error, problemCategory);
+            ExecutionReporters.failed(
+                    ctx, executionId, entityType, entityName, error, problemCategory);
         } else {
             ExecutionReporters.failed(
-                    ctx, entityType, entityName, entityMetadata, error, problemCategory);
+                    ctx,
+                    executionId,
+                    entityType,
+                    entityName,
+                    entityMetadata,
+                    error,
+                    problemCategory);
         }
         if (error instanceof Error) {
             throw (Error) error;

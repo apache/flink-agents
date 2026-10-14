@@ -38,6 +38,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -145,8 +146,12 @@ class TraceLogWriterTest {
                 List.of(
                         inputRecord(null),
                         TraceRecords.started(action),
-                        TraceRecords.started(action.childExecution("tool", "lookup", null)),
-                        TraceRecords.started(action.childExecution("tool", "other", null)));
+                        TraceRecords.started(
+                                action.childExecution(
+                                        UUID.randomUUID().toString(), "tool", "lookup", null)),
+                        TraceRecords.started(
+                                action.childExecution(
+                                        UUID.randomUUID().toString(), "tool", "other", null)));
 
         records.forEach(writer::appendAndFlush);
 

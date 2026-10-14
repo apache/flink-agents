@@ -26,9 +26,15 @@ import java.util.Map;
  * current Action.
  *
  * <p>A reported execution is one call, such as an LLM request, parser invocation, Tool call, or
- * Subagent call. Reports about the same call must use the same entity type, name, and metadata.
- * Metadata must distinguish calls with the same type and name that can overlap, and should remain
- * small, structured, and serializable.
+ * Subagent call. The caller allocates a unique, non-blank execution ID for each call or retry
+ * attempt, and supplies that ID with every report about it, including repeated reports. The
+ * creation and start helpers in {@link ExecutionReporters} can allocate this ID. Reports for one
+ * call must use the same entity type and name. Metadata describes the call but does not identify
+ * it; it should remain small, structured, and serializable.
+ *
+ * <p>Reports may be missing, repeated, or delivered after the observed operation. An execution ID
+ * identifies a call, not an individual report. Reporting does not deduplicate observations or
+ * establish a complete lifecycle.
  *
  * <p>Implementations decide how reports are consumed or ignored.
  */
@@ -62,23 +68,31 @@ public interface ExecutionReporter {
      * default implementation ignores it. A later start, success, or failure report is not
      * guaranteed; missing reports do not establish whether the call ran.
      *
+     * @param executionId the unique identity allocated by the caller for this call
      * @param entityType the call type, such as LLM, parser, tool, or subagent
      * @param entityName the call target's name, such as a model or tool name
-     * @param entityMetadata small structured metadata shared by all reports about the call
+     * @param entityMetadata small structured metadata describing the call
      */
     default void reportExecutionCreated(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception {}
 
     /**
      * Reports that a call made within the current Action started.
      *
+     * @param executionId the unique identity allocated by the caller for this call
      * @param entityType the call type, such as LLM, parser, tool, or subagent
      * @param entityName the call target's name, such as a model or tool name
-     * @param entityMetadata small structured metadata shared by all reports about the call
+     * @param entityMetadata small structured metadata describing the call
      */
     void reportExecutionStarted(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception;
 
     /**
@@ -87,21 +101,26 @@ public interface ExecutionReporter {
      * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionStartedAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
-        reportExecutionStarted(entityType, entityName, entityMetadata);
+        reportExecutionStarted(executionId, entityType, entityName, entityMetadata);
     }
 
     /**
      * Reports that a call completed successfully.
      *
-     * <p>The entity type, name, and metadata must match any creation or start report for the call.
+     * <p>The execution ID, entity type, and name must match any creation or start report for the
+     * call.
      */
     void reportExecutionSucceeded(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception;
 
     /**
@@ -110,21 +129,23 @@ public interface ExecutionReporter {
      * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionSucceededAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
-        reportExecutionSucceeded(entityType, entityName, entityMetadata);
+        reportExecutionSucceeded(executionId, entityType, entityName, entityMetadata);
     }
 
     /**
      * Reports that a call failed.
      *
-     * <p>The entity type, name, and metadata must match any creation or start report for the call.
-     * The problem category should be a stable, low-cardinality classification.
+     * <p>The execution ID, entity type, and name must match any creation or start report for the
+     * call. The problem category should be a stable, low-cardinality classification.
      */
     void reportExecutionFailed(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -138,6 +159,7 @@ public interface ExecutionReporter {
      * <p>Implementations that do not retain the supplied timestamp may use their observation time.
      */
     default void reportExecutionFailedAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -145,6 +167,7 @@ public interface ExecutionReporter {
             @Nullable String problemCategory,
             String timestamp)
             throws Exception {
-        reportExecutionFailed(entityType, entityName, entityMetadata, error, problemCategory);
+        reportExecutionFailed(
+                executionId, entityType, entityName, entityMetadata, error, problemCategory);
     }
 }

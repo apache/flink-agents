@@ -31,6 +31,7 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -97,7 +98,9 @@ class TraceRecordJsonSerdeTest {
         TraceContext action =
                 TraceContext.forAction(
                         TraceContext.forInputRun("key", "agent"), "classify", "input");
-        TraceContext context = action.childExecution("llm", "model", Map.of("model", "demo"));
+        TraceContext context =
+                action.childExecution(
+                        UUID.randomUUID().toString(), "llm", "model", Map.of("model", "demo"));
         Map<String, Object> attributes =
                 "failed".equals(status)
                         ? Map.of("errorType", "ParseError", "errorMessage", "malformed JSON")

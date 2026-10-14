@@ -151,10 +151,16 @@ public final class TraceContext implements Serializable {
                 entityMetadata);
     }
 
-    /** Creates a child execution whose parent is the current execution. */
+    /** Describes a child execution with the caller's identity and this execution as its parent. */
     @Internal
     public TraceContext childExecution(
-            String entityType, String entityName, @Nullable Map<String, Object> entityMetadata) {
+            String childExecutionId,
+            String entityType,
+            String entityName,
+            @Nullable Map<String, Object> entityMetadata) {
+        if (childExecutionId == null || childExecutionId.isBlank()) {
+            throw new IllegalArgumentException("executionId must not be null or blank.");
+        }
         if (executionId == null || executionId.isEmpty()) {
             throw new IllegalArgumentException("A child execution must have a parent execution.");
         }
@@ -165,7 +171,7 @@ public final class TraceContext implements Serializable {
                 inputRunId,
                 businessKey,
                 agentName,
-                UUID.randomUUID().toString(),
+                childExecutionId,
                 executionId,
                 requireNonEmpty(entityType, "entityType"),
                 requireNonEmpty(entityName, "entityName"),

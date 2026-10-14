@@ -215,7 +215,9 @@ public final class ChatModelInvoker {
                         : Map.of(LLMExecutionMetadataKeys.MODEL, chatModel.getModel());
 
         for (int attempt = 0; attempt < numRetries + 1; attempt++) {
-            ExecutionReporters.started(ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+            String executionId =
+                    ExecutionReporters.started(
+                            ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
             // Keep persistence and recovery failures outside the request-failure catch.
             InvocationOutcome outcome;
             try {
@@ -237,6 +239,7 @@ public final class ChatModelInvoker {
                 } catch (Throwable modelError) {
                     throw ChatModelAction.reportFailedAndPropagate(
                             ctx,
+                            executionId,
                             ExecutionReporter.EntityTypes.LLM,
                             model,
                             llmMetadata,
@@ -244,7 +247,7 @@ public final class ChatModelInvoker {
                             ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 }
                 ExecutionReporters.succeeded(
-                        ctx, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
+                        ctx, executionId, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
                 ChatModelAction.recordChatTokenMetrics(chatModel, response, requestMetricGroup);
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
@@ -277,7 +280,8 @@ public final class ChatModelInvoker {
                     actualRetryCount = attempt + 1;
                     int currentWaitSec = retryWaitIntervalSec * (1 << (actualRetryCount - 1));
                     LOG.warn(
-                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {} s.",
+                            "Chat request {} failed with error: {}, retrying {} / {}, waiting {}"
+                                    + " s.",
                             initialRequestId,
                             e,
                             actualRetryCount,

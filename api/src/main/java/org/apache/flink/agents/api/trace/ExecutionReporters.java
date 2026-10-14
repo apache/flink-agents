@@ -24,12 +24,17 @@ import org.slf4j.LoggerFactory;
 import javax.annotation.Nullable;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * Helpers for reporting the creation, start, and outcome of calls made within an Action through a
  * {@link RunnerContext} that implements {@link ExecutionReporter}.
  *
  * <p>Contexts that do not implement this capability are ignored.
+ *
+ * <p>Creation and start helpers without an execution ID allocate and return a new call's ID, even
+ * when its report is ignored. Retain that ID for subsequent reports about the same call, including
+ * repeated observations. Helpers receiving an execution ID preserve it.
  *
  * <p>These helpers are best-effort: reporter failures are ignored so reporting never changes Action
  * success or failure. When reporting a failed call, reporter failures are also attached as
@@ -44,38 +49,81 @@ public final class ExecutionReporters {
 
     private ExecutionReporters() {}
 
-    public static void created(RunnerContext ctx, String entityType, String entityName) {
-        created(ctx, entityType, entityName, EMPTY_METADATA);
+    /** Reports a new call's creation and returns its execution ID. */
+    public static String created(RunnerContext ctx, String entityType, String entityName) {
+        return created(ctx, entityType, entityName, EMPTY_METADATA);
+    }
+
+    /** Reports a new call's creation and returns its execution ID. */
+    public static String created(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata) {
+        String executionId = UUID.randomUUID().toString();
+        created(ctx, executionId, entityType, entityName, entityMetadata);
+        return executionId;
     }
 
     public static void created(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata) {
         report(
                 ctx,
-                reporter -> reporter.reportExecutionCreated(entityType, entityName, entityMetadata),
+                reporter ->
+                        reporter.reportExecutionCreated(
+                                executionId, entityType, entityName, entityMetadata),
                 null);
     }
 
-    public static void started(RunnerContext ctx, String entityType, String entityName) {
-        started(ctx, entityType, entityName, EMPTY_METADATA);
+    /** Reports a new call's start and returns its execution ID. */
+    public static String started(RunnerContext ctx, String entityType, String entityName) {
+        return started(ctx, entityType, entityName, EMPTY_METADATA);
+    }
+
+    /** Reports a new call's start and returns its execution ID. */
+    public static String started(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata) {
+        String executionId = UUID.randomUUID().toString();
+        started(ctx, executionId, entityType, entityName, entityMetadata);
+        return executionId;
     }
 
     public static void started(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata) {
         report(
                 ctx,
-                reporter -> reporter.reportExecutionStarted(entityType, entityName, entityMetadata),
+                reporter ->
+                        reporter.reportExecutionStarted(
+                                executionId, entityType, entityName, entityMetadata),
                 null);
+    }
+
+    /** Reports a new call's start at the supplied timestamp and returns its execution ID. */
+    public static String startedAt(
+            RunnerContext ctx,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata,
+            String timestamp) {
+        String executionId = UUID.randomUUID().toString();
+        startedAt(ctx, executionId, entityType, entityName, entityMetadata, timestamp);
+        return executionId;
     }
 
     public static void startedAt(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -84,28 +132,32 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionStartedAt(
-                                entityType, entityName, entityMetadata, timestamp),
+                                executionId, entityType, entityName, entityMetadata, timestamp),
                 null);
     }
 
-    public static void succeeded(RunnerContext ctx, String entityType, String entityName) {
-        succeeded(ctx, entityType, entityName, EMPTY_METADATA);
+    public static void succeeded(
+            RunnerContext ctx, String executionId, String entityType, String entityName) {
+        succeeded(ctx, executionId, entityType, entityName, EMPTY_METADATA);
     }
 
     public static void succeeded(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata) {
         report(
                 ctx,
                 reporter ->
-                        reporter.reportExecutionSucceeded(entityType, entityName, entityMetadata),
+                        reporter.reportExecutionSucceeded(
+                                executionId, entityType, entityName, entityMetadata),
                 null);
     }
 
     public static void succeededAt(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -114,21 +166,23 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionSucceededAt(
-                                entityType, entityName, entityMetadata, timestamp),
+                                executionId, entityType, entityName, entityMetadata, timestamp),
                 null);
     }
 
     public static void failed(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Throwable error,
             @Nullable String problemCategory) {
-        failed(ctx, entityType, entityName, EMPTY_METADATA, error, problemCategory);
+        failed(ctx, executionId, entityType, entityName, EMPTY_METADATA, error, problemCategory);
     }
 
     public static void failed(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -138,12 +192,18 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionFailed(
-                                entityType, entityName, entityMetadata, error, problemCategory),
+                                executionId,
+                                entityType,
+                                entityName,
+                                entityMetadata,
+                                error,
+                                problemCategory),
                 error);
     }
 
     public static void failedAt(
             RunnerContext ctx,
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -154,6 +214,7 @@ public final class ExecutionReporters {
                 ctx,
                 reporter ->
                         reporter.reportExecutionFailedAt(
+                                executionId,
                                 entityType,
                                 entityName,
                                 entityMetadata,

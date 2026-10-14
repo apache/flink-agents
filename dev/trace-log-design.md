@@ -131,7 +131,9 @@ These relationships preserve a distinction between an Event's identity and the e
 - `producerExecutionId` is absent when there is no producing Action execution, as with a root InputEvent. Framework-generated Events retain their existing source information even when no Action execution can be referenced.
 - `eventId` identifies the Event, not a unique observation. The same Event may appear in multiple records, including when a saved output is replayed during recovery.
 - On replay, `producerExecutionId` identifies the execution emitting the saved output at that point. This may differ from the execution that originally produced it.
-- `executionId` retains its existing task creation and restoration semantics. A restart does not necessarily assign a new execution ID.
+- Action `executionId` retains its existing task creation and restoration semantics. A restart does not necessarily assign a new Action execution ID.
+- For a new component invocation or retry attempt, the `created` and `started` reporting helpers, including timestamped starts, can allocate and return an `executionId`. The caller retains and explicitly reuses that ID in subsequent lifecycle reports, including duplicate reports. Overlapping calls with identical type, name, and metadata receive different IDs. Metadata may evolve across reports and is not a correlation key.
+- Ordinary asynchronous waits retain the component call's ID. Failover or replay may create new component call IDs. Stable correlation within a call does not guarantee a terminal observation, exactly-once output, or deduplication after recovery.
 
 Source fields move from the programming-model Event to Trace metadata. Custom Event construction and reconstruction continue to use the Event's ID, type, and attributes.
 
@@ -166,7 +168,7 @@ In the previous Event Log model, the runtime wrote `upstreamEventId` and `upstre
 
 - When creating an Action task, it records the triggering Event's ID in the Action's TraceContext as `entityMetadata.triggerEventId`.
 - When constructing a TraceRecord for an Event emitted by that Action, it reads the triggering Event ID, Action name, and execution ID from the current task. These become `upstreamEventId`, `upstreamActionName`, and `producerExecutionId` in the Event record's `entityMetadata`.
-- Component calls continue to use child execution contexts, retaining their execution IDs and parent execution references.
+- Component reports use the caller-supplied execution ID to construct child execution contexts, retaining their parent execution references. Correlation does not infer a call's identity from its type, name, or metadata; the existing JSON fields carry these identities and relationships.
 
 ##### 3. Preserve context independently of record filtering
 
@@ -317,6 +319,7 @@ The migration affects log producers, readers, configuration, and some runtime st
 | EventListener | Callback signatures, timing, and EventContext behavior are unchanged. Trace settings do not affect callback delivery or the Event payload received by listeners. |
 | Custom Events | Construction and reconstruction retain the Event's ID, type, and attributes. Code that directly accesses the removed upstream fields must be updated, including EventListener implementations that read those fields. |
 | Event JSON | The Event model no longer includes `upstreamEventId` or `upstreamActionName`; source relationships belong to Trace metadata. Compatibility with Event JSON from previous versions is not guaranteed. Producers, consumers, and external data must adopt the current Event schema. |
+| ExecutionReporter | Java and Python component reporting APIs require an explicit execution ID. Callers can obtain it from a creation or start helper and must pass the same ID throughout one invocation or retry attempt, including duplicate reports, using a new ID for each subsequent attempt. Custom implementations must accept this explicit ID. Action lifecycle behavior and the output JSON fields are unchanged by this requirement. |
 | Internal reporting helpers | ExecutionTraceContext, lifecycle Event factories, and reporting internals can be refactored without a separate deprecation period for each internal helper. |
 | Custom log output | Custom output integrations must adapt to TraceRecord and the new recording-level semantics. Compatibility with the previous logging extension interfaces is outside scope. |
 | Log format | Producers and the built-in reader use TraceRecord. Historical Event Log formats are unsupported. External queries and parsers must migrate field mappings and output metadata. |

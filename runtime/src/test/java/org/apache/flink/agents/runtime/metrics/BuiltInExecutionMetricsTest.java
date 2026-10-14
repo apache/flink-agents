@@ -22,14 +22,21 @@ import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
+import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
 import org.apache.flink.metrics.MetricGroup;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -47,6 +54,80 @@ class BuiltInExecutionMetricsTest {
         metricGroup = new FlinkAgentsMetricGroupImpl(parentMetricGroup);
         Set<String> registeredTools = Set.of("search", "fetch", "load_skill");
         metrics = new BuiltInExecutionMetrics(metricGroup, registeredTools::contains);
+    }
+
+    @Test
+    void overlappingReportsWithIdenticalMetadataMeasureTheirOwnCallLatency() throws Exception {
+        RunnerContextImpl runner =
+                new RunnerContextImpl(
+                        null,
+                        () -> {},
+                        new AgentPlan(new HashMap<>(), new HashMap<>()),
+                        null,
+                        "job");
+        TraceContext action =
+                TraceContext.forAction(
+                        TraceContext.forInputRun("key", "agent"), ACTION_NAME, "trigger-event");
+        runner.switchActionContext(
+                ACTION_NAME,
+                null,
+                new ArrayList<>(),
+                "key",
+                "obs",
+                false,
+                new ExecutionReportingContext(
+                        action,
+                        List.of(record -> metrics.executionRecordObserved(ACTION_NAME, record))));
+
+        runner.reportExecutionStartedAt(
+                "call-a", "llm", "primary_model", Map.of(), Instant.EPOCH.toString());
+        runner.reportExecutionStartedAt(
+                "call-b",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(10).toString());
+        runner.reportExecutionSucceededAt(
+                "call-b",
+                "llm",
+                "primary_model",
+                Map.of("responseModel", "resolved"),
+                Instant.EPOCH.plusMillis(40).toString());
+        runner.reportExecutionSucceededAt(
+                "call-a",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(100).toString());
+
+        FlinkAgentsMetricGroupImpl model =
+                actionMetricGroup().getSubGroup("model_resource", "primary_model");
+        assertThat(model.getCounter(LlmExecutionMetricRecorder.NUM_LLM_CALLS_SUCCEEDED).getCount())
+                .isEqualTo(2);
+        assertThat(model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS).getCount())
+                .isEqualTo(2);
+        assertThat(
+                        model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getStatistics()
+                                .getMin())
+                .isEqualTo(30);
+        assertThat(
+                        model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS)
+                                .getStatistics()
+                                .getMax())
+                .isEqualTo(100);
+
+        // Outcome counting remains observation-based; identity does not introduce deduplication.
+        runner.reportExecutionSucceededAt(
+                "call-a",
+                "llm",
+                "primary_model",
+                Map.of(),
+                Instant.EPOCH.plusMillis(110).toString());
+        assertThat(model.getCounter(LlmExecutionMetricRecorder.NUM_LLM_CALLS_SUCCEEDED).getCount())
+                .isEqualTo(3);
+        assertThat(model.getHistogram(LlmExecutionMetricRecorder.LLM_CALL_LATENCY_MS).getCount())
+                .isEqualTo(2);
     }
 
     @Test
@@ -356,6 +437,7 @@ class BuiltInExecutionMetricsTest {
         TraceContext action =
                 TraceContext.forAction(
                         TraceContext.forInputRun("key", "agent"), ACTION_NAME, "trigger-event");
-        return action.childExecution(entityType, entityName, metadata);
+        return action.childExecution(
+                UUID.randomUUID().toString(), entityType, entityName, metadata);
     }
 }

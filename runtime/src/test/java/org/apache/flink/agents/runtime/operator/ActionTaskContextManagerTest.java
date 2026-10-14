@@ -320,7 +320,7 @@ class ActionTaskContextManagerTest {
                     from.getRunnerContext().getExecutionReportingContext();
             from.getRunnerContext()
                     .reportExecutionCreated(
-                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
             mgr.removeContexts(from);
             mgr.transferContexts(from, to, new DurableExecutionManager(null));
@@ -329,7 +329,7 @@ class ActionTaskContextManagerTest {
                     .isSameAs(reportingContext);
             to.getRunnerContext()
                     .reportExecutionStarted(
-                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
             ActionTask other = new JavaActionTask("other", new InputEvent(2L), action, 2L);
             invokeCreateAndSetRunnerContext(
@@ -341,7 +341,7 @@ class ActionTaskContextManagerTest {
                     .isSameAs(reportingContext);
             to.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.TOOL, "slow-tool", Map.of());
 
             assertThat(factoryInvocations.get()).isOne();
             assertThat(listener.records)
@@ -382,22 +382,25 @@ class ActionTaskContextManagerTest {
 
             invokeCreateAndSetRunnerContext(mgr, taskA, factory);
             taskA.getRunnerContext()
-                    .reportExecutionCreated(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                    .reportExecutionCreated(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
             invokeCreateAndSetRunnerContext(mgr, taskB, factory);
             assertThat(taskB.getRunnerContext()).isSameAs(taskA.getRunnerContext());
             taskB.getRunnerContext()
-                    .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                    .reportExecutionStarted(
+                            "call-2", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
             mgr.restore("a", taskA);
             taskA.getRunnerContext()
-                    .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                    .reportExecutionStarted(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
             taskA.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
             mgr.restore("b", taskB);
             taskB.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                            "call-2", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
             assertThat(records).hasSize(5);
             String executionA = records.get(0).getContext().getExecutionId();
@@ -424,7 +427,7 @@ class ActionTaskContextManagerTest {
     }
 
     @Test
-    void removingContextsDropsExecutionReportingContext() throws Exception {
+    void removingContextsReplacesListenersWithoutRewritingTheSuppliedIdentity() throws Exception {
         try (ActionTaskContextManager mgr = newManager()) {
             ActionTask task =
                     new JavaActionTask("k", new InputEvent(1L), TestActions.noopAction(), 1L);
@@ -439,13 +442,14 @@ class ActionTaskContextManagerTest {
 
             invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
-                    .reportExecutionStarted(ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                    .reportExecutionStarted(
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
             mgr.removeContexts(task);
             invokeCreateAndSetRunnerContext(mgr, task, factory);
             task.getRunnerContext()
                     .reportExecutionSucceeded(
-                            ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
+                            "call-1", ExecutionReporter.EntityTypes.LLM, "model-a", Map.of());
 
             // A released contexts record starts a fresh reporting context on the next preparation.
             assertThat(created).hasSize(2);
@@ -456,7 +460,8 @@ class ActionTaskContextManagerTest {
                     .extracting(TraceRecord::getStatus)
                     .containsExactly(TraceRecord.Statuses.SUCCESS);
             assertThat(created.get(1).records.get(0).getContext().getExecutionId())
-                    .isNotEqualTo(created.get(0).records.get(0).getContext().getExecutionId());
+                    .isEqualTo("call-1")
+                    .isEqualTo(created.get(0).records.get(0).getContext().getExecutionId());
         }
     }
 
@@ -480,6 +485,7 @@ class ActionTaskContextManagerTest {
                                     List.of(new RecordingComponentListener())));
             task.getRunnerContext()
                     .reportExecutionStarted(
+                            "call-1",
                             ExecutionReporter.EntityTypes.TOOL,
                             "search",
                             Map.of("toolCallId", "call-1"));

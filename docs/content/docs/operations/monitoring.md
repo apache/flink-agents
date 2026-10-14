@@ -319,6 +319,10 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 
 One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
 
+For a new component invocation or retry attempt, the `created` and `started` reporting helpers, including timestamped starts, can allocate and return an `executionId`. The caller retains that ID and explicitly passes it to all subsequent reports for the call, including duplicate reports. The underlying `ExecutionReporter` API requires an explicit ID. Overlapping calls with identical type, name, and metadata have different IDs. Metadata may change between reports; correlate the observations by `executionId`.
+
+An ordinary asynchronous wait retains the component call's ID. Failover or replay may create new component call IDs; Action execution IDs and lifecycle behavior retain their existing semantics. Trace output remains best effort and may contain missing or repeated records. An ID does not guarantee exactly-once output, deduplication, or a terminal observation for every call.
+
 ### Recording Level
 
 | Level | Behavior |
@@ -385,6 +389,7 @@ Malformed records, conflicting Event identities, missing upstream Events, and cy
 
 - The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`, and the current output settings.
 - Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `level`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
+- Custom Java and Python `ExecutionReporter` implementations and callers must accept and pass an explicit `executionId` for each component call's lifecycle reports. Callers can obtain it from a creation or start helper and must retain it across reports, using a new ID for each invocation or retry attempt. This requirement uses the existing JSON fields.
 - File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.
 - The log metrics are `traceLogTruncatedRecords` and `traceLogWriteFailures`. Update dashboards and alert queries using their old names.
 - Python Event IDs identify occurrences using UUID4. Equal payloads do not imply equal Event IDs.

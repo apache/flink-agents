@@ -28,6 +28,7 @@ import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -108,10 +109,16 @@ class BuiltInMetricsTest {
                 TraceContext.forAction(inputRun, "restored_action", "trigger-event");
         TraceContext completedActionLlm =
                 completedAction.childExecution(
-                        ExecutionReporter.EntityTypes.LLM, "primary_model", Map.of());
+                        UUID.randomUUID().toString(),
+                        ExecutionReporter.EntityTypes.LLM,
+                        "primary_model",
+                        Map.of());
         TraceContext activeActionLlm =
                 activeAction.childExecution(
-                        ExecutionReporter.EntityTypes.LLM, "secondary_model", Map.of());
+                        UUID.randomUUID().toString(),
+                        ExecutionReporter.EntityTypes.LLM,
+                        "secondary_model",
+                        Map.of());
         metrics.restoreActionTask(completedAction, false);
 
         metrics.markExecutionRecord("restored_action", TraceRecords.started(completedActionLlm));

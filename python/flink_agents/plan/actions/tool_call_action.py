@@ -115,6 +115,7 @@ class _ToolCallOccurrence:
 
 @dataclass(frozen=True)
 class _ToolCallExecution:
+    trace_execution_id: str
     id: str
     name: str
     func: Any
@@ -223,20 +224,15 @@ def _build_tool_call_executions(
         # that sub-agent instead of bucketing the reserved callable name as an unknown
         # tool. An unresolved _subagent_ name keeps the tool scope and lands in
         # tool=unknown.
-        if agent is not None:
-            ExecutionReporters.created(
-                ctx,
-                ExecutionEntityTypes.SUBAGENT,
-                name[len(CALLABLE_NAME_PREFIX) :],
-                entity_metadata,
-            )
-        else:
-            ExecutionReporters.created(
-                ctx,
-                ExecutionEntityTypes.TOOL,
-                name,
-                entity_metadata,
-            )
+        entity_type = (
+            ExecutionEntityTypes.SUBAGENT
+            if agent is not None
+            else ExecutionEntityTypes.TOOL
+        )
+        entity_name = name[len(CALLABLE_NAME_PREFIX) :] if agent is not None else name
+        trace_execution_id = ExecutionReporters.created(
+            ctx, entity_type, entity_name, entity_metadata
+        )
 
         unresolved = tool is None and agent is None
         if unresolved or preparation_error is not None:
@@ -250,8 +246,9 @@ def _build_tool_call_executions(
             error[call_id] = str(failure)
             ExecutionReporters.failed(
                 ctx,
-                ExecutionEntityTypes.TOOL,
-                name,
+                trace_execution_id,
+                entity_type,
+                entity_name,
                 entity_metadata,
                 failure,
                 ExecutionProblemCategories.TOOL_CALL_FAILED,
@@ -264,6 +261,7 @@ def _build_tool_call_executions(
             # it again here would nest durable cursors.
             executions.append(
                 _ToolCallExecution(
+                    trace_execution_id=trace_execution_id,
                     id=call_id,
                     name=name,
                     func=None,
@@ -279,6 +277,7 @@ def _build_tool_call_executions(
             occurrence = _ToolCallOccurrence()
             executions.append(
                 _ToolCallExecution(
+                    trace_execution_id=trace_execution_id,
                     id=call_id,
                     name=name,
                     func=occurrence.wrap(tool.call),
@@ -492,6 +491,7 @@ def _report_subagent_started(execution: _ToolCallExecution, ctx: RunnerContext) 
             _subagent_report_name(execution),
             execution.entity_metadata,
             started_at.isoformat().replace("+00:00", "Z"),
+            execution_id=execution.trace_execution_id,
         )
 
 
@@ -517,6 +517,7 @@ def _record_agent_failure(
     execution.occurrence.mark_finished()
     ExecutionReporters.failed_at(
         ctx,
+        execution.trace_execution_id,
         ExecutionEntityTypes.SUBAGENT,
         _subagent_report_name(execution),
         execution.entity_metadata,
@@ -542,6 +543,7 @@ def _record_agent_result(
         execution.occurrence.mark_finished()
         ExecutionReporters.succeeded_at(
             ctx,
+            execution.trace_execution_id,
             ExecutionEntityTypes.SUBAGENT,
             _subagent_report_name(execution),
             execution.entity_metadata,
@@ -559,6 +561,7 @@ def _record_agent_result(
         execution.occurrence.mark_finished()
         ExecutionReporters.failed_at(
             ctx,
+            execution.trace_execution_id,
             ExecutionEntityTypes.SUBAGENT,
             _subagent_report_name(execution),
             execution.entity_metadata,
@@ -599,6 +602,7 @@ def _report_execution(
             execution.name,
             execution.entity_metadata,
             started_at.isoformat().replace("+00:00", "Z"),
+            execution_id=execution.trace_execution_id,
         )
     if outcome is None:
         return
@@ -612,6 +616,7 @@ def _report_execution(
     if failure is None:
         ExecutionReporters.succeeded_at(
             ctx,
+            execution.trace_execution_id,
             ExecutionEntityTypes.TOOL,
             execution.name,
             execution.entity_metadata,
@@ -620,6 +625,7 @@ def _report_execution(
     else:
         ExecutionReporters.failed_at(
             ctx,
+            execution.trace_execution_id,
             ExecutionEntityTypes.TOOL,
             execution.name,
             execution.entity_metadata,

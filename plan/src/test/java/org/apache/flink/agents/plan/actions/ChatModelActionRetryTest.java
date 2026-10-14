@@ -33,6 +33,7 @@ import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.tools.ToolResponse;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
+import org.apache.flink.agents.plan.AgentConfiguration;
 import org.apache.flink.metrics.Counter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,9 +44,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.mockito.invocation.Invocation;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -185,10 +188,17 @@ class ChatModelActionRetryTest {
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter)
                 .reportExecutionStarted(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        assertInvocationIdentities(reporter, 1);
     }
 
     @Test
@@ -209,10 +219,17 @@ class ChatModelActionRetryTest {
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter)
                 .reportExecutionStarted(
-                        ExecutionReporter.EntityTypes.PARSER, Agent.STRUCTURED_OUTPUT, Map.of());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()));
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.PARSER, Agent.STRUCTURED_OUTPUT, Map.of());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.PARSER),
+                        eq(Agent.STRUCTURED_OUTPUT),
+                        eq(Map.of()));
+        assertInvocationIdentities(reporter, 2);
     }
 
     @Test
@@ -238,12 +255,19 @@ class ChatModelActionRetryTest {
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter, times(2))
                 .reportExecutionStarted(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
         verify(reporter, times(2))
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
         verify(reporter)
                 .reportExecutionFailed(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.PARSER),
                         eq(Agent.STRUCTURED_OUTPUT),
                         eq(Map.of()),
@@ -251,18 +275,21 @@ class ChatModelActionRetryTest {
                         eq(ExecutionReporter.ProblemCategories.MODEL_OUTPUT_PARSE_ERROR));
         verify(reporter, never())
                 .reportExecutionFailed(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
                         eq(LLM_METADATA),
                         any(Throwable.class),
                         any());
+        assertInvocationIdentities(reporter, 4);
     }
 
-    @Test
-    void chatReportsEachRetriedModelInvocation() throws Exception {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void chatReportsEachRetriedModelInvocation(boolean async) throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
         BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
-        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
+        when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0, async));
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(new RuntimeException("transient error"))
                 .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "success"));
@@ -278,9 +305,13 @@ class ChatModelActionRetryTest {
         ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
         verify(reporter, times(2))
                 .reportExecutionStarted(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
         verify(reporter)
                 .reportExecutionFailed(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
                         eq(LLM_METADATA),
@@ -288,7 +319,11 @@ class ChatModelActionRetryTest {
                         eq(ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED));
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        assertInvocationIdentities(reporter, 2);
     }
 
     @Test
@@ -560,19 +595,22 @@ class ChatModelActionRetryTest {
         // must be recorded before the response is rejected.
         verify(reporter)
                 .reportExecutionSucceeded(
-                        ExecutionReporter.EntityTypes.LLM, "test-model", LLM_METADATA);
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
         verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 100L, 50L);
         // The parse is never attempted, so nothing about it is reported. The failed
         // check is unscoped: the rejection must not be reported as a failure of any
         // entity, the model call included.
         verify(reporter, never())
                 .reportExecutionStarted(
-                        eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
+                        anyString(), eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
         verify(reporter, never())
                 .reportExecutionSucceeded(
-                        eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
+                        anyString(), eq(ExecutionReporter.EntityTypes.PARSER), anyString(), any());
         verify(reporter, never())
-                .reportExecutionFailed(anyString(), anyString(), any(), any(), any());
+                .reportExecutionFailed(anyString(), anyString(), anyString(), any(), any(), any());
         assertThat(sentEvents).hasSize(1);
         assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isTrue();
     }
@@ -634,61 +672,31 @@ class ChatModelActionRetryTest {
 
     // --- Helper methods ---
 
+    private static void assertInvocationIdentities(ExecutionReporter reporter, int expectedCalls) {
+        Map<String, List<Invocation>> calls = new LinkedHashMap<>();
+        for (Invocation report : mockingDetails(reporter).getInvocations()) {
+            if (!report.getMethod().getName().startsWith("reportExecution")) {
+                continue;
+            }
+            String executionId = report.getArgument(0);
+            assertThat(executionId).isNotBlank();
+            calls.computeIfAbsent(executionId, ignored -> new ArrayList<>()).add(report);
+        }
+        assertThat(calls).hasSize(expectedCalls);
+        for (List<Invocation> reports : calls.values()) {
+            assertThat(reports).hasSize(2);
+            assertThat(reports.get(0).getMethod().getName()).isEqualTo("reportExecutionStarted");
+            assertThat(reports.get(1).getMethod().getName())
+                    .isIn("reportExecutionSucceeded", "reportExecutionFailed");
+            assertThat(reports.get(1).<String>getArgument(1))
+                    .isEqualTo(reports.get(0).<String>getArgument(1));
+            assertThat(reports.get(1).<String>getArgument(2))
+                    .isEqualTo(reports.get(0).<String>getArgument(2));
+        }
+    }
+
     private void configureRetryStrategy(int maxRetries, int waitIntervalSec) {
-        when(mockCtx.getConfig())
-                .thenAnswer(
-                        inv -> {
-                            // Return a mock ReadableConfiguration
-                            return new org.apache.flink.agents.api.configuration
-                                    .ReadableConfiguration() {
-                                @Override
-                                @SuppressWarnings("unchecked")
-                                public <T> T get(
-                                        org.apache.flink.agents.api.configuration.ConfigOption<T>
-                                                option) {
-                                    if (option == AgentExecutionOptions.MAX_RETRIES) {
-                                        return (T) Integer.valueOf(maxRetries);
-                                    }
-                                    if (option == AgentExecutionOptions.RETRY_WAIT_INTERVAL) {
-                                        return (T) Integer.valueOf(waitIntervalSec);
-                                    }
-                                    if (option == AgentExecutionOptions.CHAT_ASYNC) {
-                                        return (T) Boolean.FALSE;
-                                    }
-                                    return option.getDefaultValue();
-                                }
-
-                                @Override
-                                public Integer getInt(String key, Integer defaultValue) {
-                                    return defaultValue;
-                                }
-
-                                @Override
-                                public Long getLong(String key, Long defaultValue) {
-                                    return defaultValue;
-                                }
-
-                                @Override
-                                public Float getFloat(String key, Float defaultValue) {
-                                    return defaultValue;
-                                }
-
-                                @Override
-                                public Double getDouble(String key, Double defaultValue) {
-                                    return defaultValue;
-                                }
-
-                                @Override
-                                public Boolean getBool(String key, Boolean defaultValue) {
-                                    return defaultValue;
-                                }
-
-                                @Override
-                                public String getStr(String key, String defaultValue) {
-                                    return defaultValue;
-                                }
-                            };
-                        });
+        when(mockCtx.getConfig()).thenReturn(readableConfig(maxRetries, waitIntervalSec));
     }
 
     private RunnerContext reportingRunnerContext() {
@@ -706,65 +714,40 @@ class ChatModelActionRetryTest {
                 .thenReturn(chatModel);
         when(reportingCtx.getSensoryMemory()).thenReturn(memory);
         when(reportingCtx.getActionMetricGroup()).thenReturn(mockActionMetricGroup);
-        when(reportingCtx.<ChatMessage>durableExecute(any()))
-                .thenAnswer(inv -> inv.<DurableCallable<ChatMessage>>getArgument(0).call());
+        when(reportingCtx.durableExecute(any()))
+                .thenAnswer(
+                        invocation -> {
+                            DurableCallable<?> callable = invocation.getArgument(0);
+                            assertThat(callable.getId()).isEqualTo("chat");
+                            return callable.call();
+                        });
+        when(reportingCtx.durableExecuteAsync(any()))
+                .thenAnswer(
+                        invocation -> {
+                            DurableCallable<?> callable = invocation.getArgument(0);
+                            assertThat(callable.getId()).isEqualTo("chat");
+                            return new TestDurableFuture<>(callable.getId(), callable::call);
+                        });
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(reportingCtx).sendEvent(any());
         when(reportingCtx.getConfig()).thenReturn(readableConfig());
         return chatModel;
     }
 
-    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig() {
+    private AgentConfiguration readableConfig() {
         return readableConfig(0, 0);
     }
 
-    private org.apache.flink.agents.api.configuration.ReadableConfiguration readableConfig(
-            int maxRetries, int retryWaitIntervalSec) {
-        return new org.apache.flink.agents.api.configuration.ReadableConfiguration() {
-            @Override
-            @SuppressWarnings("unchecked")
-            public <T> T get(org.apache.flink.agents.api.configuration.ConfigOption<T> option) {
-                if (option == AgentExecutionOptions.MAX_RETRIES) {
-                    return (T) Integer.valueOf(maxRetries);
-                }
-                if (option == AgentExecutionOptions.RETRY_WAIT_INTERVAL) {
-                    return (T) Integer.valueOf(retryWaitIntervalSec);
-                }
-                if (option == AgentExecutionOptions.CHAT_ASYNC) {
-                    return (T) Boolean.FALSE;
-                }
-                return option.getDefaultValue();
-            }
+    private AgentConfiguration readableConfig(int maxRetries, int retryWaitIntervalSec) {
+        return readableConfig(maxRetries, retryWaitIntervalSec, false);
+    }
 
-            @Override
-            public Integer getInt(String key, Integer defaultValue) {
-                return defaultValue;
-            }
-
-            @Override
-            public Long getLong(String key, Long defaultValue) {
-                return defaultValue;
-            }
-
-            @Override
-            public Float getFloat(String key, Float defaultValue) {
-                return defaultValue;
-            }
-
-            @Override
-            public Double getDouble(String key, Double defaultValue) {
-                return defaultValue;
-            }
-
-            @Override
-            public Boolean getBool(String key, Boolean defaultValue) {
-                return defaultValue;
-            }
-
-            @Override
-            public String getStr(String key, String defaultValue) {
-                return defaultValue;
-            }
-        };
+    private AgentConfiguration readableConfig(
+            int maxRetries, int retryWaitIntervalSec, boolean async) {
+        AgentConfiguration config = new AgentConfiguration();
+        config.set(AgentExecutionOptions.MAX_RETRIES, maxRetries);
+        config.set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, retryWaitIntervalSec);
+        config.set(AgentExecutionOptions.CHAT_ASYNC, async);
+        return config;
     }
 
     /**

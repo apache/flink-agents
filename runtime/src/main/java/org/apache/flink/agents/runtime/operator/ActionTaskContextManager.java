@@ -442,8 +442,7 @@ class ActionTaskContextManager implements AutoCloseable {
         // outlives the removed contexts, so events emitted before a suspend survive into the
         // generated task.
         requireContexts(toTask).pendingEvents = fromTask.getRunnerContext().getPendingEvents();
-        // Retain call reporting context so calls that started before suspension keep their
-        // identity.
+        // Retain the parent Action context and listeners for reports emitted after suspension.
         requireContexts(toTask).executionReportingContext =
                 fromTask.getRunnerContext().getExecutionReportingContext();
         RunnerContextImpl.DurableExecutionContext durableContext =

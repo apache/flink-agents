@@ -369,12 +369,15 @@ def _reject_incomplete_response(response: ChatMessage) -> None:
 def _generate_structured_output_with_report(
     ctx: RunnerContext, response: ChatMessage, output_schema: OutputSchema
 ) -> ChatMessage:
-    ExecutionReporters.started(ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT)
+    execution_id = ExecutionReporters.started(
+        ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+    )
     try:
         structured_response = _generate_structured_output(response, output_schema)
     except Exception as e:
         ExecutionReporters.failed(
             ctx,
+            execution_id,
             ExecutionEntityTypes.PARSER,
             STRUCTURED_OUTPUT,
             {},
@@ -384,7 +387,7 @@ def _generate_structured_output_with_report(
         raise
     else:
         ExecutionReporters.succeeded(
-            ctx, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
+            ctx, execution_id, ExecutionEntityTypes.PARSER, STRUCTURED_OUTPUT
         )
         return structured_response
 
@@ -452,7 +455,7 @@ async def chat(
 
     try:
         for attempt in range(num_retries + 1):
-            ExecutionReporters.started(
+            execution_id = ExecutionReporters.started(
                 ctx, ExecutionEntityTypes.LLM, model, llm_metadata
             )
             # Persistence/recovery failures must escape the request-failure boundary.
@@ -470,6 +473,7 @@ async def chat(
                 except Exception as model_error:
                     ExecutionReporters.failed(
                         ctx,
+                        execution_id,
                         ExecutionEntityTypes.LLM,
                         model,
                         llm_metadata,
@@ -478,7 +482,7 @@ async def chat(
                     )
                     raise
                 ExecutionReporters.succeeded(
-                    ctx, ExecutionEntityTypes.LLM, model, llm_metadata
+                    ctx, execution_id, ExecutionEntityTypes.LLM, model, llm_metadata
                 )
 
                 if (

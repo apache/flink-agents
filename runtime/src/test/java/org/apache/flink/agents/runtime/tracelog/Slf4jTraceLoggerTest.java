@@ -54,6 +54,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;
@@ -251,7 +252,11 @@ class Slf4jTraceLoggerTest {
                         "action-name",
                         "input-id");
         TraceContext toolContext =
-                actionContext.childExecution("tool", "tool-name", Map.of("detail", "long-detail"));
+                actionContext.childExecution(
+                        UUID.randomUUID().toString(),
+                        "tool",
+                        "tool-name",
+                        Map.of("detail", "long-detail"));
         TraceRecord record =
                 TraceRecords.failed(
                         toolContext,

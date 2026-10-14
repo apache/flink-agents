@@ -74,35 +74,58 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     }
 
     public void reportExecutionCreatedJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionCreated(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionCreated(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionStartedJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionStarted(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionStarted(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionStartedAtJson(
-            String entityType, String entityName, String entityMetadataJson, String timestamp)
+            String executionId,
+            String entityType,
+            String entityName,
+            String entityMetadataJson,
+            String timestamp)
             throws Exception {
         reportExecutionStartedAt(
-                entityType, entityName, parseEntityMetadata(entityMetadataJson), timestamp);
+                executionId,
+                entityType,
+                entityName,
+                parseEntityMetadata(entityMetadataJson),
+                timestamp);
     }
 
     public void reportExecutionSucceededJson(
-            String entityType, String entityName, String entityMetadataJson) throws Exception {
-        reportExecutionSucceeded(entityType, entityName, parseEntityMetadata(entityMetadataJson));
+            String executionId, String entityType, String entityName, String entityMetadataJson)
+            throws Exception {
+        reportExecutionSucceeded(
+                executionId, entityType, entityName, parseEntityMetadata(entityMetadataJson));
     }
 
     public void reportExecutionSucceededAtJson(
-            String entityType, String entityName, String entityMetadataJson, String timestamp)
+            String executionId,
+            String entityType,
+            String entityName,
+            String entityMetadataJson,
+            String timestamp)
             throws Exception {
         reportExecutionSucceededAt(
-                entityType, entityName, parseEntityMetadata(entityMetadataJson), timestamp);
+                executionId,
+                entityType,
+                entityName,
+                parseEntityMetadata(entityMetadataJson),
+                timestamp);
     }
 
     public void reportExecutionFailedJson(
+            String executionId,
             String entityType,
             String entityName,
             String entityMetadataJson,
@@ -111,6 +134,7 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             String problemCategory)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 parseEntityMetadata(entityMetadataJson),
@@ -121,6 +145,7 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
     }
 
     public void reportExecutionFailedAtJson(
+            String executionId,
             String entityType,
             String entityName,
             String entityMetadataJson,
@@ -130,6 +155,7 @@ public class PythonRunnerContextImpl extends RunnerContextImpl {
             String timestamp)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 parseEntityMetadata(entityMetadataJson),

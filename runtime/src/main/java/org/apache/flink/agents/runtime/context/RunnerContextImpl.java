@@ -59,7 +59,6 @@ import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
-import org.apache.flink.agents.runtime.trace.ReportedExecutionKey;
 import org.apache.flink.agents.runtime.utils.EventUtil;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
@@ -153,7 +152,6 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Internal
     public static final class ExecutionReportingContext {
         private final TraceContext actionTraceContext;
-        private final Map<ReportedExecutionKey, TraceContext> activeCalls = new HashMap<>();
         private final List<ComponentExecutionListener> listeners;
 
         public ExecutionReportingContext(
@@ -163,6 +161,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         }
 
         private TraceRecord createRecord(
+                String executionId,
                 String entityType,
                 String entityName,
                 Map<String, Object> entityMetadata,
@@ -170,38 +169,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
                 String status,
                 @Nullable String problemCategory,
                 Map<String, Object> attributes) {
-            ReportedExecutionKey key =
-                    new ReportedExecutionKey(entityType, entityName, entityMetadata);
-            TraceContext previous = activeCalls.get(key);
-            boolean created = TraceRecord.Statuses.CREATED.equals(status);
-            TraceContext reportTraceContext =
-                    created || previous == null
-                            ? actionTraceContext.childExecution(
-                                    entityType, entityName, key.getEntityMetadata())
-                            : previous;
-            TraceRecord record =
-                    new TraceRecord(
-                            reportTraceContext, timestamp, status, problemCategory, attributes);
-
-            // Commit the pairing change only after the record has been validated.
-            if (created || TraceRecord.Statuses.STARTED.equals(status)) {
-                activeCalls.put(key, reportTraceContext);
-                if (created && previous != null) {
-                    LOG.debug(
-                            "Execution creation report for {}:{} replaced an active report with the same metadata.",
-                            entityType,
-                            entityName);
-                }
-            } else {
-                activeCalls.remove(key);
-                if (previous == null) {
-                    LOG.debug(
-                            "Execution terminal report for {}:{} has no matching creation or start report; emitting it with a new execution id.",
-                            entityType,
-                            entityName);
-                }
-            }
-            return record;
+            return new TraceRecord(
+                    actionTraceContext.childExecution(
+                            executionId, entityType, entityName, entityMetadata),
+                    timestamp,
+                    status,
+                    problemCategory,
+                    attributes);
         }
     }
 
@@ -591,9 +565,13 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public void reportExecutionCreated(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 entityMetadata,
@@ -605,19 +583,25 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public void reportExecutionStarted(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception {
-        reportExecutionStartedAt(entityType, entityName, entityMetadata, Instant.now().toString());
+        reportExecutionStartedAt(
+                executionId, entityType, entityName, entityMetadata, Instant.now().toString());
     }
 
     @Override
     public void reportExecutionStartedAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 entityMetadata,
@@ -629,20 +613,25 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public void reportExecutionSucceeded(
-            String entityType, String entityName, Map<String, Object> entityMetadata)
+            String executionId,
+            String entityType,
+            String entityName,
+            Map<String, Object> entityMetadata)
             throws Exception {
         reportExecutionSucceededAt(
-                entityType, entityName, entityMetadata, Instant.now().toString());
+                executionId, entityType, entityName, entityMetadata, Instant.now().toString());
     }
 
     @Override
     public void reportExecutionSucceededAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
             String timestamp)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 entityMetadata,
@@ -654,6 +643,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public void reportExecutionFailed(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -661,6 +651,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             @Nullable String problemCategory)
             throws Exception {
         reportExecutionFailedAt(
+                executionId,
                 entityType,
                 entityName,
                 entityMetadata,
@@ -671,6 +662,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     @Override
     public void reportExecutionFailedAt(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -679,6 +671,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             String timestamp)
             throws Exception {
         reportChildExecution(
+                executionId,
                 entityType,
                 entityName,
                 entityMetadata,
@@ -693,6 +686,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * are best-effort and do not fail the caller.
      */
     protected void reportChildExecution(
+            String executionId,
             String entityType,
             String entityName,
             Map<String, Object> entityMetadata,
@@ -709,6 +703,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         try {
             record =
                     reportingContext.createRecord(
+                            executionId,
                             entityType,
                             entityName,
                             entityMetadata,

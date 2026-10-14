@@ -39,6 +39,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.MockedStatic;
+import org.mockito.invocation.Invocation;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -65,6 +66,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -87,7 +89,12 @@ class ToolCallActionReportTest {
         when(ctx.getResource("search", ResourceType.TOOL)).thenReturn(tool);
         when(ctx.getConfig()).thenReturn(toolCallConfig());
         when(ctx.<ToolResponse>durableExecute(any()))
-                .thenAnswer(inv -> inv.<DurableCallable<ToolResponse>>getArgument(0).call());
+                .thenAnswer(
+                        invocation -> {
+                            DurableCallable<ToolResponse> callable = invocation.getArgument(0);
+                            assertThat(callable.getId()).isEqualTo("tool-call:call-1");
+                            return callable.call();
+                        });
         doAnswer(inv -> sentEvents.add(inv.getArgument(0))).when(ctx).sendEvent(any());
 
         Map<String, Object> function = new LinkedHashMap<>();
@@ -109,17 +116,23 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.MCP_SERVER, "search-server");
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter)
-                .reportExecutionCreated(ExecutionReporter.EntityTypes.TOOL, "search", metadata);
+                .reportExecutionCreated(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        eq(metadata));
         ArgumentCaptor<String> startedAt = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
         verify(reporter)
                 .reportExecutionStartedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         eq(metadata),
                         startedAt.capture());
         verify(reporter)
                 .reportExecutionSucceededAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         eq(metadata),
@@ -129,6 +142,7 @@ class ToolCallActionReportTest {
 
         assertThat(sentEvents).hasSize(1);
         assertThat(sentEvents.get(0)).isInstanceOf(ToolResponseEvent.class);
+        assertReportIdentities(reporter);
     }
 
     @Test
@@ -160,6 +174,7 @@ class ToolCallActionReportTest {
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter)
                 .reportExecutionFailedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         eq(metadata),
@@ -167,7 +182,8 @@ class ToolCallActionReportTest {
                         eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED),
                         anyString());
         verify(reporter, never())
-                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionSucceededAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
 
         ToolResponseEvent responseEvent = (ToolResponseEvent) sentEvents.get(0);
         assertThat(responseEvent.getSuccess()).containsEntry("call-1", false);
@@ -197,6 +213,7 @@ class ToolCallActionReportTest {
         assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1"));
         verify((ExecutionReporter) ctx)
                 .reportExecutionFailedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
@@ -237,6 +254,7 @@ class ToolCallActionReportTest {
         assertReports(ctx, List.of("call-1"), List.of(), List.of("call-1", "call-2", "call-3"));
         verify((ExecutionReporter) ctx, times(3))
                 .reportExecutionFailedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
@@ -267,18 +285,22 @@ class ToolCallActionReportTest {
         ArgumentCaptor<Map<String, Object>> createdMetadata = ArgumentCaptor.forClass(Map.class);
         verify(reporter)
                 .reportExecutionCreated(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("missing"),
                         createdMetadata.capture());
         verify(reporter)
                 .reportExecutionFailed(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("missing"),
                         eq(createdMetadata.getValue()),
                         any(Throwable.class),
                         eq(ExecutionReporter.ProblemCategories.TOOL_CALL_FAILED));
         verify(reporter, never())
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
+        assertReportIdentities(reporter);
     }
 
     @Test
@@ -316,21 +338,27 @@ class ToolCallActionReportTest {
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter, times(3))
                 .reportExecutionCreated(
-                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap());
         verify(reporter, times(3))
                 .reportExecutionStartedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
                         anyString());
         verify(reporter)
                 .reportExecutionSucceededAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
                         anyString());
         verify(reporter, times(2))
                 .reportExecutionFailedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
@@ -389,6 +417,7 @@ class ToolCallActionReportTest {
         ArgumentCaptor<String> timestamp = ArgumentCaptor.forClass(String.class);
         verify((ExecutionReporter) ctx, times(2))
                 .reportExecutionSucceededAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         metadata.capture(),
@@ -464,7 +493,13 @@ class ToolCallActionReportTest {
                 List.of("call-1", "call-2", "call-3"));
         verify((ExecutionReporter) ctx, times(3))
                 .reportExecutionFailedAt(
-                        anyString(), anyString(), anyMap(), eq(failure), anyString(), anyString());
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyMap(),
+                        eq(failure),
+                        anyString(),
+                        anyString());
         assertBusinessResponsesFailed(ctx);
     }
 
@@ -491,7 +526,13 @@ class ToolCallActionReportTest {
                 List.of("call-2"));
         verify((ExecutionReporter) ctx)
                 .reportExecutionFailedAt(
-                        anyString(), anyString(), anyMap(), eq(failure), anyString(), anyString());
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyMap(),
+                        eq(failure),
+                        anyString(),
+                        anyString());
         ArgumentCaptor<Event> event = ArgumentCaptor.forClass(Event.class);
         verify(ctx).sendEvent(event.capture());
         assertThat(((ToolResponseEvent) event.getValue()).getSuccess())
@@ -515,16 +556,22 @@ class ToolCallActionReportTest {
         ArgumentCaptor<Map<String, Object>> metadata = ArgumentCaptor.forClass(Map.class);
         verify((ExecutionReporter) ctx, times(3))
                 .reportExecutionCreated(
-                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), metadata.capture());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        metadata.capture());
         assertThat(metadata.getAllValues())
                 .extracting(value -> value.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
                 .containsExactlyInAnyOrder("call-1", "call-2", "call-3");
         verify((ExecutionReporter) ctx, never())
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verify((ExecutionReporter) ctx, never())
-                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionSucceededAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verify((ExecutionReporter) ctx, never())
                 .reportExecutionFailedAt(
+                        anyString(),
                         anyString(),
                         anyString(),
                         anyMap(),
@@ -567,7 +614,8 @@ class ToolCallActionReportTest {
                             return null;
                         })
                 .when((ExecutionReporter) ctx)
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
 
         try {
             ToolCallAction.processToolRequest(
@@ -576,6 +624,7 @@ class ToolCallActionReportTest {
             ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
             verify((ExecutionReporter) ctx)
                     .reportExecutionFailedAt(
+                            anyString(),
                             anyString(),
                             anyString(),
                             anyMap(),
@@ -647,13 +696,15 @@ class ToolCallActionReportTest {
                             return null;
                         })
                 .when((ExecutionReporter) ctx)
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
 
         try {
             ToolCallAction.processToolRequest(parallelRequest(), ctx);
             ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
             verify((ExecutionReporter) ctx, times(2))
                     .reportExecutionFailedAt(
+                            anyString(),
                             anyString(),
                             anyString(),
                             anyMap(),
@@ -702,7 +753,7 @@ class ToolCallActionReportTest {
                 });
         doAnswer(
                         invocation -> {
-                            Map<String, Object> metadata = invocation.getArgument(2);
+                            Map<String, Object> metadata = invocation.getArgument(3);
                             if ("call-1"
                                     .equals(metadata.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))) {
                                 // The delayed calls enter after the Action has observed the
@@ -715,7 +766,8 @@ class ToolCallActionReportTest {
                             return null;
                         })
                 .when((ExecutionReporter) ctx)
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
 
         try (MockedStatic<Instant> clock = mockStatic(Instant.class)) {
             clock.when(Instant::now).thenAnswer(invocation -> now.get());
@@ -731,6 +783,7 @@ class ToolCallActionReportTest {
         ArgumentCaptor<String> finishedAt = ArgumentCaptor.forClass(String.class);
         verify((ExecutionReporter) ctx, times(2))
                 .reportExecutionFailedAt(
+                        anyString(),
                         anyString(),
                         anyString(),
                         anyMap(),
@@ -817,14 +870,16 @@ class ToolCallActionReportTest {
         ArgumentCaptor<Map> successes = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<Map> failures = ArgumentCaptor.forClass(Map.class);
         verify(reporter, times(expectedCreated.size()))
-                .reportExecutionCreated(anyString(), anyString(), creations.capture());
+                .reportExecutionCreated(anyString(), anyString(), anyString(), creations.capture());
         verify(reporter, times(started.size()))
-                .reportExecutionStartedAt(anyString(), anyString(), starts.capture(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), starts.capture(), anyString());
         verify(reporter, times(succeeded.size()))
                 .reportExecutionSucceededAt(
-                        anyString(), anyString(), successes.capture(), anyString());
+                        anyString(), anyString(), anyString(), successes.capture(), anyString());
         verify(reporter, times(failed.size()))
                 .reportExecutionFailedAt(
+                        anyString(),
                         anyString(),
                         anyString(),
                         failures.capture(),
@@ -843,6 +898,25 @@ class ToolCallActionReportTest {
         assertThat(failures.getAllValues())
                 .extracting(m -> m.get(ToolExecutionMetadataKeys.TOOL_CALL_ID))
                 .containsExactlyInAnyOrderElementsOf(failed);
+        assertReportIdentities(reporter);
+    }
+
+    private static void assertReportIdentities(ExecutionReporter reporter) {
+        Map<String, String> callIds = new LinkedHashMap<>();
+        for (Invocation report : mockingDetails(reporter).getInvocations()) {
+            if (!report.getMethod().getName().startsWith("reportExecution")) {
+                continue;
+            }
+            String executionId = report.getArgument(0);
+            assertThat(executionId).isNotBlank();
+            Map<String, Object> metadata = report.getArgument(3);
+            String toolCallId = (String) metadata.get(ToolExecutionMetadataKeys.TOOL_CALL_ID);
+            String previousId = callIds.putIfAbsent(toolCallId, executionId);
+            if (previousId != null) {
+                assertThat(executionId).isEqualTo(previousId);
+            }
+        }
+        assertThat(callIds.values()).doesNotHaveDuplicates();
     }
 
     private static void assertBusinessResponsesFailed(RunnerContext ctx) {
@@ -892,6 +966,7 @@ class ToolCallActionReportTest {
         metadata.put(ToolExecutionMetadataKeys.SKILL_REGISTERED, true);
         verify((ExecutionReporter) ctx)
                 .reportExecutionStartedAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("load_skill"),
                         eq(metadata),
@@ -919,9 +994,11 @@ class ToolCallActionReportTest {
         verify(tool, never()).call(any());
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter, never())
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verify(reporter)
                 .reportExecutionSucceededAt(
+                        anyString(),
                         eq(ExecutionReporter.EntityTypes.TOOL),
                         eq("search"),
                         anyMap(),
@@ -951,9 +1028,13 @@ class ToolCallActionReportTest {
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter)
                 .reportExecutionCreated(
-                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap());
         verify(reporter, never())
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verifyNoTerminalReport(reporter);
     }
 
@@ -988,9 +1069,13 @@ class ToolCallActionReportTest {
         ExecutionReporter reporter = (ExecutionReporter) ctx;
         verify(reporter, times(2))
                 .reportExecutionCreated(
-                        eq(ExecutionReporter.EntityTypes.TOOL), eq("search"), anyMap());
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.TOOL),
+                        eq("search"),
+                        anyMap());
         verify(reporter, times(2))
-                .reportExecutionStartedAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionStartedAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verifyNoTerminalReport(reporter);
     }
 
@@ -1083,10 +1168,17 @@ class ToolCallActionReportTest {
 
     private static void verifyNoTerminalReport(ExecutionReporter reporter) throws Exception {
         verify(reporter, never())
-                .reportExecutionSucceededAt(anyString(), anyString(), anyMap(), anyString());
+                .reportExecutionSucceededAt(
+                        anyString(), anyString(), anyString(), anyMap(), anyString());
         verify(reporter, never())
                 .reportExecutionFailedAt(
-                        anyString(), anyString(), anyMap(), any(), anyString(), anyString());
+                        anyString(),
+                        anyString(),
+                        anyString(),
+                        anyMap(),
+                        any(),
+                        anyString(),
+                        anyString());
     }
 
     private static final class ReportingTool extends Tool implements ToolExecutionMetadataProvider {

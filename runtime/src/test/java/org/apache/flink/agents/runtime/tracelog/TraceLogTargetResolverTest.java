@@ -38,6 +38,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -494,7 +495,11 @@ class TraceLogTargetResolverTest {
         assertThat(
                         resolver.resolve(
                                 TraceRecord.create(
-                                        action.childExecution("tool", "lookup", null),
+                                        action.childExecution(
+                                                UUID.randomUUID().toString(),
+                                                "tool",
+                                                "lookup",
+                                                null),
                                         TraceRecord.Statuses.STARTED,
                                         null,
                                         null)))

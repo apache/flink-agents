@@ -23,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -66,15 +67,16 @@ class TraceContextTest {
         TraceContext action =
                 TraceContext.forAction(
                         TraceContext.forInputRun("key", "agent"), "classify", "input");
-        TraceContext tool = action.childExecution("tool", "search", Map.of("toolCallId", "call-1"));
+        TraceContext tool =
+                action.childExecution("tool-1", "tool", "search", Map.of("toolCallId", "call-1"));
 
         assertThat(tool.getInputRunId()).isEqualTo(action.getInputRunId());
         assertThat(tool.getAgentName()).isEqualTo("agent");
-        assertThat(tool.getExecutionId()).isNotEqualTo(action.getExecutionId());
+        assertThat(tool.getExecutionId()).isEqualTo("tool-1");
         assertThat(tool.getParentExecutionId()).isEqualTo(action.getExecutionId());
         assertThat(tool.getEntityMetadata())
                 .containsExactlyEntriesOf(Map.of("toolCallId", "call-1"));
-        assertThatThrownBy(() -> action.childExecution("event", "OrderCreated", null))
+        assertThatThrownBy(() -> action.childExecution("tool-1", "event", "OrderCreated", null))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
@@ -94,7 +96,10 @@ class TraceContextTest {
         TraceContext event = TraceContext.forEvent(run, "InputEvent", "input", null, null);
 
         for (TraceContext context : List.of(run, event)) {
-            assertThatThrownBy(() -> context.childExecution("tool", "search", null))
+            assertThatThrownBy(
+                            () ->
+                                    context.childExecution(
+                                            UUID.randomUUID().toString(), "tool", "search", null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("parent execution");
         }

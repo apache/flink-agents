@@ -15,7 +15,9 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
+
+import pytest
 
 from flink_agents.api.trace import (
     ExecutionEntityTypes,
@@ -25,106 +27,13 @@ from flink_agents.api.trace import (
 )
 
 
-def test_failed_reporter_uses_metadata_before_error() -> None:
-    ctx = MagicMock(spec=ExecutionReporter)
-    metadata = {"toolCallId": "call-1"}
-    error = RuntimeError("boom")
-
-    ExecutionReporters.failed(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        error,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-    )
-
-    ctx.report_execution_failed.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        error,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-    )
-
-
-def test_created_reporter_forwards_identity() -> None:
-    ctx = MagicMock(spec=ExecutionReporter)
-    metadata = {"toolCallId": "call-1"}
-
-    ExecutionReporters.created(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-    )
-
-    ctx.report_execution_created.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-    )
-
-
-def test_timestamped_reporters_forward_occurrence_timestamps() -> None:
-    ctx = MagicMock(spec=ExecutionReporter)
-    metadata = {"toolCallId": "call-1"}
-    error = RuntimeError("boom")
-
-    ExecutionReporters.started_at(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        "2026-01-01T00:00:00.001Z",
-    )
-    ExecutionReporters.succeeded_at(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        "2026-01-01T00:00:00.025Z",
-    )
-    ExecutionReporters.failed_at(
-        ctx,
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        error,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-        "2026-01-01T00:00:00.030Z",
-    )
-
-    ctx.report_execution_started_at.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        "2026-01-01T00:00:00.001Z",
-    )
-    ctx.report_execution_succeeded_at.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        "2026-01-01T00:00:00.025Z",
-    )
-    ctx.report_execution_failed_at.assert_called_once_with(
-        ExecutionEntityTypes.TOOL,
-        "search",
-        metadata,
-        error,
-        ExecutionProblemCategories.TOOL_CALL_FAILED,
-        "2026-01-01T00:00:00.030Z",
-    )
-
-
 def test_reporters_ignore_context_without_execution_reporter() -> None:
     ctx = MagicMock()
 
-    ExecutionReporters.created(ctx, ExecutionEntityTypes.LLM, "model")
-    ExecutionReporters.started(ctx, ExecutionEntityTypes.LLM, "model")
-    ExecutionReporters.succeeded(ctx, ExecutionEntityTypes.LLM, "model")
+    ExecutionReporters.succeeded(ctx, "execution-1", ExecutionEntityTypes.LLM, "model")
     ExecutionReporters.failed(
         ctx,
+        "execution-1",
         ExecutionEntityTypes.LLM,
         "model",
         None,
@@ -132,7 +41,95 @@ def test_reporters_ignore_context_without_execution_reporter() -> None:
         ExecutionProblemCategories.MODEL_CALL_FAILED,
     )
 
-    ctx.report_execution_created.assert_not_called()
-    ctx.report_execution_started.assert_not_called()
     ctx.report_execution_succeeded.assert_not_called()
     ctx.report_execution_failed.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["created", "started", "started_at"])
+@pytest.mark.parametrize("reporting", ["available", "unavailable", "failing"])
+def test_initial_reports_return_distinct_ids_independently_of_reporting(
+    method: str, reporting: str
+) -> None:
+    ctx = MagicMock(spec=None if reporting == "unavailable" else ExecutionReporter)
+    reporter = getattr(ctx, "report_execution_" + method)
+    if reporting == "failing":
+        reporter.side_effect = RuntimeError("report failed")
+    args = [ExecutionEntityTypes.TOOL, "search", {"toolCallId": "call-1"}]
+    if method == "started_at":
+        args.append("2026-01-01T00:00:00Z")
+    report = getattr(ExecutionReporters, method)
+    identities = [report(ctx, *args), report(ctx, *args, execution_id=None)]
+    assert identities[0] != identities[1]
+    assert all(
+        isinstance(identity, str) and identity.strip() for identity in identities
+    )
+    if reporting == "unavailable":
+        reporter.assert_not_called()
+    else:
+        assert reporter.call_args_list == [
+            call(identity, *args) for identity in identities
+        ]
+
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "created",
+        "started",
+        "started_at",
+        "succeeded",
+        "succeeded_at",
+        "failed",
+        "failed_at",
+    ],
+)
+def test_reporters_forward_arguments_and_ignore_reporting_failures(method: str) -> None:
+    ctx = MagicMock(spec=ExecutionReporter)
+    reporter = getattr(ctx, "report_execution_" + method)
+    reporter.side_effect = [None, RuntimeError("report failed")]
+    args = [
+        "",
+        ExecutionEntityTypes.TOOL,
+        "search",
+        {"toolCallId": "call-1"},
+    ]
+    if method.startswith("failed"):
+        args.extend(
+            [ValueError("business failed"), ExecutionProblemCategories.TOOL_CALL_FAILED]
+        )
+    if method.endswith("_at"):
+        args.append("2026-01-01T00:00:00Z")
+    initial_report = method in {"created", "started", "started_at"}
+    helper_args = args[1:] if initial_report else args
+    helper_kwargs = {"execution_id": args[0]} if initial_report else {}
+    for _ in range(2):
+        result = getattr(ExecutionReporters, method)(ctx, *helper_args, **helper_kwargs)
+        if initial_report:
+            assert result == args[0]
+    assert reporter.call_args_list == [call(*args), call(*args)]
+
+
+def test_reports_keep_identity_with_changed_metadata_or_repeated_reports() -> None:
+    ctx = MagicMock(spec=ExecutionReporter)
+    identities = []
+    for _ in range(2):
+        execution_id = ExecutionReporters.created(ctx, "custom", "same", {})
+        identities.append(execution_id)
+        assert (
+            ExecutionReporters.started(
+                ctx, "custom", "same", {"stage": "started"}, execution_id=execution_id
+            )
+            == execution_id
+        )
+        ExecutionReporters.succeeded(
+            ctx, execution_id, "custom", "same", {"result": "done"}
+        )
+        ExecutionReporters.succeeded(
+            ctx, execution_id, "custom", "same", {"result": "done"}
+        )
+    assert [
+        call.args[0] for call in ctx.report_execution_started.call_args_list
+    ] == identities
+    assert [call.args[0] for call in ctx.report_execution_succeeded.call_args_list] == [
+        identity for identity in identities for _ in range(2)
+    ]
