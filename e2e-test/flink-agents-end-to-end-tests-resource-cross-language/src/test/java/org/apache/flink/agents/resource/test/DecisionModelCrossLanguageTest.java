@@ -26,6 +26,7 @@ import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.agents.Agent;
+import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.annotation.Action;
 import org.apache.flink.agents.api.context.RunnerContext;
 import org.apache.flink.agents.api.decision.BaseDecisionModelConnection;
@@ -37,17 +38,26 @@ import org.apache.flink.agents.api.decision.DecisionResult.ChoiceAnswer;
 import org.apache.flink.agents.api.decision.DecisionResult.PredicateAnswer;
 import org.apache.flink.agents.api.decision.DecisionResult.RefusalAnswer;
 import org.apache.flink.agents.api.decision.DecisionResult.ScoreAnswer;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.plan.AgentPlan;
+import org.apache.flink.agents.plan.actions.DecisionModelAction;
+import org.apache.flink.agents.plan.utils.CancellationUtils;
 import org.apache.flink.agents.runtime.PythonMCPResourceDiscovery;
 import org.apache.flink.agents.runtime.ResourceCache;
+import org.apache.flink.agents.runtime.context.RunnerContextImpl;
+import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonInterpreterManager;
 import org.apache.flink.agents.runtime.python.utils.PythonResourceAdapterImpl;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.util.CloseableIterator;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import pemja.core.PythonInterpreter;
 import pemja.core.PythonInterpreterConfig;
 
@@ -56,6 +66,8 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -84,19 +96,58 @@ public class DecisionModelCrossLanguageTest {
         }
 
         @Action(EventType.InputEvent)
-        public static void decide(Event event, RunnerContext ctx) throws Exception {
-            BaseDecisionModelSetup setup =
-                    (BaseDecisionModelSetup) ctx.getResource("first", ResourceType.DECISION_MODEL);
+        public static void decide(Event event, RunnerContext ctx) {
+            ctx.sendEvent(
+                    new DecisionRequestEvent(
+                            "first", request(InputEvent.fromEvent(event).getInput())));
+        }
+
+        @Action(DecisionResponseEvent.EVENT_TYPE)
+        public static void emitResult(Event event, RunnerContext ctx) throws Exception {
             ctx.sendEvent(
                     new OutputEvent(
                             MAPPER.writeValueAsString(
-                                    setup.decide(
-                                            request(InputEvent.fromEvent(event).getInput())))));
+                                    DecisionResponseEvent.fromEvent(event).getResponse())));
         }
     }
 
     @Test
-    void preservesContractsAndSharedConnectionLifecycleThroughPemja() throws Exception {
+    @Timeout(45)
+    void preservesContractsAndSharedConnectionLifecycleThroughPemja(
+            @TempDir Path temporaryDirectory) throws Exception {
+        // Manual interpreter lifecycle checks need a separate CPython process from Flink jobs.
+        Path outputFile = temporaryDirectory.resolve("decision-lifecycle.log");
+        Process process =
+                new ProcessBuilder(
+                                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                                "--add-opens=java.base/java.util=ALL-UNNAMED",
+                                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+                                "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
+                                "-XX:ErrorFile=" + temporaryDirectory.resolve("hs_err_pid%p.log"),
+                                "-cp",
+                                System.getProperty(
+                                        "surefire.test.class.path",
+                                        System.getProperty("java.class.path")),
+                                ResourceLifecycleScenario.class.getName())
+                        .redirectErrorStream(true)
+                        .redirectOutput(outputFile.toFile())
+                        .start();
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        if (!finished) {
+            process.destroyForcibly().waitFor();
+        }
+        String output = Files.readString(outputFile);
+        assertThat(finished).as("Decision lifecycle scenario timed out:%n%s", output).isTrue();
+        assertThat(process.exitValue()).as("Decision lifecycle scenario:%n%s", output).isZero();
+    }
+
+    public static class ResourceLifecycleScenario {
+        public static void main(String[] args) throws Exception {
+            verifyResourceLifecycle();
+        }
+    }
+
+    private static void verifyResourceLifecycle() throws Exception {
         Path root = projectRoot();
         PythonInterpreterConfig config =
                 PythonInterpreterConfig.newBuilder()
@@ -107,8 +158,8 @@ public class DecisionModelCrossLanguageTest {
         PythonInterpreter interpreter = new PythonInterpreter(config);
         try (PythonInterpreterManager manager =
                 new PythonInterpreterManager(interpreter, () -> new PythonInterpreter(config))) {
-            interpreter.exec("from " + FIXTURE + " import reset, snapshot");
-            interpreter.invoke("reset");
+            interpreter.exec("import " + FIXTURE + " as decision_fixture");
+            interpreter.invoke("decision_fixture.reset");
             AgentPlan plan = new AgentPlan(new DecisionAgent());
             plan = MAPPER.readValue(MAPPER.writeValueAsString(plan), AgentPlan.class);
             ResourceCache cache = new ResourceCache(plan.getResourceProviders());
@@ -146,10 +197,12 @@ public class DecisionModelCrossLanguageTest {
                         new DecisionRequest(
                                 "input", Map.of("bad", Question.score(List.of(42), null)));
                 assertThatThrownBy(() -> second.decide(invalid)).hasMessageContaining("validation");
-                JsonNode live = MAPPER.readTree((String) interpreter.invoke("snapshot"));
+                JsonNode live =
+                        MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"));
                 assertThat(live.get("opens").asInt()).isEqualTo(1);
                 assertThat(live.get("closes").asInt()).isZero();
                 assertThat(live.get("calls").asInt()).isEqualTo(4);
+                verifyCancellationSignals(plan, cache, second, connection, interpreter);
             } finally {
                 try {
                     cache.close();
@@ -157,17 +210,88 @@ public class DecisionModelCrossLanguageTest {
                     adapter.close();
                 }
             }
-            JsonNode closed = MAPPER.readTree((String) interpreter.invoke("snapshot"));
+            JsonNode closed =
+                    MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"));
             assertThat(closed.get("closes").asInt()).isEqualTo(1);
         }
     }
 
+    private static void verifyCancellationSignals(
+            AgentPlan plan,
+            ResourceCache cache,
+            BaseDecisionModelSetup setup,
+            BaseDecisionModelConnection connection,
+            PythonInterpreter interpreter)
+            throws Exception {
+        plan.getConfig().set(AgentExecutionOptions.DECISION_ASYNC, false);
+        plan.getConfig().set(AgentExecutionOptions.MAX_RETRIES, 1);
+        plan.getConfig().set(AgentExecutionOptions.RETRY_WAIT_INTERVAL, 0);
+        for (String input : List.of("cancel", "async-cancel", "interrupt")) {
+            DecisionRequest cancelled = request(input);
+            boolean interrupted = input.equals("interrupt");
+            assertThatThrownBy(() -> setup.decide(cancelled))
+                    .isInstanceOf(CancellationException.class)
+                    .satisfies(
+                            error ->
+                                    assertThat(CancellationUtils.isInterruption(error))
+                                            .isEqualTo(interrupted));
+            assertThatThrownBy(() -> connection.decide(cancelled, "direct"))
+                    .isInstanceOf(CancellationException.class)
+                    .satisfies(
+                            error ->
+                                    assertThat(CancellationUtils.isInterruption(error))
+                                            .isEqualTo(interrupted));
+            int callsBefore =
+                    MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"))
+                            .get("calls")
+                            .asInt();
+            RunnerContextImpl context =
+                    new RunnerContextImpl(
+                            new FlinkAgentsMetricGroupImpl(
+                                    UnregisteredMetricGroups
+                                            .createUnregisteredOperatorMetricGroup()),
+                            () -> {},
+                            plan,
+                            cache,
+                            "decision-bridge-test") {
+                        {
+                            actionName = "decision_model_action";
+                        }
+                    };
+            try {
+                assertThatThrownBy(
+                                () ->
+                                        DecisionModelAction.processDecisionRequest(
+                                                new DecisionRequestEvent("second", cancelled),
+                                                context))
+                        .isInstanceOf(CancellationException.class);
+                assertThat(context.getPendingEvents()).isEmpty();
+                assertThat(Thread.currentThread().isInterrupted()).isEqualTo(interrupted);
+            } finally {
+                // The standalone scenario also checks lifecycle calls after interruption.
+                Thread.interrupted();
+            }
+            int callsAfter =
+                    MAPPER.readTree((String) interpreter.invoke("decision_fixture.snapshot"))
+                            .get("calls")
+                            .asInt();
+            assertThat(callsAfter).isEqualTo(callsBefore + 1);
+        }
+        DecisionRequest resumed = request("after cancellation");
+        assertResult(setup.decide(resumed), resumed, "second");
+    }
+
     @Test
-    void javaActionCallsPythonDecisionModelInFlink() throws Exception {
+    void javaEventActionCallsPythonDecisionModelInFlink() throws Exception {
         Configuration config = new Configuration();
         config.setString("restart-strategy.type", "disable");
         config.setString(
                 "python.executable", System.getenv().getOrDefault("PYTHON_EXECUTABLE", "python3"));
+        config.setString(
+                "python.pythonpath",
+                projectRoot().resolve("python")
+                        + java.io.File.pathSeparator
+                        + System.getenv().getOrDefault("PYTHONPATH", ""));
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(config);
         env.setParallelism(1);
         AgentsExecutionEnvironment agents = AgentsExecutionEnvironment.getExecutionEnvironment(env);

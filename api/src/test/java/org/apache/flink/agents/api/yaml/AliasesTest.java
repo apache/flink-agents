@@ -22,6 +22,8 @@ import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.junit.jupiter.api.Test;
@@ -34,6 +36,10 @@ class AliasesTest {
     void resolveEventTypeHits() {
         assertThat(Aliases.resolveEventType("input")).isEqualTo(InputEvent.EVENT_TYPE);
         assertThat(Aliases.resolveEventType("output")).isEqualTo(OutputEvent.EVENT_TYPE);
+        assertThat(Aliases.resolveEventType("decision_request"))
+                .isEqualTo(DecisionRequestEvent.EVENT_TYPE);
+        assertThat(Aliases.resolveEventType("decision_response"))
+                .isEqualTo(DecisionResponseEvent.EVENT_TYPE);
         assertThat(Aliases.resolveEventType("chat_request")).isEqualTo(ChatRequestEvent.EVENT_TYPE);
         assertThat(Aliases.resolveEventType("chat_response"))
                 .isEqualTo(ChatResponseEvent.EVENT_TYPE);

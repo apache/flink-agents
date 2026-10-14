@@ -23,6 +23,10 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.events.tool_event import (
     ToolRequestEvent,
@@ -42,6 +46,8 @@ def test_event_aliases_map_to_real_event_types() -> None:
     assert EVENT_ALIASES["output"] == OutputEvent.EVENT_TYPE
     assert EVENT_ALIASES["chat_request"] == ChatRequestEvent.EVENT_TYPE
     assert EVENT_ALIASES["chat_response"] == ChatResponseEvent.EVENT_TYPE
+    assert resolve_event_type("decision_request") == DecisionRequestEvent.EVENT_TYPE
+    assert resolve_event_type("decision_response") == DecisionResponseEvent.EVENT_TYPE
     assert EVENT_ALIASES["tool_request"] == ToolRequestEvent.EVENT_TYPE
     assert EVENT_ALIASES["tool_response"] == ToolResponseEvent.EVENT_TYPE
     assert (

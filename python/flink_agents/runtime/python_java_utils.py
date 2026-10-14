@@ -18,6 +18,8 @@
 import importlib
 import json
 import typing
+from asyncio import CancelledError as AsyncCancelledError
+from concurrent.futures import CancelledError
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, cast
 
@@ -63,15 +65,20 @@ def call_decision_model(
     resource: "BaseDecisionModelConnection | BaseDecisionModelSetup",
     request_json: str,
     model: str | None,
-) -> str:
-    """Call a decision resource with JSON values across the Java/Python boundary."""
+) -> dict[str, str]:
+    """Return a tagged decision result or cancellation signal for the Java bridge."""
     request = DecisionRequest.model_validate_json(request_json)
-    result = (
-        resource.decide(request)
-        if model is None
-        else resource.decide(request, model=model)
-    )
-    return result.model_dump_json()
+    try:
+        result = (
+            resource.decide(request)
+            if model is None
+            else resource.decide(request, model=model)
+        )
+    except InterruptedError as error:
+        return {"status": "INTERRUPTED", "message": str(error)}
+    except (CancelledError, AsyncCancelledError) as error:
+        return {"status": "CANCELLED", "message": str(error)}
+    return {"status": "SUCCESS", "result": result.model_dump_json()}
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:

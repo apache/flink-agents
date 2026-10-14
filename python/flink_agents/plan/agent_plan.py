@@ -41,6 +41,7 @@ from flink_agents.plan import subagent as _subagent
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
+from flink_agents.plan.actions.decision_model_action import DECISION_MODEL_ACTION
 from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import JavaFunction, PythonFunction
@@ -59,7 +60,12 @@ if TYPE_CHECKING:
     )
     from flink_agents.integrations.mcp.mcp import MCPServer
 
-BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
+BUILT_IN_ACTIONS = [
+    CHAT_MODEL_ACTION,
+    TOOL_CALL_ACTION,
+    CONTEXT_RETRIEVAL_ACTION,
+    DECISION_MODEL_ACTION,
+]
 
 
 class AgentPlan(BaseModel):

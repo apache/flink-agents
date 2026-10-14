@@ -50,6 +50,7 @@ import org.apache.flink.agents.api.tools.ToolParameterInjectionValidator;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.plan.actions.ChatModelAction;
 import org.apache.flink.agents.plan.actions.ContextRetrievalAction;
+import org.apache.flink.agents.plan.actions.DecisionModelAction;
 import org.apache.flink.agents.plan.actions.ToolCallAction;
 import org.apache.flink.agents.plan.resourceprovider.JavaResourceProvider;
 import org.apache.flink.agents.plan.resourceprovider.JavaSerializableResourceProvider;
@@ -252,6 +253,7 @@ public class AgentPlan implements Serializable {
     private void extractActionsFromAgent(Agent agent) throws Exception {
         // Add built-in actions
         addBuiltAction(ChatModelAction.getChatModelAction());
+        addBuiltAction(DecisionModelAction.getDecisionModelAction());
         addBuiltAction(ToolCallAction.getToolCallAction());
         addBuiltAction(ContextRetrievalAction.getContextRetrievalAction());
 

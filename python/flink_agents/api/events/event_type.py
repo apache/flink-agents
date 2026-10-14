@@ -35,6 +35,12 @@ from flink_agents.api.events.context_retrieval_event import (
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalResponseEvent as _ContextRetrievalResponseEvent,
 )
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent as _DecisionRequestEvent,
+)
+from flink_agents.api.events.decision_event import (
+    DecisionResponseEvent as _DecisionResponseEvent,
+)
 from flink_agents.api.events.event import (
     InputEvent as _InputEvent,
 )
@@ -83,6 +89,8 @@ class EventType:
     OutputEvent: str = _OutputEvent.EVENT_TYPE
     ChatRequestEvent: str = _ChatRequestEvent.EVENT_TYPE
     ChatResponseEvent: str = _ChatResponseEvent.EVENT_TYPE
+    DecisionRequestEvent: str = _DecisionRequestEvent.EVENT_TYPE
+    DecisionResponseEvent: str = _DecisionResponseEvent.EVENT_TYPE
     ToolRequestEvent: str = _ToolRequestEvent.EVENT_TYPE
     ToolResponseEvent: str = _ToolResponseEvent.EVENT_TYPE
     ContextRetrievalRequestEvent: str = _ContextRetrievalRequestEvent.EVENT_TYPE

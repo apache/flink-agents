@@ -49,6 +49,10 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.memory_event import (
     LongTermGetEvent,
@@ -72,6 +76,8 @@ REGISTRY: Dict[str, type[Event]] = {
     OutputEvent.EVENT_TYPE: OutputEvent,
     ChatRequestEvent.EVENT_TYPE: ChatRequestEvent,
     ChatResponseEvent.EVENT_TYPE: ChatResponseEvent,
+    DecisionRequestEvent.EVENT_TYPE: DecisionRequestEvent,
+    DecisionResponseEvent.EVENT_TYPE: DecisionResponseEvent,
     ToolRequestEvent.EVENT_TYPE: ToolRequestEvent,
     ToolResponseEvent.EVENT_TYPE: ToolResponseEvent,
     ContextRetrievalRequestEvent.EVENT_TYPE: ContextRetrievalRequestEvent,

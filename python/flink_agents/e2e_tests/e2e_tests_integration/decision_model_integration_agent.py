@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Call a registered decision model from an Action in a real Flink job."""
+"""Call a registered decision model through built-in events in a real Flink job."""
 
 from typing import TYPE_CHECKING, cast
 
@@ -27,6 +27,10 @@ from flink_agents.api.decision_models import (
     ScoreQuestion,
 )
 from flink_agents.api.decorators import action
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -93,8 +97,9 @@ class DecisionModelTestAgent(Agent):
             else departments
         )
         text = InputEvent.from_event(event).input
-        result = model.decide(
-            DecisionRequest(
+        request_event = DecisionRequestEvent(
+            model="decision",
+            request=DecisionRequest(
                 input=text,
                 questions={
                     "refund": PredicateQuestion(
@@ -122,10 +127,20 @@ class DecisionModelTestAgent(Agent):
                         ],
                     ),
                 },
-            )
+            ),
         )
+        ctx.sensory_memory.set(str(request_event.id), text)
+        ctx.send_event(request_event)
+
+    @action(DecisionResponseEvent.EVENT_TYPE)
+    @staticmethod
+    def emit_result(event: Event, ctx: RunnerContext) -> None:
+        response = DecisionResponseEvent.from_event(event)
         ctx.send_event(
             OutputEvent(
-                output={"input": text, "result": result.model_dump(mode="json")}
+                output={
+                    "input": ctx.sensory_memory.get(str(response.request_id)),
+                    "result": response.response.model_dump(mode="json"),
+                }
             )
         )

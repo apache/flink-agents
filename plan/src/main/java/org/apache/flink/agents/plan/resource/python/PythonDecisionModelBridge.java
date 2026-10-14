@@ -27,6 +27,7 @@ import pemja.core.object.PyObject;
 import javax.annotation.Nullable;
 
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 
 /** Owns the Python handle and the JSON boundary shared by decision setups and connections. */
 final class PythonDecisionModelBridge implements AutoCloseable {
@@ -55,15 +56,35 @@ final class PythonDecisionModelBridge implements AutoCloseable {
             throw new IllegalArgumentException(
                     "Decision request must contain JSON-compatible values", e);
         }
-        String resultJson =
-                (String)
-                        adapter.invoke(
-                                "python_java_utils.call_decision_model",
-                                resource,
-                                requestJson,
-                                model);
+        Object value =
+                adapter.invoke(
+                        "python_java_utils.call_decision_model", resource, requestJson, model);
+        if (!(value instanceof Map)) {
+            throw new IllegalStateException("Invalid DecisionModel invocation outcome from Python");
+        }
+        Map<?, ?> outcome = (Map<?, ?>) value;
+        Object status = outcome.get("status");
+        if (!("SUCCESS".equals(status)
+                        || "CANCELLED".equals(status)
+                        || "INTERRUPTED".equals(status))
+                || outcome.size() != 2) {
+            throw new IllegalStateException("Invalid DecisionModel invocation status from Python");
+        }
+        Object payload = outcome.get("SUCCESS".equals(status) ? "result" : "message");
+        if (!(payload instanceof String)) {
+            throw new IllegalStateException("Invalid DecisionModel invocation payload from Python");
+        }
+        // Pemja erases Python exception types. Preserve these control signals explicitly.
+        if ("INTERRUPTED".equals(status)) {
+            CancellationException cancellation = new CancellationException((String) payload);
+            cancellation.initCause(new InterruptedException(cancellation.getMessage()));
+            throw cancellation;
+        }
+        if ("CANCELLED".equals(status)) {
+            throw new CancellationException((String) payload);
+        }
         try {
-            return MAPPER.readValue(resultJson, DecisionResult.class);
+            return MAPPER.readValue((String) payload, DecisionResult.class);
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("Invalid DecisionModel result from Python", e);
         }

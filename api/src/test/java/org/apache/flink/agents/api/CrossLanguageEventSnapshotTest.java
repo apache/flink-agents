@@ -31,11 +31,15 @@ import org.apache.flink.agents.api.chat.messages.TextBlock;
 import org.apache.flink.agents.api.chat.messages.VideoBlock;
 import org.apache.flink.agents.api.context.MemoryObject;
 import org.apache.flink.agents.api.context.MemoryRef;
+import org.apache.flink.agents.api.decision.DecisionRequest;
+import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.MemoryEvent;
 import org.apache.flink.agents.api.event.ShortTermWriteEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
@@ -731,5 +735,120 @@ class CrossLanguageEventSnapshotTest {
     void snapshotDirectoryExists() {
         assertNotNull(snapshotDir);
         assertTrue(Files.isDirectory(snapshotDir), "Expected snapshot directory at " + snapshotDir);
+    }
+
+    private static Map<String, Event> buildDecisionEvents() {
+        Map<String, DecisionRequest.Question> questions = new LinkedHashMap<>();
+        questions.put(
+                "eligible",
+                DecisionRequest.Question.predicate(
+                        "Has a receipt?", Map.of("true", Map.of("receipt", true))));
+        questions.put(
+                "route",
+                DecisionRequest.Question.choice(
+                        List.of(Map.of("value", true), Map.of("value", "true")), null));
+        questions.put(
+                "severity",
+                DecisionRequest.Question.score(
+                        List.of("low", Map.of("label", "medium"), List.of("high")), null));
+        questions.put("restricted", DecisionRequest.Question.predicate("May this be disclosed?"));
+        DecisionRequest request =
+                new DecisionRequest(
+                        Map.of("receipt", true, "notes", List.of("first", "second")), questions);
+
+        Map<String, DecisionResult.Answer> answers = new LinkedHashMap<>();
+        answers.put("eligible", new DecisionResult.PredicateAnswer(0.9));
+        answers.put(
+                "route",
+                new DecisionResult.ChoiceAnswer(
+                        true,
+                        List.of(
+                                new DecisionResult.ChoiceProbability(true, 0.8),
+                                new DecisionResult.ChoiceProbability("true", 0.2)),
+                        0.7));
+        answers.put(
+                "severity",
+                new DecisionResult.ScoreAnswer(
+                        1.25,
+                        List.of(
+                                new DecisionResult.ScoreProbability(0, "low", 0.0),
+                                new DecisionResult.ScoreProbability(
+                                        1, Map.of("label", "medium"), 0.75),
+                                new DecisionResult.ScoreProbability(2, List.of("high"), 0.25)),
+                        null));
+        answers.put("restricted", new DecisionResult.RefusalAnswer("Cannot answer"));
+        DecisionResult result =
+                new DecisionResult(
+                        answers,
+                        "reported-model",
+                        new DecisionResult.TokenUsage(42L, null, null),
+                        Map.of(
+                                "request_id",
+                                "provider-request",
+                                "usage",
+                                Map.of("cached_tokens", 4)));
+        Map<String, Event> events = new LinkedHashMap<>();
+        events.put(
+                "decision_request_event.json",
+                new DecisionRequestEvent("registered-model", request));
+        events.put(
+                "decision_response_event.json",
+                DecisionResponseEvent.success(FIXED_REQUEST_ID, result, 1, 2));
+        events.put(
+                "decision_response_failed_event.json",
+                DecisionResponseEvent.failed(FIXED_REQUEST_ID, "TimeoutError: timed out", 2, 3));
+        events.replaceAll(
+                (name, event) ->
+                        BuiltInEvents.restore(
+                                new Event(
+                                        FIXED_EVENT_ID,
+                                        event.getType(),
+                                        event.getAttributes(),
+                                        Map.of("reference", Map.of("key", "review")))));
+        return events;
+    }
+
+    @Test
+    void regenerateDecisionEventJavaSnapshots() throws Exception {
+        assumeTrue(regenerateRequested(), "Set -Dregenerate.snapshots=true to refresh.");
+        for (Map.Entry<String, Event> entry : buildDecisionEvents().entrySet()) {
+            writeJavaSnapshot(entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Test
+    void decisionEventJavaSnapshotsAreStable() throws Exception {
+        for (Map.Entry<String, Event> entry : buildDecisionEvents().entrySet()) {
+            assertJavaSnapshotStable(entry.getKey(), entry.getValue());
+        }
+    }
+
+    @Test
+    void javaCanDeserializeDecisionEventsFromPythonSnapshots() throws Exception {
+        for (Map.Entry<String, Event> entry : buildDecisionEvents().entrySet()) {
+            Event restored = readPythonSnapshot(entry.getKey());
+            assertEquals(entry.getValue().getClass(), restored.getClass());
+            assertEquals(MAPPER.valueToTree(entry.getValue()), MAPPER.valueToTree(restored));
+            if (restored instanceof DecisionRequestEvent) {
+                assertInstanceOf(
+                        DecisionRequest.class, ((DecisionRequestEvent) restored).getRequest());
+            } else {
+                DecisionResponseEvent response = (DecisionResponseEvent) restored;
+                if (response.isSuccess()) {
+                    DecisionResult result = response.getResponse();
+                    DecisionResult.ChoiceAnswer choice =
+                            (DecisionResult.ChoiceAnswer) result.getAnswers().get("route");
+                    assertEquals(Boolean.TRUE, choice.getChoice());
+                    assertEquals("true", choice.getProbabilities().get(1).getValue());
+                    assertInstanceOf(
+                            DecisionResult.RefusalAnswer.class,
+                            result.getAnswers().get("restricted"));
+                } else {
+                    org.junit.jupiter.api.Assertions.assertThrows(
+                            DecisionResponseEvent.DecisionResponseException.class,
+                            response::getResponse);
+                }
+            }
+        }
     }
 }

@@ -241,8 +241,9 @@ The runnable
 [`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/decision_review_analysis_example.py)
 uses the same `ProductReview` input as the workflow-agent quickstart. Its
 [`DecisionReviewAnalysisAgent`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py)
-processes each `InputEvent` in an Action, retrieves a named decision resource, and
-asks three questions in one call:
+submits a `DecisionRequestEvent` for each `InputEvent`. The built-in Decision
+Action calls the named model with three questions, using durable execution,
+retries, and execution reporting:
 
 | Question | Type | Business use |
 |---|---|---|
@@ -250,17 +251,20 @@ asks three questions in one call:
 | `primary_reason` | Choice | Main complaint: shipping, quality, fit, other, or none |
 | `shipping_damage` | Predicate | Probability that the reviewer reports damage during shipping |
 
-The Action emits the product ID, satisfaction score, primary reason, and shipping
-probability. It adds one to the zero-based expected score to report a **1–5 score
-that can contain decimals**. The primary reason is a predefined category, not a
+A response Action handles the correlated `DecisionResponseEvent`, retrieves the
+original review by `request_id`, and emits the product ID, satisfaction score,
+primary reason, and shipping probability. It adds one to the zero-based expected
+score to report a **1–5 score that can contain decimals**. The primary reason is a
+predefined category, not a
 free-text explanation. The output is a dictionary; it does not use the chat
 example's integer-valued `ProductReviewAnalysisRes`.
 
 When the shipping-damage probability is at least `0.8`, the Action calls the
 quickstart's `notify_shipping_manager` function, which prints a notification.
 This threshold is an example business policy. If any question returns a refusal,
-the Action instead emits the product ID and refusals without notifying. Request
-failures propagate from the Action.
+the response Action instead emits the product ID and refusals without notifying.
+Reading a failed response raises `DecisionResponseError`, so exhausted provider
+failures propagate from the response Action.
 
 Run the Flink job with the selected provider's API key and an accessible model:
 
@@ -279,7 +283,9 @@ setup on `AgentsExecutionEnvironment`; FA owns their lifecycle.
 ## Use from a Python Action
 
 Obtain a named setup through `RunnerContext`, then supply input and questions for
-each call. For example, the review Agent uses:
+each direct call. To use the built-in Action's durable execution and retries,
+emit a `DecisionRequestEvent` as the review example does; see
+[Event-driven calls](#event-driven-calls). Direct calls use:
 
 ```python
 from typing import cast
@@ -389,6 +395,73 @@ or `Boolean`, including in the probability list; unreported usage and confidence
 remain null. Refusals are `DecisionResult.RefusalAnswer` values, while provider
 failures propagate as exceptions. An Action must not close framework-owned
 resources.
+
+## Event-driven calls
+
+Emit a `DecisionRequestEvent` to use the built-in Decision Action's durable
+execution, retries, and observation. Its `model` field names a registered
+`DECISION_MODEL` resource; `request` is the same `DecisionRequest` used by direct
+calls. Handle the correlated `DecisionResponseEvent` in another Action:
+
+```python
+from flink_agents.api.decision_models import DecisionRequest, PredicateQuestion
+from flink_agents.api.decorators import action
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
+from flink_agents.api.events.event import Event, InputEvent, OutputEvent
+from flink_agents.api.runner_context import RunnerContext
+
+
+@action(InputEvent.EVENT_TYPE)
+def request_decision(event: Event, ctx: RunnerContext) -> None:
+    ctx.send_event(DecisionRequestEvent(
+        model="decision",
+        request=DecisionRequest(
+            input=InputEvent.from_event(event).input,
+            questions={
+                "eligible": PredicateQuestion(
+                    instructions="Does the customer have a valid receipt?"
+                )
+            },
+        ),
+    ))
+
+
+@action(DecisionResponseEvent.EVENT_TYPE)
+def handle_decision(event: Event, ctx: RunnerContext) -> None:
+    response = DecisionResponseEvent.from_event(event)
+    # Accessing response on a failed event raises DecisionResponseError.
+    ctx.send_event(OutputEvent(output=response.response.model_dump(mode="json")))
+```
+
+For Java, emit `new DecisionRequestEvent("decision", request)` and subscribe an
+Action to `DecisionResponseEvent.EVENT_TYPE`. Read the result with
+`DecisionResponseEvent.fromEvent(event).getResponse()`. YAML subscriptions support
+the `decision_request` and `decision_response` aliases in both languages.
+
+The response's `request_id` identifies the request event. A successful response
+contains the full `DecisionResult`, including any per-question refusals. Provider
+exceptions produce a failed response after retries are exhausted; applications
+can inspect `is_failed` / `isFailed()` and `error` / `getError()` instead of
+accessing the result. Resource lookup failures, cancellation, and failures in durable
+state or event delivery propagate to the runtime. Durable-state failures are not
+reported as model call failures.
+
+The built-in Action uses the existing `max-retries` (default `0`) and
+`retry-wait-interval` (default `1` second) options. Each retry doubles the wait;
+the terminal event reports the retry count and total wait. `decision.async`
+defaults to `true`; Java calls through Python fall back to synchronous execution
+when the runtime does not support asynchronous Python calls.
+
+When an Action State Store is configured, successful and failed provider outcomes
+are recorded through the durable execution API, so recovery can replay persisted
+outcomes. A provider request whose outcome was not persisted may run again after
+recovery. Each attempt emits model execution reports. Retry metrics and available
+token counts are recorded under the named model resource; missing token counts
+remain unreported. Accumulated retry metrics are also recorded when execution
+exits with an exception.
 
 ## SDK requirements
 

@@ -18,6 +18,8 @@
 """Deterministic decision provider for tests through the real Java/Python bridge."""
 
 import json
+from asyncio import CancelledError as AsyncCancelledError
+from concurrent.futures import CancelledError
 
 from flink_agents.api.decision_models import (
     BaseDecisionModelConnection,
@@ -56,6 +58,14 @@ class BridgeDecisionConnection(BaseDecisionModelConnection):
         if request.input == "fail":
             msg = "decision provider failed"
             raise RuntimeError(msg)
+        # Use the same message so bridge classification must depend on the type.
+        cancellation_message = "provider stopped"
+        if request.input == "cancel":
+            raise CancelledError(cancellation_message)
+        if request.input == "async-cancel":
+            raise AsyncCancelledError(cancellation_message)
+        if request.input == "interrupt":
+            raise InterruptedError(cancellation_message)
         return DecisionResult(
             answers={
                 "eligible": PredicateAnswer(probability_true=0.9),

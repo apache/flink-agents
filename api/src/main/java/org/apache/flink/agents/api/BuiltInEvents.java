@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.LongTermGetEvent;
 import org.apache.flink.agents.api.event.LongTermSearchEvent;
 import org.apache.flink.agents.api.event.LongTermUpdateEvent;
@@ -75,6 +77,8 @@ public final class BuiltInEvents {
                     Map.entry(OutputEvent.EVENT_TYPE, OutputEvent::fromEvent),
                     Map.entry(ChatRequestEvent.EVENT_TYPE, ChatRequestEvent::fromEvent),
                     Map.entry(ChatResponseEvent.EVENT_TYPE, ChatResponseEvent::fromEvent),
+                    Map.entry(DecisionRequestEvent.EVENT_TYPE, DecisionRequestEvent::fromEvent),
+                    Map.entry(DecisionResponseEvent.EVENT_TYPE, DecisionResponseEvent::fromEvent),
                     Map.entry(ToolRequestEvent.EVENT_TYPE, ToolRequestEvent::fromEvent),
                     Map.entry(ToolResponseEvent.EVENT_TYPE, ToolResponseEvent::fromEvent),
                     Map.entry(

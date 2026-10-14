@@ -54,7 +54,7 @@ if __name__ == "__main__":
     assert java_chat.descriptor.target_clazz == "custom.models.Chat"
     assert java_chat.descriptor.arguments == {"model": "test"}
 
-    assert len(actions) == 5
+    assert len(actions) == 6
 
     event = "org.apache.flink.agents.api.Event"
     input_event = "_input_event"
@@ -92,6 +92,17 @@ if __name__ == "__main__":
         my_event,
         input_event,
     ]
+
+    decision_action = actions["decision_model_action"]
+    decision_function = decision_action.exec
+    assert isinstance(decision_function, JavaFunction)
+    assert (
+        decision_function.qualname
+        == "org.apache.flink.agents.plan.actions.DecisionModelAction"
+    )
+    assert decision_function.method_name == "processDecisionRequest"
+    assert decision_function.parameter_types == [event, runner_context]
+    assert decision_action.trigger_conditions == ["_decision_request_event"]
 
     # Runtime indexes are derived after plan loading and are not part of the
     # wire format.

@@ -1,0 +1,62 @@
+{
+  "id": "00000000-0000-0000-0000-000000000001",
+  "type": "_decision_request_event",
+  "attributes": {
+    "model": "registered-model",
+    "request": {
+      "input": {
+        "receipt": true,
+        "notes": [
+          "first",
+          "second"
+        ]
+      },
+      "questions": {
+        "eligible": {
+          "type": "predicate",
+          "instructions": "Has a receipt?",
+          "criteria": {
+            "true": {
+              "receipt": true
+            }
+          }
+        },
+        "route": {
+          "type": "choice",
+          "instructions": null,
+          "criteria": [
+            {
+              "value": true
+            },
+            {
+              "value": "true"
+            }
+          ]
+        },
+        "severity": {
+          "type": "score",
+          "instructions": null,
+          "criteria": [
+            "low",
+            {
+              "label": "medium"
+            },
+            [
+              "high"
+            ]
+          ]
+        },
+        "restricted": {
+          "type": "predicate",
+          "instructions": "May this be disclosed?",
+          "criteria": null
+        }
+      }
+    }
+  },
+  "attachments": {
+    "reference": {
+      "key": "review"
+    }
+  }
+}
