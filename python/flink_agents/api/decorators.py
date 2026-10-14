@@ -165,6 +165,18 @@ def chat_model_setup(func: Callable) -> Callable:
     return func
 
 
+def decision_model_connection(func: Callable) -> Callable:
+    """Mark a function declaring a Python decision model connection."""
+    func._is_decision_model_connection = True
+    return func
+
+
+def decision_model_setup(func: Callable) -> Callable:
+    """Mark a function declaring a Python decision model setup."""
+    func._is_decision_model_setup = True
+    return func
+
+
 def embedding_model_connection(func: Callable) -> Callable:
     """Decorator for marking a function declaring an embedding model connection.
 

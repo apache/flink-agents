@@ -354,6 +354,8 @@ def _get_resource_providers(
         if (
             hasattr(value, "_is_chat_model_setup")
             or hasattr(value, "_is_chat_model_connection")
+            or hasattr(value, "_is_decision_model_setup")
+            or hasattr(value, "_is_decision_model_connection")
             or hasattr(value, "_is_embedding_model_setup")
             or hasattr(value, "_is_embedding_model_connection")
             or hasattr(value, "_is_vector_store")
@@ -368,6 +370,8 @@ def _get_resource_providers(
                     for marker, resource_type in {
                         "_is_chat_model_setup": ResourceType.CHAT_MODEL,
                         "_is_chat_model_connection": ResourceType.CHAT_MODEL_CONNECTION,
+                        "_is_decision_model_setup": ResourceType.DECISION_MODEL,
+                        "_is_decision_model_connection": ResourceType.DECISION_MODEL_CONNECTION,
                         "_is_embedding_model_setup": ResourceType.EMBEDDING_MODEL,
                         "_is_embedding_model_connection": ResourceType.EMBEDDING_MODEL_CONNECTION,
                         "_is_vector_store": ResourceType.VECTOR_STORE,
@@ -478,6 +482,8 @@ def _get_resource_providers(
     for resource_type in [
         ResourceType.CHAT_MODEL,
         ResourceType.CHAT_MODEL_CONNECTION,
+        ResourceType.DECISION_MODEL,
+        ResourceType.DECISION_MODEL_CONNECTION,
         ResourceType.EMBEDDING_MODEL,
         ResourceType.EMBEDDING_MODEL_CONNECTION,
         ResourceType.VECTOR_STORE,

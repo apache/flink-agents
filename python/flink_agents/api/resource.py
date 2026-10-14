@@ -31,12 +31,14 @@ if TYPE_CHECKING:
 class ResourceType(Enum):
     """Type enum of resource.
 
-    Currently, support chat_model, chat_model_server, tool, embedding_model,
+    Currently, support chat_model, decision_model, tool, embedding_model,
     vector_store, prompt, mcp_server, skills, model_router, agent.
     """
 
     CHAT_MODEL = "chat_model"
     CHAT_MODEL_CONNECTION = "chat_model_connection"
+    DECISION_MODEL = "decision_model"
+    DECISION_MODEL_CONNECTION = "decision_model_connection"
     TOOL = "tool"
     EMBEDDING_MODEL = "embedding_model"
     EMBEDDING_MODEL_CONNECTION = "embedding_model_connection"
@@ -378,6 +380,14 @@ class ResourceName:
             # IBM watsonx.ai
             WATSONX_CONNECTION = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelConnection"
             WATSONX_SETUP = "org.apache.flink.agents.integrations.chatmodels.watsonx.WatsonxChatModelSetup"
+
+    class DecisionModel:
+        """Python implementations of DecisionModel."""
+
+        TYPESAFE_CONNECTION = "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelConnection"
+        TYPESAFE_SETUP = "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelSetup"
+        OPENAI_CONNECTION = "flink_agents.integrations.decision_models.openai_decision_model.OpenAIDecisionModelConnection"
+        OPENAI_SETUP = "flink_agents.integrations.decision_models.openai_decision_model.OpenAIDecisionModelSetup"
 
     class EmbeddingModel:
         """EmbeddingModel resource names."""

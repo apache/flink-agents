@@ -279,6 +279,8 @@ class AgentSpec(BaseModel):
 
     chat_model_connections: List[DescriptorSpec] = Field(default_factory=list)
     chat_model_setups: List[DescriptorSpec] = Field(default_factory=list)
+    decision_model_connections: List[DescriptorSpec] = Field(default_factory=list)
+    decision_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     embedding_model_connections: List[DescriptorSpec] = Field(default_factory=list)
     embedding_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     vector_stores: List[DescriptorSpec] = Field(default_factory=list)
@@ -309,6 +311,8 @@ class YamlAgentsDocument(BaseModel):
 
     chat_model_connections: List[DescriptorSpec] = Field(default_factory=list)
     chat_model_setups: List[DescriptorSpec] = Field(default_factory=list)
+    decision_model_connections: List[DescriptorSpec] = Field(default_factory=list)
+    decision_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     embedding_model_connections: List[DescriptorSpec] = Field(default_factory=list)
     embedding_model_setups: List[DescriptorSpec] = Field(default_factory=list)
     vector_stores: List[DescriptorSpec] = Field(default_factory=list)

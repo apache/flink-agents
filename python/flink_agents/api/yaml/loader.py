@@ -64,6 +64,8 @@ from flink_agents.api.yaml.specs import (
 _DESCRIPTOR_TYPES: Dict[str, ResourceType] = {
     "chat_model_connections": ResourceType.CHAT_MODEL_CONNECTION,
     "chat_model_setups": ResourceType.CHAT_MODEL,
+    "decision_model_connections": ResourceType.DECISION_MODEL_CONNECTION,
+    "decision_model_setups": ResourceType.DECISION_MODEL,
     "embedding_model_connections": ResourceType.EMBEDDING_MODEL_CONNECTION,
     "embedding_model_setups": ResourceType.EMBEDDING_MODEL,
     "vector_stores": ResourceType.VECTOR_STORE,

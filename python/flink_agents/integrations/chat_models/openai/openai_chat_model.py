@@ -18,12 +18,13 @@
 from typing import Any, Dict, List, Literal, Mapping, Sequence
 
 import httpx
+import httpx2
 from openai import NOT_GIVEN, OpenAI
 
 # Private SDK module (leading underscore): the openai client itself uses this helper to
 # build the strict json_schema for response_format, and there is no public re-export. It
-# has existed at this path since the structured-output support in openai 1.66.3 (the
-# pinned minimum). A future openai bump that moves it will fail loudly on import here.
+# has existed at this path since the structured-output support in openai 1.66.3.
+# A future openai bump that moves it will fail loudly on import here.
 from openai.lib._pydantic import to_strict_json_schema
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
@@ -180,7 +181,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
     )
 
     _client: OpenAI | None = PrivateAttr(default=None)
-    _http_client: httpx.Client | None = PrivateAttr()
+    _http_client: httpx.Client | httpx2.Client | None = PrivateAttr()
 
     def __init__(
         self,
@@ -190,8 +191,8 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         max_retries: int = 3,
         timeout: float = 60.0,
         reuse_client: bool = True,
-        http_client: httpx.Client | None = None,
-        async_http_client: httpx.AsyncClient | None = None,
+        http_client: httpx.Client | httpx2.Client | None = None,
+        async_http_client: httpx.AsyncClient | httpx2.AsyncClient | None = None,
         **kwargs: Any,
     ) -> None:
         """Init method."""
@@ -211,7 +212,7 @@ class OpenAIChatModelConnection(BaseChatModelConnection):
         self._http_client = http_client
         self._async_http_client = async_http_client
         if self.timeout == 0 and self._http_client is not None:
-            self._http_client.timeout = httpx.Timeout(None)
+            self._http_client.timeout = None
 
     @property
     def client(self) -> OpenAI:

@@ -98,6 +98,20 @@
           "title": "Chat Model Setups",
           "type": "array"
         },
+        "decision_model_connections": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Decision Model Connections",
+          "type": "array"
+        },
+        "decision_model_setups": {
+          "items": {
+            "$ref": "#/$defs/DescriptorSpec"
+          },
+          "title": "Decision Model Setups",
+          "type": "array"
+        },
         "description": {
           "anyOf": [
             {
@@ -576,6 +590,20 @@
         "$ref": "#/$defs/DescriptorSpec"
       },
       "title": "Chat Model Setups",
+      "type": "array"
+    },
+    "decision_model_connections": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Decision Model Connections",
+      "type": "array"
+    },
+    "decision_model_setups": {
+      "items": {
+        "$ref": "#/$defs/DescriptorSpec"
+      },
+      "title": "Decision Model Setups",
       "type": "array"
     },
     "embedding_model_connections": {
