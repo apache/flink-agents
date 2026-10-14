@@ -53,6 +53,7 @@ from flink_agents.plan.resource.java.java_chat_model import JavaChatModelSetup
 
 if TYPE_CHECKING:
     from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
+    from flink_agents.api.metric_group import MetricGroup
 
 _TOOL_CALL_CONTEXT = "_TOOL_CALL_CONTEXT"
 _TOOL_REQUEST_EVENT_CONTEXT = "_TOOL_REQUEST_EVENT_CONTEXT"
@@ -67,6 +68,52 @@ _logger = logging.getLogger(__name__)
 
 class _InvocationFailure(Exception):
     """Textual provider failure recovered from durable execution."""
+
+
+def _report_successful_response(
+    ctx: "RunnerContext",
+    execution_id: str,
+    model: str,
+    llm_metadata: dict,
+    chat_model: "BaseChatModelSetup",
+    response: "ChatMessage",
+    request_metric_group: "MetricGroup | None",
+) -> None:
+    """Report a successful chat response to execution observers and token metrics."""
+    prompt_tokens = response.extra_args.get("promptTokens")
+    completion_tokens = response.extra_args.get("completionTokens")
+    usage = {
+        name: value
+        for name, value in (
+            ("promptTokens", prompt_tokens),
+            ("completionTokens", completion_tokens),
+        )
+        if isinstance(value, int | float) and not isinstance(value, bool)
+    }
+    metadata = dict(llm_metadata)
+    if usage:
+        metadata[LLMExecutionMetadataKeys.USAGE] = usage
+    ExecutionReporters.succeeded(
+        ctx,
+        execution_id,
+        ExecutionEntityTypes.LLM,
+        model,
+        metadata,
+    )
+
+    model_name = response.extra_args.get("model_name")
+    if (
+        request_metric_group is not None
+        and model_name
+        and prompt_tokens
+        and completion_tokens
+    ):
+        chat_model._record_token_metrics(
+            model_name,
+            prompt_tokens,
+            completion_tokens,
+            request_metric_group,
+        )
 
 
 def _require_invocation_response(
@@ -481,22 +528,15 @@ async def chat(
                         ExecutionProblemCategories.MODEL_CALL_FAILED,
                     )
                     raise
-                ExecutionReporters.succeeded(
-                    ctx, execution_id, ExecutionEntityTypes.LLM, model, llm_metadata
+                _report_successful_response(
+                    ctx,
+                    execution_id,
+                    model,
+                    llm_metadata,
+                    chat_model,
+                    response,
+                    request_metric_group,
                 )
-
-                if (
-                    request_metric_group is not None
-                    and response.extra_args.get("model_name")
-                    and response.extra_args.get("promptTokens")
-                    and response.extra_args.get("completionTokens")
-                ):
-                    chat_model._record_token_metrics(
-                        response.extra_args["model_name"],
-                        response.extra_args["promptTokens"],
-                        response.extra_args["completionTokens"],
-                        request_metric_group,
-                    )
                 # A truncated response consumed its full token budget, so the token
                 # metrics above are recorded before this rejects and abandons the
                 # response.

@@ -223,30 +223,6 @@ public class ChatModelAction {
         }
     }
 
-    static void recordChatTokenMetrics(
-            BaseChatModelSetup chatModel,
-            ChatMessage response,
-            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
-        if (requestMetricGroup == null) {
-            return;
-        }
-        Map<String, Object> extraArgs = response.getExtraArgs();
-        Object modelName = extraArgs.get("model_name");
-        Object promptTokens = extraArgs.get("promptTokens");
-        Object completionTokens = extraArgs.get("completionTokens");
-        if (modelName != null
-                && !modelName.toString().isEmpty()
-                && promptTokens instanceof Number
-                && completionTokens instanceof Number) {
-            long prompt = ((Number) promptTokens).longValue();
-            long completion = ((Number) completionTokens).longValue();
-            if (prompt > 0 && completion > 0) {
-                chatModel.recordTokenMetrics(
-                        requestMetricGroup, modelName.toString(), prompt, completion);
-            }
-        }
-    }
-
     private static void handleToolCalls(
             ChatMessage response,
             UUID initialRequestId,

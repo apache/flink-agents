@@ -390,6 +390,7 @@ class FileTraceLoggerTest {
         assertEquals(1, lines.size());
 
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals(1, jsonNode.get("schemaVersion").intValue());
         assertEquals("STANDARD", jsonNode.get("level").asText());
         assertEquals(
                 event.getId().toString(),
@@ -427,6 +428,7 @@ class FileTraceLoggerTest {
         assertEquals(1, lines.size());
 
         JsonNode jsonNode = objectMapper.readTree(lines.get(0));
+        assertEquals(1, jsonNode.get("schemaVersion").intValue());
         assertEquals("VERBOSE", jsonNode.get("level").asText());
 
         // The customData field (inside attributes) should NOT be truncated
@@ -575,6 +577,7 @@ class FileTraceLoggerTest {
         logger.flush();
 
         JsonNode json = objectMapper.readTree(Files.readAllLines(getExpectedLogFilePath()).get(0));
+        assertEquals(1, json.get("schemaVersion").intValue());
         assertEquals(actionContext.getInputRunId(), json.get("inputRunId").asText());
         assertEquals(actionContext.getExecutionId(), json.get("executionId").asText());
         assertEquals("long-business-key", json.get("businessKey").asText());

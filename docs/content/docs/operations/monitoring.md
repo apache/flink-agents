@@ -258,25 +258,31 @@ By default, each record occupies one line of JSONL. Setting `trace-log.pretty-pr
 
 ### JSON Format
 
-Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. The logger adds `level` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
+Both outputs share the same observation fields: entity identity, relationships, timestamp, status, and attributes. Every record includes the top-level integer `schemaVersion`, currently `1`, identifying its JSON format. The logger adds `level` when writing JSON; it is output metadata, not a field of the `TraceRecord` model. SLF4J output also adds the job and subtask fields described above.
 
 For an Event, `attributes` contains its payload and `entityMetadata` contains its ID and source relationships. These relationships belong to the trace context and are not fields of the Event passed between Actions.
 
 | Field | Meaning |
 |-------|---------|
+| `schemaVersion` | JSON format version, currently `1`; independent of the Flink Agents release and persisted state formats. |
 | `timestamp` | Observation or occurrence time. |
 | `level` | Output metadata identifying the resolved `STANDARD` or `VERBOSE` level. |
 | `inputRunId`, `businessKey`, `agentName` | Available run identity and agent context. |
 | `entityType`, `entityName` | The observed entity's type and name. For an Event, its routing type is the entity name. |
 | `executionId`, `parentExecutionId` | Identity of an Action execution or component call, and its containing execution when available. These fields are absent for Events. |
-| `entityMetadata` | Identity and relationship metadata, such as Event ID, producer, upstream Event, triggering Event, or configured model. |
+| `entityMetadata` | Identity, relationship, and execution metadata, such as Event ID, producer, upstream Event, triggering Event, configured model, or token usage. |
 | `status`, `problemCategory` | Progress or outcome, and optional failure classification. These fields are absent for Events. |
 | `attributes` | Event payload or details of the observed execution or call. Only this object is subject to `STANDARD` truncation. |
+
+Incompatible changes to field names, types, or meanings require a new schema version. Adding optional fields does not require a version change; readers can ignore fields they do not use.
+
+When an Action is excluded by the logging configuration, its selected component calls still retain their `parentExecutionId`, even though the Action's own record is absent.
 
 For example, an output Event produced by an Action is recorded as:
 
 ```json
 {
+  "schemaVersion": 1,
   "timestamp": "2024-01-15T10:30:02Z",
   "level": "STANDARD",
   "inputRunId": "run-1",
@@ -300,6 +306,7 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
 
 ```json
 {
+  "schemaVersion": 1,
   "timestamp": "2024-01-15T10:30:01Z",
   "level": "STANDARD",
   "inputRunId": "run-1",
@@ -309,13 +316,20 @@ An LLM call uses its configured ChatModel Resource as `entityName`:
   "entityName": "primary_model",
   "executionId": "llm-1",
   "parentExecutionId": "action-1",
-  "entityMetadata": {"model": "qwen-max"},
+  "entityMetadata": {
+    "model": "qwen-max",
+    "usage": {"promptTokens": 120, "completionTokens": 30}
+  },
   "status": "success",
   "attributes": {}
 }
 ```
 
 `entityMetadata.model` is the model or deployment configured on the Resource. It is the requested identifier, not a provider-confirmed model identity. Action metadata carries `triggerEventId`, linking the execution to the Event that triggered it.
+
+Successful LLM observations include `entityMetadata.usage` when the returned `ChatMessage` contains token counts. It preserves the `promptTokens` and `completionTokens` field names and values from `extra_args` (`extraArgs` in Java), independently of token metric collection. Each count is optional, and zero is retained. When neither count is available, `usage` is omitted. Availability depends on the ChatModel integration; the trace does not fetch additional provider data.
+
+Each retry reports its own response usage without accumulating earlier attempts. A response rejected later because of its finish reason or structured-output parsing still has a successful LLM observation with its usage. Replaying a cached durable response reports that response's usage again; this does not establish that the provider received another request.
 
 One entity can have several observations sharing its identity. Progress and outcome statuses include `created`, `started`, `success`, `failed`, and `reused`; they are not separate Event routing types. Tool calls can be observed at creation before their callable starts. Some observations are published after a durable call or parallel batch returns, while retaining their occurrence timestamp. A missing observation therefore does not establish that the call never ran or completed. Use occurrence timestamps rather than file order to calculate call latency.
 
@@ -350,6 +364,8 @@ A truncated field changes JSON type. Consumers requiring the full attribute sche
 ### Trace Tree Reader
 
 The `flink-agents-trace-tree` command is installed with the Python wheel. It reconstructs Event causal trees from the `TraceRecord` format described above. Pass a file directly or a directory containing `traces-*.log` or `*.trace-log.log` files. Both JSONL and pretty-printed JSON are supported.
+
+The reader accepts records with integer `schemaVersion: 1`. A missing, invalid, or unsupported version produces a warning and the record is skipped; other records continue to be read.
 
 The reader uses `entityMetadata.eventId`, `upstreamEventId`, and `upstreamActionName` to build an Event–Action–Event graph. An InputEvent with no upstream Event starts a tree; an InputEvent produced by an Action can be a descendant. An edge without an Action name produces a `MISSING_ACTION_NAME` warning and is not linked. The reader does not require Action observations, so the default `EVENT_ONLY` scope is sufficient. Other observed entities are skipped; component calls and their statuses are not displayed in this Event view.
 
@@ -388,6 +404,7 @@ Malformed records, conflicting Event identities, missing upstream Events, and cy
 ### Migration Notes
 
 - The old `event-log.*`, `eventLoggerType`, `baseLogDir`, and `prettyPrint` settings are rejected at startup. Use `trace-log.targets`, `trace-log.standard.*`, and the current output settings.
+- Each record now includes `schemaVersion: 1`. Unversioned records are not treated as version `1`; the built-in reader skips them with a warning.
 - Consumers must migrate from `logLevel`, `eventType`, and `eventAttributes` to `level`, `entityName` for Events, and `attributes`. Event identity and lineage references are now under `entityMetadata`.
 - Custom Java and Python `ExecutionReporter` implementations and callers must accept and pass an explicit `executionId` for each component call's lifecycle reports. Callers can obtain it from a creation or start helper and must retain it across reports, using a new ID for each invocation or retry attempt. This requirement uses the existing JSON fields.
 - File names use `traces-*.log`; the SLF4J category is `org.apache.flink.agents.TraceLog`, its appender is `FlinkAgentsTraceLogAppender`, and its file suffix is `.trace-log.log`. Update log collection and custom log4j2 configuration accordingly.

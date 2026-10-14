@@ -165,6 +165,7 @@ class Slf4jTraceLoggerTest {
         logger.flush();
         logger.close();
         JsonNode jsonNode = objectMapper.readTree(messages.get(0));
+        assertEquals(1, jsonNode.get("schemaVersion").intValue());
         assertEquals("STANDARD", jsonNode.get("level").asText());
         // Verify subtask context fields
         assertEquals(testJobId.toString(), jsonNode.get("jobId").asText());
@@ -267,6 +268,7 @@ class Slf4jTraceLoggerTest {
         logger.append(record, TraceLogLevel.STANDARD);
 
         JsonNode json = objectMapper.readTree(testAppender.getMessages().get(0));
+        assertEquals(1, json.get("schemaVersion").intValue());
         assertEquals(toolContext.getInputRunId(), json.get("inputRunId").asText());
         assertEquals(toolContext.getExecutionId(), json.get("executionId").asText());
         assertEquals(actionContext.getExecutionId(), json.get("parentExecutionId").asText());

@@ -92,7 +92,7 @@ class TraceRecordJsonSerdeTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"started", "failed"})
+    @ValueSource(strings = {"created", "started", "success", "failed", "reused"})
     void executionLifecycleRecordsUseStatusWithoutSyntheticEventFields(String status)
             throws Exception {
         TraceContext action =
@@ -168,7 +168,7 @@ class TraceRecordJsonSerdeTest {
     @Test
     void outputMetadataCanBeReadWithoutChangingTheTraceContext() throws Exception {
         String json =
-                "{\"timestamp\":\""
+                "{\"schemaVersion\":1,\"timestamp\":\""
                         + TIMESTAMP
                         + "\",\"entityType\":\"event\","
                         + "\"entityName\":\"InputEvent\",\"entityMetadata\":{\"eventId\":\"input\"},"
@@ -186,6 +186,7 @@ class TraceRecordJsonSerdeTest {
     void malformedRecordsRejectTheInvalidField(
             String field, Object invalidValue, String expectedMessage) throws Exception {
         Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("schemaVersion", 1);
         fields.put("timestamp", TIMESTAMP);
         fields.put("entityType", "event");
         fields.put("entityName", "InputEvent");
@@ -205,6 +206,13 @@ class TraceRecordJsonSerdeTest {
 
     private static Stream<Arguments> invalidRecordFields() {
         return Stream.of(
+                Arguments.of("schemaVersion", null, "schemaVersion: missing"),
+                Arguments.of("schemaVersion", 0, "schemaVersion"),
+                Arguments.of("schemaVersion", 2, "schemaVersion"),
+                Arguments.of("schemaVersion", "1", "schemaVersion"),
+                Arguments.of("schemaVersion", 1.0, "schemaVersion"),
+                Arguments.of("schemaVersion", true, "schemaVersion"),
+                Arguments.of("schemaVersion", 4294967297L, "schemaVersion"),
                 Arguments.of("timestamp", null, "timestamp"),
                 Arguments.of("entityMetadata", Map.of(), "entityMetadata.eventId"),
                 Arguments.of("status", "success", "status and problemCategory"),
@@ -229,7 +237,7 @@ class TraceRecordJsonSerdeTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("executionId");
         String json =
-                "{\"timestamp\":\""
+                "{\"schemaVersion\":1,\"timestamp\":\""
                         + TIMESTAMP
                         + "\",\"entityType\":\"action\","
                         + "\"entityName\":\"classify\",\"status\":\"started\",\"attributes\":{}}";
@@ -256,6 +264,7 @@ class TraceRecordJsonSerdeTest {
                 .hasMessageContaining(identityField);
 
         Map<String, Object> fields = new LinkedHashMap<>();
+        fields.put("schemaVersion", 1);
         fields.put("timestamp", TIMESTAMP);
         fields.put("entityType", "event");
         fields.put("entityName", "OrderCreated");
@@ -284,6 +293,9 @@ class TraceRecordJsonSerdeTest {
     }
 
     private void assertRoundTrip(TraceRecord record, String json) throws Exception {
+        JsonNode version = mapper.readTree(json).get("schemaVersion");
+        assertThat(version.isIntegralNumber()).isTrue();
+        assertThat(version.intValue()).isEqualTo(1);
         TraceRecord restored = mapper.readValue(json, TraceRecord.class);
         assertThat(restored.getContext()).isEqualTo(record.getContext());
         assertThat(restored.getTimestamp()).isEqualTo(record.getTimestamp());

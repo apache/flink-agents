@@ -105,7 +105,7 @@ The same persisted action state is also used by fine-grained durable execution.
 {{< hint warning >}}
 The action-state key format changed in Flink Agents 0.4 and action-state records written by earlier versions are unsupported. When upgrading, use a fresh Kafka topic or Fluss table and start without an older checkpoint or savepoint. Recovery validates the current fields, but cannot reliably distinguish every older record from the current format.
 
-Checkpoints and savepoints containing pending Action state from before Trace Log's execution-identity schema are also unsupported. No state migration is provided. See [Trace Log Migration Notes]({{< ref "docs/operations/monitoring#migration-notes" >}}) for configuration and log-format changes.
+State written before the Trace Log changes is also unsupported. This includes pending Action state in checkpoints and savepoints and completed Action state in Kafka or Fluss, whose stored Events may use the previous schema. Follow the upgrade steps above; no state migration is provided. See [Trace Log Migration Notes]({{< ref "docs/operations/monitoring#migration-notes" >}}) for configuration and log-format changes.
 
 Action-state keys contain a digest of the serialized key. Changing key types or serializer configuration when recovering existing state is unsupported, even if Flink accepts the change for keyed state: the same key can serialize to different bytes, causing recovery to miss completed actions and repeat their side effects. These changes are not detected by the action-state store. Preserve the original key types and serializer configuration for recovery. Custom key serializers must produce deterministic bytes.
 

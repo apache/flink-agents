@@ -22,3 +22,4 @@ class LLMExecutionMetadataKeys:
     """Shared field names for metadata reported with an LLM request."""
 
     MODEL = "model"
+    USAGE = "usage"

@@ -20,7 +20,7 @@
 import asyncio
 import time
 from typing import Any, Sequence
-from unittest.mock import ANY, MagicMock, call
+from unittest.mock import ANY, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -206,7 +206,9 @@ class TestChatModelActionRetry:
     @pytest.mark.parametrize("provider_fails", [False, True])
     def test_terminal_delivery_failure_propagates(self, provider_fails: bool) -> None:
         model = MagicMock()
-        model.chat.return_value = ChatMessage.of(role=MessageRole.ASSISTANT, content="ok")
+        model.chat.return_value = ChatMessage.of(
+            role=MessageRole.ASSISTANT, content="ok"
+        )
         if provider_fails:
             model.chat.side_effect = ValueError("provider failure")
         ctx, events, _, _ = _create_mock_runner_context(model, max_retries=0)
@@ -278,6 +280,61 @@ class TestChatModelActionRetry:
             _LLM_METADATA,
         )
         ctx.report_execution_failed.assert_not_called()
+
+    @pytest.mark.parametrize("metrics_available", [False, True])
+    @pytest.mark.parametrize(
+        ("extra_args", "expected_usage", "records_metrics"),
+        [
+            (
+                {"promptTokens": 100, "completionTokens": 50},
+                {"promptTokens": 100, "completionTokens": 50},
+                True,
+            ),
+            (
+                {"promptTokens": 5, "completionTokens": 0},
+                {"promptTokens": 5, "completionTokens": 0},
+                False,
+            ),
+            ({"completionTokens": 0}, {"completionTokens": 0}, False),
+            ({"promptTokens": 5}, {"promptTokens": 5}, False),
+            ({"promptTokens": None, "completionTokens": None}, {}, False),
+            ({}, {}, False),
+        ],
+    )
+    def test_usage_and_token_metrics_share_response_counts(
+        self,
+        extra_args: dict,
+        expected_usage: dict,
+        records_metrics: bool,
+        metrics_available: bool,
+    ) -> None:
+        chat_model = MagicMock()
+        chat_model.chat.return_value = ChatMessage.of(
+            MessageRole.ASSISTANT,
+            "hello",
+            extra_args={"model_name": "metric-model", **extra_args},
+        )
+        ctx, events, metric_group, _ = _create_mock_runner_context(chat_model)
+        if not metrics_available:
+            ctx.action_metric_group = None
+        asyncio.run(chat(uuid4(), "test-model", [], {}, None, ctx))
+        expected_metadata = dict(_LLM_METADATA)
+        if expected_usage:
+            expected_metadata["usage"] = expected_usage
+        ctx.report_execution_started.assert_called_once_with(
+            ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+        )
+        ctx.report_execution_succeeded.assert_called_once_with(
+            ANY, ExecutionEntityTypes.LLM, "test-model", expected_metadata
+        )
+        if records_metrics and metrics_available:
+            chat_model._record_token_metrics.assert_called_once_with(
+                "metric-model", 100, 50, metric_group
+            )
+        else:
+            chat_model._record_token_metrics.assert_not_called()
+        _assert_report_identities(ctx)
+        assert not events[0].is_failed
 
     def test_chat_retries_with_exponential_backoff(self) -> None:
         """Fail once then succeed: 1s interval, 1 retry -> wait 1s (1 * 2^0)."""
@@ -386,8 +443,14 @@ class TestChatModelActionRetry:
         chat_model = MagicMock()
         chat_model.chat = MagicMock(
             side_effect=[
-                ChatMessage.of(MessageRole.ASSISTANT, "not-json"),
-                ChatMessage.of(MessageRole.ASSISTANT, '{"result": 42}'),
+                ChatMessage.of(
+                    MessageRole.ASSISTANT, "not-json", extra_args={"promptTokens": 11}
+                ),
+                ChatMessage.of(
+                    MessageRole.ASSISTANT,
+                    '{"result": 42}',
+                    extra_args={"completionTokens": 0},
+                ),
             ]
         )
 
@@ -432,17 +495,15 @@ class TestChatModelActionRetry:
         _assert_report_identities(ctx)
         assert ctx.report_execution_started.call_count == 4
         assert ctx.report_execution_succeeded.call_count == 3
-        assert (
-            ctx.report_execution_succeeded.call_args_list.count(
-                call(
-                    ANY,
-                    ExecutionEntityTypes.LLM,
-                    "test-model",
-                    _LLM_METADATA,
-                )
-            )
-            == 2
-        )
+        llm_successes = [
+            report.args[3]
+            for report in ctx.report_execution_succeeded.call_args_list
+            if report.args[1] == ExecutionEntityTypes.LLM
+        ]
+        assert llm_successes == [
+            {**_LLM_METADATA, "usage": {"promptTokens": 11}},
+            {**_LLM_METADATA, "usage": {"completionTokens": 0}},
+        ]
 
 
 class TestChatModelActionFinishReason:
@@ -631,7 +692,10 @@ class TestChatModelActionFinishReason:
         # The model call itself succeeded and spent its full token budget, so
         # both must be recorded before the response is rejected.
         ctx.report_execution_succeeded.assert_called_once_with(
-            ANY, ExecutionEntityTypes.LLM, "test-model", _LLM_METADATA
+            ANY,
+            ExecutionEntityTypes.LLM,
+            "test-model",
+            {**_LLM_METADATA, "usage": {"promptTokens": 100, "completionTokens": 50}},
         )
         chat_model._record_token_metrics.assert_called_once_with(
             "provider-model", 100, 50, metric_group

@@ -26,12 +26,14 @@ import java.io.IOException;
 
 /** Writes TraceRecord JSON with flattened context fields. */
 final class TraceRecordJsonSerializer extends JsonSerializer<TraceRecord> {
+    static final int SCHEMA_VERSION = 1;
 
     @Override
     public void serialize(TraceRecord record, JsonGenerator gen, SerializerProvider serializers)
             throws IOException {
         TraceContext context = record.getContext();
         gen.writeStartObject();
+        gen.writeNumberField("schemaVersion", SCHEMA_VERSION);
         gen.writeStringField("timestamp", record.getTimestamp());
         writeStringIfPresent(gen, "inputRunId", context.getInputRunId());
         writeStringIfPresent(gen, "businessKey", context.getBusinessKey());

@@ -35,6 +35,7 @@ import org.slf4j.LoggerFactory;
 
 import javax.annotation.Nullable;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -246,9 +247,14 @@ public final class ChatModelInvoker {
                             modelError,
                             ExecutionReporter.ProblemCategories.MODEL_CALL_FAILED);
                 }
-                ExecutionReporters.succeeded(
-                        ctx, executionId, ExecutionReporter.EntityTypes.LLM, model, llmMetadata);
-                ChatModelAction.recordChatTokenMetrics(chatModel, response, requestMetricGroup);
+                reportSuccessfulResponse(
+                        ctx,
+                        executionId,
+                        model,
+                        llmMetadata,
+                        chatModel,
+                        response,
+                        requestMetricGroup);
                 // A truncated response consumed its full token budget, so the token metrics
                 // above are recorded before this rejects and abandons the response.
                 ChatModelAction.rejectIncompleteResponse(response);
@@ -303,5 +309,44 @@ public final class ChatModelInvoker {
             }
         }
         throw new IllegalStateException("Unreachable chat retry state.");
+    }
+
+    private static void reportSuccessfulResponse(
+            RunnerContext ctx,
+            String executionId,
+            String model,
+            Map<String, Object> llmMetadata,
+            BaseChatModelSetup chatModel,
+            ChatMessage response,
+            @Nullable FlinkAgentsMetricGroup requestMetricGroup) {
+        Map<String, Object> extraArgs = response.getExtraArgs();
+        Object promptTokens = extraArgs.get("promptTokens");
+        Object completionTokens = extraArgs.get("completionTokens");
+        Map<String, Object> usage = new HashMap<>();
+        long prompt = 0;
+        long completion = 0;
+        if (promptTokens instanceof Number) {
+            usage.put("promptTokens", promptTokens);
+            prompt = ((Number) promptTokens).longValue();
+        }
+        if (completionTokens instanceof Number) {
+            usage.put("completionTokens", completionTokens);
+            completion = ((Number) completionTokens).longValue();
+        }
+        Map<String, Object> metadata = new HashMap<>(llmMetadata);
+        if (!usage.isEmpty()) {
+            metadata.put(LLMExecutionMetadataKeys.USAGE, usage);
+        }
+        ExecutionReporters.succeeded(
+                ctx, executionId, ExecutionReporter.EntityTypes.LLM, model, metadata);
+        Object modelName = extraArgs.get("model_name");
+        if (requestMetricGroup != null
+                && modelName != null
+                && !modelName.toString().isEmpty()
+                && prompt > 0
+                && completion > 0) {
+            chatModel.recordTokenMetrics(
+                    requestMetricGroup, modelName.toString(), prompt, completion);
+        }
     }
 }

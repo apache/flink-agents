@@ -22,9 +22,7 @@ import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ImageBlock;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
 import org.apache.flink.agents.api.chat.messages.TextBlock;
-import org.apache.flink.agents.api.chat.model.BaseChatModelSetup;
 import org.apache.flink.agents.api.context.RunnerContext;
-import org.apache.flink.agents.api.metrics.FlinkAgentsMetricGroup;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.junit.jupiter.api.Test;
 
@@ -35,13 +33,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.withSettings;
 
 /** Tests for {@link ChatModelAction}. */
@@ -66,10 +58,6 @@ class ChatModelActionTest {
 
     private static final String PARSEABLE_CONTENT = "{\"answer\":\"42\"}";
 
-    private static ChatMessage responseWith(Map<String, Object> extraArgs) {
-        return new ChatMessage(MessageRole.ASSISTANT, "response", extraArgs);
-    }
-
     private static RunnerContext reportingContext() {
         return mock(RunnerContext.class, withSettings().extraInterfaces(ExecutionReporter.class));
     }
@@ -80,100 +68,6 @@ class ChatModelActionTest {
                 ctx,
                 new ChatMessage(MessageRole.ASSISTANT, PARSEABLE_CONTENT, extraArgs),
                 Map.class);
-    }
-
-    @Test
-    void testRecordChatTokenMetricsRecordsWhenAllKeysPresent() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        FlinkAgentsMetricGroup requestMetricGroup = mock(FlinkAgentsMetricGroup.class);
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("model_name", "m");
-        extraArgs.put("promptTokens", 100L);
-        extraArgs.put("completionTokens", 50L);
-
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), requestMetricGroup);
-
-        verify(setup).recordTokenMetrics(requestMetricGroup, "m", 100L, 50L);
-    }
-
-    @Test
-    void testRecordChatTokenMetricsHandlesIntegerTokenValues() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        FlinkAgentsMetricGroup requestMetricGroup = mock(FlinkAgentsMetricGroup.class);
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("model_name", "m");
-        extraArgs.put("promptTokens", 100);
-        extraArgs.put("completionTokens", 50);
-
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), requestMetricGroup);
-
-        verify(setup).recordTokenMetrics(requestMetricGroup, "m", 100L, 50L);
-    }
-
-    @Test
-    void testRecordChatTokenMetricsSkipsWhenMetricGroupMissing() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("model_name", "m");
-        extraArgs.put("promptTokens", 100L);
-        extraArgs.put("completionTokens", 50L);
-
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), null);
-
-        verifyNoInteractions(setup);
-    }
-
-    @Test
-    void testRecordChatTokenMetricsSkipsWhenTokenValueNonNumeric() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        FlinkAgentsMetricGroup requestMetricGroup = mock(FlinkAgentsMetricGroup.class);
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("model_name", "m");
-        extraArgs.put("promptTokens", "100");
-        extraArgs.put("completionTokens", 50L);
-
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), requestMetricGroup);
-
-        verify(setup, never())
-                .recordTokenMetrics(
-                        any(FlinkAgentsMetricGroup.class), anyString(), anyLong(), anyLong());
-    }
-
-    @Test
-    void testRecordChatTokenMetricsSkipsWhenKeyMissing() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        FlinkAgentsMetricGroup requestMetricGroup = mock(FlinkAgentsMetricGroup.class);
-        Map<String, Object> extraArgs = new HashMap<>();
-        extraArgs.put("model_name", "m");
-        extraArgs.put("completionTokens", 50L);
-
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(extraArgs), requestMetricGroup);
-
-        verify(setup, never())
-                .recordTokenMetrics(
-                        any(FlinkAgentsMetricGroup.class), anyString(), anyLong(), anyLong());
-    }
-
-    @Test
-    void testRecordChatTokenMetricsSkipsZeroTokensOrEmptyModel() {
-        BaseChatModelSetup setup = mock(BaseChatModelSetup.class);
-        FlinkAgentsMetricGroup requestMetricGroup = mock(FlinkAgentsMetricGroup.class);
-
-        Map<String, Object> zeroPrompt = new HashMap<>();
-        zeroPrompt.put("model_name", "m");
-        zeroPrompt.put("promptTokens", 0L);
-        zeroPrompt.put("completionTokens", 50L);
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(zeroPrompt), requestMetricGroup);
-
-        Map<String, Object> emptyModel = new HashMap<>();
-        emptyModel.put("model_name", "");
-        emptyModel.put("promptTokens", 100L);
-        emptyModel.put("completionTokens", 50L);
-        ChatModelAction.recordChatTokenMetrics(setup, responseWith(emptyModel), requestMetricGroup);
-
-        verify(setup, never())
-                .recordTokenMetrics(
-                        any(FlinkAgentsMetricGroup.class), anyString(), anyLong(), anyLong());
     }
 
     @Test

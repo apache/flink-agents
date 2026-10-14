@@ -21,8 +21,10 @@ import subprocess
 import sys
 import sysconfig
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from pyflink.common import Configuration, WatermarkStrategy
 from pyflink.datastream import (
@@ -34,13 +36,18 @@ from pyflink.datastream.connectors.file_system import (
     FileSource,
     StreamFormat,
 )
+from typing_extensions import override
 
 from flink_agents.api.agents.agent import Agent
+from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.chat_models.chat_model import BaseChatModelSetup
 from flink_agents.api.core_options import AgentConfigOptions, AgentExecutionOptions
-from flink_agents.api.decorators import action
+from flink_agents.api.decorators import action, chat_model_setup
+from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
+from flink_agents.api.resource import ResourceDescriptor
 from flink_agents.api.runner_context import RunnerContext
 from flink_agents.api.trace import ExecutionEntityTypes, ExecutionReporters
 from flink_agents.api.trace_log import TraceLogTarget
@@ -168,6 +175,62 @@ class PythonAwaitExecutionReportingAgent(Agent):
         (gate_dir / "release").touch()
 
 
+class TraceUsageChatModel(BaseChatModelSetup):
+    """Return scripted token counters without an external service."""
+
+    @override
+    def open(self) -> None:
+        """No connection is needed by the offline fixture."""
+
+    @property
+    @override
+    def model_kwargs(self) -> dict[str, Any]:
+        """Return no provider arguments."""
+        return {}
+
+    @override
+    def chat(self, messages: Sequence[ChatMessage], **kwargs: Any) -> ChatMessage:
+        """Read the scripted response metadata from the request."""
+        return ChatMessage.of(
+            MessageRole.ASSISTANT,
+            "reply",
+            extra_args=json.loads(messages[-1].text),
+        )
+
+
+class PythonLlmTraceUsageAgent(Agent):
+    """Exercise the built-in ChatModelAction with an offline model."""
+
+    @chat_model_setup
+    @staticmethod
+    def offline_model() -> ResourceDescriptor:
+        """Configure the model independently of the response's token counters."""
+        return ResourceDescriptor(
+            clazz=f"{TraceUsageChatModel.__module__}.{TraceUsageChatModel.__name__}",
+            connection="unused",
+            model="request-alias",
+        )
+
+    @action(EventType.InputEvent)
+    @staticmethod
+    def request_chat(event: Event, ctx: RunnerContext) -> None:
+        """Send a request through the built-in chat action."""
+        metadata = InputEvent.from_event(event).input["response_metadata"]
+        ctx.send_event(
+            ChatRequestEvent(
+                model="offline_model",
+                messages=[ChatMessage.user(json.dumps(metadata))],
+            )
+        )
+
+    @action(EventType.ChatResponseEvent)
+    @staticmethod
+    def emit_response(event: Event, ctx: RunnerContext) -> None:
+        """Expose metadata after the response Event returns through Java."""
+        response = ChatResponseEvent.from_event(event).response
+        ctx.send_event(OutputEvent(output={"responseMetadata": response.extra_args}))
+
+
 def test_python_trace_logging(tmp_path: Path) -> None:
     """Verify the Python runtime writes Event payloads in native TraceRecords."""
     records = _read_log_records(_run_trace_logging_pipeline(tmp_path))
@@ -249,6 +312,11 @@ def _read_log_records(trace_log_dir: Path) -> list[dict]:
     for log_file in trace_log_dir.glob("traces-*.log"):
         with log_file.open(encoding="utf-8") as handle:
             records.extend(json.loads(line) for line in handle if line.strip())
+    assert records
+    assert all(
+        type(record.get("schemaVersion")) is int and record["schemaVersion"] == 1
+        for record in records
+    )
     return records
 
 
@@ -518,3 +586,92 @@ def test_python_execution_identity_survives_await_and_action_context_switch(
         "executionId": call_ids[awaited_action["executionId"]],
         "result": "released",
     }
+
+
+def test_llm_trace_records_per_call_usage(tmp_path: Path) -> None:
+    """Trace the real chat action and preserve its response through the Event bridge."""
+    inputs = [
+        {
+            "id": 1,
+            "response_metadata": {
+                "model_name": "request-alias",
+                "promptTokens": 5,
+                "completionTokens": 0,
+            },
+        },
+        {"id": 2, "response_metadata": {"model_name": "request-alias"}},
+    ]
+    input_path = tmp_path / "llm-input.jsonl"
+    input_path.write_text(
+        "".join(json.dumps(value) + "\n" for value in inputs), encoding="utf-8"
+    )
+    records = _read_log_records(
+        _run_trace_logging_pipeline(
+            tmp_path,
+            targets=[TraceLogTarget.all()],
+            agent=PythonLlmTraceUsageAgent(),
+            input_path=input_path,
+        )
+    )
+    input_events = {
+        record["inputRunId"]: record
+        for record in records
+        if record["entityType"] == "event"
+        and record["entityName"] == InputEvent.EVENT_TYPE
+    }
+    actions = {
+        record["executionId"]: record
+        for record in records
+        if record["entityType"] == "action" and record["status"] == "started"
+    }
+    chat_requests = {
+        record["entityMetadata"]["eventId"]: record
+        for record in records
+        if record["entityType"] == "event"
+        and record["entityName"] == ChatRequestEvent.EVENT_TYPE
+    }
+    llm_records = [
+        record for record in records if record["entityType"] == ExecutionEntityTypes.LLM
+    ]
+    outputs = [
+        record
+        for record in records
+        if record["entityType"] == "event"
+        and record["entityName"] == OutputEvent.EVENT_TYPE
+    ]
+    assert len(input_events) == len(chat_requests) == len(outputs) == 2
+    assert len(llm_records) == 4
+    assert len({record["executionId"] for record in llm_records}) == 2
+
+    for run_id, input_event in input_events.items():
+        started, succeeded = [
+            record for record in llm_records if record["inputRunId"] == run_id
+        ]
+        assert [started["status"], succeeded["status"]] == ["started", "success"]
+        assert started["entityMetadata"] == {"model": "request-alias"}
+        expected = (
+            {
+                "model": "request-alias",
+                "usage": {"promptTokens": 5, "completionTokens": 0},
+            }
+            if input_event["attributes"]["input"]["id"] == 1
+            else {"model": "request-alias"}
+        )
+        assert succeeded.get("entityMetadata", {}) == expected
+        assert started["executionId"]
+        assert succeeded["executionId"] == started["executionId"]
+        assert succeeded["parentExecutionId"] == started["parentExecutionId"]
+        action_record = actions[started["parentExecutionId"]]
+        request = chat_requests[action_record["entityMetadata"]["triggerEventId"]]
+        assert request["attributes"]["model"] == "offline_model"
+        assert request["inputRunId"] == action_record["inputRunId"] == run_id
+        for record in (started, succeeded):
+            assert record["entityName"] == "offline_model"
+            assert record["businessKey"] == action_record["businessKey"]
+            assert record["agentName"] == action_record["agentName"]
+
+    for output in outputs:
+        input_value = input_events[output["inputRunId"]]["attributes"]["input"]
+        assert output["attributes"]["output"] == {
+            "responseMetadata": input_value["response_metadata"]
+        }

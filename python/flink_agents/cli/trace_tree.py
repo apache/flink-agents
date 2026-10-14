@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 INPUT_EVENT_TYPE = "_input_event"
+SUPPORTED_SCHEMA_VERSION = 1
 
 
 def find_log_files(path: Path) -> list[Path]:
@@ -83,6 +84,19 @@ def _normalize_event_record(
     """Extract Event identity and lineage; skip other observed entities."""
     if not isinstance(record, dict):
         return None, None, "record must be a JSON object"
+
+    if "schemaVersion" not in record:
+        return None, None, "field 'schemaVersion' is required"
+    schema_version = record["schemaVersion"]
+    if type(schema_version) is not int:
+        return None, None, "field 'schemaVersion' must be an integer"
+    if schema_version != SUPPORTED_SCHEMA_VERSION:
+        return (
+            None,
+            None,
+            f"unsupported schemaVersion {schema_version}; "
+            f"expected {SUPPORTED_SCHEMA_VERSION}",
+        )
 
     entity_type = record.get("entityType")
     event_type = record.get("entityName")

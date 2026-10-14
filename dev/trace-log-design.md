@@ -99,6 +99,7 @@ Consider a `create_order` Action execution (`action-1`) that consumes Event `eve
 
 ```json
 {
+  "schemaVersion": 1,
   "inputRunId": "run-1",
   "entityType": "event",
   "entityName": "OrderCreated",
@@ -113,6 +114,8 @@ Consider a `create_order` Action execution (`action-1`) that consumes Event `eve
   }
 }
 ```
+
+Every TraceRecord JSON includes a top-level integer `schemaVersion`, initially `1`, identifying the log format independently of Flink Agents releases and persisted runtime state. Incompatible field or semantic changes require a new version; optional fields can be added within the same version. Readers ignore unused fields. The built-in reader warns and skips records with a missing, invalid, or unsupported version while continuing to read other records.
 
 The Event's `type` maps to `entityName`, its `id` to `entityMetadata.eventId`, and its payload directly to `attributes`. This preserves the Event's identity and content without embedding the Event object in the record.
 
@@ -133,6 +136,7 @@ These relationships preserve a distinction between an Event's identity and the e
 - On replay, `producerExecutionId` identifies the execution emitting the saved output at that point. This may differ from the execution that originally produced it.
 - Action `executionId` retains its existing task creation and restoration semantics. A restart does not necessarily assign a new Action execution ID.
 - For a new component invocation or retry attempt, the `created` and `started` reporting helpers, including timestamped starts, can allocate and return an `executionId`. The caller retains and explicitly reuses that ID in subsequent lifecycle reports, including duplicate reports. Overlapping calls with identical type, name, and metadata receive different IDs. Metadata may evolve across reports and is not a correlation key.
+- Successful LLM reports add per-response `usage` using the ChatMessage's existing `promptTokens` and `completionTokens` field names and values. Available zero counts are retained and missing counts are omitted. Each retry or cached-response replay reports that response's usage, independently of metric collection. The `model` field remains the configured model or deployment.
 - Ordinary asynchronous waits retain the component call's ID. Failover or replay may create new component call IDs. Stable correlation within a call does not guarantee a terminal observation, exactly-once output, or deduplication after recovery.
 
 Source fields move from the programming-model Event to Trace metadata. Custom Event construction and reconstruction continue to use the Event's ID, type, and attributes.

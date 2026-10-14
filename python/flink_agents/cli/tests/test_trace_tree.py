@@ -38,6 +38,7 @@ def _record(
     if upstream_action_name is not None:
         metadata["upstreamActionName"] = upstream_action_name
     record = {
+        "schemaVersion": 1,
         "timestamp": "2026-07-17T10:00:00Z",
         "entityType": "event",
         "entityName": event_type,
@@ -185,14 +186,16 @@ def test_reader_reconstructs_pretty_printed_records(tmp_path: Path) -> None:
     assert text_result.stderr == ""
 
 
-def test_reader_rejects_old_flat_and_nested_record_formats(tmp_path: Path) -> None:
+def test_reader_skips_missing_and_unsupported_schema_versions(tmp_path: Path) -> None:
     log_path = tmp_path / "events.log"
+    missing_version = _record("missing-version", "_input_event")
+    del missing_version["schemaVersion"]
     _write_log(
         log_path,
         [
             _record("root", "_input_event"),
-            {"eventId": "flat", "eventType": "OldEvent", "eventAttributes": {}},
-            {"eventType": "OldEvent", "event": {"id": "nested", "attributes": {}}},
+            missing_version,
+            {**_record("unsupported-version", "_input_event"), "schemaVersion": 2},
             _record("child", "ChildEvent", "root", "child_action"),
         ],
     )
@@ -210,6 +213,45 @@ def test_reader_rejects_old_flat_and_nested_record_formats(tmp_path: Path) -> No
         "MALFORMED_RECORD",
     ]
     assert result.stderr.count("MALFORMED_RECORD") == 2
+    assert "field 'schemaVersion' is required" in result.stderr
+    assert "unsupported schemaVersion 2; expected 1" in result.stderr
+
+
+@pytest.mark.parametrize("schema_version", [None, "1", True, False, 1.0, [], {}])
+def test_reader_skips_invalid_schema_version_and_continues(
+    tmp_path: Path, schema_version: object
+) -> None:
+    log_path = tmp_path / "events.log"
+    _write_log(
+        log_path,
+        [
+            {**_record("invalid", "_input_event"), "schemaVersion": schema_version},
+            _record("root", "_input_event"),
+        ],
+    )
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert trace_forest["roots"] == ["root"]
+    assert set(trace_forest["nodes"]) == {"root"}
+    assert [item["code"] for item in trace_forest["warnings"]] == ["MALFORMED_RECORD"]
+    assert "field 'schemaVersion' must be an integer" in result.stderr
+
+
+def test_reader_tolerates_unknown_optional_fields(tmp_path: Path) -> None:
+    log_path = tmp_path / "events.log"
+    record = _record("root", "_input_event")
+    record["futureField"] = {"value": 1}
+    record["entityMetadata"]["futureMetadata"] = "value"
+    _write_log(log_path, [record])
+
+    result = _run_reader(log_path, "json")
+    trace_forest = json.loads(result.stdout)
+
+    assert trace_forest["roots"] == ["root"]
+    assert trace_forest["warnings"] == []
+    assert result.stderr == ""
 
 
 def test_reader_ignores_non_event_entities(tmp_path: Path) -> None:
@@ -220,6 +262,7 @@ def test_reader_ignores_non_event_entities(tmp_path: Path) -> None:
             _record("root", "_input_event"),
             *[
                 {
+                    "schemaVersion": 1,
                     "entityType": entity_type,
                     "entityName": "component",
                     "executionId": f"execution-{entity_type}",
@@ -331,7 +374,7 @@ def test_reader_resynchronizes_after_malformed_pretty_record(
     ("malformed_record", "expected_event_id"),
     [
         ([], None),
-        ({}, None),
+        ({"schemaVersion": 1}, None),
         ({**_record("bad", "BadEvent"), "entityName": 123}, None),
         ({**_record("bad", "BadEvent"), "entityMetadata": []}, None),
         ({**_record("bad", "BadEvent"), "entityMetadata": {}}, None),

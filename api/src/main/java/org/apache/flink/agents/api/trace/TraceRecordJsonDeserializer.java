@@ -42,6 +42,18 @@ final class TraceRecordJsonDeserializer extends JsonDeserializer<TraceRecord> {
         if (!root.isObject()) {
             throw JsonMappingException.from(parser, "A TraceRecord must be a JSON object.");
         }
+        JsonNode version = root.get("schemaVersion");
+        if (version == null
+                || !version.isInt()
+                || version.intValue() != TraceRecordJsonSerializer.SCHEMA_VERSION) {
+            throw JsonMappingException.from(
+                    parser,
+                    "Unsupported TraceRecord schemaVersion: "
+                            + (version == null ? "missing" : version)
+                            + "; expected integer "
+                            + TraceRecordJsonSerializer.SCHEMA_VERSION
+                            + ".");
+        }
         try {
             TraceContext context =
                     TraceContext.fromExistingIds(

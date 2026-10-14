@@ -54,7 +54,8 @@ import java.util.Objects;
  * User payload fields named {@code status} or {@code problemCategory} remain ordinary attributes.
  *
  * <p>JSON output flattens the context fields, while keeping entity metadata and attributes as
- * separate objects.
+ * separate objects. Each JSON record includes a {@code schemaVersion} identifying its format; this
+ * version is independent of the Flink Agents release and persisted runtime state.
  */
 @JsonSerialize(using = TraceRecordJsonSerializer.class)
 @JsonDeserialize(using = TraceRecordJsonDeserializer.class)

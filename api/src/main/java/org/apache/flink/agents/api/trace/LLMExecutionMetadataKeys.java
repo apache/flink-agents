@@ -21,6 +21,7 @@ package org.apache.flink.agents.api.trace;
 public final class LLMExecutionMetadataKeys {
 
     public static final String MODEL = "model";
+    public static final String USAGE = "usage";
 
     private LLMExecutionMetadataKeys() {}
 }

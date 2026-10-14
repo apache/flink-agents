@@ -39,6 +39,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
@@ -201,6 +202,126 @@ class ChatModelActionRetryTest {
         assertInvocationIdentities(reporter, 1);
     }
 
+    @ParameterizedTest
+    @MethodSource("responseUsageCases")
+    void chatReportsUsageAndPreservesTokenMetricConditions(
+            Map<String, Object> extraArgs,
+            Map<String, Object> expectedUsage,
+            boolean metricsAvailable,
+            boolean recordsMetrics)
+            throws Exception {
+        RunnerContext reportingCtx = reportingRunnerContext();
+        BaseChatModelSetup chatModel = configureReportingChatContext(reportingCtx);
+        if (!metricsAvailable) {
+            when(reportingCtx.getActionMetricGroup()).thenReturn(null);
+        }
+        when(chatModel.chat(any(), any(), any()))
+                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "hello", extraArgs));
+
+        ChatModelAction.chat(
+                UUID.randomUUID(), "test-model", List.of(), Map.of(), null, reportingCtx);
+
+        Map<String, Object> expectedMetadata = new HashMap<>(LLM_METADATA);
+        if (!expectedUsage.isEmpty()) {
+            expectedMetadata.put("usage", expectedUsage);
+        }
+        ExecutionReporter reporter = (ExecutionReporter) reportingCtx;
+        verify(reporter)
+                .reportExecutionStarted(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(LLM_METADATA));
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(expectedMetadata));
+        if (recordsMetrics) {
+            verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "metric-model", 100L, 50L);
+        } else {
+            verify(chatModel, never()).recordTokenMetrics(any(), anyString(), anyLong(), anyLong());
+        }
+        assertInvocationIdentities(reporter, 1);
+        assertThat(ChatResponseEvent.fromEvent(sentEvents.get(0)).isFailed()).isFalse();
+    }
+
+    private static Stream<Arguments> responseUsageCases() {
+        Map<String, Object> complete =
+                Map.of("model_name", "metric-model", "promptTokens", 100L, "completionTokens", 50L);
+        Map<String, Object> unknown = new HashMap<>();
+        unknown.put("promptTokens", null);
+        unknown.put("completionTokens", null);
+        return Stream.of(
+                Arguments.of(
+                        complete,
+                        Map.of("promptTokens", 100L, "completionTokens", 50L),
+                        true,
+                        true),
+                Arguments.of(
+                        Map.of(
+                                "model_name",
+                                "metric-model",
+                                "promptTokens",
+                                100,
+                                "completionTokens",
+                                50),
+                        Map.of("promptTokens", 100, "completionTokens", 50),
+                        true,
+                        true),
+                Arguments.of(
+                        complete,
+                        Map.of("promptTokens", 100L, "completionTokens", 50L),
+                        false,
+                        false),
+                Arguments.of(
+                        Map.of(
+                                "model_name",
+                                "metric-model",
+                                "promptTokens",
+                                "100",
+                                "completionTokens",
+                                50L),
+                        Map.of("completionTokens", 50L),
+                        true,
+                        false),
+                Arguments.of(
+                        Map.of("model_name", "metric-model", "completionTokens", 50L),
+                        Map.of("completionTokens", 50L),
+                        true,
+                        false),
+                Arguments.of(
+                        Map.of(
+                                "model_name",
+                                "metric-model",
+                                "promptTokens",
+                                0L,
+                                "completionTokens",
+                                50L),
+                        Map.of("promptTokens", 0L, "completionTokens", 50L),
+                        true,
+                        false),
+                Arguments.of(
+                        Map.of("model_name", "", "promptTokens", 100L, "completionTokens", 50L),
+                        Map.of("promptTokens", 100L, "completionTokens", 50L),
+                        true,
+                        false),
+                Arguments.of(
+                        Map.of("promptTokens", 5L, "completionTokens", 0L),
+                        Map.of("promptTokens", 5L, "completionTokens", 0L),
+                        true,
+                        false),
+                Arguments.of(
+                        Map.of("completionTokens", 0L),
+                        Map.of("completionTokens", 0L),
+                        true,
+                        false),
+                Arguments.of(Map.of("promptTokens", 5L), Map.of("promptTokens", 5L), true, false),
+                Arguments.of(unknown, Map.of(), true, false),
+                Arguments.of(Map.of(), Map.of(), true, false));
+    }
+
     @Test
     void chatReportsStructuredOutputParserExecution() throws Exception {
         RunnerContext reportingCtx = reportingRunnerContext();
@@ -239,8 +360,12 @@ class ChatModelActionRetryTest {
         when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0));
         when(chatModel.chat(any(), any(), any()))
                 .thenReturn(
-                        new ChatMessage(MessageRole.ASSISTANT, "not-json"),
-                        new ChatMessage(MessageRole.ASSISTANT, "{\"answer\":\"42\"}"));
+                        new ChatMessage(
+                                MessageRole.ASSISTANT, "not-json", Map.of("promptTokens", 11L)),
+                        new ChatMessage(
+                                MessageRole.ASSISTANT,
+                                "{\"answer\":\"42\"}",
+                                Map.of("completionTokens", 0L)));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -259,12 +384,28 @@ class ChatModelActionRetryTest {
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
                         eq(LLM_METADATA));
-        verify(reporter, times(2))
+        verify(reporter)
                 .reportExecutionSucceeded(
                         anyString(),
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
-                        eq(LLM_METADATA));
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("promptTokens", 11L))));
+        verify(reporter)
+                .reportExecutionSucceeded(
+                        anyString(),
+                        eq(ExecutionReporter.EntityTypes.LLM),
+                        eq("test-model"),
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("completionTokens", 0L))));
         verify(reporter)
                 .reportExecutionFailed(
                         anyString(),
@@ -292,7 +433,9 @@ class ChatModelActionRetryTest {
         when(reportingCtx.getConfig()).thenReturn(readableConfig(1, 0, async));
         when(chatModel.chat(any(), any(), any()))
                 .thenThrow(new RuntimeException("transient error"))
-                .thenReturn(new ChatMessage(MessageRole.ASSISTANT, "success"));
+                .thenReturn(
+                        new ChatMessage(
+                                MessageRole.ASSISTANT, "success", Map.of("completionTokens", 0L)));
 
         ChatModelAction.chat(
                 UUID.randomUUID(),
@@ -322,7 +465,12 @@ class ChatModelActionRetryTest {
                         anyString(),
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
-                        eq(LLM_METADATA));
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("completionTokens", 0L))));
         assertInvocationIdentities(reporter, 2);
     }
 
@@ -598,7 +746,12 @@ class ChatModelActionRetryTest {
                         anyString(),
                         eq(ExecutionReporter.EntityTypes.LLM),
                         eq("test-model"),
-                        eq(LLM_METADATA));
+                        eq(
+                                Map.of(
+                                        "model",
+                                        "configured-model",
+                                        "usage",
+                                        Map.of("promptTokens", 100L, "completionTokens", 50L))));
         verify(chatModel).recordTokenMetrics(mockActionMetricGroup, "provider-model", 100L, 50L);
         // The parse is never attempted, so nothing about it is reported. The failed
         // check is unscoped: the rejection must not be reported as a failure of any
