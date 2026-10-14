@@ -23,6 +23,8 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.LongTermGetEvent;
 import org.apache.flink.agents.api.event.LongTermSearchEvent;
 import org.apache.flink.agents.api.event.LongTermUpdateEvent;
@@ -51,6 +53,8 @@ class EventTypeTest {
                         Map.entry("OutputEvent", OutputEvent.EVENT_TYPE),
                         Map.entry("ChatRequestEvent", ChatRequestEvent.EVENT_TYPE),
                         Map.entry("ChatResponseEvent", ChatResponseEvent.EVENT_TYPE),
+                        Map.entry("DecisionRequestEvent", DecisionRequestEvent.EVENT_TYPE),
+                        Map.entry("DecisionResponseEvent", DecisionResponseEvent.EVENT_TYPE),
                         Map.entry("ToolRequestEvent", ToolRequestEvent.EVENT_TYPE),
                         Map.entry("ToolResponseEvent", ToolResponseEvent.EVENT_TYPE),
                         Map.entry(

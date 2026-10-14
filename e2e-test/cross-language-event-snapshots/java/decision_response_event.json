@@ -1,0 +1,72 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "error" : null,
+    "request_id" : "00000000-0000-0000-0000-000000000002",
+    "response" : {
+      "answers" : {
+        "eligible" : {
+          "type" : "predicate",
+          "probability_true" : 0.9
+        },
+        "route" : {
+          "type" : "choice",
+          "choice" : true,
+          "probabilities" : [ {
+            "value" : true,
+            "probability" : 0.8
+          }, {
+            "value" : "true",
+            "probability" : 0.2
+          } ],
+          "provider_confidence" : 0.7
+        },
+        "severity" : {
+          "type" : "score",
+          "score" : 1.25,
+          "probabilities" : [ {
+            "value" : 0,
+            "label" : "low",
+            "probability" : 0.0
+          }, {
+            "value" : 1,
+            "label" : {
+              "label" : "medium"
+            },
+            "probability" : 0.75
+          }, {
+            "value" : 2,
+            "label" : [ "high" ],
+            "probability" : 0.25
+          } ],
+          "provider_confidence" : null
+        },
+        "restricted" : {
+          "type" : "refusal",
+          "reason" : "Cannot answer"
+        }
+      },
+      "model" : "reported-model",
+      "usage" : {
+        "input_tokens" : 42,
+        "output_tokens" : null,
+        "total_tokens" : null
+      },
+      "metadata" : {
+        "usage" : {
+          "cached_tokens" : 4
+        },
+        "request_id" : "provider-request"
+      }
+    },
+    "total_retry_wait_sec" : 2,
+    "retry_count" : 1,
+    "status" : "SUCCESS"
+  },
+  "attachments" : {
+    "reference" : {
+      "key" : "review"
+    }
+  },
+  "type" : "_decision_response_event"
+}

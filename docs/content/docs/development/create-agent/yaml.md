@@ -677,6 +677,8 @@ For `clazz:` on resource descriptors and for complete event-type entries in `tri
 | `output`                       | `OutputEvent`                    |
 | `chat_request`                 | `ChatRequestEvent`               |
 | `chat_response`                | `ChatResponseEvent`              |
+| `decision_request`             | `DecisionRequestEvent`           |
+| `decision_response`            | `DecisionResponseEvent`          |
 | `tool_request`                 | `ToolRequestEvent`               |
 | `tool_response`                | `ToolResponseEvent`              |
 | `context_retrieval_request`    | `ContextRetrievalRequestEvent`   |

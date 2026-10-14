@@ -15,7 +15,7 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 ################################################################################
-"""Analyze a small product-review stream with a DecisionModel Agent.
+"""Analyze product reviews through the built-in Decision Action.
 
 Set TYPESAFE_API_KEY or OPENAI_API_KEY, then run with a model you can access:
 

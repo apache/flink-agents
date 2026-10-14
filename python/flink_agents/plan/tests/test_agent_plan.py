@@ -131,9 +131,19 @@ def test_to_agent_invalid_signature() -> None:
 def test_builtin_actions_are_python_native_after_compile() -> None:
     agent_plan = AgentPlan.from_agent(AgentForTest(), AgentConfiguration())
 
-    for name in ("chat_model_action", "tool_call_action", "context_retrieval_action"):
+    for name in (
+        "chat_model_action",
+        "tool_call_action",
+        "context_retrieval_action",
+        "decision_model_action",
+    ):
         action = agent_plan.actions[name]
         assert isinstance(action.exec, PythonFunction)
+
+    decision_action = agent_plan.actions["decision_model_action"]
+    assert decision_action.trigger_conditions == [EventType.DecisionRequestEvent]
+    restored_plan = AgentPlan.model_validate_json(agent_plan.model_dump_json())
+    assert restored_plan.actions["decision_model_action"] == decision_action
 
 
 class AgentWithConventionalDecoratorOrder(Agent):

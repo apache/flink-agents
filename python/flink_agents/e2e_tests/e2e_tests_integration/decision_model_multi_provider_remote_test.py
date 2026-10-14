@@ -65,7 +65,7 @@ def test_decision_model_integration_remote(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An Action resolves a model and emits real provider answers on Flink."""
+    """The built-in Decision Action emits correlated real-provider answers on Flink."""
     prefix = provider.upper()
     api_key = os.environ.get(f"{prefix}_API_KEY")
     if not api_key:

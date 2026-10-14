@@ -159,7 +159,7 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(agent);
 
         // Verify that actions were collected correctly
-        assertThat(agentPlan.getActions().size()).isEqualTo(5);
+        assertThat(agentPlan.getActions().size()).isEqualTo(6);
         assertThat(agentPlan.getActions()).containsKey("handleInputEvent");
         assertThat(agentPlan.getActions()).containsKey("handleMultipleEvents");
 
@@ -224,6 +224,7 @@ public class AgentPlanTest {
         assertThat(new AgentPlan(agent).getActions().keySet())
                 .containsExactly(
                         "chat_model_action",
+                        "decision_model_action",
                         "tool_call_action",
                         "context_retrieval_action",
                         "first",
@@ -243,7 +244,7 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(emptyAgent);
 
         // Verify that no actions were collected
-        assertThat(agentPlan.getActions().size()).isEqualTo(3);
+        assertThat(agentPlan.getActions().size()).isEqualTo(4);
     }
 
     @Test
@@ -251,7 +252,11 @@ public class AgentPlanTest {
         AgentPlan agentPlan = new AgentPlan(new Agent() {});
 
         for (String name :
-                List.of("chat_model_action", "tool_call_action", "context_retrieval_action")) {
+                List.of(
+                        "chat_model_action",
+                        "decision_model_action",
+                        "tool_call_action",
+                        "context_retrieval_action")) {
             Action action = agentPlan.getActions().get(name);
             assertThat(action).isNotNull();
             assertThat(action.getExec()).isInstanceOf(JavaFunction.class);

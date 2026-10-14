@@ -33,6 +33,10 @@ public final class EventType {
             org.apache.flink.agents.api.event.ChatRequestEvent.EVENT_TYPE;
     public static final String ChatResponseEvent =
             org.apache.flink.agents.api.event.ChatResponseEvent.EVENT_TYPE;
+    public static final String DecisionRequestEvent =
+            org.apache.flink.agents.api.event.DecisionRequestEvent.EVENT_TYPE;
+    public static final String DecisionResponseEvent =
+            org.apache.flink.agents.api.event.DecisionResponseEvent.EVENT_TYPE;
     public static final String ToolRequestEvent =
             org.apache.flink.agents.api.event.ToolRequestEvent.EVENT_TYPE;
     public static final String ToolResponseEvent =
@@ -68,6 +72,8 @@ public final class EventType {
                     Map.entry("OutputEvent", OutputEvent),
                     Map.entry("ChatRequestEvent", ChatRequestEvent),
                     Map.entry("ChatResponseEvent", ChatResponseEvent),
+                    Map.entry("DecisionRequestEvent", DecisionRequestEvent),
+                    Map.entry("DecisionResponseEvent", DecisionResponseEvent),
                     Map.entry("ToolRequestEvent", ToolRequestEvent),
                     Map.entry("ToolResponseEvent", ToolResponseEvent),
                     Map.entry("ContextRetrievalRequestEvent", ContextRetrievalRequestEvent),

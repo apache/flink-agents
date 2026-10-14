@@ -55,7 +55,7 @@ public class CreateJavaAgentPlanFromJson {
         String agentJsonFile = args[0];
         String json = Files.readString(Paths.get(agentJsonFile));
         AgentPlan agentPlan = new ObjectMapper().readValue(json, AgentPlan.class);
-        assertEquals(5, agentPlan.getActions().size());
+        assertEquals(6, agentPlan.getActions().size());
 
         String myEvent = "_my_event";
         String inputEvent = "_input_event";
@@ -97,6 +97,16 @@ public class CreateJavaAgentPlanFromJson {
         assertEquals(
                 List.of(chatRequestEvent, toolResponseEvent),
                 chatModelAction.getTriggerConditions());
+
+        Action decisionModelAction = agentPlan.getActions().get("decision_model_action");
+        assertInstanceOf(PythonFunction.class, decisionModelAction.getExec());
+        PythonFunction processDecisionRequestFunc = (PythonFunction) decisionModelAction.getExec();
+        assertEquals(
+                "flink_agents.plan.actions.decision_model_action",
+                processDecisionRequestFunc.getModule());
+        assertEquals("process_decision_request", processDecisionRequestFunc.getQualName());
+        assertEquals(
+                List.of("_decision_request_event"), decisionModelAction.getTriggerConditions());
 
         assertTrue(agentPlan.getActions().containsKey("tool_call_action"));
         Action toolCallAction = agentPlan.getActions().get("tool_call_action");

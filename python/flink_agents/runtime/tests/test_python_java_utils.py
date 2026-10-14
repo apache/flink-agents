@@ -16,10 +16,20 @@
 # limitations under the License.
 #################################################################################
 import json
+from asyncio import CancelledError as AsyncCancelledError
+from concurrent.futures import CancelledError
 from typing import Any
+from unittest.mock import Mock
 
 import cloudpickle
+import pytest
 
+from flink_agents.api.decision_models import (
+    DecisionRequest,
+    DecisionResult,
+    PredicateAnswer,
+    PredicateQuestion,
+)
 from flink_agents.api.decorators import tool
 from flink_agents.api.embedding_models.embedding_model import (
     EmbeddingResult,
@@ -28,6 +38,7 @@ from flink_agents.api.embedding_models.embedding_model import (
 from flink_agents.api.events.event import Event
 from flink_agents.api.tools import InjectedArg, ToolResponse
 from flink_agents.runtime.python_java_utils import (
+    call_decision_model,
     call_embedding_with_usage,
     convert_to_python_key_text,
     get_python_tool_metadata,
@@ -218,3 +229,67 @@ def test_tool_bridge_preserves_explicit_blocks_in_both_directions() -> None:
     assert response.to_result_block("id").metadata == {}
     assert _decode_java_tool_result(wire) == response
     assert response.to_result_block("id").text == "visible"
+
+
+@pytest.mark.parametrize("model", [None, "selected-model"])
+def test_call_decision_model_preserves_result_and_selected_model(
+    model: str | None,
+) -> None:
+    request = DecisionRequest(
+        input={"text": "Refund requested"},
+        questions={"refund": PredicateQuestion(instructions="Needs a refund?")},
+    )
+    result = DecisionResult(answers={"refund": PredicateAnswer(probability_true=0.9)})
+    resource = Mock()
+    resource.decide.return_value = result
+
+    outcome = call_decision_model(resource, request.model_dump_json(), model)
+
+    assert outcome["status"] == "SUCCESS"
+    assert DecisionResult.model_validate_json(outcome["result"]) == result
+    if model is None:
+        resource.decide.assert_called_once_with(request)
+    else:
+        resource.decide.assert_called_once_with(request, model=model)
+
+
+@pytest.mark.parametrize(
+    ("error", "signal"),
+    [
+        (CancelledError(), "CANCELLED"),
+        (AsyncCancelledError("provider stopped"), "CANCELLED"),
+        (InterruptedError("provider stopped"), "INTERRUPTED"),
+    ],
+)
+def test_call_decision_model_preserves_cancellation_type(
+    error: BaseException, signal: str
+) -> None:
+    request = DecisionRequest(
+        input="Refund requested",
+        questions={"refund": PredicateQuestion(instructions="Needs a refund?")},
+    )
+    resource = Mock()
+    resource.decide.side_effect = error
+
+    assert call_decision_model(resource, request.model_dump_json(), None) == {
+        "status": signal,
+        "message": str(error),
+    }
+    resource.decide.assert_called_once_with(request)
+
+
+@pytest.mark.parametrize(
+    "error", [ValueError("CancelledError"), TimeoutError("InterruptedError")]
+)
+def test_call_decision_model_keeps_ordinary_provider_failures(error: Exception) -> None:
+    request = DecisionRequest(
+        input="Refund requested",
+        questions={"refund": PredicateQuestion(instructions="Needs a refund?")},
+    )
+    resource = Mock()
+    resource.decide.side_effect = error
+
+    with pytest.raises(type(error)) as raised:
+        call_decision_model(resource, request.model_dump_json(), None)
+
+    assert raised.value is error

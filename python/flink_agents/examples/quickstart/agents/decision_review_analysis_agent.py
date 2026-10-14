@@ -28,6 +28,10 @@ from flink_agents.api.decision_models import (
     ScoreQuestion,
 )
 from flink_agents.api.decorators import action
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.resource import ResourceType
 from flink_agents.api.runner_context import RunnerContext
@@ -52,15 +56,16 @@ class DecisionReviewAnalysisAgent(Agent):
     """Score satisfaction, classify the main complaint, and flag shipping damage.
 
     The job registers ``review_analysis_model`` as a shared decision resource.
-    The Action supplies the review and criteria, then applies a business threshold
-    to the shipping-damage probability. The example notification prints to stdout.
+    The input Action submits the review and criteria to the built-in Decision Action.
+    The response Action applies a business threshold to the shipping-damage probability.
+    The example notification prints to stdout.
     """
 
     @action(InputEvent.EVENT_TYPE)
     @staticmethod
     def process_input(event: Event, ctx: RunnerContext) -> None:
-        """Evaluate one product review and emit its analysis or explicit refusals."""
-        review = ProductReview.model_validate(cast("InputEvent", event).input)
+        """Submit one product review to the built-in Decision Action."""
+        review = ProductReview.model_validate(InputEvent.from_event(event).input)
         model = cast(
             "BaseDecisionModelSetup",
             ctx.get_resource("review_analysis_model", ResourceType.DECISION_MODEL),
@@ -82,8 +87,9 @@ class DecisionReviewAnalysisAgent(Agent):
             if isinstance(model, OpenAIDecisionModelSetup)
             else reasons
         )
-        result = model.decide(
-            DecisionRequest(
+        request = DecisionRequestEvent(
+            model="review_analysis_model",
+            request=DecisionRequest(
                 input=review.review,
                 questions={
                     "satisfaction": ScoreQuestion(
@@ -120,7 +126,19 @@ class DecisionReviewAnalysisAgent(Agent):
                         ),
                     ),
                 },
-            )
+            ),
+        )
+        ctx.sensory_memory.set(str(request.id), review.model_dump(mode="json"))
+        ctx.send_event(request)
+
+    @action(DecisionResponseEvent.EVENT_TYPE)
+    @staticmethod
+    def process_decision_response(event: Event, ctx: RunnerContext) -> None:
+        """Handle the correlated analysis or refusals and apply business policy."""
+        response = DecisionResponseEvent.from_event(event)
+        result = response.response
+        review = ProductReview.model_validate(
+            ctx.sensory_memory.get(str(response.request_id))
         )
 
         refusals = {

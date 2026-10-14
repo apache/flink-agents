@@ -22,11 +22,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.chat.messages.ChatMessage;
 import org.apache.flink.agents.api.chat.messages.ChatResult;
 import org.apache.flink.agents.api.chat.messages.MessageRole;
+import org.apache.flink.agents.api.decision.DecisionRequest;
+import org.apache.flink.agents.api.decision.DecisionResult;
 import org.apache.flink.agents.api.event.AgentRunBeginEvent;
 import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.LongTermGetEvent;
 import org.apache.flink.agents.api.event.LongTermSearchEvent;
 import org.apache.flink.agents.api.event.LongTermUpdateEvent;
@@ -226,6 +230,22 @@ class BuiltInEventsTest {
                         new OutputEvent(FIXED_ID, Map.of("output", "world")),
                         chatRequest(),
                         new ChatResponseEvent(FIXED_ID, responseAttrs),
+                        new DecisionRequestEvent(
+                                "decision",
+                                new DecisionRequest(
+                                        "evidence",
+                                        Map.of(
+                                                "eligible",
+                                                DecisionRequest.Question.predicate("Eligible?")))),
+                        DecisionResponseEvent.success(
+                                REQUEST_ID,
+                                new DecisionResult(
+                                        Map.of("eligible", new DecisionResult.PredicateAnswer(0.9)),
+                                        null,
+                                        null,
+                                        Map.of()),
+                                0,
+                                0),
                         new ToolRequestEvent(FIXED_ID, toolAttrs),
                         new ContextRetrievalRequestEvent(FIXED_ID, contextAttrs),
                         new AgentRunBeginEvent(FIXED_ID, memoryAttrs),
@@ -434,6 +454,26 @@ class BuiltInEventsTest {
                         "error",
                         "boom"));
         byType.put(
+                DecisionRequestEvent.EVENT_TYPE,
+                attrs(
+                        "model",
+                        "decision",
+                        "request",
+                        new DecisionRequest(
+                                "evidence",
+                                Map.of(
+                                        "eligible",
+                                        DecisionRequest.Question.predicate("Eligible?")))));
+        byType.put(
+                DecisionResponseEvent.EVENT_TYPE,
+                attrs(
+                        "request_id",
+                        REQUEST_ID,
+                        "status",
+                        DecisionResponseEvent.FAILED,
+                        "error",
+                        "boom"));
+        byType.put(
                 ToolRequestEvent.EVENT_TYPE, attrs("model", "test-model", "tool_calls", List.of()));
         byType.put(
                 ToolResponseEvent.EVENT_TYPE,
@@ -584,6 +624,11 @@ class BuiltInEventsTest {
                 // ChatResponseEvent
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
                 Arguments.of(ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+                // Decision events
+                Arguments.of(DecisionRequestEvent.EVENT_TYPE, "model", 0),
+                Arguments.of(DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
+                Arguments.of(
+                        DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
                 // ToolRequestEvent
                 Arguments.of(ToolRequestEvent.EVENT_TYPE, "model", 0),
                 Arguments.of(ToolRequestEvent.EVENT_TYPE, "tool_calls", List.of(0)),

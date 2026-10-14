@@ -55,6 +55,10 @@ public class AgentExecutionOptions {
     public static final ConfigOption<Boolean> CHAT_ASYNC =
             new ConfigOption<>("chat.async", Boolean.class, true);
 
+    /** Whether the built-in decision-model action uses durable asynchronous execution. */
+    public static final ConfigOption<Boolean> DECISION_ASYNC =
+            new ConfigOption<>("decision.async", Boolean.class, true);
+
     /** Whether the built-in tool-call action runs each tool via durable async execution. */
     public static final ConfigOption<Boolean> TOOL_CALL_ASYNC =
             new ConfigOption<>("tool-call.async", Boolean.class, true);

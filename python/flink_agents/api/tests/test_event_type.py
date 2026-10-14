@@ -24,6 +24,10 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
 from flink_agents.api.events.tool_event import ToolRequestEvent, ToolResponseEvent
@@ -34,6 +38,8 @@ def test_builtin_constants_match_event_class_constants() -> None:
     assert EventType.OutputEvent == OutputEvent.EVENT_TYPE
     assert EventType.ChatRequestEvent == ChatRequestEvent.EVENT_TYPE
     assert EventType.ChatResponseEvent == ChatResponseEvent.EVENT_TYPE
+    assert EventType.DecisionRequestEvent == DecisionRequestEvent.EVENT_TYPE
+    assert EventType.DecisionResponseEvent == DecisionResponseEvent.EVENT_TYPE
     assert EventType.ToolRequestEvent == ToolRequestEvent.EVENT_TYPE
     assert EventType.ToolResponseEvent == ToolResponseEvent.EVENT_TYPE
     assert (
