@@ -18,7 +18,9 @@
 package org.apache.flink.agents.runtime.operator;
 
 import org.apache.flink.agents.api.Event;
+import org.apache.flink.agents.api.EventType;
 import org.apache.flink.agents.api.InputEvent;
+import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.agents.AgentExecutionOptions;
 import org.apache.flink.agents.api.context.DurableCallable;
 import org.apache.flink.agents.api.context.RunnerContext;
@@ -27,6 +29,7 @@ import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.plan.JavaFunction;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
+import org.apache.flink.agents.runtime.lifecycle.TaskLifecycleListener;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
 import org.apache.flink.api.java.functions.KeySelector;
@@ -44,6 +47,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assumptions.assumeThat;
 
 /** Component-level tests for metrics bookkeeping on the JDK&lt;21 parallel execution path. */
@@ -231,5 +235,79 @@ class ActionExecutionOperatorParallelMetricsTest {
             }
             return new AgentPlan(actions, new LinkedHashMap<>(), parallelConfig());
         }
+    }
+
+    @Test
+    @Timeout(20)
+    void failedParallelActionMarksInputRunFailed() throws Exception {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                newHarness(new AgentPlan(new FailingAgent(), parallelConfig()))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator = operator(testHarness);
+
+            assertThatThrownBy(
+                            () -> {
+                                testHarness.processElement(new StreamRecord<>(0L));
+                                operator.waitInFlightEventsFinished();
+                            })
+                    .hasStackTraceContaining("parallel action boom");
+
+            assertThat(metricGroup(operator).getCounter("numOfInputRunsFailed").getCount())
+                    .as("a failure propagated through commit() must close the input run")
+                    .isEqualTo(1L);
+        }
+    }
+
+    /** Agent whose only action always fails, exercising the parallel failure path. */
+    public static class FailingAgent extends Agent {
+
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handleInput(Event event, RunnerContext context) {
+            throw new IllegalStateException("parallel action boom");
+        }
+    }
+
+    @Test
+    @Timeout(20)
+    void preparationFailureKeepsCauseAndMarksInputRunFailed() throws Exception {
+        assumeThat(ContinuationActionExecutor.isContinuationSupported()).isFalse();
+
+        try (KeyedOneInputStreamOperatorTestHarness<Long, Long, Object> testHarness =
+                newHarness(new AgentPlan(new PlainAgent(), parallelConfig()))) {
+            testHarness.open();
+            ActionExecutionOperator<Long, Object> operator = operator(testHarness);
+
+            // A preparation-time listener failure must surface as the original exception,
+            // not as a NullPointerException from commit() dereferencing a null actionTask,
+            // and must still close the input run so the failure is counted.
+            operator.addTaskLifecycleListener(
+                    new TaskLifecycleListener() {
+                        @Override
+                        public void onActionPrepared(ActionTask task) {
+                            throw new IllegalStateException("prepare boom");
+                        }
+                    });
+
+            assertThatThrownBy(
+                            () -> {
+                                testHarness.processElement(new StreamRecord<>(0L));
+                                operator.waitInFlightEventsFinished();
+                            })
+                    .hasStackTraceContaining("prepare boom");
+
+            assertThat(metricGroup(operator).getCounter("numOfInputRunsFailed").getCount())
+                    .as(
+                            "a preparation failure propagated through commit() must close the input run")
+                    .isEqualTo(1L);
+        }
+    }
+
+    /** Agent whose action does nothing, so the only failure comes from the listener. */
+    public static class PlainAgent extends Agent {
+
+        @org.apache.flink.agents.api.annotation.Action(EventType.InputEvent)
+        public static void handleInput(Event event, RunnerContext context) {}
     }
 }

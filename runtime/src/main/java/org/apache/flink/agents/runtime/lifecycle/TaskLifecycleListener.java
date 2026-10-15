@@ -23,7 +23,10 @@ import org.apache.flink.agents.runtime.operator.ActionTask;
 /**
  * Observes the per-record and per-action lifecycle of {@code ActionExecutionOperator}.
  *
- * <p>All callbacks run on the mailbox thread.
+ * <p>Callbacks run on the thread that drives the execution being reported, which is not fixed: the
+ * mailbox thread on the default engine, and either the mailbox thread or an action worker thread
+ * when parallel action execution is enabled. A listener must not rely on thread affinity and must
+ * synchronize its own state if more than one thread can reach it.
  *
  * <p>Event pairing semantics:
  *
