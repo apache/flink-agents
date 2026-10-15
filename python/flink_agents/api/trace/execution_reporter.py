@@ -56,7 +56,9 @@ class ExecutionReporter(ABC):
     unique to that call and reuses it in every report, including across awaits.
     Retries are separate calls with separate IDs. Entity type and name remain
     stable for the call; metadata describes the observation and does not identify
-    the call. Metadata should remain small, structured, and serializable.
+    the call. Each report carries only the metadata supplied for that observation.
+    Reporting does not merge metadata across reports with the same execution ID.
+    Metadata should remain small, structured, and serializable.
 
     Implementations decide how reports are consumed or ignored.
     """

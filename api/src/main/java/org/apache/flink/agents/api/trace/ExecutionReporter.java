@@ -29,8 +29,10 @@ import java.util.Map;
  * Subagent call. The caller allocates a unique, non-blank execution ID for each call or retry
  * attempt, and supplies that ID with every report about it, including repeated reports. The
  * creation and start helpers in {@link ExecutionReporters} can allocate this ID. Reports for one
- * call must use the same entity type and name. Metadata describes the call but does not identify
- * it; it should remain small, structured, and serializable.
+ * call must use the same entity type and name. Metadata describes the observation and does not
+ * identify the call. Each report carries only the metadata supplied for that observation. Reporting
+ * does not merge metadata across reports with the same execution ID. Metadata should remain small,
+ * structured, and serializable.
  *
  * <p>Reports may be missing, repeated, or delivered after the observed operation. An execution ID
  * identifies a call, not an individual report. Reporting does not deduplicate observations or
@@ -71,7 +73,7 @@ public interface ExecutionReporter {
      * @param executionId the unique identity allocated by the caller for this call
      * @param entityType the call type, such as LLM, parser, tool, or subagent
      * @param entityName the call target's name, such as a model or tool name
-     * @param entityMetadata small structured metadata describing the call
+     * @param entityMetadata small structured metadata describing the observation
      */
     default void reportExecutionCreated(
             String executionId,
@@ -86,7 +88,7 @@ public interface ExecutionReporter {
      * @param executionId the unique identity allocated by the caller for this call
      * @param entityType the call type, such as LLM, parser, tool, or subagent
      * @param entityName the call target's name, such as a model or tool name
-     * @param entityMetadata small structured metadata describing the call
+     * @param entityMetadata small structured metadata describing the observation
      */
     void reportExecutionStarted(
             String executionId,
