@@ -619,7 +619,8 @@ Decision-model aliases (apply to both `decision_model_connections` and `decision
 | `typesafe` | TypeSafe Jev | — |
 | `openai` | OpenAI Decisions | — |
 
-Decision models currently support Python implementations only. See
+Decision providers currently have Python implementations. Both YAML loaders can
+configure them with `type: python`. See
 [Decision Models]({{< ref "docs/development/decision_models" >}}) for request types and Action examples.
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):

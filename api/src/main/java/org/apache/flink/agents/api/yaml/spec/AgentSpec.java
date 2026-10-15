@@ -36,6 +36,8 @@ public final class AgentSpec {
     private final List<AgentActionRef> actions;
     private final List<DescriptorSpec> chatModelConnections;
     private final List<DescriptorSpec> chatModelSetups;
+    private final List<DescriptorSpec> decisionModelConnections;
+    private final List<DescriptorSpec> decisionModelSetups;
     private final List<DescriptorSpec> embeddingModelConnections;
     private final List<DescriptorSpec> embeddingModelSetups;
     private final List<DescriptorSpec> vectorStores;
@@ -52,6 +54,9 @@ public final class AgentSpec {
             @JsonProperty("actions") List<AgentActionRef> actions,
             @JsonProperty("chat_model_connections") List<DescriptorSpec> chatModelConnections,
             @JsonProperty("chat_model_setups") List<DescriptorSpec> chatModelSetups,
+            @JsonProperty("decision_model_connections")
+                    List<DescriptorSpec> decisionModelConnections,
+            @JsonProperty("decision_model_setups") List<DescriptorSpec> decisionModelSetups,
             @JsonProperty("embedding_model_connections")
                     List<DescriptorSpec> embeddingModelConnections,
             @JsonProperty("embedding_model_setups") List<DescriptorSpec> embeddingModelSetups,
@@ -66,6 +71,8 @@ public final class AgentSpec {
         this.actions = orEmpty(actions);
         this.chatModelConnections = orEmpty(chatModelConnections);
         this.chatModelSetups = orEmpty(chatModelSetups);
+        this.decisionModelConnections = orEmpty(decisionModelConnections);
+        this.decisionModelSetups = orEmpty(decisionModelSetups);
         this.embeddingModelConnections = orEmpty(embeddingModelConnections);
         this.embeddingModelSetups = orEmpty(embeddingModelSetups);
         this.vectorStores = orEmpty(vectorStores);
@@ -107,6 +114,14 @@ public final class AgentSpec {
 
     public List<DescriptorSpec> getChatModelSetups() {
         return chatModelSetups;
+    }
+
+    public List<DescriptorSpec> getDecisionModelConnections() {
+        return decisionModelConnections;
+    }
+
+    public List<DescriptorSpec> getDecisionModelSetups() {
+        return decisionModelSetups;
     }
 
     public List<DescriptorSpec> getEmbeddingModelConnections() {

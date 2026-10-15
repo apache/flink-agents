@@ -28,8 +28,9 @@ A decision model evaluates application-supplied evidence against named questions
 It returns probabilities, a choice, or a score. The business Action supplies facts
 and criteria, chooses thresholds, and decides what to do with the answers.
 
-Decision models have a Python API and Python YAML declarations. Java Actions can
-call the same Python providers through the DecisionModel cross-language API.
+Decision models have Java and Python APIs and can be declared through either YAML
+loader. Providers are implemented in Python; Java Actions call them through the
+DecisionModel cross-language API.
 
 ## Direct Python call
 

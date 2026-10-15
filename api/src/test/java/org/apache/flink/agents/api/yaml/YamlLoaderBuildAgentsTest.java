@@ -21,9 +21,11 @@ package org.apache.flink.agents.api.yaml;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.agents.Agent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.function.JavaFunction;
 import org.apache.flink.agents.api.function.PythonFunction;
 import org.apache.flink.agents.api.prompt.Prompt;
+import org.apache.flink.agents.api.resource.PythonResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceType;
 import org.apache.flink.agents.api.skills.SkillSourceSpec;
@@ -96,6 +98,64 @@ class YamlLoaderBuildAgentsTest {
 
         Prompt p1 = (Prompt) agent.getResources().get(ResourceType.PROMPT).get("text_prompt");
         assertThat(p1.formatString(Map.of("name", "x"))).isEqualTo("hello x");
+    }
+
+    @Test
+    void decisionModelsSupportAgentAndSharedPythonResources() {
+        LoadedFile out = YamlLoader.buildAgents(FIXTURES.resolve("with_decision_models.yaml"));
+        Agent agent = out.getAgents().get("decision_agent");
+
+        ResourceDescriptor ownConnection =
+                (ResourceDescriptor)
+                        agent.getResources()
+                                .get(ResourceType.DECISION_MODEL_CONNECTION)
+                                .get("own_connection");
+        assertThat(ownConnection).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(ownConnection.getModule())
+                .isEqualTo("flink_agents.integrations.decision_models.openai_decision_model");
+        assertThat(ownConnection.getClazz()).isEqualTo("OpenAIDecisionModelConnection");
+        assertThat(ownConnection.getInitialArguments())
+                .containsExactlyEntriesOf(Map.of("timeout", 30));
+
+        ResourceDescriptor ownModel =
+                (ResourceDescriptor)
+                        agent.getResources().get(ResourceType.DECISION_MODEL).get("own_model");
+        assertThat(ownModel).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(ownModel.getModule())
+                .isEqualTo("flink_agents.integrations.decision_models.openai_decision_model");
+        assertThat(ownModel.getClazz()).isEqualTo("OpenAIDecisionModelSetup");
+        assertThat(ownModel.getInitialArguments())
+                .hasSize(2)
+                .containsEntry("connection", "own_connection")
+                .containsEntry("model", "decision-model");
+
+        ResourceDescriptor sharedConnection =
+                (ResourceDescriptor)
+                        out.getSharedResources()
+                                .get(ResourceType.DECISION_MODEL_CONNECTION)
+                                .get("shared_connection");
+        assertThat(sharedConnection).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(sharedConnection.getModule())
+                .isEqualTo("flink_agents.integrations.decision_models.typesafe_decision_model");
+        assertThat(sharedConnection.getClazz()).isEqualTo("TypeSafeDecisionModelConnection");
+        assertThat(sharedConnection.getInitialArguments())
+                .containsExactlyEntriesOf(Map.of("base_url", "https://decision.example"));
+
+        ResourceDescriptor sharedModel =
+                (ResourceDescriptor)
+                        out.getSharedResources()
+                                .get(ResourceType.DECISION_MODEL)
+                                .get("shared_model");
+        assertThat(sharedModel).isInstanceOf(PythonResourceDescriptor.class);
+        assertThat(sharedModel.getModule())
+                .isEqualTo("flink_agents.integrations.decision_models.typesafe_decision_model");
+        assertThat(sharedModel.getClazz()).isEqualTo("TypeSafeDecisionModelSetup");
+        assertThat(sharedModel.getInitialArguments())
+                .hasSize(2)
+                .containsEntry("connection", "shared_connection")
+                .containsEntry("model", "jev-latest");
+        assertThat(agent.getActions().get("consume").f0)
+                .containsExactly(DecisionResponseEvent.EVENT_TYPE);
     }
 
     @Test

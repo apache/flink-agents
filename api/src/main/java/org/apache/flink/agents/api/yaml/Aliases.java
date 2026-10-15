@@ -119,6 +119,24 @@ public final class Aliases {
         chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
         ca.put(ResourceType.CHAT_MODEL, buildLangBuckets(chatJava, chatPython));
 
+        // DECISION_MODEL_CONNECTION
+        ca.put(
+                ResourceType.DECISION_MODEL_CONNECTION,
+                buildLangBuckets(
+                        Map.of(),
+                        Map.of(
+                                "typesafe", ResourceName.DecisionModel.Python.TYPESAFE_CONNECTION,
+                                "openai", ResourceName.DecisionModel.Python.OPENAI_CONNECTION)));
+
+        // DECISION_MODEL
+        ca.put(
+                ResourceType.DECISION_MODEL,
+                buildLangBuckets(
+                        Map.of(),
+                        Map.of(
+                                "typesafe", ResourceName.DecisionModel.Python.TYPESAFE_SETUP,
+                                "openai", ResourceName.DecisionModel.Python.OPENAI_SETUP)));
+
         // EMBEDDING_MODEL_CONNECTION
         Map<String, String> embConnJava = new HashMap<>();
         embConnJava.put("ollama", ResourceName.EmbeddingModel.OLLAMA_CONNECTION);
