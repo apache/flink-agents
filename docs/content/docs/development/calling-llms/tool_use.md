@@ -85,6 +85,7 @@ class ReviewAnalysisAgent(Agent):
         return ResourceDescriptor(
             clazz=ResourceName.ChatModel.OLLAMA_SETUP,
             connection="ollamaChatModelConnection",
+            model="qwen3:8b",
             tools=["notify_shipping_manager"], # reference the tool by its name
         )
     
@@ -106,6 +107,7 @@ public class ReviewAnalysisAgent extends Agent {
     public static ResourceDescriptor reviewAnalysisModel() {
         return ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument("tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
                 .build();
     }
@@ -156,6 +158,7 @@ review_analysis_react_agent = ReActAgent(
     chat_model=ResourceDescriptor(
         clazz=ResourceName.ChatModel.OLLAMA_SETUP,
         connection="ollamaChatModelConnection",
+        model="qwen3:8b",
         tools=["notify_shipping_manager"], # reference the tool by its name
     ),
 )
@@ -183,6 +186,7 @@ agentsEnv
 ReActAgent reviewAnalysisReactAgent = new ReActAgent(
         ResourceDescriptor.Builder.newBuilder(ResourceName.ChatModel.OLLAMA_SETUP)
                 .addInitialArgument("connection", "ollamaChatModelConnection")
+                .addInitialArgument("model", "qwen3:8b")
                 .addInitialArgument(
                         "tools", Collections.singletonList("notifyShippingManager")) // reference the tool by its name
                 .build(),
@@ -404,8 +408,7 @@ created with `ctx.gather(...)`. The `num-async-threads` setting further limits
 available concurrency. Tool batches share execution capacity with other external
 calls, so a large batch may delay other model calls or retrieval requests. Lower
 the batch limit to leave capacity for other calls or avoid overwhelming an
-external service. Actual concurrency can be lower than the batch limit. Java and
-Python support concurrent tool-call batches on all supported JDK versions.
+external service. Actual concurrency can be lower than the batch limit.
 
 {{< hint warning >}}
 Calls in a parallel batch must be independent: a tool must not wait for another
@@ -416,15 +419,19 @@ on another's result, request it in a later step instead of the same batch.
 
 ### Timeouts and external effects
 
-`async.batch.timeout.ms` sets an overall timeout when ordinary tool calls execute
-as a parallel batch. Its default is `-1`; non-positive values disable it. It does
-not set a timeout for the synchronous or sequential async tool-call paths, so
-configure timeouts for blocking operations inside each tool, such as an HTTP
-client read timeout.
+`async.batch.timeout.ms` sets an overall timeout for a parallel batch of ordinary
+tool calls. Its default is `-1`; non-positive values disable it. When it expires,
+completed calls keep their results and unfinished calls are reported to the model
+as failed tool calls.
+
+For requests containing only ordinary tools, the batch timeout is not used when
+`tool-call.async` is `false`, when `async.batch.parallelism` is `1` or less, or when
+the request has a single tool call. Configure timeouts for blocking operations
+inside each tool, such as an HTTP client read timeout.
 
 A batch timeout does not undo external effects or guarantee that an already
-running tool stops. Tools that change external systems should be idempotent or
-provide a reconciler for durable execution. See
+running tool stops. Tools that change external systems should be idempotent,
+because a call may run again after recovery. See
 [Configuration]({{< ref "docs/operations/configuration" >}}) for the full async batch
 and execution-capacity options, and
 [Durable Execution]({{< ref "docs/development/create-agent/actions#durable-execution" >}})
