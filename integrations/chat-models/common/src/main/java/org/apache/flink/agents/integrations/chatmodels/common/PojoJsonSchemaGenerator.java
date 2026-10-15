@@ -75,7 +75,8 @@ public final class PojoJsonSchemaGenerator {
     //     when every constant carries @JsonProperty, so in a partly annotated enum it lists the
     //     renamed constants by Java names that fail to deserialize. Its @JsonValue flattening
     //     types numeric values as strings, a schema no value satisfies. An enum without
-    //     constants, or one whose values cannot be written, is left to the module.
+    //     constants, one whose values cannot be written, or one written as objects or arrays
+    //     (such as @JsonFormat(shape = OBJECT)) falls back to the existing enum handling.
 
     /**
      * Generates the JSON Schema for {@code type}.
@@ -143,6 +144,11 @@ public final class PojoJsonSchemaGenerator {
             } catch (IllegalArgumentException e) {
                 return null;
             }
+            if (value.isContainerNode()) {
+                // Handle only scalar values here. Object and array values fall back to the
+                // existing enum handling; reading them back may require a @JsonCreator.
+                return null;
+            }
             if ((value.isFloat() || value.isDouble()) && !Double.isFinite(value.doubleValue())) {
                 // JSON has no non-finite numbers; Jackson writes these as strings such as "NaN".
                 value = TextNode.valueOf(value.asText());
@@ -174,10 +180,6 @@ public final class PojoJsonSchemaGenerator {
             return context.getKeyword(SchemaKeyword.TAG_TYPE_BOOLEAN);
         } else if (value.isNull()) {
             return context.getKeyword(SchemaKeyword.TAG_TYPE_NULL);
-        } else if (value.isArray()) {
-            return context.getKeyword(SchemaKeyword.TAG_TYPE_ARRAY);
-        } else if (value.isObject()) {
-            return context.getKeyword(SchemaKeyword.TAG_TYPE_OBJECT);
         }
         return context.getKeyword(SchemaKeyword.TAG_TYPE_STRING);
     }

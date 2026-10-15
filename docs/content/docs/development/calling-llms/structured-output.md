@@ -264,7 +264,7 @@ The connection's `api_version` must be `2024-08-01` or later, for example `2024-
 List the values the model should return, in the form the model reads back:
 
 - **Python:** a Pydantic `Enum` lists its values. A string enum gives `"type": "string"` and a numeric enum gives `"type": "integer"`.
-- **Java:** the native schema lists each constant under the value Jackson serializes it to, typed as that value: a `@JsonProperty` name, a `@JsonValue` result, or the Java name. An integer `@JsonValue` gives `"type": "integer"`. Jackson reads the values back by default when a `@JsonValue` method returns a `String` or an integral primitive or wrapper; other return types, such as floating-point, `boolean`, `BigInteger` or `Object`, may need matching deserialization support, such as a `@JsonCreator`. The ReAct Agent's prompt text uses a different generator (see [Java POJOs](#java-pojos)).
+- **Java:** the native schema lists each constant under the value Jackson serializes it to, typed as that value: a `@JsonProperty` name, a `@JsonValue` result, or the Java name. An integer `@JsonValue` gives `"type": "integer"`. An enum with `@JsonFormat(shape = OBJECT)` and no other Jackson customization is listed by its constant names, which a default `ObjectMapper` reads back. Jackson reads the values back by default when a `@JsonValue` method returns a `String` or an integral primitive or wrapper; other return types, such as floating-point, `boolean`, `BigInteger` or `Object`, may need matching deserialization support, such as a `@JsonCreator`. The ReAct Agent's prompt text uses a different generator (see [Java POJOs](#java-pojos)).
 
 {{< tabs "Enum Fields" >}}
 

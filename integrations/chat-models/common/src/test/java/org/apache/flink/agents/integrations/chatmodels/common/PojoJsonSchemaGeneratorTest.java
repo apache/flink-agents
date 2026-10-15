@@ -17,6 +17,7 @@
  */
 package org.apache.flink.agents.integrations.chatmodels.common;
 
+import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonValue;
@@ -285,6 +286,41 @@ class PojoJsonSchemaGeneratorTest {
             assertThat(empty.toString()).doesNotContain("\"type\":[]");
             assertThat(textValues(empty.path("type"))).contains("null");
         }
+    }
+
+    /** Output schema fixture holding an enum that Jackson writes as an object. */
+    public static class Shipment {
+        public Carrier carrier;
+    }
+
+    @JsonFormat(shape = JsonFormat.Shape.OBJECT)
+    public enum Carrier {
+        GROUND(1),
+        AIR(2);
+
+        public final int code;
+
+        Carrier(int code) {
+            this.code = code;
+        }
+    }
+
+    @Test
+    @DisplayName("An enum written as an object keeps its constant names in the schema")
+    void listsObjectShapedEnumByItsConstantNames() throws Exception {
+        // Listed as objects, the values would sit under "type":"object" with no declared
+        // properties, which a strict schema rejects, and a plain mapper cannot read them back.
+        JsonNode carrier =
+                PojoJsonSchemaGenerator.generateAllRequired(
+                                Shipment.class, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT)
+                        .path("properties")
+                        .path("carrier");
+        assertThat(carrier.path("type").asText()).isEqualTo("string");
+        List<Carrier> carriers = new ArrayList<>();
+        for (JsonNode value : carrier.path("enum")) {
+            carriers.add(MAPPER.treeToValue(value, Carrier.class));
+        }
+        assertThat(carriers).containsExactly(Carrier.GROUND, Carrier.AIR);
     }
 
     @Test
