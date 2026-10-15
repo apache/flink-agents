@@ -19,9 +19,9 @@
 
 Set TYPESAFE_API_KEY or OPENAI_API_KEY, then run with a model you can access:
 
-    python -m flink_agents.examples.quickstart.decision_review_analysis_example \
+    python -m flink_agents.examples.decision_models.decision_review_analysis_example \
         --provider typesafe --model jev-latest
-    python -m flink_agents.examples.quickstart.decision_review_analysis_example \
+    python -m flink_agents.examples.decision_models.decision_review_analysis_example \
         --provider openai --model gpt-6-luna
 """
 

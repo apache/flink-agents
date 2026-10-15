@@ -239,7 +239,7 @@ portable semantics.
 ## Review analysis Agent
 
 The runnable
-[`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/decision_review_analysis_example.py)
+[`decision_review_analysis_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/decision_models/decision_review_analysis_example.py)
 uses the same `ProductReview` input as the workflow-agent quickstart. Its
 [`DecisionReviewAnalysisAgent`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/decision_review_analysis_agent.py)
 submits a `DecisionRequestEvent` for each `InputEvent`. The built-in Decision
@@ -270,16 +270,17 @@ failures propagate from the response Action.
 Run the Flink job with the selected provider's API key and an accessible model:
 
 ```bash
-TYPESAFE_API_KEY=... python -m flink_agents.examples.quickstart.decision_review_analysis_example \
+TYPESAFE_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
     --provider typesafe --model jev-latest
-OPENAI_API_KEY=... python -m flink_agents.examples.quickstart.decision_review_analysis_example \
+OPENAI_API_KEY=... python -m flink_agents.examples.decision_models.decision_review_analysis_example \
     --provider openai --model gpt-6-luna
 ```
 
-The job processes three sample reviews and prints their analysis. It requires the
-same Flink runtime setup as the other quickstart jobs. Use `--base-url` to select
-another compatible endpoint. The launcher registers the connection and model
-setup on `AgentsExecutionEnvironment`; FA owns their lifecycle.
+The job processes three sample reviews and prints their analysis. It requires a
+TypeSafe or OpenAI account and the same Flink runtime setup as the quickstart
+jobs. Use `--base-url` to select another compatible endpoint. The launcher
+registers the connection and model setup on `AgentsExecutionEnvironment`; FA
+owns their lifecycle.
 
 ## Use from a Python Action
 
