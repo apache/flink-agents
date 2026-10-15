@@ -88,7 +88,9 @@ The runtime records Event IDs and source relationships in [Trace Log]({{< ref "d
 
 Events are serialized as JSON when passed between Python actions or across the Java-Python boundary. When an event crosses that boundary, its **type** and its **payload** are handled differently.
 
-**Built-in event types are restored automatically.** At the JSON boundary (`Event.fromJson` in Java, `Event.from_json` in Python) the framework restores every built-in event type to its concrete subclass and validates its fixed attribute schema. So inside an action, a dispatched `InputEvent`, `ChatRequestEvent`, `ChatResponseEvent`, or any other built-in event is already its concrete type: use it directly (with a cast in Java) instead of calling `from_event` / `fromEvent`. Those reconstruction methods stay available and idempotent, so code that still calls them keeps working.
+**Built-in event types are restored automatically.** A dispatched `InputEvent`,
+`ChatRequestEvent`, `ChatResponseEvent`, or other built-in Event has its concrete
+type and validated attributes. Use it directly inside an Action, with a cast in Java.
 
 **Custom event types stay generic.** A user-defined event type is not known to the framework, so it arrives as a generic `Event`; call your subclass's `from_event` / `fromEvent` to reconstruct it (see [Custom Event Subclasses](#custom-event-subclasses)).
 
@@ -99,6 +101,9 @@ Events are serialized as JSON when passed between Python actions or across the J
 # only its opaque `input` payload needs manual reconstruction.
 input_data = ItemData.model_validate(event.input)
 ```
+
+For supported payload values, see
+[Data passed between Java and Python]({{< ref "docs/development/create-agent/choose-apis-and-languages#data-passed-between-java-and-python" >}}).
 
 ### Custom Event Subclasses
 

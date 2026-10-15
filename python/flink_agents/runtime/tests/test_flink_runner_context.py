@@ -16,10 +16,38 @@
 # limitations under the License.
 #################################################################################
 from typing import Any
+from unittest.mock import Mock
 
 from flink_agents.api.events.event import Event
 from flink_agents.api.memory_reference import MemoryRef
 from flink_agents.runtime.flink_runner_context import FlinkRunnerContext
+
+
+def test_action_config_follows_resource_scope_across_task_switches() -> None:
+    """A chat inside a child graph uses the child config, then restores root config."""
+    ctx = FlinkRunnerContext.__new__(FlinkRunnerContext)
+    java_context = Mock()
+    java_context.getActionName.return_value = "chat_model_action"
+    ctx._j_runner_context = java_context
+    root_plan, child_plan = Mock(), Mock()
+    root_plan.get_action_config.return_value = {"model": "root"}
+    root_plan.get_action_config_value.return_value = "root"
+    child_plan.get_action_config.return_value = {"model": "child"}
+    child_plan.get_action_config_value.return_value = "child"
+    ctx._FlinkRunnerContext__agent_plan = root_plan
+    ctx._FlinkRunnerContext__scoped_resource_caches = {
+        "child-json": (child_plan, Mock())
+    }
+
+    for scope, expected in [(None, "root"), ("child-json", "child"), (None, "root")]:
+        java_context.getActiveScopePlanJson.return_value = scope
+        assert ctx.action_config == {"model": expected}
+        assert ctx.get_action_config_value("model") == expected
+
+    child_plan.get_action_config.assert_called_once_with("chat_model_action")
+    child_plan.get_action_config_value.assert_called_once_with(
+        action_name="chat_model_action", key="model"
+    )
 
 
 class _FakeJavaMemoryRef:

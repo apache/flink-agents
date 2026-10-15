@@ -243,6 +243,72 @@ evaluated as doubles and may lose precision.
   start. This happens before event-time evaluation and is not controlled by the condition evaluation
   failure strategy. Dynamic access inside a selected top-level attribute remains supported.
 
+### Cross-language Actions
+
+To declare a cross-language Action, apply `action(...)` to a `Function` descriptor
+in Python, or annotate a `static final` `Function` field in Java. The descriptor
+identifies the function to execute.
+
+{{< tabs "Cross-language Actions" >}}
+
+{{< tab "Python" >}}
+```python
+from flink_agents.api.function import JavaFunction
+
+class MyAgent(Agent):
+    # Action signatures are fixed (Event, RunnerContext), so for_action
+    # fills the Java parameter types for you — only the class and method.
+    handle_input = action(InputEvent.EVENT_TYPE)(
+        JavaFunction.for_action("com.example.MyHandlers", "handleInput"))
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+import org.apache.flink.agents.api.function.PythonFunction;
+
+public class MyAgent extends Agent {
+    @Action(EventType.InputEvent)
+    private static final PythonFunction handleInput =
+            PythonFunction.of("my_pkg.handlers", "handle_input");
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+**Override the Action name (optional)**
+
+By default, the examples above use the member name as the Action name:
+`handle_input` in Python and `handleInput` in Java. Set `name` to give the Action
+a different name. These declarations name the Action `process_input`:
+
+{{< tabs "Override Cross-language Action Name" >}}
+
+{{< tab "Python" >}}
+```python
+class MyAgent(Agent):
+    handle_input = action(InputEvent.EVENT_TYPE, name="process_input")(
+        JavaFunction.for_action("com.example.MyHandlers", "handleInput")
+    )
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+public class MyAgent extends Agent {
+    @Action(value = EventType.InputEvent, name = "process_input")
+    private static final PythonFunction handleInput =
+            PythonFunction.of("my_pkg.handlers", "handle_input");
+}
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+For dependency setup and supported payload types, see
+[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}}).
+
 ### Async Execution
 
 Use `execute_async` (Python) or `executeAsync` (Java) to run a function
@@ -295,6 +361,48 @@ future's result or exception; a future that is never awaited performs no work.
 Obtain resources before creating calls, and update memory or send events after
 awaiting results. Callbacks must not access `RunnerContext`, and any clients they
 share must support concurrent use.
+
+#### JDK and scheduling requirements
+
+For concurrency between Actions:
+
+- **Java on JDK 21+:** enable continuation-based execution by adding
+  `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to the JVM options, including
+  `env.java.opts.all` when running on a cluster.
+- **Java on JDK 11–20:** the experimental parallel execution engine is enabled by
+  default for plans whose Actions are all Java. If the plan declares Python Resources,
+  it also requires a Flink version supporting cross-language async calls (below).
+  Setting `parallel-execution.enabled` to `false`, or including Python Actions,
+  disables this engine; a Java single-call `executeAsync(...).await()` then runs
+  synchronously. Use `gather` to run a batch concurrently.
+- **Python Actions:** use `async def` and the framework's `AsyncFuture`/`gather` APIs.
+  Use `gather` to await multiple calls concurrently; awaiting each call in turn runs
+  them sequentially.
+
+See [Core Options]({{< ref "docs/operations/configuration#core-options" >}})
+for worker-pool and concurrency limits. These scheduling rules also apply to durable
+async calls; persistence adds the [durable execution requirements](#durable-execution).
+
+#### Cross-language async requirements
+
+Async calls across Java/Python require Flink **1.20.5+**, **2.0.2+**, **2.1.3+**,
+**2.2.1+**, or **2.3+**, within the respective release line. Use these versions for
+custom cross-language async calls and for asynchronous built-in chat and
+context-retrieval Actions that use an opposite-language Resource.
+
+{{< hint warning >}}
+Async actions in either language may call cross-language resources. Within one async execution,
+keep the cross-language call chain to one reverse callback. Only the following call shapes are
+supported:
+
+- Python action → Java resource → Python callback
+- Java action → Python resource → Java callback
+
+For example, a Python action may use a Java `ChatModelSetup` backed by a Python
+`ChatModelConnection`. Multiple or deeper cross-language callbacks, such as
+Python→Java→Python→Java or Java→Python→Java→Python, are not recommended and may deadlock
+when an outer call occupies an async or interpreter worker while waiting for another worker.
+{{< /hint >}}
 
 ### Durable Execution
 
@@ -497,61 +605,5 @@ public static void processInput(Event event, RunnerContext ctx) throws Exception
 }
 ```
 
-{{< hint info >}}
-To use async execution on JDK 21+, user should append jvm option `--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED` to [env.java.opts.all](https://nightlies.apache.org/flink/flink-docs-stable/docs/deployment/config/#env-java-opts-all) before start the flink cluster.
-{{< /hint >}}
 {{< /tab >}}
 {{< /tabs >}}
-
-{{< hint warning >}}
-Async actions in either language may call cross-language resources. Within one async execution,
-keep the cross-language call chain to one reverse callback. Only the following call shapes are
-supported:
-
-- Python action → Java resource → Python callback
-- Java action → Python resource → Java callback
-
-For example, a Python action may use a Java `ChatModelSetup` backed by a Python
-`ChatModelConnection`. Multiple or deeper cross-language callbacks, such as
-Python→Java→Python→Java or Java→Python→Java→Python, are not recommended and may deadlock
-when an outer call occupies an async or interpreter worker while waiting for another worker.
-{{< /hint >}}
-
-### Cross-language Actions
-
-An action declared in one language can dispatch its body to the other language. The declared member *is* the executable target, so no placeholder body is needed: apply `action(...)` to a `Function` descriptor in Python, or annotate a `static final` `Function` field in Java. The member name becomes the action name, and can be overridden with `name=` (Python) or `name` (Java).
-
-{{< tabs "Cross-language Actions" >}}
-
-{{< tab "Python" >}}
-```python
-from flink_agents.api.function import JavaFunction
-
-class MyAgent(Agent):
-    # Action signatures are fixed (Event, RunnerContext), so for_action
-    # fills the Java parameter types for you — only the class and method.
-    handle_input = action(InputEvent.EVENT_TYPE)(
-        JavaFunction.for_action("com.example.MyHandlers", "handleInput"))
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-import org.apache.flink.agents.api.function.PythonFunction;
-
-public class MyAgent extends Agent {
-    @Action(EventType.InputEvent)
-    private static final PythonFunction handleInput =
-            PythonFunction.of("my_pkg.handlers", "handle_input");
-}
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-{{< hint warning >}}
-**Limitations:**
-
-- Cross-language actions are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
-- Complex object serialization between languages may have limitations
-{{< /hint >}}

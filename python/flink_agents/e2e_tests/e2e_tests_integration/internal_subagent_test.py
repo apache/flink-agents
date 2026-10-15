@@ -26,12 +26,12 @@ dispatched and their output accumulated into the caller's ``Result``.
 Unlike the Java caller path, this does not need JDK 21: a Python coroutine
 releases the mailbox by yielding at ``await``.
 
-The operator computes the child's ``SubagentScope`` before wiring the context and
-sets it on the shared ``PythonRunnerContextImpl`` (``ActionTaskContextManager``),
-so a Python child action runs scope-aware: its ``send_event`` is accumulated into
-the call result instead of landing on the root context, and its ``get_resource``
-resolves against the child plan (``getActiveScopePlanJson``), including any nested
-sub-agent. ``submit`` is a coroutine returning a ``SubagentFuture``, so each call
+The common subgraph runtime routes child events privately and accumulates outputs
+into the call result. The operator separately selects the child's ``ResourceScope``
+on the shared ``PythonRunnerContextImpl`` (``ActionTaskContextManager``), so its
+``get_resource`` and action configuration resolve against the child plan
+(``getActiveScopePlanJson``), including any nested sub-agent. ``submit`` is a
+coroutine returning a ``SubagentFuture``, so each call
 is awaited in two phases: awaiting ``submit`` yields the future, and awaiting the
 future yields the ``Result``.
 

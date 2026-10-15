@@ -21,8 +21,9 @@ import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.plan.AgentPlan;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
+import org.apache.flink.agents.runtime.subgraph.SubgraphDefinition;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.runtime.metrics.groups.UnregisteredMetricGroups;
 import org.junit.jupiter.api.Test;
 
@@ -42,8 +43,7 @@ class RunnerContextPendingEventsContractTest {
         List<Event> buffer = new ArrayList<>();
         Event first = new Event("first");
         Event second = new Event("second");
-        InternalSubagentCallEvent bootstrap =
-                InternalSubagentCallEvent.bootstrap(new InputEvent(1L), "child", "call", "session");
+        SubgraphEvent bootstrap = new SubgraphEvent("child-call", new InputEvent(1L), true);
 
         context.switchActionContext("action", memory, buffer, "key", "obs", false, null);
         context.sendEvent(first);
@@ -66,21 +66,17 @@ class RunnerContextPendingEventsContractTest {
     @Test
     void childActionRetainsSameCallEventsUntilCompletion() {
         RunnerContextImpl context = newContext();
-        InternalSubagentCallStatus status =
-                new InternalSubagentCallStatus("call", "child", "session", null);
-        context.setSubagentScope(
-                new RunnerContextImpl.SubagentScope(
-                        context.getAgentMetricGroup(),
-                        new AgentPlan(new HashMap<>(), new HashMap<>()),
-                        null,
-                        status));
+        context.setSubgraphInvocation(
+                new SubgraphInvocation<>(
+                        "child-call",
+                        "key",
+                        org.mockito.Mockito.mock(SubgraphDefinition.class),
+                        new RunnerContextImpl.MemoryContext(null, null),
+                        null));
         Event next = new Event("next");
-        InternalSubagentCallEvent nestedCall =
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent(1L), "leaf", "nested-call", "session");
-        InternalSubagentCallEvent nestedSession =
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent(2L), "leaf", "call", "nested-session");
+        SubgraphEvent nestedCall = new SubgraphEvent("nested-call", new InputEvent(1L), true);
+        SubgraphEvent nestedSession =
+                new SubgraphEvent("nested-session-call", new InputEvent(2L), true);
         context.sendEvent(next);
         context.sendEvent(nestedCall);
         context.sendEvent(nestedSession);
@@ -90,8 +86,7 @@ class RunnerContextPendingEventsContractTest {
                 .containsExactly(nestedCall, nestedSession);
         assertThat(context.drainEventsAtActionYield(null)).isEmpty();
         assertThat(context.getPendingEvents()).containsExactly(forwarded);
-        assertThat(((InternalSubagentCallEvent) forwarded).getDelegate().getType())
-                .isEqualTo(next.getType());
+        assertThat(((SubgraphEvent) forwarded).getDelegate().getType()).isEqualTo(next.getType());
         assertThat(context.drainEventsAtActionFinish(null)).containsExactly(forwarded);
         context.checkNoPendingEvents();
     }

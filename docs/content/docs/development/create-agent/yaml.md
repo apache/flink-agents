@@ -421,6 +421,11 @@ Composing one agent across multiple YAML files is **not** supported. If two file
 
 ## Loading and Running
 
+YAML describes an Agent but is not submitted to Flink by itself. Create a Java Flink
+or PyFlink job that loads the YAML and applies the Agent, then submit that job. Install
+the Java and Python dependencies required by the implementations referenced in the
+YAML. See [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages#integrate-the-agent-into-a-flink-job" >}}).
+
 `AgentsExecutionEnvironment` exposes a `load_yaml` / `loadYaml` method that parses one or more YAML files and:
 
 - registers all shared resources on the environment, and
@@ -661,7 +666,10 @@ Loaded with `agents_env.load_yaml(...)` on the Python side, this produces an age
 - `math_chat_model` is a Python Ollama setup that calls a Java function tool through the cross-language tool bridge.
 - `creative_chat_model` is a Java Ollama setup driven from the Python loader via the Java chat-model wrapper.
 
-The bridge is symmetric: the same file loaded by the **Java loader** can declare `type: python` resources, and the Java loader wraps each Python implementation through its Python wrapper. So a Java-side agent can drive a Python chat model or call a Python tool, just as the example above drives Java pieces from the Python loader.
+The **Java loader** also supports `type: python` for these components. Load the YAML
+in a Java Flink job and use each component's `type:` to select its implementation.
+Application payloads must use the supported
+[Java and Python data types]({{< ref "docs/development/create-agent/choose-apis-and-languages#data-passed-between-java-and-python" >}}).
 
 Not every resource type is cross-language. Currently `actions`, `tools`, `chat_model_connections`, `chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, and `vector_stores` support `type:` on the opposite language; others (e.g. `mcp_servers`) do not.
 
@@ -698,4 +706,9 @@ Continuous tests then verify cross-runtime consistency:
 - the Pydantic specs stay aligned with the Python `Agent` API;
 - the Java POJOs stay aligned with the Java `Agent` API.
 
-This keeps the YAML API a true cross-language contract: a YAML file that validates against the schema is guaranteed to load and run on either the Python or the Java loader (subject only to the language-specific differences documented above, such as `parameter_types` on Java tools).
+These checks keep the YAML structure aligned across loaders. Schema validation does
+not verify that referenced classes/functions are installed, that a component supports
+the selected implementation language, or that its provider is reachable. Before
+running the job, follow [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
+to check language support and provision the required dependencies. Java Tools also
+require the documented `parameter_types`.

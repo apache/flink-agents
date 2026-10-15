@@ -193,11 +193,11 @@ public class MyAgent extends Agent {
 
 Flink Agents supports cross-language embedding model integration, allowing you to use embedding models implemented in one language (Java or Python) from agents written in the other language. This is particularly useful when an embedding model provider is only available in one language (e.g., the DashScope embedding integration for Alibaba Cloud Model Studio is currently Python-only).
 
-{{< hint warning >}}
-**Limitations:**
-- Cross-language resources are currently supported only when [running in Flink]({{< ref "docs/operations/deployment#run-in-flink" >}}), not in local development mode
-- Complex object serialization between languages may have limitations
-{{< /hint >}}
+Choose a Java or Python provider implementation and install its dependencies in the
+job's environment, following [the setup instructions]({{< ref "docs/development/create-agent/choose-apis-and-languages#integrate-the-agent-into-a-flink-job" >}}).
+When provider results are carried in Event payloads, those payloads must use the supported
+[Java and Python data types]({{< ref "docs/development/create-agent/choose-apis-and-languages#data-passed-between-java-and-python" >}}).
+For async calls, also check the [cross-language execution requirements]({{< ref "docs/development/create-agent/actions#cross-language-async-requirements" >}}).
 ### How To Use
 
 To use a resource implemented in another language, declare its implementation class with the corresponding cross-language resource descriptor:

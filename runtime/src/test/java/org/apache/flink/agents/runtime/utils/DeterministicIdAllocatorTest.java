@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.flink.agents.runtime.subagent;
+package org.apache.flink.agents.runtime.utils;
 
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
@@ -32,15 +32,15 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Unit tests for {@link SubagentIdAllocator}: same namespace inputs plus the same call sequence
- * must reproduce byte-for-byte identical ids, and any difference in the caller-side namespace
- * inputs must separate the id stream.
+ * Unit tests for {@link DeterministicIdAllocator}: same namespace inputs plus the same call
+ * sequence must reproduce byte-for-byte identical ids, and any difference in the caller-side
+ * namespace inputs must separate the id stream.
  */
-class SubagentIdAllocatorTest {
+class DeterministicIdAllocatorTest {
 
-    private static SubagentIdAllocator newAllocator(
+    private static DeterministicIdAllocator newAllocator(
             Object key, long sequenceNumber, String actionName, Object eventInput) {
-        return new SubagentIdAllocator(
+        return new DeterministicIdAllocator(
                 key, sequenceNumber, actionName, new InputEvent(eventInput), "agent");
     }
 
@@ -48,10 +48,12 @@ class SubagentIdAllocatorTest {
     void eventInstanceIdDoesNotAffectNamespace() {
         // The namespace keeps only the event's type and attributes, so a failover replay that
         // re-creates the event object (with a new event id) reproduces the same ids.
-        SubagentIdAllocator ctx1 =
-                new SubagentIdAllocator("key-1", 7L, "actionA", new InputEvent("payload"), "agent");
-        SubagentIdAllocator ctx2 =
-                new SubagentIdAllocator("key-1", 7L, "actionA", new InputEvent("payload"), "agent");
+        DeterministicIdAllocator ctx1 =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new InputEvent("payload"), "agent");
+        DeterministicIdAllocator ctx2 =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new InputEvent("payload"), "agent");
 
         assertEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
     }
@@ -69,11 +71,11 @@ class SubagentIdAllocatorTest {
         reversed.put("beta", "2");
         reversed.put("alpha", "1");
 
-        SubagentIdAllocator ctx1 =
-                new SubagentIdAllocator(
+        DeterministicIdAllocator ctx1 =
+                new DeterministicIdAllocator(
                         "key-1", 7L, "actionA", new Event("my.EventType", forward), "agent");
-        SubagentIdAllocator ctx2 =
-                new SubagentIdAllocator(
+        DeterministicIdAllocator ctx2 =
+                new DeterministicIdAllocator(
                         "key-1", 7L, "actionA", new Event("my.EventType", reversed), "agent");
 
         assertEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
@@ -81,8 +83,8 @@ class SubagentIdAllocatorTest {
 
     @Test
     void deterministicAcrossTwoInstancesWithSameNamespace() {
-        SubagentIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
-        SubagentIdAllocator ctx2 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-1", 7L, "actionA", "e-1");
 
         // Same call sequence replayed on two independently constructed instances that share an
         // identical namespace must reproduce byte-for-byte identical ids -- this is the core
@@ -103,8 +105,8 @@ class SubagentIdAllocatorTest {
 
     @Test
     void namespaceSeparatesOnKey() {
-        SubagentIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
-        SubagentIdAllocator ctx2 = newAllocator("key-2", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-2", 7L, "actionA", "e-1");
 
         // The ordinal is 0 on the first call for both instances, so any difference in the
         // returned id must come from the namespace digest alone.
@@ -113,16 +115,16 @@ class SubagentIdAllocatorTest {
 
     @Test
     void namespaceSeparatesOnSequenceNumber() {
-        SubagentIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
-        SubagentIdAllocator ctx2 = newAllocator("key-1", 8L, "actionA", "e-1");
+        DeterministicIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-1", 8L, "actionA", "e-1");
 
         assertNotEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
     }
 
     @Test
     void namespaceSeparatesOnActionName() {
-        SubagentIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
-        SubagentIdAllocator ctx2 = newAllocator("key-1", 7L, "actionB", "e-1");
+        DeterministicIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-1", 7L, "actionB", "e-1");
 
         assertNotEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
     }
@@ -131,8 +133,8 @@ class SubagentIdAllocatorTest {
     void namespaceSeparatesOnTriggeringEventAloneSiblingTaskScenario() {
         // Two sibling tasks sharing key/sequenceNumber/actionName but triggered by different
         // events: the event attributes alone must keep their identities from colliding.
-        SubagentIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
-        SubagentIdAllocator ctx2 = newAllocator("key-1", 7L, "actionA", "e-2");
+        DeterministicIdAllocator ctx1 = newAllocator("key-1", 7L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-1", 7L, "actionA", "e-2");
 
         assertNotEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
     }
@@ -141,17 +143,19 @@ class SubagentIdAllocatorTest {
     void namespaceSeparatesOnAgentName() {
         // Two sub-agents of the same action execution share the caller's counting range but must
         // never hand out the same ids: the agent name alone separates their namespaces.
-        SubagentIdAllocator ctx1 =
-                new SubagentIdAllocator("key-1", 7L, "actionA", new InputEvent("e-1"), "agent-a");
-        SubagentIdAllocator ctx2 =
-                new SubagentIdAllocator("key-1", 7L, "actionA", new InputEvent("e-1"), "agent-b");
+        DeterministicIdAllocator ctx1 =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new InputEvent("e-1"), "agent-a");
+        DeterministicIdAllocator ctx2 =
+                new DeterministicIdAllocator(
+                        "key-1", 7L, "actionA", new InputEvent("e-1"), "agent-b");
 
         assertNotEquals(ctx1.nextSessionId(), ctx2.nextSessionId());
     }
 
     @Test
     void sessionOrdinalsIncreaseAndAreUnique() {
-        SubagentIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
 
         String s0 = ctx.nextSessionId();
         String s1 = ctx.nextSessionId();
@@ -172,7 +176,7 @@ class SubagentIdAllocatorTest {
 
     @Test
     void perSessionCallOrdinalStartsAtOneAndIncrementsPerSession() {
-        SubagentIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
 
         String sessionA = ctx.nextSessionId();
         String sessionB = ctx.nextSessionId();
@@ -193,7 +197,7 @@ class SubagentIdAllocatorTest {
 
     @Test
     void callIdIsSessionIdPlusOrdinal() {
-        SubagentIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
 
         // The call id is formed by appending the per-session ordinal to the session id, which
         // already carries the namespace digest, so no further hashing is involved.
@@ -204,7 +208,7 @@ class SubagentIdAllocatorTest {
 
     @Test
     void explicitSessionIdIsUsedVerbatimNotParsed() {
-        SubagentIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator ctx = newAllocator("key-1", 1L, "actionA", "e-1");
 
         // Caller-supplied session ids need not follow the "{digest}-{ordinal}" shape; any string
         // is legal and distinct ids never collide (they must not be reused across executions).
@@ -216,7 +220,7 @@ class SubagentIdAllocatorTest {
 
         // Determinism holds for explicit session ids too: a second, freshly constructed allocator
         // sharing the same namespace reproduces the same id for the same explicit session id.
-        SubagentIdAllocator ctx2 = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator ctx2 = newAllocator("key-1", 1L, "actionA", "e-1");
         assertEquals(callForExplicit1, ctx2.nextCallId("checkout-session-42"));
     }
 
@@ -226,19 +230,20 @@ class SubagentIdAllocatorTest {
         // action execution. Each task constructs its own allocator, so when a later action reuses
         // a session id, the per-session call ordinal starts at 1 again and the same call ids
         // recur instead of continuing the earlier action's count.
-        SubagentIdAllocator firstTask = newAllocator("key-1", 1L, "actionA", "e-1");
+        DeterministicIdAllocator firstTask = newAllocator("key-1", 1L, "actionA", "e-1");
         assertEquals("shared-session-1", firstTask.nextCallId("shared-session"));
         assertEquals("shared-session-2", firstTask.nextCallId("shared-session"));
 
         // A different task (other sequence number / triggering event) allocates under the same
         // session id and hands out the identical ids again.
-        SubagentIdAllocator secondTask = newAllocator("key-1", 2L, "actionA", "e-2");
+        DeterministicIdAllocator secondTask = newAllocator("key-1", 2L, "actionA", "e-2");
         assertEquals("shared-session-1", secondTask.nextCallId("shared-session"));
     }
 
     @Test
     void idsAreOpaqueAndDoNotLeakPlainKeyOrActionName() {
-        SubagentIdAllocator ctx = newAllocator("super-secret-key", 1L, "myCustomActionName", "e-1");
+        DeterministicIdAllocator ctx =
+                newAllocator("super-secret-key", 1L, "myCustomActionName", "e-1");
 
         String sessionId = ctx.nextSessionId();
         String callId = ctx.nextCallId(sessionId);

@@ -24,9 +24,8 @@ under the License.
 
 ## Overview
 
-Flink Agents jobs run on Flink:
+Flink Agents runs as part of Java Flink or PyFlink jobs:
 
-- **Language Support**: Python & Java
 - **Input and Output**: DataStream or Table
 - **Suitable Use Case**: Production
 
@@ -35,7 +34,7 @@ Flink Agents jobs run on Flink:
 ### Prerequisites
 
 - **Operating System**: Unix-like environment (Linux, macOS, Cygwin, or WSL)  
-- **Python**: Version 3.10, 3.11 or 3.12
+- **Python**: Version 3.10, 3.11 or 3.12 when the job uses PyFlink or Python components/features
 - **Flink**: A running Flink cluster with version above 1.20.3 (including 1.20.3) and the Flink Agents dependency installed
 
 {{< hint info >}}
@@ -44,16 +43,21 @@ Flink Agents jobs run on Flink:
 
 ### Prepare Flink Agents
 
-We recommend creating a Python virtual environment to install the Flink Agents Python library.
-
-Follow the [instructions]({{< ref "docs/get-started/setup" >}}) to install the Flink Agents Python and Java libraries.
+Follow [Setup]({{< ref "docs/get-started/setup" >}}) to install Flink Agents for
+the Java Flink or PyFlink job. When the Agent uses Actions or Resources implemented
+in the other language, also install their dependencies.
 
 ### Submit to Flink Cluster
+
+Submit the Java Flink or PyFlink job to the cluster. If the Agent is defined in YAML,
+[load it in that job]({{< ref "docs/development/create-agent/yaml#loading-and-running" >}})
+before submission.
 
 {{< tabs "Submit to Flink Cluster" >}}
 
 {{< tab "Python" >}}
-Submitting Flink Agent jobs to the Flink Cluster is the same as submitting PyFlink jobs. For more details on all available options, please refer to the [Flink CLI documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/cli/#submitting-pyflink-jobs).
+Submit a PyFlink job with Flink Agents in the same way as any other PyFlink job. For
+all available options, see the [Flink CLI documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/cli/#submitting-pyflink-jobs).
 
 ```bash
 <FLINK_HOME>/bin/flink run \
@@ -63,7 +67,8 @@ Submitting Flink Agent jobs to the Flink Cluster is the same as submitting PyFli
 {{< /tab >}}
 
 {{< tab "Java" >}}
-Submitting Flink Agent jobs to the Flink Cluster is the same as submitting Flink jobs. For more details on all available options, please refer to the [Flink CLI documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/cli/#submitting-a-job).
+Submit a Java Flink job with Flink Agents in the same way as any other Java Flink job.
+For all available options, see the [Flink CLI documentation](https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/deployment/cli/#submitting-a-job).
 
 ```bash
 <FLINK_HOME>/bin/flink run \

@@ -16,7 +16,7 @@
  * limitations under the License.
  */
 
-package org.apache.flink.agents.runtime.subagent;
+package org.apache.flink.agents.runtime.utils;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude;
@@ -35,11 +35,11 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Deterministically assigns sub-agent session and call ids for one action execution. The {@link
- * Namespace} of caller-side facts fixes the counting range, so a failover replay reproduces the
- * same id sequence.
+ * Deterministically assigns session and call ids for one action execution and target namespace.
+ * Shared by chat calls and subagents, the {@link Namespace} of caller-side facts fixes the counting
+ * range, so replaying the same facts and call order reproduces the same id sequence.
  */
-public final class SubagentIdAllocator {
+public final class DeterministicIdAllocator {
 
     private final Namespace namespace;
 
@@ -47,9 +47,9 @@ public final class SubagentIdAllocator {
     private final Map<String, Integer> perSessionCallOrdinals = new HashMap<>();
 
     /** Creates an allocator for one action execution from the execution's caller-side facts. */
-    public SubagentIdAllocator(
-            Object key, long sequenceNumber, String actionName, Event event, String subagentName) {
-        this.namespace = new Namespace(key, sequenceNumber, actionName, event, subagentName);
+    public DeterministicIdAllocator(
+            Object key, long sequenceNumber, String actionName, Event event, String targetName) {
+        this.namespace = new Namespace(key, sequenceNumber, actionName, event, targetName);
     }
 
     /** Creates a new, ordinal-increasing session id scoped to this task's namespace. */
@@ -67,12 +67,11 @@ public final class SubagentIdAllocator {
     }
 
     /**
-     * The caller-side identity of one action execution, seeding the deterministic ids of the
-     * sub-agent calls it issues.
+     * The caller-side facts and target namespace used to seed deterministic call ids.
      *
      * <p>Key, sequence number, action name, and the event's type and attributes are facts of the
-     * execution itself, identical for every sub-agent called from it. The subagent name
-     * distinguishes the sub-agents called from one action, so it alone keeps their id ranges apart.
+     * execution itself, identical for every target called from it. The target name distinguishes a
+     * named subagent or a built-in capability, keeping their id ranges apart.
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public static final class Namespace {
@@ -102,8 +101,9 @@ public final class SubagentIdAllocator {
         @JsonProperty("eventAttributes")
         private final Map<String, Object> eventAttributes;
 
+        // Preserve this digest field name so the component rename does not change allocated ids.
         @JsonProperty("subagentName")
-        private final String subagentName;
+        private final String targetName;
 
         /**
          * Computed lazily on the first allocation. Digesting is mailbox-confined, so it needs no
@@ -116,13 +116,13 @@ public final class SubagentIdAllocator {
                 long sequenceNumber,
                 String actionName,
                 Event event,
-                String subagentName) {
+                String targetName) {
             this.key = key.toString();
             this.sequenceNumber = sequenceNumber;
             this.actionName = actionName;
             this.eventType = event.getType();
             this.eventAttributes = event.getAttributes();
-            this.subagentName = subagentName;
+            this.targetName = targetName;
         }
 
         /** Digests the id-bearing facts into a name-based UUID string, stable across replays. */
@@ -134,7 +134,7 @@ public final class SubagentIdAllocator {
                                     UUID.nameUUIDFromBytes(DIGEST_MAPPER.writeValueAsBytes(this)));
                 } catch (JsonProcessingException e) {
                     throw new IllegalStateException(
-                            "Failed to digest the sub-agent identity namespace", e);
+                            "Failed to digest the call identity namespace", e);
                 }
             }
             return digest;

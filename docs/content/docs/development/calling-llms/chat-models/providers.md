@@ -26,6 +26,8 @@ under the License.
 
 ## Built-in Providers
 
+For which providers and models enforce an `output_schema` natively, see [Structured Output]({{< ref "docs/development/calling-llms/structured-output#provider-support" >}}).
+
 ### Amazon Bedrock
 
 Amazon Bedrock provides access to a wide range of foundation models from leading AI providers through a unified API. The Flink Agents Bedrock integration uses the [Converse API](https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference.html), which provides a consistent interface across all supported models with native tool calling support. Authentication is handled via SigV4 using the AWS default credentials chain. No API keys are required.
@@ -337,7 +339,7 @@ The target is `OpenAICompletionsConnection` rather than `AzureOpenAIChatModelCon
 |-----------|------|---------|-------------|
 | `connection` | str | Required | Reference to connection method name |
 | `model` | str | Required | Name of OpenAI model deployment on Azure |
-| `model_of_azure_deployment` | str | None | The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for token metrics tracking |
+| `model_of_azure_deployment` | str | None | The underlying model name (e.g., 'gpt-4', 'gpt-35-turbo'). Used for token metrics tracking, and to decide whether an `output_schema` is applied natively (see [Structured Output]({{< ref "docs/development/calling-llms/structured-output#provider-support" >}})) |
 | `prompt` | Prompt \| str | None | Prompt template or reference to prompt resource |
 | `tools` | List[str] | None | List of tool names available to the model |
 | `temperature` | float | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |
@@ -353,7 +355,7 @@ The target is `OpenAICompletionsConnection` rather than `AzureOpenAIChatModelCon
 |-----------|------|---------|-------------|
 | `connection` | String | Required | Reference to connection method name |
 | `model` | String | Required | Azure deployment name (not the underlying OpenAI model name) |
-| `model_of_azure_deployment` | String | None | The underlying model name (e.g., 'gpt-4', 'gpt-4o'). Used solely for token metrics tracking |
+| `model_of_azure_deployment` | String | None | The underlying model name (e.g., 'gpt-4', 'gpt-4o'). Used for token metrics tracking, and to decide whether an `output_schema` is applied natively (see [Structured Output]({{< ref "docs/development/calling-llms/structured-output#provider-support" >}})) |
 | `prompt` | Prompt \| String | None | Prompt template or reference to prompt resource |
 | `tools` | List<String> | None | List of tool names available to the model |
 | `temperature` | double | None | Sampling temperature (0.0 to 2.0). Not supported by reasoning models |

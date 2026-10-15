@@ -22,7 +22,6 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.flink.agents.api.Event;
-import org.apache.flink.agents.api.OutputEvent;
 import org.apache.flink.agents.api.configuration.ReadableConfiguration;
 import org.apache.flink.agents.api.context.AsyncFuture;
 import org.apache.flink.agents.api.context.DurableCallable;
@@ -45,6 +44,7 @@ import org.apache.flink.agents.plan.utils.JsonUtils;
 import org.apache.flink.agents.runtime.ResourceCache;
 import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.CallResult;
+import org.apache.flink.agents.runtime.chat.ChatContext;
 import org.apache.flink.agents.runtime.lifecycle.ComponentExecutionListener;
 import org.apache.flink.agents.runtime.memory.CachedMemoryStore;
 import org.apache.flink.agents.runtime.memory.EventAttachmentUtils;
@@ -56,10 +56,10 @@ import org.apache.flink.agents.runtime.memory.MemoryObjectImpl;
 import org.apache.flink.agents.runtime.memory.MemoryValueObservation;
 import org.apache.flink.agents.runtime.metrics.BuiltInMetrics;
 import org.apache.flink.agents.runtime.metrics.FlinkAgentsMetricGroupImpl;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallStatus;
 import org.apache.flink.agents.runtime.subagent.InternalSubagentSetup;
-import org.apache.flink.agents.runtime.utils.EventUtil;
+import org.apache.flink.agents.runtime.subgraph.SubgraphCallManager;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphInvocation;
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.util.Preconditions;
 import org.slf4j.Logger;
@@ -194,12 +194,16 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     protected InteranlBaseLongTermMemory ltm;
 
     /**
-     * The sub-agent call this action runs inside, or {@code null} for a top-level action. Attached
-     * by {@link #setSubagentScope}: while set, the context answers resource/config queries from the
-     * child plan and routes events through the call (output accumulated into the call status, other
-     * events wrapped and forwarded) instead of emitting them top-level.
+     * Resource/configuration environment, or {@code null} for the root plan. A chat inherits its
+     * caller's environment; an internal subagent selects its child plan. Event routing is separate.
      */
-    @Nullable private SubagentScope subagentScope;
+    @Nullable private ResourceScope resourceScope;
+
+    /** Current action's chat context, replaced as a unit on each task switch or restore. */
+    @Nullable private ChatContext chatContext;
+
+    @Nullable private SubgraphInvocation<?> subgraphInvocation;
+    private SubgraphCallManager subgraphCalls = new SubgraphCallManager();
 
     /**
      * Index of the internal sub-agent setups owning a bootstrapped call session, keyed by session
@@ -264,7 +268,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     /** The metrics in effect: the child plan's while inside a sub-agent call, else the root's. */
     public BuiltInMetrics getBuiltInMetrics() {
-        return subagentScope != null ? subagentScope.getBuiltInMetrics() : builtInMetrics;
+        return resourceScope != null ? resourceScope.getBuiltInMetrics() : builtInMetrics;
     }
 
     /**
@@ -320,19 +324,51 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     /**
-     * Attaches (or clears, with {@code null}) the sub-agent call this action runs inside. Must be
-     * applied on every context switch: the shared context is reused across tasks, so a top-level
-     * action must not inherit the scope of whichever sub-agent action was wired on previously (its
-     * output would be folded into that call and it would run against the child plan).
+     * Selects the task's resource/configuration environment on every context switch. Passing {@code
+     * null} restores the root plan; it does not change the event-routing boundary.
      */
-    public void setSubagentScope(@Nullable SubagentScope subagentScope) {
-        this.subagentScope = subagentScope;
+    public void setResourceScope(@Nullable ResourceScope resourceScope) {
+        this.resourceScope = resourceScope;
     }
 
-    /** The sub-agent call this action runs inside, or {@code null} for a top-level action. */
+    /** The resource environment in effect, or {@code null} for the root plan. */
     @Nullable
-    public SubagentScope getSubagentScope() {
-        return subagentScope;
+    public ResourceScope getResourceScope() {
+        return resourceScope;
+    }
+
+    /** Installs the operator-wide registry shared by every internal call adapter. */
+    public void setSubgraphCalls(SubgraphCallManager calls) {
+        this.subgraphCalls = calls;
+    }
+
+    public SubgraphCallManager getSubgraphCalls() {
+        return subgraphCalls;
+    }
+
+    /** Sets the graph whose action is running, not a child call that the action is awaiting. */
+    public void setSubgraphInvocation(@Nullable SubgraphInvocation<?> invocation) {
+        this.subgraphInvocation = invocation;
+    }
+
+    @Nullable
+    public SubgraphInvocation<?> getSubgraphInvocation() {
+        return subgraphInvocation;
+    }
+
+    /** Installs the current task's chat context, or clears it when none is attached. */
+    public void setChatContext(@Nullable ChatContext chatContext) {
+        this.chatContext = chatContext;
+    }
+
+    /** Checks thread confinement for runtime components accessing this shared context. */
+    public void checkMailboxThread() {
+        mailboxThreadChecker.run();
+    }
+
+    /** Returns the current action's chat context, also used by the Python bridge. */
+    public ChatContext getChatContext() {
+        return Preconditions.checkNotNull(chatContext, "Chat calls require an executing action");
     }
 
     public void switchActionContext(
@@ -373,41 +409,19 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     @Override
     public void sendEvent(Event event) {
         mailboxThreadChecker.run();
-        if (subagentScope != null) {
-            sendEventInSubagentScope(event);
-            return;
+        if (subgraphInvocation != null && !(event instanceof SubgraphEvent)) {
+            try {
+                EventAttachmentUtils.storeEventAttachments(event, this);
+            } catch (Exception e) {
+                throw new IllegalStateException("Failed to store subgraph event attachments", e);
+            }
+            event = new SubgraphEvent(subgraphInvocation.getId(), event, false);
         }
         addPendingEvent(event);
     }
 
-    /**
-     * Routes an event emitted inside a sub-agent call. Output events are accumulated into the call
-     * status (they are the call's result, not top-level output); any other event is wrapped in an
-     * {@link InternalSubagentCallEvent} and forwarded for dispatch within the child scope.
-     */
-    private void sendEventInSubagentScope(Event event) {
-        if (EventUtil.isOutputEvent(event)) {
-            OutputEvent outputEvent =
-                    event instanceof OutputEvent
-                            ? (OutputEvent) event
-                            : OutputEvent.fromEvent(event);
-            subagentScope.accumulateOutput(outputEvent);
-            return;
-        }
-        InternalSubagentCallStatus callStatus = subagentScope.getCallStatus();
-        InternalSubagentCallEvent wrapped =
-                event instanceof InternalSubagentCallEvent
-                        ? (InternalSubagentCallEvent) event
-                        : InternalSubagentCallEvent.forward(
-                                event,
-                                callStatus.getScope(),
-                                callStatus.getCallId(),
-                                callStatus.getSessionId());
-        callStatus.emitEvent();
-        addPendingEvent(wrapped);
-    }
-
-    private void addPendingEvent(Event event) {
+    /** Enqueues a runtime event without applying user-event or sub-agent routing. */
+    public void addPendingEvent(Event event) {
         try {
             EventAttachmentUtils.storeEventAttachments(event, this);
         } catch (Exception e) {
@@ -429,16 +443,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         Iterator<Event> iterator = pendingEvents.iterator();
         while (iterator.hasNext()) {
             Event event = iterator.next();
-            if (!(event instanceof InternalSubagentCallEvent)) {
+            if (!(event instanceof SubgraphEvent) || !((SubgraphEvent) event).isBootstrap()) {
                 continue;
-            }
-            InternalSubagentCallEvent envelope = (InternalSubagentCallEvent) event;
-            if (subagentScope != null) {
-                InternalSubagentCallStatus callStatus = subagentScope.getCallStatus();
-                if (callStatus.getSessionId().equals(envelope.getSessionId())
-                        && callStatus.getCallId().equals(envelope.getCallId())) {
-                    continue;
-                }
             }
             // Only call bootstraps must run before completion to unblock the awaiting action.
             if (timestamp != null) {
@@ -793,12 +799,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
 
     /** The plan in effect: the child plan while inside a sub-agent call, else the root plan. */
     public AgentPlan currentPlan() {
-        return subagentScope != null ? subagentScope.getChildPlan() : agentPlan;
+        return resourceScope != null ? resourceScope.getChildPlan() : agentPlan;
     }
 
     /** The resource cache in effect: the child cache while inside a sub-agent call, else root. */
     public ResourceCache currentResourceCache() {
-        return subagentScope != null ? subagentScope.getChildResourceCache() : resourceCache;
+        return resourceScope != null ? resourceScope.getChildResourceCache() : resourceCache;
     }
 
     /**
@@ -813,10 +819,10 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      */
     @Nullable
     public String getActiveScopePlanJson() {
-        if (subagentScope == null) {
+        if (resourceScope == null) {
             return null;
         }
-        return subagentScope.getCallStatus().getSetup().getPlanJson();
+        return resourceScope.getPlanJson();
     }
 
     @Override
@@ -1204,7 +1210,7 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
      * recorded success may carry a {@code null} value (for example a {@code Void} call), so the
      * presence of the outcome, not its value, marks the hit.
      */
-    protected <T> Optional<Outcome<T>> tryGetCachedResult(String functionId, Class<T> resultClass)
+    public <T> Optional<Outcome<T>> tryGetCachedResult(String functionId, Class<T> resultClass)
             throws Exception {
         Object[] cached = matchNextOrClearSubsequentCallResult(functionId);
         if (cached != null && (Boolean) cached[0]) {
@@ -1225,7 +1231,8 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
         return Optional.empty();
     }
 
-    protected void recordDurableCompletion(String functionId, Object result, Exception exception)
+    /** Serializes and persists a terminal result for runtime-managed durable calls. */
+    public void recordDurableCompletion(String functionId, Object result, Exception exception)
             throws Exception {
         byte[] resultPayload = serializeDurableResult(result);
         byte[] exceptionPayload = serializeDurableException(exception);
@@ -1569,31 +1576,29 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
     }
 
     /**
-     * The state of one internal sub-agent call, attached to the shared runner context while a child
-     * agent's action executes. Holds the child plan and resource cache the action resolves against,
-     * the per-call quiesce state, and the output events the child emits (accumulated here so they
-     * can be persisted into the child action state and replayed on recovery).
+     * Resource/configuration environment selected independently of subgraph event routing. A chat
+     * invocation may reuse its caller's environment without admitting the caller's event listeners.
+     * This object has no invocation counters, result buffer, or memory journal.
      *
      * <p>The call is a scope on the one shared context rather than a separate context object per
      * call, so the language machinery (continuation / Python awaitable) does not have to be
      * duplicated per scope.
      */
-    public static final class SubagentScope {
+    public static final class ResourceScope {
 
         private final AgentPlan childPlan;
         private final ResourceCache childResourceCache;
-        private final InternalSubagentCallStatus callStatus;
+        private final String planJson;
         private final BuiltInMetrics builtInMetrics;
-        private final List<Event> outputEvents = new ArrayList<>();
 
-        public SubagentScope(
+        public ResourceScope(
                 FlinkAgentsMetricGroupImpl agentMetricGroup,
                 AgentPlan childPlan,
                 ResourceCache childResourceCache,
-                InternalSubagentCallStatus callStatus) {
+                String planJson) {
             this.childPlan = childPlan;
             this.childResourceCache = childResourceCache;
-            this.callStatus = callStatus;
+            this.planJson = planJson;
             this.builtInMetrics =
                     new BuiltInMetrics(
                             agentMetricGroup,
@@ -1610,22 +1615,12 @@ public class RunnerContextImpl implements RunnerContext, ExecutionReporter {
             return childResourceCache;
         }
 
-        public InternalSubagentCallStatus getCallStatus() {
-            return callStatus;
+        public String getPlanJson() {
+            return planJson;
         }
 
         public BuiltInMetrics getBuiltInMetrics() {
             return builtInMetrics;
-        }
-
-        /** Records an output event emitted by the child and folds its payload into the call. */
-        public void accumulateOutput(OutputEvent outputEvent) {
-            callStatus.accumulateOutput(outputEvent.getOutput());
-            outputEvents.add(outputEvent);
-        }
-
-        public List<Event> getOutputEvents() {
-            return List.copyOf(outputEvents);
         }
     }
 }

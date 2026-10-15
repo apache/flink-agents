@@ -22,7 +22,7 @@ import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.plan.actions.Action;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,7 +53,7 @@ public abstract class ActionTask implements Serializable {
     protected final Object key;
     protected final Event event;
     protected final Action action;
-    protected final boolean isSubagentEvent;
+    protected final boolean isSubgraphEvent;
     /** Stable identifier for observations produced by this logical action execution. */
     protected String observationId;
 
@@ -115,7 +115,7 @@ public abstract class ActionTask implements Serializable {
         this.event = event;
         this.action = action;
         this.sequenceNumber = sequenceNumber;
-        this.isSubagentEvent = event instanceof InternalSubagentCallEvent;
+        this.isSubgraphEvent = event instanceof SubgraphEvent;
         this.observationId = Objects.requireNonNull(observationId, "observationId");
         this.traceContext = Objects.requireNonNull(traceContext, "traceContext must not be null");
     }
@@ -144,17 +144,14 @@ public abstract class ActionTask implements Serializable {
         return sequenceNumber;
     }
 
-    public boolean isSubagentEvent() {
-        return isSubagentEvent;
+    public boolean isSubgraphEvent() {
+        return isSubgraphEvent;
     }
 
-    /**
-     * Returns the delegate event for action invocation, unwrapping InternalSubagentCallEvent if
-     * needed.
-     */
+    /** Returns the delegate event for action invocation, unwrapping SubgraphEvent if needed. */
     public Event getDelegateEvent() {
-        if (isSubagentEvent) {
-            return ((InternalSubagentCallEvent) event).getDelegate();
+        if (event instanceof SubgraphEvent) {
+            return ((SubgraphEvent) event).getDelegate();
         }
         return event;
     }

@@ -26,7 +26,7 @@ import org.apache.flink.agents.runtime.python.context.PythonRunnerContextImpl;
 import org.apache.flink.agents.runtime.python.operator.PythonActionTask;
 import org.apache.flink.agents.runtime.python.operator.PythonGeneratorActionTask;
 import org.apache.flink.agents.runtime.python.utils.PythonActionExecutor;
-import org.apache.flink.agents.runtime.subagent.InternalSubagentCallEvent;
+import org.apache.flink.agents.runtime.subgraph.SubgraphEvent;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -106,9 +106,7 @@ class ActionTaskTest {
         task.setRunnerContext(context);
         Event firstEvent = new Event("first-event");
         Event secondEvent = new Event("second-event");
-        InternalSubagentCallEvent bootstrap =
-                InternalSubagentCallEvent.bootstrap(
-                        new InputEvent("prompt"), "child", "call", "session");
+        SubgraphEvent bootstrap = new SubgraphEvent("child-call", new InputEvent("prompt"), true);
         when(executor.executePythonFunction(function, triggeringEvent))
                 .thenAnswer(
                         invocation -> {

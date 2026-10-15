@@ -223,6 +223,10 @@ Flink Agents offers two implementations of MCP support, based on MCP SDKs in dif
 | Java           | JDK 16 and below | Python SDK  |
 
 
+When the selected implementation uses Python, install its Python dependencies and
+configure the Python environment even for a Java Flink job; see
+[dependency setup]({{< ref "docs/development/create-agent/choose-apis-and-languages#integrate-the-agent-into-a-flink-job" >}}).
+
 As shown in the table above, for Java agents running on JDK 17+, the framework automatically uses the Java SDK implementation. If you need to use the Python SDK instead (not recommended), you can set the `lang` parameter to `"python"` in the `@MCPServer` annotation:
 ```java
 @MCPServer(lang = "python")

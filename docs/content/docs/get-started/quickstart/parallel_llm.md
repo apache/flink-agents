@@ -31,10 +31,6 @@ This quickstart introduces an example that demonstrates how to build a parallel 
 
 The **Parallel Sentiment Analysis** agent processes a restaurant review and judges sentiment along two dimensions (taste / service) in parallel, then aggregates the results into a one-line summary with a final LLM call. The end-to-end wall clock time is roughly "slowest single branch + aggregation call", rather than the sum of all three calls.
 
-{{< hint info >}}
-**JDK version note (Java only):** On JDK 21+, the framework uses the Continuation API to execute concurrent chat actions in parallel. On JDK < 21, the framework silently falls back to sequential execution — the result is identical, but the LLM calls run one after another. Python uses native coroutines and always executes in parallel regardless of the JDK version.
-{{< /hint >}}
-
 ## Code Walkthrough
 
 ### Prepare Agents Execution Environment
@@ -382,7 +378,7 @@ agentsEnv.execute();
 
 * Unix-like environment (we use Linux, Mac OS X, Cygwin, WSL)
 * Git
-* Java 11+ (Java 21+ recommended for parallel execution on the Java side)
+* Java 11+
 * Python 3.10, 3.11 or 3.12
 
 ### Preparation

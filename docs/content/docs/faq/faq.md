@@ -25,9 +25,10 @@ under the License.
 
 This page describes the solutions to some common questions for Flink Agents users.
 
-## Q1: What are the Python environment considerations when running Flink Agents jobs?
+## Q1: What are the Python environment considerations when using Python with Flink Agents?
 
-To ensure stability and compatibility when running Flink Agents jobs, please be aware of the following Python environment guidelines:
+When using a PyFlink job, Python components, or another Flink Agents feature that
+uses Python, follow these Python environment guidelines:
 
 - **Recommended Python versions**: It is advised to use officially supported Python versions such as Python 3.10, 3.11 or 3.12. These versions have been thoroughly tested and offer the best compatibility with Flink Agents.
 
@@ -40,7 +41,7 @@ To ensure stability and compatibility when running Flink Agents jobs, please be 
     - **For macOS users**: Use Homebrew to install Python (e.g., `brew install python`).
     - **For Windows users**: Download and install the official version from the [Python website](https://www.python.org/downloads/).
 
-- **Avoid using Python installed via uv**: Currently, it is not recommended to run Flink Agents jobs with a Python interpreter installed via the `uv` tool, as this may lead to potential compatibility issues or instability. For example, you may encounter the following gRPC-related error:
+- **Avoid using Python installed via uv**: Currently, it is not recommended to use a Python interpreter installed via the `uv` tool with Flink Agents, as this may lead to potential compatibility issues or instability. For example, you may encounter the following gRPC-related error:
 
     ```
     Logging client failed: <_MultiThreadedRendezvous of RPC that terminated with:
@@ -55,87 +56,7 @@ To ensure stability and compatibility when running Flink Agents jobs, please be 
 
   If you see an error like this, switch immediately to one of the officially recommended installation methods and confirm that you're using a supported Python version.
 
-## Q2: Why do cross-language resources not work in local development mode?
-
-Cross-language resources, such as using Java resources from Python or vice versa, are currently supported only when running in Flink. Local development mode does not support cross-language resources.
-
-This limitation exists because cross-language communication requires the Flink runtime environment to effectively bridge Java and Python processes. In local development mode, this bridge is unavailable.
-
-To use cross-language resources, please test the functionality by deploying to a Flink standalone cluster.
-
-## Q3: Should I choose Java or Python?
-
-When choosing between Flink Agents' Java API and Python API, consider the following factors:
-
-1. **Team experience and preferences**
-2. **JDK version** (for Java users)
-3. **Integration supports**
-
-### Understanding Async Execution and JDK Versions
-
-Async execution can significantly improve performance by allowing multiple operations to run concurrently. However, async execution support varies by language and JDK version:
-
-| Environment | Async Execution Support |
-|-------------|------------------------|
-| Python | ✅ Supported |
-| Java (JDK 21+) | ✅ Supported (via Continuation API) |
-| Java (JDK < 21) | ❌ Not supported (falls back to synchronous execution) |
-
-This is important because:
-
-- **For Python users**: Async execution is always available.
-- **For Java users on JDK 21+**: Async execution is available.
-- **For Java users on JDK < 21**: Async execution is not available and falls back to synchronous execution.
-
-> **Cross-language async note**: Async execution for cross-language resources requires the pemja 0.5.7 fix, available in Flink 1.20.5+ / 2.0.2+ / 2.1.3+ / 2.2.1+ / 2.3+. Current builds target Flink 2.3.0, which includes the fix, so cross-language async is enabled by default; on older Flink versions it falls back to synchronous execution automatically.
-
-### Native Integration Support Matrix
-
-Flink Agents provides built-in integrations for many ecosystem providers. Some integrations are only available in one language. For those marked as ❌, you can still use them from the other language via cross-language support.
-
-**Chat Models**
-
-| Provider | Python | Java |
-|---|---|---|
-| [Amazon Bedrock]({{< ref "docs/development/calling-llms/chat-models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
-| [Anthropic]({{< ref "docs/development/calling-llms/chat-models/providers#anthropic" >}}) | ✅ | ✅ |
-| [Azure OpenAI]({{< ref "docs/development/calling-llms/chat-models/providers#azure-openai" >}}) | ✅ | ✅ |
-| [Gemini]({{< ref "docs/development/calling-llms/chat-models/providers#gemini" >}}) | ❌ | ✅ |
-| [Ollama]({{< ref "docs/development/calling-llms/chat-models/providers#ollama" >}}) | ✅ | ✅ |
-| [OpenAI]({{< ref "docs/development/calling-llms/chat-models/providers#openai" >}}) | ✅ | ✅ |
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/calling-llms/chat-models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
-| [vLLM]({{< ref "docs/development/calling-llms/chat-models/providers#vllm" >}}) | ✅ | ✅ |
-| [Watsonx (IBM watsonx.ai)]({{< ref "docs/development/calling-llms/chat-models/providers#watsonx-ibm-watsonxai" >}}) | ✅ | ✅ |
-
-**Embedding Models**
-
-| Provider | Python | Java |
-|---|---|---|
-| [Amazon Bedrock]({{< ref "docs/development/vector-search/embedding_models/providers#amazon-bedrock" >}}) | ❌ | ✅ |
-| [Ollama]({{< ref "docs/development/vector-search/embedding_models/providers#ollama" >}}) | ✅ | ✅ |
-| [OpenAI]({{< ref "docs/development/vector-search/embedding_models/providers#openai" >}}) | ✅ | ✅ |
-| [Alibaba Cloud Model Studio (DashScope)]({{< ref "docs/development/vector-search/embedding_models/providers#alibaba-cloud-model-studio-dashscope" >}}) | ✅ | ❌ |
-
-**Vector Stores**
-
-| Provider | Python | Java |
-|---|---|---|
-| [Amazon OpenSearch]({{< ref "docs/development/vector-search/vector_stores/providers#amazon-opensearch" >}}) | ❌ | ✅ |
-| [Amazon S3 Vectors]({{< ref "docs/development/vector-search/vector_stores/providers#amazon-s3-vectors" >}}) | ❌ | ✅ |
-| [Chroma]({{< ref "docs/development/vector-search/vector_stores/providers#chroma" >}}) | ✅ | ❌ |
-| [Elasticsearch]({{< ref "docs/development/vector-search/vector_stores/providers#elasticsearch" >}}) | ❌ | ✅ |
-| [Mem0]({{< ref "docs/development/vector-search/vector_stores/providers#mem0" >}}) | ✅ | ❌ |
-| [Milvus]({{< ref "docs/development/vector-search/vector_stores/providers#milvus" >}}) | ❌ | ✅ |
-
-**MCP Server**
-
-| Provider | Python | Java |
-|---|---|---|
-| [MCP Server]({{< ref "docs/development/calling-llms/mcp" >}}) | ✅ | ✅ |
-
-> **Note**: Java native MCP support requires **JDK 17+**. For JDK 11-16, the framework automatically uses the Python SDK via cross-language support, which works seamlessly without additional configuration. See [MCP]({{< ref "docs/development/calling-llms/mcp" >}}) for details.
-
-## Q4: How to run agent in IDE.
+## Q2: How do I run an Agent in an IDE?
 
 To avoid potential conflict with Flink cluster, the scope of the dependencies related to Flink and Flink Agents for agent job are provided. See [Maven Dependencies]({{< ref "docs/get-started/setup#maven-dependencies-for-java" >}}) for details.
 

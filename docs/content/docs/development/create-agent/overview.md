@@ -37,10 +37,6 @@ contain cycles. Each node is an action, and each edge represents an event flow b
 
 An Agent is well-suited for scenarios where the solution requires explicit orchestration, branching, or multi-step reasoning, such as data enrichment, multi-tool pipelines, or complex business logic.
 
-{{< hint info >}}
-For guidance on choosing Java or Python, see [Should I choose Java or Python?]({{< ref "docs/faq/faq#q3-should-i-choose-java-or-python" >}}).
-{{< /hint >}}
-
 ## Agent Example
 
 {{< tabs "Agent Example" >}}
@@ -235,4 +231,9 @@ public class ReviewAnalysisAgent extends Agent {
 
 {{< /tabs >}}
 
-Continue with [Actions]({{< ref "docs/development/create-agent/actions" >}}) and [Events]({{< ref "docs/development/create-agent/events" >}}).
+Next, learn how [Actions]({{< ref "docs/development/create-agent/actions" >}})
+process incoming Events and emit new Events, and how
+[Events]({{< ref "docs/development/create-agent/events" >}}) carry data and trigger
+Actions. Then see
+[Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
+to choose among the Java, Python, and YAML APIs and combine Java and Python components.

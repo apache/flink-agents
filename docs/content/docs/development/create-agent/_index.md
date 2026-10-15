@@ -26,4 +26,5 @@ under the License.
 - [Overview]({{< ref "docs/development/create-agent/overview" >}})
 - [Actions]({{< ref "docs/development/create-agent/actions" >}})
 - [Events]({{< ref "docs/development/create-agent/events" >}})
+- [Choose APIs and Languages]({{< ref "docs/development/create-agent/choose-apis-and-languages" >}})
 - [YAML API]({{< ref "docs/development/create-agent/yaml" >}})

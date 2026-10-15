@@ -25,9 +25,9 @@ under the License.
 -->
 
 ## Overview
-Flink Agents provides both Python and Java APIs to define a Flink Agents job.
-
-The sections below show how to install the required dependencies.
+Flink Agents runs as part of a Java Flink or PyFlink job. Follow the setup for that
+job. A YAML Agent can be loaded by either type of job. If the Agent contains both
+Java and Python components, install the dependencies required by both.
 
 {{< hint warning >}}
 __NOTE:__ To run on a Flink cluster, Flink-Agents requires a stable release of Flink version 1.20.3 or higher. We highly recommend using the **latest stable release of your chosen Flink minor version** (e.g., for minor version 2.2, use the latest 2.2.x release).
@@ -37,8 +37,8 @@ __NOTE:__ To run on a Flink cluster, Flink-Agents requires a stable release of F
 
 Both the script-based and manual installation paths require:
 
-* **Java 11+** on your `PATH`. Java 21+ is recommended when using the Java API — see the table below for the version-specific limitations.
-* **Python 3.10, 3.11, or 3.12** (only required if you plan to use the Python API or PyFlink).
+* **Java 11+** on your `PATH`, using a JDK supported by your chosen Flink release. See [Java Versions](#java-versions) for feature-specific requirements.
+* **Python 3.10, 3.11, or 3.12** when using a PyFlink job, Python Actions or Resources, or another feature that uses Python, such as the Python MCP SDK. This includes Java Flink jobs that use those components.
 
 For building Flink Agents from source, you additionally need:
 - Unix-like environment (Linux, macOS, Cygwin, or WSL)
@@ -47,14 +47,15 @@ For building Flink Agents from source, you additionally need:
 
 ### Java Versions
 
-For running an agent built with the **Python API**, you can use any Java version 11 or higher.
+The Flink Agents Java baseline is JDK 11. The JDK must also be supported by the
+Flink release you deploy. Concurrency and integration requirements depend on the
+feature:
 
-When using the **Java API**, there are some functionality limitations for earlier Java versions, as detailed below:
-
-| Java Version | Limitations            |
-|--------------|------------------------|
-| Java 21+     | No limitations.        |
-| Java 11-20   | Async execution is unavailable. |
+- Java Action scheduling differs between JDK 21+ and earlier JDKs. See
+  [Async Execution]({{< ref "docs/development/create-agent/actions#async-execution" >}})
+  for configuration and the JDK 21+ JVM option.
+- Java-native MCP requires JDK 17+; on earlier supported JDKs, it uses the Python SDK
+  and requires its Python dependencies. See [MCP SDK]({{< ref "docs/development/calling-llms/mcp#mcp-sdk" >}}).
 
 {{< hint info >}}
 **Note**: Python 3.12 requires Flink 2.1 or above and Flink Agents 0.3 or above.
@@ -91,7 +92,7 @@ tar -xzf flink-${FLINK_VERSION}-bin-scala_2.12.tgz
 # Set FLINK_HOME environment variable
 export FLINK_HOME=$(pwd)/flink-${FLINK_VERSION}
 
-# Copy the flink-python JAR from opt to lib (required for PyFlink)
+# Copy the flink-python JAR from opt to lib (required for PyFlink or Python components)
 cp $FLINK_HOME/opt/flink-python-${FLINK_VERSION}.jar $FLINK_HOME/lib/
 ```
 
@@ -211,19 +212,19 @@ export PYTHONPATH=$(python -c 'import sysconfig; print(sysconfig.get_paths()["pu
 **Note:** You can add the `export PYTHONPATH=...` line to your shell profile (`~/.bash_profile`, `~/.bashrc`, `~/.zprofile`, or `~/.zshrc`) to set it permanently. This way, it will be automatically configured in all future terminal sessions.
 {{< /hint >}}
 
-### Install Flink Agents Java Library (Java jobs only)
+### Install Flink Agents Java Library (Java Flink jobs)
 
 {{< hint info >}}
-**Skip this section if you only use the Python API.** When you call
+**Skip the manual JAR copy for PyFlink jobs.** When you call
 `AgentsExecutionEnvironment.get_execution_environment(env=...)`, the framework
 automatically registers the required JARs via `pipeline.jars` so Flink loads
 them into the user-code classloader. No manual JAR copy into
 `$FLINK_HOME/lib/` is needed.
 {{< /hint >}}
 
-This step is for Java jobs (or other deployments that don't go through the
-Python entry point). Copy the Flink Agents distribution JAR to your Flink
-installation's `lib` directory:
+This step is for Java Flink jobs, including those that load YAML Agents or use Python
+components. Copy the Flink Agents distribution JAR to your Flink installation's `lib`
+directory:
 
 {{< tabs "Install Flink Agents Java Library" >}}
 
@@ -282,7 +283,7 @@ For developing Flink Agents applications in Java, add the following dependencies
 {{< hint info >}}
 All the above dependencies should be in provided scope, to avoid potential conflict with the Flink cluster.
 
-For execution in IDE, enable the feature `add dependencies with provided scope to classpath` in your IDE. See [FAQ]({{< ref "docs/faq/faq#q4-how-to-run-agent-in-ide" >}}) for details. 
+For execution in IDE, enable the feature `add dependencies with provided scope to classpath` in your IDE. See [FAQ]({{< ref "docs/faq/faq#q2-how-do-i-run-an-agent-in-an-ide" >}}) for details.
 {{< /hint >}}
 
 **Example `pom.xml`**
@@ -354,4 +355,5 @@ $FLINK_HOME/bin/flink run -c <your.main.class> /path/to/your-job.jar
 
 {{< /tabs >}}
 
-See [deployment]({{< ref "docs/operations/deployment" >}}) for more details on running Flink Agents jobs.
+See [deployment]({{< ref "docs/operations/deployment" >}}) for more details on
+running Java Flink and PyFlink jobs with Flink Agents.

@@ -310,11 +310,11 @@ This keeps each request lean — a skill the agent never activates costs only it
 
 The complete example sends arithmetic questions such as `What is (2 + 3) * 4?` to `MathAgent`. Its model loads `math-calculator`, uses `bash` to run `bc`, and returns the numeric result through the normal chat response path. For the chat request and response Actions, see [Chat with Models]({{< ref "docs/development/calling-llms/chat" >}}).
 
-| Language | Flink job entry point | Agent definition | Skill instructions |
-|----------|-----------------------|------------------|--------------------|
+| Language | Example job | Agent definition | Skill instructions |
+|----------|-------------|------------------|--------------------|
 | Python | [skills_agent_example.py](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/skills_agent_example.py) | [MathAgent](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/agents/math_agent.py) | [SKILL.md](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/resources/skills/math-calculator/SKILL.md) |
 | Java | [SkillsAgentExample.java](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/SkillsAgentExample.java) | [MathAgent](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/agents/MathAgent.java) | [SKILL.md](https://github.com/apache/flink-agents/blob/main/examples/src/main/resources/skills/math-calculator/SKILL.md) |
 
 The Python example loads its bundled skill through `Skills.from_package`; the Java example uses `Skills.fromClasspath`. Make `bash` and `bc` available on the TaskManagers and prepare the Ollama model configured by the example (`qwen3.5:9b`).
 
-Follow [Setup]({{< ref "docs/get-started/setup" >}}) for dependencies and [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent#run-the-example" >}}) for the build and submission workflow, substituting the Skills job entry point above. See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for stream integration details.
+Follow [Setup]({{< ref "docs/get-started/setup" >}}) for dependencies and [Build Your First Agent]({{< ref "docs/get-started/quickstart/create-agent/single-agent#run-the-example" >}}) for the build and submission workflow, using the corresponding Skills example job above. See [Integrate with Flink]({{< ref "docs/development/integrate_with_flink" >}}) for stream integration details.

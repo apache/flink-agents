@@ -17,9 +17,11 @@
  */
 package org.apache.flink.agents.runtime.operator;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.flink.agents.api.Event;
 import org.apache.flink.agents.api.InputEvent;
 import org.apache.flink.agents.api.OutputEvent;
+import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.TraceContext;
 import org.apache.flink.agents.api.trace.TraceRecord;
@@ -30,6 +32,7 @@ import org.apache.flink.agents.runtime.actionstate.ActionState;
 import org.apache.flink.agents.runtime.actionstate.InMemoryActionStateStore;
 import org.apache.flink.agents.runtime.async.ContinuationActionExecutor;
 import org.apache.flink.agents.runtime.async.ContinuationContext;
+import org.apache.flink.agents.runtime.chat.ChatContext;
 import org.apache.flink.agents.runtime.context.JavaRunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl;
 import org.apache.flink.agents.runtime.context.RunnerContextImpl.ExecutionReportingContext;
@@ -189,24 +192,75 @@ class ActionTaskContextManagerTest {
             invokeCreateAndSetRunnerContext(mgr, taskA);
             RunnerContextImpl.MemoryContext memoryA = taskA.getRunnerContext().getMemoryContext();
             assertThat(memoryA).isNotNull();
+            ChatContext chatA = taskA.getRunnerContext().getChatContext();
             ContinuationContext continuationA =
                     ((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext();
 
             invokeCreateAndSetRunnerContext(mgr, taskB);
             RunnerContextImpl.MemoryContext memoryB = taskB.getRunnerContext().getMemoryContext();
             assertThat(memoryB).isNotNull().isNotSameAs(memoryA);
+            ChatContext chatB = taskB.getRunnerContext().getChatContext();
+            assertThat(chatB).isNotSameAs(chatA);
+            assertThat(chatB.getOwner()).isNotSameAs(chatA.getOwner());
+            assertThat(chatB.getManager()).isSameAs(chatA.getManager());
             ContinuationContext continuationB =
                     ((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext();
 
             mgr.restore("a", taskA);
             assertThat(taskA.getRunnerContext().getMemoryContext()).isSameAs(memoryA);
+            assertThat(taskA.getRunnerContext().getChatContext()).isSameAs(chatA);
             assertThat(((JavaRunnerContextImpl) taskA.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationA);
 
             mgr.restore("b", taskB);
             assertThat(taskB.getRunnerContext().getMemoryContext()).isSameAs(memoryB);
+            assertThat(taskB.getRunnerContext().getChatContext()).isSameAs(chatB);
             assertThat(((JavaRunnerContextImpl) taskB.getRunnerContext()).getContinuationContext())
                     .isSameAs(continuationB);
+        }
+    }
+
+    @Test
+    void chatContextRestoresActiveCallAndSurvivesContinuationTransfer() throws Exception {
+        try (ActionTaskContextManager mgr = newManager()) {
+            Action action = TestActions.noopAction();
+            ActionTask caller = new JavaActionTask("k", new InputEvent(1L), action, 1L);
+            invokeCreateAndSetRunnerContext(mgr, caller);
+            RunnerContextImpl context = caller.getRunnerContext();
+            ChatContext callerChat = context.getChatContext();
+            String callId =
+                    callerChat
+                            .getManager()
+                            .prepareCall(
+                                    context,
+                                    new ObjectMapper()
+                                            .writeValueAsString(
+                                                    new ChatRequestEvent("model", List.of())));
+            ActionTask chatTask =
+                    new JavaActionTask("k", context.getPendingEvents().get(0), action, 2L);
+            invokeCreateAndSetRunnerContext(mgr, chatTask);
+            ChatContext activeChat = context.getChatContext();
+            assertThat(activeChat.getManager()).isSameAs(callerChat.getManager());
+            assertThat(activeChat.getOwner()).isNotSameAs(callerChat.getOwner());
+            assertThat(context.getSubgraphInvocation())
+                    .isSameAs(mgr.getChatCallManager().get(callId));
+
+            mgr.restore("k", caller);
+            assertThat(context.getChatContext()).isSameAs(callerChat);
+            assertThat(context.getSubgraphInvocation()).isNull();
+            mgr.restore("k", chatTask);
+            assertThat(context.getChatContext()).isSameAs(activeChat);
+
+            // A generated task may no longer carry the bootstrap event; keep the whole context.
+            ActionTask continuation = new JavaActionTask("k", new Event("resume"), action, 2L);
+            mgr.removeContexts(chatTask);
+            mgr.transferContexts(chatTask, continuation, new DurableExecutionManager(null));
+            invokeCreateAndSetRunnerContext(mgr, continuation);
+            assertThat(context.getChatContext()).isSameAs(activeChat);
+            assertThat(context.getSubgraphInvocation())
+                    .isSameAs(mgr.getChatCallManager().get(callId));
+            mgr.restore("k", caller);
+            assertThat(context.getChatContext()).isSameAs(callerChat);
         }
     }
 
@@ -665,7 +719,7 @@ class ActionTaskContextManagerTest {
                 shortTermMem,
                 /* pythonRunnerContext */ null,
                 longTermMemory,
-                /* subagentScope */ null,
+                /* resourceScope */ null,
                 executionReportingContextFactory);
     }
 
