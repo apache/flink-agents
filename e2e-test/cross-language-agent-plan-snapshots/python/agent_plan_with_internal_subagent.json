@@ -36,6 +36,18 @@
         "_context_retrieval_request_event"
       ],
       "config": null
+    },
+    "decision_model_action": {
+      "name": "decision_model_action",
+      "exec": {
+        "func_type": "PythonFunction",
+        "module": "flink_agents.plan.actions.decision_model_action",
+        "qualname": "process_decision_request"
+      },
+      "trigger_conditions": [
+        "_decision_request_event"
+      ],
+      "config": null
     }
   },
   "resource_providers": {
@@ -98,6 +110,18 @@
                   },
                   "trigger_conditions": [
                     "_context_retrieval_request_event"
+                  ],
+                  "config": null
+                },
+                "decision_model_action": {
+                  "name": "decision_model_action",
+                  "exec": {
+                    "func_type": "PythonFunction",
+                    "module": "flink_agents.plan.actions.decision_model_action",
+                    "qualname": "process_decision_request"
+                  },
+                  "trigger_conditions": [
+                    "_decision_request_event"
                   ],
                   "config": null
                 }

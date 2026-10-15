@@ -303,10 +303,14 @@ def test_cancellation_propagates_without_response_or_retry(
         ctx.get_resource.side_effect = failure
     elif source == "durable":
         ctx.durable_execute.side_effect = failure
-    with pytest.raises(type(failure)) as caught:
-        asyncio.run(process_decision_request(_request(), ctx))
 
-    assert caught.value is failure
+    async def run_action() -> None:
+        # Catch at the Action boundary before asyncio.run normalizes cancellation.
+        with pytest.raises(type(failure)) as caught:
+            await process_decision_request(_request(), ctx)
+        assert caught.value is failure
+
+    asyncio.run(run_action())
     ctx.send_event.assert_not_called()
     ctx.report_execution_failed.assert_not_called()
     assert model.decide.call_count == (1 if source == "provider" else 0)
@@ -375,10 +379,14 @@ def test_started_retry_metrics_survive_durable_failure(
 
     ctx.durable_execute.side_effect = execute
     ctx.durable_execute_async.side_effect = execute_async
-    with pytest.raises(type(failure)) as caught:
-        asyncio.run(process_decision_request(_request(), ctx))
 
-    assert caught.value is failure
+    async def run_action() -> None:
+        # Catch at the Action boundary before asyncio.run normalizes cancellation.
+        with pytest.raises(type(failure)) as caught:
+            await process_decision_request(_request(), ctx)
+        assert caught.value is failure
+
+    asyncio.run(run_action())
     ctx.send_event.assert_not_called()
     model.decide.assert_called_once()
     assert ctx.durable_execute.call_count + ctx.durable_execute_async.call_count == 2
