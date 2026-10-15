@@ -26,7 +26,7 @@ under the License.
 
 Flink Agents provides `ReActAgent` as a built-in subclass of `Agent` that implements the ReAct pattern.
 
-ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. Leveraging this paradigm, the user only needs to specify the goal with prompt and provide available tools, and the LLM will decide how to achieve the goal and take actions autonomously.
+ReAct Agent is a general paradigm that combines reasoning and action capabilities to solve complex tasks. A `ReActAgent` requires a chat model. You can optionally provide a prompt, an output schema, tools, and skills; the model then decides how to achieve the goal and when to use the capabilities you expose.
 
 {{< hint info >}}
 The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
@@ -46,6 +46,7 @@ from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.execution_environment import AgentsExecutionEnvironment
 from flink_agents.api.prompts.prompt import Prompt
 from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
+from flink_agents.api.skills import Skills
 from flink_agents.api.tools.tool import Tool
 ```
 {{< /tab >}}
@@ -64,6 +65,7 @@ import org.apache.flink.agents.api.prompt.Prompt;
 import org.apache.flink.agents.api.resource.ResourceDescriptor;
 import org.apache.flink.agents.api.resource.ResourceName;
 import org.apache.flink.agents.api.resource.ResourceType;
+import org.apache.flink.agents.api.skills.Skills;
 import org.apache.flink.agents.api.tools.Tool;
 import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
 import org.apache.flink.api.common.typeinfo.TypeInformation;
@@ -78,6 +80,8 @@ import java.util.List;
 
 ## ReAct Agent Example
 
+The chat model descriptor is the only required configuration. The example below also supplies an optional prompt and output schema. In Python, omitted optional arguments default to `None`. In Java, pass `null` for the prompt or output schema when you do not need it.
+
 {{< tabs "ReAct Agent Example" >}}
 
 {{< tab "Python" >}}
@@ -85,7 +89,7 @@ import java.util.List;
 my_react_agent = ReActAgent(
     chat_model=chat_model_descriptor,
     prompt=my_prompt,
-    output_schema=MyBaseModelDataType, # or output_schema=my_row_type_info
+    output_schema=MyBaseModelDataType,  # or my_row_type_info
 )
 ```
 {{< /tab >}}
@@ -106,9 +110,9 @@ ReActAgent myReActAgent =
 
 ## Initialize Arguments
 ### Chat Model
-User should specify the chat model used in the ReAct Agent.
+Use a `ResourceDescriptor` to select the required chat model setup and pass its arguments. See [Chat Models]({{< ref "docs/development/calling-llms/chat-models" >}}) for the provider-specific connection and model configuration.
 
-We use `ResourceDescriptor` to describe the chat model, includes chat model type and chat model arguments. See [Chat Model]({{< ref "docs/development/calling-llms/chat-models" >}}) for more details.
+Tools are optional. To expose them to the ReAct Agent, list their registered resource names in the descriptor's `tools` argument:
 
 {{< tabs "ChatModel ResourceDescriptor" >}}
 
@@ -150,6 +154,7 @@ Register the referenced tools (this can also be done with a YAML file — see [T
 agents_env.add_resource(
     "my_tool1", ResourceType.TOOL, Tool.from_callable(my_tool1)
 )
+# Register my_tool2 the same way.
 ```
 {{< /tab >}}
 
@@ -159,15 +164,18 @@ agentsEnv.addResource(
         "myTool1",
         ResourceType.TOOL,
         Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
+// Register myTool2 the same way.
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-### Prompt
-User can provide prompt to instruct agent.
+Registering a Vector Store resource does not make a ReAct Agent retrieve from it automatically. Implement retrieval explicitly, for example by exposing it as a tool.
 
-A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional (if it is omitted, the framework still prepends the output-schema instruction automatically).
+### Prompt
+The prompt is optional. Without one, the agent directly converts a Java `String` or primitive wrapper, a Python `str`, `bool`, `int`, `float`, or `None`, or a Java `Map`/Python `dict` whose only key is `input` into a user message. Other structured inputs require a prompt to map their fields into one or more user messages; otherwise, the agent rejects the input at runtime.
+
+A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional. When an output schema is configured, the framework still prepends its schema instruction if the prompt has no SYSTEM message.
 
 {{< tabs "Prompt" >}}
 
@@ -188,9 +196,8 @@ system_prompt_str = """
 my_prompt = Prompt.from_messages(
     messages=[
         ChatMessage.system(system_prompt_str),
-        # For react agent, if the input element is not primitive types,
-        # framework will deserialize input element to dict and fill the prompt.
-        # Note, the input element should be primitive types, BaseModel or Row.
+        # Structured input fields are matched to the prompt placeholders.
+        # The input can be a primitive, dict, BaseModel, or Row.
         ChatMessage.user(
             """
             "id": {id},
@@ -228,13 +235,13 @@ The USER-message template uses `{placeholder}` syntax. The placeholder names are
 - **Primitive** (`int`, `str`, `float`, `bool`, ...): a single `{input}` placeholder.
 - **`Row`**: one placeholder per field name (`row.as_dict()` keys in Python, `row.getFieldNames()` in Java).
 - **`dict` / `Map`**: the keys are used directly.
-- **`BaseModel` (Python) / Pojo (Java)**: the object's field names.
+- **`BaseModel` (Python) / POJO (Java)**: the object's field names.
 
 For example, the prompt snippet above uses `{id}` and `{review}` because the input element's fields are named `id` and `review`. A placeholder whose name does not match a field is left unchanged in the text.
 
-If the input element is primitive types, like `int`, `str` and so on, the second message should be
+When a prompt formats a primitive input, use the `{input}` placeholder in its USER message:
 
-{{< tabs "Prepare Agents Execution Environment" >}}
+{{< tabs "Primitive Input Placeholder" >}}
 
 {{< tab "Python" >}}
 ```python
@@ -253,11 +260,11 @@ new ChatMessage(MessageRole.USER, "{input}")
 See [Prompt]({{< ref "docs/development/calling-llms/prompts" >}}) for more details.
 
 ### Output Schema
-User can set output schema to configure the ReAct Agent output type. If output schema is set, the ReAct Agent will deserialize the llm response to expected type. 
+The output schema is optional. Without one, the agent does not add a schema instruction, parse or validate the final response against a schema, or perform type conversion. It emits the text of the final assistant message as a `String` (Java) or `str` (Python). This text is the concatenation of the message's top-level text blocks; media, reasoning, and tool-call blocks are not included.
 
-The output schema should be a `BaseModel` subclass (Python) / a Pojo class (Java), or a `RowTypeInfo` (both).
+When you set an output schema, the agent emits the parsed result instead. The schema should be a `BaseModel` subclass (Python), a POJO class (Java), or a `RowTypeInfo` (both). If the final response cannot be parsed after the configured retries, the chat request fails and the ReAct Agent propagates that failure.
 
-When the chat model's provider supports it, the schema is enforced natively by the provider rather than only described in the prompt. See [Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) for the strategies, supported providers and schema rules.
+When the chat model's provider supports it, the schema is enforced natively by the provider rather than only described in the prompt. See [Structured Output]({{< ref "docs/development/calling-llms/structured-output" >}}) for the strategies, result types, supported providers, schema rules, and failure behavior.
 
 {{< tabs "Output Schema" >}}
 
@@ -333,7 +340,7 @@ RowTypeInfo myRowTypeInfo =
 {{< /tabs >}}
 
 ### Skills
-User can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor instead of adding a `skills` argument to the chat model descriptor. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
+Skills are optional. You can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor instead of adding a `skills` argument to the chat model descriptor. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
 
 **Skill names.** Pass the names of skills that are already declared to the agent:
 
