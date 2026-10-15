@@ -47,7 +47,7 @@ dependencies = [
     "jsonschema>=4.23,<5",
     "docstring-parser==0.16",
     "pyyaml==6.0.2",
-    "mcp>=1.8.0",
+    "mcp>=1.8.0,<2",
     "setuptools>=75.3,<82",
     "find_libpython",
     "tree-sitter>=0.24,<0.26",

@@ -128,6 +128,8 @@ public final class YamlLoader {
             if (!java.util.Set.of(
                             ResourceType.CHAT_MODEL,
                             ResourceType.CHAT_MODEL_CONNECTION,
+                            ResourceType.DECISION_MODEL,
+                            ResourceType.DECISION_MODEL_CONNECTION,
                             ResourceType.EMBEDDING_MODEL,
                             ResourceType.EMBEDDING_MODEL_CONNECTION,
                             ResourceType.VECTOR_STORE)
@@ -340,6 +342,13 @@ public final class YamlLoader {
                 sharedResources, ResourceType.CHAT_MODEL, doc.getChatModelSetups(), path);
         addSharedDescriptors(
                 sharedResources,
+                ResourceType.DECISION_MODEL_CONNECTION,
+                doc.getDecisionModelConnections(),
+                path);
+        addSharedDescriptors(
+                sharedResources, ResourceType.DECISION_MODEL, doc.getDecisionModelSetups(), path);
+        addSharedDescriptors(
+                sharedResources,
                 ResourceType.EMBEDDING_MODEL_CONNECTION,
                 doc.getEmbeddingModelConnections(),
                 path);
@@ -454,6 +463,9 @@ public final class YamlLoader {
         addAgentDescriptors(
                 agent, ResourceType.CHAT_MODEL_CONNECTION, spec.getChatModelConnections());
         addAgentDescriptors(agent, ResourceType.CHAT_MODEL, spec.getChatModelSetups());
+        addAgentDescriptors(
+                agent, ResourceType.DECISION_MODEL_CONNECTION, spec.getDecisionModelConnections());
+        addAgentDescriptors(agent, ResourceType.DECISION_MODEL, spec.getDecisionModelSetups());
         addAgentDescriptors(
                 agent,
                 ResourceType.EMBEDDING_MODEL_CONNECTION,

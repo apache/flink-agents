@@ -1,0 +1,27 @@
+decision_model_connections:
+  - name: shared_connection
+    clazz: typesafe
+    base_url: https://decision.example
+decision_model_setups:
+  - name: shared_model
+    clazz: typesafe
+    connection: shared_connection
+    model: jev-latest
+agents:
+  - name: decision_agent
+    decision_model_connections:
+      - name: own_connection
+        clazz: openai
+        type: python
+        timeout: 30
+    decision_model_setups:
+      - name: own_model
+        clazz: openai
+        type: python
+        connection: own_connection
+        model: decision-model
+    actions:
+      - name: consume
+        function: org.apache.flink.agents.api.yaml.LoaderTargets:increment
+        type: java
+        trigger_conditions: [decision_response]

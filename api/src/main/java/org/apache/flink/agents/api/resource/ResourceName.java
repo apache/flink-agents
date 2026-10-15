@@ -152,6 +152,26 @@ public final class ResourceName {
         private ChatModel() {}
     }
 
+    // ==================== DecisionModel ====================
+    public static final class DecisionModel {
+
+        /** Python implementations of DecisionModel. */
+        public static final class Python {
+            public static final String TYPESAFE_CONNECTION =
+                    "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelConnection";
+            public static final String TYPESAFE_SETUP =
+                    "flink_agents.integrations.decision_models.typesafe_decision_model.TypeSafeDecisionModelSetup";
+            public static final String OPENAI_CONNECTION =
+                    "flink_agents.integrations.decision_models.openai_decision_model.OpenAIDecisionModelConnection";
+            public static final String OPENAI_SETUP =
+                    "flink_agents.integrations.decision_models.openai_decision_model.OpenAIDecisionModelSetup";
+
+            private Python() {}
+        }
+
+        private DecisionModel() {}
+    }
+
     // ==================== EmbeddingModel ====================
     public static final class EmbeddingModel {
 
