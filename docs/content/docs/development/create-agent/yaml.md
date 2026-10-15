@@ -179,6 +179,8 @@ agents:
 
 The supported `source` values are `config`, `sensory_memory`, and `short_term_memory`. If omitted, `source` defaults to `sensory_memory`. For `config`, `key` is read from the agent execution environment configuration. For memory sources, `key` is the memory path.
 
+See [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}}) for runtime value resolution, overriding model-supplied arguments, and missing-value behavior.
+
 For Java tools loaded from YAML, the `injected_args` entry itself marks the parameter
 as framework-injected and hides it from the model-facing schema. The Java method may
 use `@ToolParam(name = "...")` to provide stable parameter names, but it does not need

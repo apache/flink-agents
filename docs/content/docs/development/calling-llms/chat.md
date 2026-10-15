@@ -297,7 +297,7 @@ the text blocks and exclude media.
 
 ## Tool Calling {#built-in-events-and-actions}
 
-A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Tool Use]({{< ref "docs/development/calling-llms/tool_use" >}}) for configuration and examples.
+A chat model can use tools to perform operations while answering a request. To enable this, define or register the tools and reference their names in the model setup's `tools` list. See [Local Function as Tool]({{< ref "docs/development/calling-llms/tool_use#local-function-as-tool" >}}) for declaration and registration examples, [Tool Parameter Injection]({{< ref "docs/development/calling-llms/tool_use#tool-parameter-injection" >}}) for framework-provided arguments, and [Parallel tool-call batches]({{< ref "docs/development/calling-llms/tool_use#parallel-tool-call-batches" >}}) for execution settings and concurrency limits.
 
 Send a `ChatRequestEvent` as usual. The model decides whether to answer directly or request tool calls:
 
