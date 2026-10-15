@@ -27,6 +27,7 @@ import com.github.victools.jsonschema.generator.Option;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +104,38 @@ class PojoJsonSchemaGeneratorTest {
         }
     }
 
+    /**
+     * Output schema fixture for enums the Jackson module's flattened enums misstate: one maps only
+     * some of its constants through {@code @JsonProperty}, and one maps its constants to numbers
+     * through a {@code @JsonValue} method.
+     */
+    public static class Order {
+        public PartlyMapped status;
+        public Sign sign;
+    }
+
+    public enum PartlyMapped {
+        @JsonProperty("in-progress")
+        IN_PROGRESS,
+        DONE
+    }
+
+    public enum Sign {
+        POSITIVE(1),
+        NEGATIVE(-1);
+
+        private final int value;
+
+        Sign(int value) {
+            this.value = value;
+        }
+
+        @JsonValue
+        public int value() {
+            return value;
+        }
+    }
+
     @Test
     @DisplayName("The generated schema names properties the way Jackson deserializes them")
     void namesPropertiesTheWayJacksonReadsThem() {
@@ -136,6 +169,125 @@ class PojoJsonSchemaGeneratorTest {
     }
 
     @Test
+    @DisplayName("The generated schema lists a partly annotated enum the way Jackson reads it")
+    void listsPartlyAnnotatedEnumByItsJacksonWireValues() throws Exception {
+        JsonNode status =
+                PojoJsonSchemaGenerator.generate(Order.class).path("properties").path("status");
+
+        // Listing the Java name of the annotated constant would let the model emit a value that
+        // fails to deserialize, so the schema has to name it by its @JsonProperty value.
+        assertThat(textValues(status.path("enum"))).containsExactly("in-progress", "DONE");
+        for (JsonNode value : status.path("enum")) {
+            MAPPER.treeToValue(value, PartlyMapped.class);
+        }
+    }
+
+    @Test
+    @DisplayName("The enum definition takes precedence over the Jackson module's enum handling")
+    void enumDefinitionWinsOverJacksonModule() throws Exception {
+        JsonNode sign =
+                PojoJsonSchemaGenerator.generate(Order.class).path("properties").path("sign");
+
+        // The Jackson module also handles a @JsonValue enum, typing it as a string even when the
+        // values are numbers, so a numeric type here comes from the generator's own definition.
+        assertThat(sign.toString()).isEqualTo("{\"type\":\"integer\",\"enum\":[1,-1]}");
+        List<Sign> signs = new ArrayList<>();
+        for (JsonNode value : sign.path("enum")) {
+            signs.add(MAPPER.treeToValue(value, Sign.class));
+        }
+        assertThat(signs).containsExactly(Sign.POSITIVE, Sign.NEGATIVE);
+    }
+
+    /** Output schema fixture for enums whose written values need care in a schema. */
+    public static class Measures {
+        public Limit limit;
+        public Only only;
+        public Huge huge;
+    }
+
+    public enum Limit {
+        FINITE(1.5),
+        UNBOUNDED(Double.POSITIVE_INFINITY),
+        UNDEFINED(Double.NaN);
+
+        private final double value;
+
+        Limit(double value) {
+            this.value = value;
+        }
+
+        @JsonValue
+        public double value() {
+            return value;
+        }
+    }
+
+    public enum Huge {
+        BEYOND_DOUBLE(new BigDecimal("1E400")),
+        ONE(BigDecimal.ONE);
+
+        private final BigDecimal value;
+
+        Huge(BigDecimal value) {
+            this.value = value;
+        }
+
+        @JsonValue
+        public BigDecimal value() {
+            return value;
+        }
+    }
+
+    public enum Only {
+        @JsonProperty("only")
+        ONLY
+    }
+
+    @Test
+    @DisplayName("The enum definition writes non-finite numbers as strings and one value as const")
+    void writesNonFiniteNumbersAsStringsAndSingleValuesAsConst() {
+        for (ObjectNode schema :
+                List.of(
+                        PojoJsonSchemaGenerator.generate(Measures.class),
+                        PojoJsonSchemaGenerator.generateAllRequired(Measures.class))) {
+            JsonNode properties = schema.path("properties");
+
+            // JSON has no NaN or Infinity, so Jackson writes them as strings, and the schema has
+            // to list them the same way; a single value keeps the const form victools uses.
+            assertThat(properties.path("limit").toString())
+                    .isEqualTo(
+                            "{\"type\":[\"number\",\"string\"],\"enum\":[1.5,\"Infinity\",\"NaN\"]}");
+            assertThat(properties.path("only").toString())
+                    .isEqualTo("{\"type\":\"string\",\"const\":\"only\"}");
+            // A finite decimal beyond double's range is still written as a number.
+            assertThat(properties.path("huge").path("type").asText()).isEqualTo("number");
+            assertThat(properties.path("huge").path("enum").get(0).isNumber()).isTrue();
+        }
+    }
+
+    /** Output schema fixture holding an enum that declares no constants. */
+    public static class Placeholder {
+        public Optional<Empty> empty;
+    }
+
+    public enum Empty {}
+
+    @Test
+    @DisplayName("An enum without constants keeps the schema it had before")
+    void leavesEnumWithoutConstantsToJacksonModule() {
+        // An enum definition built from no values would declare an empty type list, which no
+        // instance satisfies, so even the null the Optional field allows would be rejected.
+        for (ObjectNode schema :
+                List.of(
+                        PojoJsonSchemaGenerator.generate(Placeholder.class),
+                        PojoJsonSchemaGenerator.generateAllRequired(Placeholder.class))) {
+            JsonNode empty = schema.path("properties").path("empty");
+            assertThat(empty.toString()).doesNotContain("\"type\":[]");
+            assertThat(textValues(empty.path("type"))).contains("null");
+        }
+    }
+
+    @Test
     @DisplayName("The generated schema requires every field the caller did not make optional")
     void requiresEveryFieldExceptOptional() {
         JsonNode schema = PojoJsonSchemaGenerator.generate(Report.class);
@@ -162,7 +314,7 @@ class PojoJsonSchemaGeneratorTest {
     @Test
     @DisplayName("The all-required schema differs from the default one only in its required set")
     void allRequiredChangesOnlyTheRequiredSet() {
-        for (Class<?> type : List.of(Report.class, Profile.class, Ticket.class)) {
+        for (Class<?> type : List.of(Report.class, Profile.class, Ticket.class, Order.class)) {
             ObjectNode allRequired =
                     PojoJsonSchemaGenerator.generateAllRequired(
                             type, Option.FORBIDDEN_ADDITIONAL_PROPERTIES_BY_DEFAULT);

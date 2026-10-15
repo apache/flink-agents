@@ -264,7 +264,7 @@ The connection's `api_version` must be `2024-08-01` or later, for example `2024-
 List the values the model should return, in the form the model reads back:
 
 - **Python:** a Pydantic `Enum` lists its values. A string enum gives `"type": "string"` and a numeric enum gives `"type": "integer"`.
-- **Java:** the schema lists the values Jackson deserializes. Put `@JsonProperty` on **every** constant, or use a `@JsonValue` method that returns a `String`.
+- **Java:** the native schema lists each constant under the value Jackson serializes it to, typed as that value: a `@JsonProperty` name, a `@JsonValue` result, or the Java name. An integer `@JsonValue` gives `"type": "integer"`. Jackson reads the values back by default when a `@JsonValue` method returns a `String` or an integral primitive or wrapper; other return types, such as floating-point, `boolean`, `BigInteger` or `Object`, may need matching deserialization support, such as a `@JsonCreator`. The ReAct Agent's prompt text uses a different generator (see [Java POJOs](#java-pojos)).
 
 {{< tabs "Enum Fields" >}}
 
@@ -303,11 +303,6 @@ public enum Sentiment {
 {{< /tab >}}
 
 {{< /tabs >}}
-
-Two Java cases do not work as you might expect. They behave the same on every Java provider:
-
-- `@JsonProperty` on only **some** constants lists the Java names for **all** of them (`["POSITIVE","NEGATIVE"]`). The model may reply with a Java name where you annotated a different value, and parsing fails. Annotate every constant or none.
-- A `@JsonValue` that returns a number produces `{"type":"string","enum":[1,-1]}`, which contradicts itself. Use a string value instead.
 
 ### Java POJOs
 
