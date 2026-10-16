@@ -29,34 +29,39 @@ import io.opentelemetry.sdk.common.InstrumentationScopeInfo;
 import io.opentelemetry.sdk.resources.Resource;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.data.StatusData;
-import org.apache.flink.agents.api.trace.ExecutionLifecycleEvents;
 import org.apache.flink.agents.api.trace.ExecutionReporter;
 import org.apache.flink.agents.api.trace.LLMExecutionMetadataKeys;
 import org.apache.flink.agents.api.trace.ToolExecutionMetadataKeys;
+import org.apache.flink.agents.api.trace.TraceContext;
+import org.apache.flink.agents.api.trace.TraceRecord;
 
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Assembles OpenTelemetry spans from Agent Trace Event Log records, following the mapping agreed in
- * the Agent Trace design discussions:
+ * Assembles OpenTelemetry spans from Trace Log records, following the mapping agreed in the Agent
+ * Trace design discussions:
  *
  * <ul>
  *   <li>one input run = one Trace, with a synthesized {@code invoke_agent} root span;
  *   <li>each execution ({@code action} / {@code llm} / {@code parser} / {@code tool}) = one span,
- *       parented via {@code parentExecutionId} (falling back to the run root);
+ *       parented via {@code parentExecutionId}, or the run root when there is none or the parent
+ *       has no records;
+ *   <li>Event records are not spans; they are skipped;
  *   <li>span and trace ids are derived deterministically from the framework ids, so re-exports are
  *       idempotent (see {@link OTelIds}).
  * </ul>
  *
  * <p>Attributes follow the OpenTelemetry GenAI semantic conventions (development stability; the
  * targeted convention set is documented per attribute below). The framework-native ids are always
- * attached under {@code flink_agents.*} so backends can correlate spans with the raw Event Log
+ * attached under {@code flink_agents.*} so backends can correlate spans with the raw Trace Log
  * regardless of semantic-convention evolution.
  */
 public final class AgentTraceSpans {
@@ -87,6 +92,8 @@ public final class AgentTraceSpans {
             AttributeKey.stringKey("flink_agents.input_run_id");
     static final AttributeKey<String> FA_EXECUTION_ID =
             AttributeKey.stringKey("flink_agents.execution_id");
+    static final AttributeKey<String> FA_PARENT_EXECUTION_ID =
+            AttributeKey.stringKey("flink_agents.parent_execution_id");
     static final AttributeKey<String> FA_ENTITY_TYPE =
             AttributeKey.stringKey("flink_agents.entity_type");
     static final AttributeKey<String> FA_ENTITY_NAME =
@@ -128,15 +135,15 @@ public final class AgentTraceSpans {
         this.scope = InstrumentationScopeInfo.create(INSTRUMENTATION_SCOPE_NAME);
     }
 
-    /** Assembles spans from Event Log records; ordering of the input records does not matter. */
+    /** Assembles spans from Trace Log records; ordering of the input records does not matter. */
     public List<SpanData> assemble(List<TraceRecord> records) {
         return assemble(records, new ArrayList<>());
     }
 
     /**
      * Assembles spans and appends machine-readable {@link ConverterDiagnostic}s (incomplete
-     * executions, terminal records without a start, records with an unparseable timestamp) to the
-     * given collector.
+     * executions, terminal records without a start, parents without records, records with an
+     * unparseable timestamp) to the given collector.
      */
     public List<SpanData> assemble(
             List<TraceRecord> records, List<ConverterDiagnostic> diagnostics) {
@@ -145,14 +152,12 @@ public final class AgentTraceSpans {
         Map<String, RunAccumulator> runs = new LinkedHashMap<>();
 
         for (TraceRecord record : records) {
-            String eventType = record.getEventType();
-            if (eventType == null
-                    || !ExecutionLifecycleEvents.isExecutionLifecycleEvent(eventType)) {
-                continue;
-            }
-            if (record.getExecutionId() == null
-                    || record.getInputRunId() == null
-                    || record.getTimestamp() == null) {
+            TraceContext context = record.getContext();
+            // Event records and execution records without a run or a status are not spans.
+            if (TraceContext.EVENT_ENTITY_TYPE.equals(context.getEntityType())
+                    || context.getExecutionId() == null
+                    || context.getInputRunId() == null
+                    || !isKnownStatus(record.getStatus())) {
                 continue;
             }
             if (!isValidTimestamp(record.getTimestamp())) {
@@ -160,7 +165,7 @@ public final class AgentTraceSpans {
                 diagnostics.add(
                         new ConverterDiagnostic(
                                 ConverterDiagnostic.MALFORMED_RECORD,
-                                record.getExecutionId(),
+                                context.getExecutionId(),
                                 "Invalid timestamp '"
                                         + record.getTimestamp()
                                         + "'; the record was skipped.",
@@ -168,9 +173,10 @@ public final class AgentTraceSpans {
                 continue;
             }
             executions
-                    .computeIfAbsent(record.getExecutionId(), id -> new ExecutionSpanBuilder())
+                    .computeIfAbsent(context.getExecutionId(), id -> new ExecutionSpanBuilder())
                     .accept(record);
-            runs.computeIfAbsent(record.getInputRunId(), id -> new RunAccumulator()).accept(record);
+            runs.computeIfAbsent(context.getInputRunId(), id -> new RunAccumulator())
+                    .accept(record);
         }
 
         List<SpanData> spans = new ArrayList<>(executions.size() + runs.size());
@@ -178,7 +184,7 @@ public final class AgentTraceSpans {
             spans.add(buildRunRootSpan(run.getKey(), run.getValue()));
         }
         for (ExecutionSpanBuilder execution : executions.values()) {
-            spans.add(buildExecutionSpan(execution, diagnostics));
+            spans.add(buildExecutionSpan(execution, executions.keySet(), diagnostics));
         }
         return spans;
     }
@@ -206,18 +212,18 @@ public final class AgentTraceSpans {
     }
 
     private SpanData buildExecutionSpan(
-            ExecutionSpanBuilder execution, List<ConverterDiagnostic> diagnostics) {
-        TraceRecord any = execution.anyRecord();
+            ExecutionSpanBuilder execution,
+            Set<String> executionIds,
+            List<ConverterDiagnostic> diagnostics) {
+        TraceContext any = execution.anyRecord().getContext();
         String inputRunId = any.getInputRunId();
         String entityType = any.getEntityType();
-        String entityName = any.getEntityName() != null ? any.getEntityName() : "unknown";
+        String entityName = any.getEntityName();
 
         AttributesBuilder attributes = Attributes.builder();
         attributes.put(FA_INPUT_RUN_ID, inputRunId);
         attributes.put(FA_EXECUTION_ID, any.getExecutionId());
-        if (entityType != null) {
-            attributes.put(FA_ENTITY_TYPE, entityType);
-        }
+        attributes.put(FA_ENTITY_TYPE, entityType);
         attributes.put(FA_ENTITY_NAME, entityName);
         putBusinessKey(attributes, any.getBusinessKey());
 
@@ -245,12 +251,8 @@ public final class AgentTraceSpans {
             if (agentName != null) {
                 attributes.put(GEN_AI_AGENT_NAME, agentName);
             }
-            // Prefer the provider-issued call id, which is what the model's tool-call request
-            // carries; the framework-assigned id is the fallback.
-            String callId = stringValue(metadata, ToolExecutionMetadataKeys.EXTERNAL_ID);
-            if (callId == null) {
-                callId = stringValue(metadata, ToolExecutionMetadataKeys.TOOL_CALL_ID);
-            }
+            // The call id the model's tool-call request carries.
+            String callId = stringValue(metadata, ToolExecutionMetadataKeys.TOOL_CALL_ID);
             if (callId != null) {
                 attributes.put(GEN_AI_TOOL_CALL_ID, callId);
             }
@@ -272,36 +274,35 @@ public final class AgentTraceSpans {
             // names when no well-known value applies (parser has none).
             attributes.put(GEN_AI_OPERATION_NAME, "parse");
         } else {
-            name = (entityType != null ? entityType + " " : "") + entityName;
+            name = entityType + " " + entityName;
             kind = SpanKind.INTERNAL;
         }
 
         StatusData status = StatusData.unset();
         TraceRecord terminal = execution.terminal;
         if (terminal != null) {
-            if (ExecutionLifecycleEvents.STATUS_FAILED.equals(terminal.getStatus())) {
+            if (TraceRecord.Statuses.FAILED.equals(terminal.getStatus())) {
+                String errorMessage = attributeString(terminal, "errorMessage");
                 status =
                         StatusData.create(
-                                StatusCode.ERROR,
-                                terminal.getErrorMessage() != null
-                                        ? terminal.getErrorMessage()
-                                        : "");
-                String errorType =
-                        terminal.getErrorType() != null
-                                ? terminal.getErrorType()
-                                : terminal.getProblemCategory();
+                                StatusCode.ERROR, errorMessage != null ? errorMessage : "");
+                String errorType = attributeString(terminal, "errorType");
+                if (errorType == null) {
+                    errorType = terminal.getProblemCategory();
+                }
                 if (errorType != null) {
                     attributes.put(ERROR_TYPE, errorType);
                 }
             }
-            if (terminal.getStatus() != null) {
-                attributes.put(FA_EXECUTION_STATUS, terminal.getStatus());
-            }
-            putUsageIfPresent(attributes, terminal.getEventAttributes());
+            attributes.put(FA_EXECUTION_STATUS, terminal.getStatus());
+            // Usage travels on the success record's metadata, which can differ from the start
+            // record's metadata for the same execution.
+            putUsageIfPresent(
+                    attributes,
+                    terminal.getContext().getEntityMetadata().get(LLMExecutionMetadataKeys.USAGE));
         }
         boolean reused =
-                terminal != null
-                        && ExecutionLifecycleEvents.STATUS_REUSED.equals(terminal.getStatus());
+                terminal != null && TraceRecord.Statuses.REUSED.equals(terminal.getStatus());
         if (terminal == null) {
             // A start with no terminal: crash, a best-effort write that dropped the terminal
             // record, or recovery discarding the transient pairing — indistinguishable here, so
@@ -333,10 +334,27 @@ public final class AgentTraceSpans {
                         : epochNanos(terminal.getTimestamp());
         long endNanos = terminal != null ? epochNanos(terminal.getTimestamp()) : startNanos;
 
-        SpanContext parent =
-                any.getParentExecutionId() != null
-                        ? spanContext(inputRunId, OTelIds.spanId(any.getParentExecutionId()))
-                        : spanContext(inputRunId, OTelIds.runRootSpanId(inputRunId));
+        String parentId = any.getParentExecutionId();
+        SpanContext parent;
+        if (parentId != null && executionIds.contains(parentId)) {
+            parent = spanContext(inputRunId, OTelIds.spanId(parentId));
+        } else {
+            parent = spanContext(inputRunId, OTelIds.runRootSpanId(inputRunId));
+            if (parentId != null) {
+                // The parent has no records, e.g. Trace Log targets that keep tool calls but not
+                // Actions; attach to the run root rather than to a span that never arrives.
+                attributes.put(FA_PARENT_EXECUTION_ID, parentId);
+                diagnostics.add(
+                        new ConverterDiagnostic(
+                                ConverterDiagnostic.MISSING_PARENT,
+                                any.getExecutionId(),
+                                "Parent execution "
+                                        + parentId
+                                        + " has no records; the span was attached to the run"
+                                        + " root.",
+                                null));
+            }
+        }
 
         return new AgentTraceSpanData(
                 name,
@@ -384,19 +402,37 @@ public final class AgentTraceSpans {
         return value == null ? null : String.valueOf(value);
     }
 
-    private static void putUsageIfPresent(
-            AttributesBuilder attributes, Map<String, Object> eventAttributes) {
-        if (eventAttributes == null) {
-            return;
+    /**
+     * A string attribute of the record. At {@code STANDARD} level the Trace Log replaces a long
+     * string with {@code {"truncatedString": "<prefix>...", "omittedChars": N}}; the prefix is
+     * kept.
+     */
+    private static String attributeString(TraceRecord record, String name) {
+        Object value = record.getAttributes().get(name);
+        if (value instanceof Map) {
+            value = ((Map<?, ?>) value).get("truncatedString");
         }
-        Object prompt = eventAttributes.get("promptTokens");
+        return value instanceof String ? (String) value : null;
+    }
+
+    private static void putUsageIfPresent(AttributesBuilder attributes, Object usage) {
+        Map<?, ?> tokens = usage instanceof Map ? (Map<?, ?>) usage : Collections.emptyMap();
+        Object prompt = tokens.get("promptTokens");
         if (prompt instanceof Number) {
             attributes.put(GEN_AI_USAGE_INPUT_TOKENS, ((Number) prompt).longValue());
         }
-        Object completion = eventAttributes.get("completionTokens");
+        Object completion = tokens.get("completionTokens");
         if (completion instanceof Number) {
             attributes.put(GEN_AI_USAGE_OUTPUT_TOKENS, ((Number) completion).longValue());
         }
+    }
+
+    private static boolean isKnownStatus(String status) {
+        return TraceRecord.Statuses.CREATED.equals(status)
+                || TraceRecord.Statuses.STARTED.equals(status)
+                || TraceRecord.Statuses.SUCCESS.equals(status)
+                || TraceRecord.Statuses.FAILED.equals(status)
+                || TraceRecord.Statuses.REUSED.equals(status);
     }
 
     private static SpanContext spanContext(String inputRunId, String spanIdHex) {
@@ -421,23 +457,35 @@ public final class AgentTraceSpans {
         return TimeUnit.SECONDS.toNanos(instant.getEpochSecond()) + instant.getNano();
     }
 
-    /** Started/terminal record pair for one execution id. */
+    /**
+     * Created/started/terminal records for one execution id. When the Trace Log repeats a record
+     * (outputs are best-effort and may duplicate), the earliest one of each kind is kept, so the
+     * result does not depend on record order.
+     */
     private static final class ExecutionSpanBuilder {
         private TraceRecord created;
         private TraceRecord started;
         private TraceRecord terminal;
 
         void accept(TraceRecord record) {
-            String eventType = record.getEventType();
-            if (ExecutionLifecycleEvents.EXECUTION_CREATED_EVENT_TYPE.equals(eventType)) {
-                created = record;
-            } else if (ExecutionLifecycleEvents.EXECUTION_STARTED_EVENT_TYPE.equals(eventType)) {
-                started = record;
+            String status = record.getStatus();
+            if (TraceRecord.Statuses.CREATED.equals(status)) {
+                created = earlier(created, record);
+            } else if (TraceRecord.Statuses.STARTED.equals(status)) {
+                started = earlier(started, record);
             } else {
-                // finished / failed / reused all terminate the execution. A reused execution has
+                // success / failed / reused all terminate the execution. A reused execution has
                 // no started record: it becomes a point-in-time span with status "reused".
-                terminal = record;
+                terminal = earlier(terminal, record);
             }
+        }
+
+        private static TraceRecord earlier(TraceRecord current, TraceRecord candidate) {
+            return current == null
+                            || epochNanos(candidate.getTimestamp())
+                                    < epochNanos(current.getTimestamp())
+                    ? candidate
+                    : current;
         }
 
         /**
@@ -457,8 +505,8 @@ public final class AgentTraceSpans {
         /** The agent name from whichever of this execution's records carries one. */
         String agentName() {
             for (TraceRecord record : new TraceRecord[] {started, created, terminal}) {
-                if (record != null && record.getAgentName() != null) {
-                    return record.getAgentName();
+                if (record != null && record.getContext().getAgentName() != null) {
+                    return record.getContext().getAgentName();
                 }
             }
             return null;
@@ -476,11 +524,12 @@ public final class AgentTraceSpans {
             long nanos = epochNanos(record.getTimestamp());
             minEpochNanos = Math.min(minEpochNanos, nanos);
             maxEpochNanos = Math.max(maxEpochNanos, nanos);
-            if (agentName == null && record.getAgentName() != null) {
-                agentName = record.getAgentName();
+            TraceContext context = record.getContext();
+            if (agentName == null && context.getAgentName() != null) {
+                agentName = context.getAgentName();
             }
-            if (businessKey == null && record.getBusinessKey() != null) {
-                businessKey = record.getBusinessKey();
+            if (businessKey == null && context.getBusinessKey() != null) {
+                businessKey = context.getBusinessKey();
             }
         }
     }

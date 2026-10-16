@@ -21,6 +21,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.sdk.trace.data.SpanData;
+import org.apache.flink.agents.api.trace.TraceRecord;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -41,10 +42,9 @@ class AgentTraceSpansTest {
     private static final String LLM = "llm-2222";
     private static final String TOOL = "tool-3333";
 
-    // The metadata ToolCallAction records: framework call id, provider call id, and tool type.
+    // The metadata ToolCallAction records: the provider's call id and the tool type.
     private static final String TOOL_METADATA =
-            "\"entityMetadata\":{\"toolCallId\":\"fa-call-1\",\"externalId\":\"call_abc\","
-                    + "\"toolType\":\"function\"},";
+            "\"entityMetadata\":{\"toolCallId\":\"call_abc\",\"toolType\":\"function\"},";
 
     private static TraceRecord record(String json) {
         try {
@@ -57,16 +57,16 @@ class AgentTraceSpansTest {
     private static List<TraceRecord> sampleRun() {
         return List.of(
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:00Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:00Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"businessKey\":\"order-1001\",\"agentName\":\"ReActAgent\","
                                 + "\"executionId\":\""
                                 + ACTION
                                 + "\",\"entityType\":\"action\","
-                                + "\"entityName\":\"review\",\"eventType\":\"_execution_started_event\","
+                                + "\"entityName\":\"review\","
                                 + "\"status\":\"started\"}"),
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:01Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:01Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"businessKey\":\"order-1001\",\"executionId\":\""
                                 + LLM
@@ -75,20 +75,20 @@ class AgentTraceSpansTest {
                                 + "\","
                                 + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
                                 + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
-                                + "\"eventType\":\"_execution_started_event\",\"status\":\"started\"}"),
+                                + "\"status\":\"started\"}"),
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:03Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"timestamp\":\"2026-01-15T10:30:03Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"executionId\":\""
                                 + LLM
                                 + "\",\"parentExecutionId\":\""
                                 + ACTION
                                 + "\",\"entityType\":\"llm\",\"entityName\":\"chatModel\","
-                                + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
-                                + "\"eventType\":\"_execution_finished_event\",\"status\":\"success\","
-                                + "\"eventAttributes\":{\"promptTokens\":120,\"completionTokens\":45}}"),
+                                + "\"entityMetadata\":{\"model\":\"qwen-max\","
+                                + "\"usage\":{\"promptTokens\":120,\"completionTokens\":45}},"
+                                + "\"status\":\"success\",\"attributes\":{}}"),
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:04Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:04Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"executionId\":\""
                                 + TOOL
@@ -96,9 +96,9 @@ class AgentTraceSpansTest {
                                 + ACTION
                                 + "\",\"entityType\":\"tool\",\"entityName\":\"get_weather\","
                                 + TOOL_METADATA
-                                + "\"eventType\":\"_execution_started_event\",\"status\":\"started\"}"),
+                                + "\"status\":\"started\"}"),
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:05Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"timestamp\":\"2026-01-15T10:30:05Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"executionId\":\""
                                 + TOOL
@@ -106,17 +106,17 @@ class AgentTraceSpansTest {
                                 + ACTION
                                 + "\",\"entityType\":\"tool\",\"entityName\":\"get_weather\","
                                 + TOOL_METADATA
-                                + "\"eventType\":\"_execution_failed_event\",\"status\":\"failed\","
+                                + "\"status\":\"failed\","
                                 + "\"problemCategory\":\"tool_call_failed\","
-                                + "\"eventAttributes\":{\"errorType\":\"java.io.IOException\","
+                                + "\"attributes\":{\"errorType\":\"java.io.IOException\","
                                 + "\"errorMessage\":\"connection refused\"}}"),
                 record(
-                        "{\"timestamp\":\"2026-01-15T10:30:06Z\",\"inputRunId\":\""
+                        "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:06Z\",\"inputRunId\":\""
                                 + RUN
                                 + "\",\"executionId\":\""
                                 + ACTION
                                 + "\",\"entityType\":\"action\","
-                                + "\"entityName\":\"review\",\"eventType\":\"_execution_finished_event\","
+                                + "\"entityName\":\"review\","
                                 + "\"status\":\"success\"}"));
     }
 
@@ -220,10 +220,9 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:01Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:01Z\","
                                                         + "\"inputRunId\":\"r\",\"executionId\":\"l\","
                                                         + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
-                                                        + "\"eventType\":\"_execution_finished_event\","
                                                         + "\"status\":\"success\"}")));
 
         SpanData llm = spanNamed(spans, "chat");
@@ -264,10 +263,9 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:05Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:05Z\","
                                                         + "\"inputRunId\":\"r\",\"executionId\":\"t\","
                                                         + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
-                                                        + "\"eventType\":\"_execution_failed_event\","
                                                         + "\"status\":\"failed\","
                                                         + "\"problemCategory\":\"tool_call_failed\"}")));
 
@@ -283,12 +281,12 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:05Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:05Z\","
                                                         + "\"inputRunId\":\"r\",\"executionId\":\"t\","
                                                         + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
                                                         + "\"entityMetadata\":"
                                                         + entityMetadataJson
-                                                        + ",\"eventType\":\"_execution_finished_event\","
+                                                        + ","
                                                         + "\"status\":\"success\"}")));
         return spanNamed(spans, "execute_tool lookup");
     }
@@ -390,25 +388,16 @@ class AgentTraceSpansTest {
                                 List.of(
                                         toolRecord(
                                                 "2026-01-15T10:30:04Z",
-                                                "_execution_started_event",
                                                 "started",
                                                 ",\"agentName\":\"ReActAgent\""),
-                                        toolRecord(
-                                                "2026-01-15T10:30:05Z",
-                                                "_execution_finished_event",
-                                                "success")))
+                                        toolRecord("2026-01-15T10:30:05Z", "success")))
                         .get(1);
         assertThat(named.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME))
                 .isEqualTo("ReActAgent");
 
         SpanData unnamed =
                 new AgentTraceSpans("test-service")
-                        .assemble(
-                                List.of(
-                                        toolRecord(
-                                                "2026-01-15T10:30:04Z",
-                                                "_execution_started_event",
-                                                "started")))
+                        .assemble(List.of(toolRecord("2026-01-15T10:30:04Z", "started")))
                         .get(1);
         assertThat(unnamed.getAttributes().get(AgentTraceSpans.GEN_AI_AGENT_NAME)).isNull();
     }
@@ -421,12 +410,8 @@ class AgentTraceSpansTest {
                 new AgentTraceSpans("test-service")
                         .assemble(
                                 List.of(
-                                        toolRecord(
-                                                "yesterday", "_execution_started_event", "started"),
-                                        toolRecord(
-                                                "2026-01-15T10:30:05Z",
-                                                "_execution_finished_event",
-                                                "success")),
+                                        toolRecord("yesterday", "started"),
+                                        toolRecord("2026-01-15T10:30:05Z", "success")),
                                 diagnostics);
 
         // The valid terminal record still becomes a span; the invalid start is reported.
@@ -439,23 +424,24 @@ class AgentTraceSpansTest {
                         });
     }
 
-    private static TraceRecord toolRecord(String timestamp, String eventType, String status) {
-        return toolRecord(timestamp, eventType, status, "");
+    private static TraceRecord toolRecord(String timestamp, String status) {
+        return toolRecord(timestamp, status, "");
     }
 
-    private static TraceRecord toolRecord(
-            String timestamp, String eventType, String status, String extraJson) {
+    /**
+     * {@code extraJson} adds fields after the status; empty attributes are added if it has none.
+     */
+    private static TraceRecord toolRecord(String timestamp, String status, String extraJson) {
         return record(
-                "{\"timestamp\":\""
+                "{\"schemaVersion\":1,\"timestamp\":\""
                         + timestamp
                         + "\",\"inputRunId\":\"r\",\"executionId\":\"t\","
                         + "\"entityType\":\"tool\",\"entityName\":\"lookup\","
-                        + "\"eventType\":\""
-                        + eventType
-                        + "\",\"status\":\""
+                        + "\"status\":\""
                         + status
                         + "\""
                         + extraJson
+                        + (extraJson.contains("\"attributes\"") ? "" : ",\"attributes\":{}")
                         + "}");
     }
 
@@ -465,17 +451,10 @@ class AgentTraceSpansTest {
         List<TraceRecord> records =
                 new ArrayList<>(
                         List.of(
-                                toolRecord(
-                                        "2026-01-15T10:30:00Z",
-                                        "_execution_created_event",
-                                        "created"),
-                                toolRecord(
-                                        "2026-01-15T10:30:01Z",
-                                        "_execution_started_event",
-                                        "started"),
+                                toolRecord("2026-01-15T10:30:00Z", "created"),
+                                toolRecord("2026-01-15T10:30:01Z", "started"),
                                 toolRecord(
                                         "2026-01-15T10:30:03Z",
-                                        "_execution_failed_event",
                                         "failed",
                                         ",\"problemCategory\":\"tool_call_failed\"")));
         for (int pass = 0; pass < 2; pass++) {
@@ -504,11 +483,7 @@ class AgentTraceSpansTest {
                 spanNamed(
                         new AgentTraceSpans("test-service")
                                 .assemble(
-                                        List.of(
-                                                toolRecord(
-                                                        "2026-01-15T10:30:00Z",
-                                                        "_execution_created_event",
-                                                        "created")),
+                                        List.of(toolRecord("2026-01-15T10:30:00Z", "created")),
                                         diagnostics),
                         "execute_tool lookup");
 
@@ -529,14 +504,8 @@ class AgentTraceSpansTest {
                         new AgentTraceSpans("test-service")
                                 .assemble(
                                         List.of(
-                                                toolRecord(
-                                                        "2026-01-15T10:30:00Z",
-                                                        "_execution_created_event",
-                                                        "created"),
-                                                toolRecord(
-                                                        "2026-01-15T10:30:00.500Z",
-                                                        "_execution_failed_event",
-                                                        "failed")),
+                                                toolRecord("2026-01-15T10:30:00Z", "created"),
+                                                toolRecord("2026-01-15T10:30:00.500Z", "failed")),
                                         diagnostics),
                         "execute_tool lookup");
 
@@ -555,9 +524,8 @@ class AgentTraceSpansTest {
                                         List.of(
                                                 toolRecord(
                                                         "2026-01-15T10:30:00Z",
-                                                        "_execution_failed_event",
                                                         "failed",
-                                                        ",\"eventAttributes\":{\"errorType\":\"x.Boom\","
+                                                        ",\"attributes\":{\"errorType\":\"x.Boom\","
                                                                 + "\"errorMessage\":{\"truncatedString\":"
                                                                 + "\"long message...\",\"omittedChars\":42}}"))),
                         "execute_tool lookup");
@@ -574,7 +542,7 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:00Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
@@ -582,7 +550,6 @@ class AgentTraceSpansTest {
                                                         + ACTION
                                                         + "\","
                                                         + "\"entityType\":\"action\",\"entityName\":\"review\","
-                                                        + "\"eventType\":\"_execution_reused_event\","
                                                         + "\"status\":\"reused\"}")));
 
         SpanData reused = spanNamed(spans, "action review");
@@ -601,7 +568,7 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:00Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
@@ -610,7 +577,6 @@ class AgentTraceSpansTest {
                                                         + "\","
                                                         + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
                                                         + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
-                                                        + "\"eventType\":\"_execution_started_event\","
                                                         + "\"status\":\"started\"}")));
 
         SpanData span = spanNamed(spans, "chat qwen-max");
@@ -630,7 +596,7 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:00Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
@@ -639,10 +605,9 @@ class AgentTraceSpansTest {
                                                         + "\","
                                                         + "\"entityType\":\"llm\",\"entityName\":\"chatModel\","
                                                         + "\"entityMetadata\":{\"model\":\"qwen-max\"},"
-                                                        + "\"eventType\":\"_execution_started_event\","
                                                         + "\"status\":\"started\"}"),
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:02Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:02Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
@@ -650,7 +615,6 @@ class AgentTraceSpansTest {
                                                         + TOOL
                                                         + "\","
                                                         + "\"entityType\":\"tool\",\"entityName\":\"get_weather\","
-                                                        + "\"eventType\":\"_execution_finished_event\","
                                                         + "\"status\":\"success\"}")),
                                 diagnostics);
 
@@ -681,24 +645,22 @@ class AgentTraceSpansTest {
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:00Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
                                                         + "\"executionId\":\"p-1\","
                                                         + "\"entityType\":\"parser\","
                                                         + "\"entityName\":\"json_output\","
-                                                        + "\"eventType\":\"_execution_started_event\","
                                                         + "\"status\":\"started\"}"),
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:01Z\","
+                                                "{\"schemaVersion\":1,\"attributes\":{},\"timestamp\":\"2026-01-15T10:30:01Z\","
                                                         + "\"inputRunId\":\""
                                                         + RUN
                                                         + "\","
                                                         + "\"executionId\":\"p-1\","
                                                         + "\"entityType\":\"parser\","
                                                         + "\"entityName\":\"json_output\","
-                                                        + "\"eventType\":\"_execution_finished_event\","
                                                         + "\"status\":\"success\"}")));
 
         SpanData parser = spanNamed(spans, "parse json_output");
@@ -708,21 +670,81 @@ class AgentTraceSpansTest {
     }
 
     @Test
-    @DisplayName("Business events and records without trace context are ignored")
+    @DisplayName("Event records and execution records without a run are ignored")
     void testNonLifecycleRecordsIgnored() {
         List<SpanData> spans =
                 new AgentTraceSpans("test-service")
                         .assemble(
                                 List.of(
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
-                                                        + "\"eventType\":\"_chat_request_event\","
-                                                        + "\"eventAttributes\":{\"model\":\"gpt-4\"}}"),
+                                                "{\"schemaVersion\":1,"
+                                                        + "\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                        + "\"inputRunId\":\"r\",\"entityType\":\"event\","
+                                                        + "\"entityName\":\"_chat_request_event\","
+                                                        + "\"entityMetadata\":{\"eventId\":\"e-1\"},"
+                                                        + "\"attributes\":{\"model\":\"gpt-4\"}}"),
                                         record(
-                                                "{\"timestamp\":\"2026-01-15T10:30:00Z\","
-                                                        + "\"eventType\":\"_execution_started_event\","
-                                                        + "\"status\":\"started\"}")));
+                                                "{\"schemaVersion\":1,"
+                                                        + "\"timestamp\":\"2026-01-15T10:30:00Z\","
+                                                        + "\"executionId\":\"x\",\"entityType\":\"tool\","
+                                                        + "\"entityName\":\"lookup\","
+                                                        + "\"status\":\"started\",\"attributes\":{}}")));
 
         assertThat(spans).isEmpty();
+    }
+
+    @Test
+    @DisplayName(
+            "A child whose parent has no records is attached to the run root, with a diagnostic")
+    void testMissingParentAttachesToRunRoot() {
+        List<ConverterDiagnostic> diagnostics = new ArrayList<>();
+        List<SpanData> spans =
+                new AgentTraceSpans("test-service")
+                        .assemble(
+                                List.of(
+                                        toolRecord(
+                                                "2026-01-15T10:30:04Z",
+                                                "started",
+                                                ",\"parentExecutionId\":\"act-missing\""),
+                                        toolRecord(
+                                                "2026-01-15T10:30:05Z",
+                                                "success",
+                                                ",\"parentExecutionId\":\"act-missing\"")),
+                                diagnostics);
+
+        SpanData root = spanNamed(spans, "invoke_agent");
+        SpanData tool = spanNamed(spans, "execute_tool lookup");
+        assertThat(tool.getParentSpanId()).isEqualTo(root.getSpanId());
+        assertThat(tool.getAttributes().get(AgentTraceSpans.FA_PARENT_EXECUTION_ID))
+                .isEqualTo("act-missing");
+        assertThat(diagnostics)
+                .singleElement()
+                .satisfies(
+                        d -> {
+                            assertThat(d.getCode()).isEqualTo(ConverterDiagnostic.MISSING_PARENT);
+                            assertThat(d.getExecutionId()).isEqualTo("t");
+                        });
+    }
+
+    @Test
+    @DisplayName("Repeated records keep the earliest of each kind, whatever their order")
+    void testDuplicateRecordsKeepEarliest() {
+        List<TraceRecord> records =
+                new ArrayList<>(
+                        List.of(
+                                toolRecord("2026-01-15T10:30:01Z", "started"),
+                                toolRecord("2026-01-15T10:30:02Z", "started"),
+                                toolRecord("2026-01-15T10:30:04Z", "success"),
+                                toolRecord("2026-01-15T10:30:06Z", "success")));
+        for (int pass = 0; pass < 2; pass++) {
+            SpanData tool =
+                    spanNamed(
+                            new AgentTraceSpans("test-service").assemble(records),
+                            "execute_tool lookup");
+
+            assertThat(tool.getEndEpochNanos() - tool.getStartEpochNanos())
+                    .isEqualTo(3_000_000_000L);
+            Collections.reverse(records);
+        }
     }
 }
