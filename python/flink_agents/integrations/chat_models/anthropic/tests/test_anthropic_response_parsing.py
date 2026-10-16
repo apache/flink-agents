@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 from anthropic import transform_schema
 from anthropic.types import Message, TextBlock, ToolUseBlock, Usage
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from pyflink.common.typeinfo import Types
 
 from flink_agents.api.agents.types import OutputSchema
@@ -232,9 +232,17 @@ class _MapsToFieldLess(BaseModel):
 
 
 class _Labelled(BaseModel):
-    """A schema whose only member is a free-form map, a legitimate constraint."""
+    """A schema whose only member is a map, which the renderer closes empty."""
 
     labels: Dict[str, str]
+
+
+class _AllowsExtra(BaseModel):
+    """A schema admitting undeclared keys at its root, which the renderer closes."""
+
+    model_config = ConfigDict(extra="allow")
+
+    verdict: str
 
 
 # A model the provider documents native structured-output support for.
@@ -314,11 +322,11 @@ def test_unrenderable_schema_raises_naming_the_model() -> None:
         )
 
 
-@pytest.mark.parametrize("schema", [_FieldLess, _NestsFieldLess, _MapsToFieldLess])
+@pytest.mark.parametrize("schema", [_FieldLess, _NestsFieldLess])
 def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
     # A schema declaring no fields renders, so the provider decides on it, not this
     # connection. The document reaches the request exactly as rendered rather than
-    # being refused here. The nested cases carry the field-less model below the root,
+    # being refused here. The nested case carries the field-less model below the root,
     # so the assertion covers the whole document rather than only its top level.
     output_config = _request_kwargs(
         model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=schema)
@@ -327,16 +335,22 @@ def test_field_less_schema_is_accepted_and_sent_whole(schema) -> None:
     assert output_config["format"]["schema"] == transform_schema(schema)
 
 
-def test_map_member_schema_is_accepted_and_sent_whole() -> None:
-    # This renderer rewrites a map member into an object with an empty properties. The
-    # rewritten document is what reaches the request, so the member survives the
-    # normalization rather than being dropped or flattened.
-    output_config = _request_kwargs(
-        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=_Labelled)
-    )["output_config"]
+@pytest.mark.parametrize("schema", [_Labelled, _MapsToFieldLess, _AllowsExtra])
+def test_schema_admitting_undeclared_keys_keeps_the_prompt_path(schema) -> None:
+    # The renderer closes every object, so a map would reach the provider as an object
+    # with no properties and come back empty, and an open model would lose its extra
+    # keys, with no error either way. No output_config is sent, and the query answers
+    # INFEASIBLE in step, which fails a NATIVE policy before the call is made.
+    assert (
+        _connection().supports_native_structured_output(
+            OutputSchema(output_schema=schema), [], {"model": _CAPABLE_MODEL}
+        )
+        is NativeStructuredOutputSupport.INFEASIBLE
+    )
 
-    assert output_config["format"]["schema"] == transform_schema(_Labelled)
-    assert output_config["format"]["schema"]["properties"]["labels"]["properties"] == {}
+    assert "output_config" not in _request_kwargs(
+        model=_CAPABLE_MODEL, output_schema=OutputSchema(output_schema=schema)
+    )
 
 
 def test_unlisted_model_answers_feasible_and_still_carries_the_schema() -> None:
@@ -600,6 +614,16 @@ def test_json_prefill_applied_when_schema_falls_back() -> None:
         model=_INCAPABLE_MODEL,
         json_prefill=True,
         output_schema=OutputSchema(output_schema=row_type),
+    ) == (True, _COMPLETED)
+
+
+def test_json_prefill_applied_when_open_schema_falls_back() -> None:
+    # A schema admitting undeclared keys is a BaseModel, so it passes every check a
+    # RowTypeInfo fails, and still falls back. The prefill has to follow it there.
+    assert _prefill_outcome(
+        model=_INCAPABLE_MODEL,
+        json_prefill=True,
+        output_schema=OutputSchema(output_schema=_AllowsExtra),
     ) == (True, _COMPLETED)
 
 
@@ -872,6 +896,7 @@ def test_query_agrees_with_the_native_branch() -> None:
 
     for schema in (
         OutputSchema(output_schema=_Answer),
+        OutputSchema(output_schema=_Labelled),
         OutputSchema(output_schema=row_type),
         None,
     ):

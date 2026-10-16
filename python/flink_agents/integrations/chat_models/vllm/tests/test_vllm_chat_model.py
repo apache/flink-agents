@@ -83,6 +83,12 @@ class _Person(BaseModel):
     age: int
 
 
+class _Tally(BaseModel):
+    """A schema carrying a map, which vLLM's guided decoding can enforce."""
+
+    counts: dict[str, int]
+
+
 @pytest.mark.parametrize(
     ("model", "expected"),
     [
@@ -136,6 +142,27 @@ def test_native_response_format_applied_for_qwen_model() -> None:
     kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert "response_format" in kwargs
     assert kwargs["response_format"]["type"] == "json_schema"
+
+
+def test_map_schema_is_sent_natively_with_its_value_type() -> None:
+    # OpenAI keeps a map off the native path because strict mode rejects it. vLLM
+    # does not apply strict mode, so the map is sent and keeps its value type.
+    connection, mock_client = _connection_with_mock_client()
+    schema = OutputSchema(output_schema=_Tally)
+    model = "Qwen/Qwen2.5-7B-Instruct"
+
+    assert (
+        connection.supports_native_structured_output(schema, [], {"model": model})
+        is NativeStructuredOutputSupport.NATIVE_RECOMMENDED
+    )
+
+    connection.chat(
+        [ChatMessage.of(MessageRole.USER, "hi")], model=model, output_schema=schema
+    )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    sent = kwargs["response_format"]["json_schema"]["schema"]
+    assert sent["properties"]["counts"]["additionalProperties"] == {"type": "integer"}
 
 
 def test_capability_override_shapes_only_the_query() -> None:

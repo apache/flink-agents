@@ -15,13 +15,13 @@
 #  See the License for the specific language governing permissions and
 # limitations under the License.
 #################################################################################
-from typing import Any, Callable
+from typing import Annotated, Any, Callable, Mapping
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, RootModel, StringConstraints
 from pydantic.errors import PydanticInvalidForJsonSchema
 
-from flink_agents.api.agents.types import render_output_schema
+from flink_agents.api.agents.types import contains_open_object, render_output_schema
 
 
 def _render(model: type[BaseModel]) -> dict[str, Any]:
@@ -154,3 +154,129 @@ def test_renderer_failure_raises_chained() -> None:
         render_output_schema(Renderable, _render_failing)
 
     assert isinstance(exc_info.value.__cause__, ValueError)
+
+
+class TypedValues(BaseModel):
+    counts: dict[str, int]
+
+
+class AnyDict(BaseModel):
+    attributes: dict[str, Any]
+
+
+class BareDict(BaseModel):
+    attributes: dict
+
+
+class MappingField(BaseModel):
+    counts: Mapping[str, int]
+
+
+class OptionalDict(BaseModel):
+    counts: dict[str, int] | None = None
+
+
+class ListOfDicts(BaseModel):
+    rows: list[dict[str, int]]
+
+
+class DictOfModels(BaseModel):
+    by_name: dict[str, Renderable]
+
+
+class NestsDict(BaseModel):
+    inner: TypedValues
+
+
+class ConstrainedKeys(BaseModel):
+    counts: dict[Annotated[str, StringConstraints(pattern="^[a-z]+$")], int]
+
+
+class TupleWithDict(BaseModel):
+    pair: tuple[int, dict[str, int]]
+
+
+class ModelOrDict(BaseModel):
+    value: Renderable | dict[str, int]
+
+
+class AllowsExtra(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    name: str
+
+
+class DictRoot(RootModel[dict[str, int]]):
+    pass
+
+
+class NestsRenderable(BaseModel):
+    inner: Renderable
+    items: list[Renderable]
+
+
+class AnyField(BaseModel):
+    value: Any
+
+
+class ForbidsExtra(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+
+
+class KeywordNamedField(BaseModel):
+    additionalProperties: int
+    patternProperties: str
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        TypedValues,
+        AnyDict,
+        BareDict,
+        MappingField,
+        OptionalDict,
+        ListOfDicts,
+        DictOfModels,
+        NestsDict,
+        ConstrainedKeys,
+        TupleWithDict,
+        ModelOrDict,
+        AllowsExtra,
+        DictRoot,
+    ],
+)
+def test_schema_admitting_undeclared_keys_is_open(model: type[BaseModel]) -> None:
+    """A dict anywhere in the schema, or an extra-allowing model, is found.
+
+    A strict native schema closes every object, so it would admit only ``{}`` for
+    each of these, or be refused.
+    """
+    assert contains_open_object(model)
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        Renderable,
+        NestsRenderable,
+        SelfReferential,
+        MutualA,
+        FieldLess,
+        AnyField,
+        ForbidsExtra,
+        KeywordNamedField,
+    ],
+)
+def test_schema_declaring_every_key_is_not_open(model: type[BaseModel]) -> None:
+    """A schema whose objects all declare their keys is left to the native path.
+
+    That includes a field named after a keyword, since keys under ``properties``
+    are names rather than keywords.
+    """
+    assert not contains_open_object(model)
+
+
+def test_model_without_a_json_schema_is_not_reported_open() -> None:
+    """The render reports that failure clearly, so this check leaves it alone."""
+    assert not contains_open_object(Unrenderable)

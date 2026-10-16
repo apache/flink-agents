@@ -25,7 +25,11 @@ from anthropic.types import MessageParam, TextBlockParam, ToolParam
 from pydantic import BaseModel, Field, PrivateAttr
 from typing_extensions import override
 
-from flink_agents.api.agents.types import OutputSchema, render_output_schema
+from flink_agents.api.agents.types import (
+    OutputSchema,
+    contains_open_object,
+    render_output_schema,
+)
 from flink_agents.api.chat_message import (
     ChatMessage,
     MessageRole,
@@ -436,11 +440,14 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         """Whether a request built from these inputs would carry a derived
         ``output_config``, leaving the effective model's capability out of the answer.
 
-        Two conditions. Only a ``BaseModel`` subclass has a native translation here; a
-        ``RowTypeInfo`` wrapped in ``OutputSchema``, or no schema at all, has none. And
-        a caller-supplied ``output_config`` wins: it is the caller being explicit about
-        the exact parameter the native branch writes, so the schema keeps the
-        prompt-engineering fallback rather than the two competing on one request.
+        Two conditions. Only a ``BaseModel`` subclass has a native translation here,
+        and only one whose schema admits no undeclared keys: a ``dict`` field admits
+        them, and the derived schema closes every object, so the model could return
+        only ``{}`` for one. A ``RowTypeInfo`` wrapped in ``OutputSchema``, or no
+        schema at all, has none. And a caller-supplied ``output_config`` wins: it is
+        the caller being explicit about the exact parameter the native branch writes,
+        so the schema keeps the prompt-engineering fallback rather than the two
+        competing on one request.
 
         The tools are not read; a bound tool does not stop this connection sending a
         schema.
@@ -464,11 +471,15 @@ class AnthropicChatModelConnection(BaseChatModelConnection):
         Returns:
         -------
         bool
-            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass and the caller
-            supplied no ``output_config`` of its own.
+            ``True`` if ``output_schema`` wraps a ``BaseModel`` subclass whose schema
+            admits no undeclared keys, and the caller supplied no ``output_config`` of
+            its own.
         """
-        return _native_output_model(output_schema) is not None and (
-            model_kwargs is None or "output_config" not in model_kwargs
+        model = _native_output_model(output_schema)
+        return (
+            model is not None
+            and (model_kwargs is None or "output_config" not in model_kwargs)
+            and not contains_open_object(model)
         )
 
     def chat(
