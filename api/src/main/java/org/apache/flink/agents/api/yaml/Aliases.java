@@ -24,6 +24,8 @@ import org.apache.flink.agents.api.event.ChatRequestEvent;
 import org.apache.flink.agents.api.event.ChatResponseEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalRequestEvent;
 import org.apache.flink.agents.api.event.ContextRetrievalResponseEvent;
+import org.apache.flink.agents.api.event.DecisionRequestEvent;
+import org.apache.flink.agents.api.event.DecisionResponseEvent;
 import org.apache.flink.agents.api.event.ToolRequestEvent;
 import org.apache.flink.agents.api.event.ToolResponseEvent;
 import org.apache.flink.agents.api.resource.ResourceName;
@@ -63,6 +65,8 @@ public final class Aliases {
         ev.put("output", OutputEvent.EVENT_TYPE);
         ev.put("chat_request", ChatRequestEvent.EVENT_TYPE);
         ev.put("chat_response", ChatResponseEvent.EVENT_TYPE);
+        ev.put("decision_request", DecisionRequestEvent.EVENT_TYPE);
+        ev.put("decision_response", DecisionResponseEvent.EVENT_TYPE);
         ev.put("tool_request", ToolRequestEvent.EVENT_TYPE);
         ev.put("tool_response", ToolResponseEvent.EVENT_TYPE);
         ev.put("context_retrieval_request", ContextRetrievalRequestEvent.EVENT_TYPE);
@@ -114,6 +118,24 @@ public final class Aliases {
         chatPython.put("vllm", ResourceName.ChatModel.Python.VLLM_SETUP);
         chatPython.put("watsonx", ResourceName.ChatModel.Python.WATSONX_SETUP);
         ca.put(ResourceType.CHAT_MODEL, buildLangBuckets(chatJava, chatPython));
+
+        // DECISION_MODEL_CONNECTION
+        ca.put(
+                ResourceType.DECISION_MODEL_CONNECTION,
+                buildLangBuckets(
+                        Map.of(),
+                        Map.of(
+                                "typesafe", ResourceName.DecisionModel.Python.TYPESAFE_CONNECTION,
+                                "openai", ResourceName.DecisionModel.Python.OPENAI_CONNECTION)));
+
+        // DECISION_MODEL
+        ca.put(
+                ResourceType.DECISION_MODEL,
+                buildLangBuckets(
+                        Map.of(),
+                        Map.of(
+                                "typesafe", ResourceName.DecisionModel.Python.TYPESAFE_SETUP,
+                                "openai", ResourceName.DecisionModel.Python.OPENAI_SETUP)));
 
         // EMBEDDING_MODEL_CONNECTION
         Map<String, String> embConnJava = new HashMap<>();

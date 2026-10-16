@@ -38,6 +38,10 @@ from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
 )
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
+)
 from flink_agents.api.events.event import InputEvent, OutputEvent
 from flink_agents.api.events.tool_event import (
     ToolRequestEvent,
@@ -51,6 +55,8 @@ EVENT_ALIASES: Dict[str, str] = {
     "output": OutputEvent.EVENT_TYPE,
     "chat_request": ChatRequestEvent.EVENT_TYPE,
     "chat_response": ChatResponseEvent.EVENT_TYPE,
+    "decision_request": DecisionRequestEvent.EVENT_TYPE,
+    "decision_response": DecisionResponseEvent.EVENT_TYPE,
     "tool_request": ToolRequestEvent.EVENT_TYPE,
     "tool_response": ToolResponseEvent.EVENT_TYPE,
     "context_retrieval_request": ContextRetrievalRequestEvent.EVENT_TYPE,
@@ -101,6 +107,18 @@ CLAZZ_ALIASES: Dict[ResourceType, Dict[str, Dict[str, str]]] = {
             "bedrock": ResourceName.ChatModel.Java.BEDROCK_SETUP,
             "vllm": ResourceName.ChatModel.Java.VLLM_SETUP,
             "watsonx": ResourceName.ChatModel.Java.WATSONX_SETUP,
+        },
+    },
+    ResourceType.DECISION_MODEL_CONNECTION: {
+        "python": {
+            "typesafe": ResourceName.DecisionModel.TYPESAFE_CONNECTION,
+            "openai": ResourceName.DecisionModel.OPENAI_CONNECTION,
+        },
+    },
+    ResourceType.DECISION_MODEL: {
+        "python": {
+            "typesafe": ResourceName.DecisionModel.TYPESAFE_SETUP,
+            "openai": ResourceName.DecisionModel.OPENAI_SETUP,
         },
     },
     ResourceType.EMBEDDING_MODEL_CONNECTION: {

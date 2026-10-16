@@ -32,11 +32,21 @@ import pytest
 from flink_agents.api import events
 from flink_agents.api.chat_message import ChatMessage, MessageRole
 from flink_agents.api.chat_result import ChatResult
+from flink_agents.api.decision_models import (
+    DecisionRequest,
+    DecisionResult,
+    PredicateAnswer,
+    PredicateQuestion,
+)
 from flink_agents.api.events.built_in_events import REGISTRY, restore
 from flink_agents.api.events.chat_event import ChatRequestEvent, ChatResponseEvent
 from flink_agents.api.events.context_retrieval_event import (
     ContextRetrievalRequestEvent,
     ContextRetrievalResponseEvent,
+)
+from flink_agents.api.events.decision_event import (
+    DecisionRequestEvent,
+    DecisionResponseEvent,
 )
 from flink_agents.api.events.event import Event, InputEvent, OutputEvent
 from flink_agents.api.events.event_type import EventType
@@ -83,6 +93,17 @@ def _category_fixtures() -> list[Event]:
         InputEvent(input="hello"),
         OutputEvent(output="world"),
         _chat_request(),
+        DecisionRequestEvent(
+            "decision",
+            DecisionRequest(
+                input="evidence",
+                questions={"eligible": PredicateQuestion(instructions="Eligible?")},
+            ),
+        ),
+        DecisionResponseEvent.success(
+            uuid4(),
+            DecisionResult(answers={"eligible": PredicateAnswer(probability_true=0.9)}),
+        ),
         ChatResponseEvent.success(
             request_id=uuid4(),
             response=ChatResult(message=ChatMessage.assistant("hi there")),
@@ -358,6 +379,20 @@ def _valid_attributes_by_type() -> dict:
             "status": ChatResponseEvent.FAILED,
             "error": "boom",
         },
+        DecisionRequestEvent.EVENT_TYPE: {
+            "model": "decision",
+            "request": {
+                "input": "evidence",
+                "questions": {
+                    "eligible": {"type": "predicate", "instructions": "Eligible?"}
+                },
+            },
+        },
+        DecisionResponseEvent.EVENT_TYPE: {
+            "request_id": _REQUEST_ID,
+            "status": DecisionResponseEvent.FAILED,
+            "error": "boom",
+        },
         ToolRequestEvent.EVENT_TYPE: {"model": "test-model", "tool_calls": []},
         ToolResponseEvent.EVENT_TYPE: {"request_id": _REQUEST_ID, "responses": {}},
         ContextRetrievalRequestEvent.EVENT_TYPE: {
@@ -514,6 +549,10 @@ def _mistyped_attribute_cases() -> list[tuple[str, str, object]]:
         # ChatResponseEvent
         (ChatResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
         (ChatResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
+        # Decision events
+        (DecisionRequestEvent.EVENT_TYPE, "model", 0),
+        (DecisionResponseEvent.EVENT_TYPE, "retry_count", "not-a-number"),
+        (DecisionResponseEvent.EVENT_TYPE, "total_retry_wait_sec", "not-a-number"),
         # ToolRequestEvent
         (ToolRequestEvent.EVENT_TYPE, "model", 0),
         (ToolRequestEvent.EVENT_TYPE, "tool_calls", [0]),

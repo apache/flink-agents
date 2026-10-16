@@ -26,6 +26,8 @@ package org.apache.flink.agents.api.resource;
 public enum ResourceType {
     CHAT_MODEL("chat_model"),
     CHAT_MODEL_CONNECTION("chat_model_connection"),
+    DECISION_MODEL("decision_model"),
+    DECISION_MODEL_CONNECTION("decision_model_connection"),
     EMBEDDING_MODEL("embedding_model"),
     EMBEDDING_MODEL_CONNECTION("embedding_model_connection"),
     VECTOR_STORE("vector_store"),

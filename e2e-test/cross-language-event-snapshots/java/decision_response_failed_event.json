@@ -1,0 +1,17 @@
+{
+  "id" : "00000000-0000-0000-0000-000000000001",
+  "attributes" : {
+    "error" : "TimeoutError: timed out",
+    "request_id" : "00000000-0000-0000-0000-000000000002",
+    "response" : null,
+    "total_retry_wait_sec" : 3,
+    "retry_count" : 2,
+    "status" : "FAILED"
+  },
+  "attachments" : {
+    "reference" : {
+      "key" : "review"
+    }
+  },
+  "type" : "_decision_response_event"
+}

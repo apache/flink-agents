@@ -138,6 +138,76 @@ def test_build_agents_rejects_duplicate_agent_within_file(tmp_path: Path) -> Non
         build_agents(p)
 
 
+@pytest.mark.parametrize("provider", ["typesafe", "openai"])
+def test_decision_model_declarations_at_both_scopes(
+    tmp_path: Path, provider: str
+) -> None:
+    source = tmp_path / "decisions.yaml"
+    source.write_text(
+        f"""decision_model_connections:
+  - name: shared_connection
+    clazz: {provider}
+    api_key: test-key
+decision_model_setups:
+  - name: shared_model
+    clazz: {provider}
+    connection: shared_connection
+    model: test-model
+agents:
+  - name: decisions
+    decision_model_connections:
+      - name: local_connection
+        clazz: {provider}
+        api_key: test-key
+    decision_model_setups:
+      - name: local_model
+        clazz: {provider}
+        connection: local_connection
+        model: test-model
+"""
+    )
+
+    agents, shared_resources, _ = build_agents(source)
+
+    for resources, prefix in [
+        (shared_resources, "shared"),
+        (agents["decisions"].resources, "local"),
+    ]:
+        connection = resources[ResourceType.DECISION_MODEL_CONNECTION][
+            f"{prefix}_connection"
+        ]
+        setup = resources[ResourceType.DECISION_MODEL][f"{prefix}_model"]
+        assert connection.language == setup.language == "python"
+        assert f"{connection.target_module}.{connection.target_clazz}" == getattr(
+            ResourceName.DecisionModel, f"{provider.upper()}_CONNECTION"
+        )
+        assert f"{setup.target_module}.{setup.target_clazz}" == getattr(
+            ResourceName.DecisionModel, f"{provider.upper()}_SETUP"
+        )
+        assert connection.arguments == {"api_key": "test-key"}
+        assert setup.arguments == {
+            "connection": f"{prefix}_connection",
+            "model": "test-model",
+        }
+
+
+@pytest.mark.parametrize(
+    "section", ["decision_model_connections", "decision_model_setups"]
+)
+def test_decision_model_yaml_rejects_java_implementations(
+    tmp_path: Path, section: str
+) -> None:
+    source = tmp_path / "java-decision.yaml"
+    source.write_text(
+        f"{section}:\n  - name: unsupported\n    clazz: example.Decision\n    type: java\n"
+    )
+
+    with pytest.raises(
+        ValueError, match="type='java' is not supported for decision_model"
+    ):
+        build_agents(source)
+
+
 def test_build_agents_from_single_agent_yaml() -> None:
     agents, shared_resources, shared_actions = build_agents(
         _FIXTURES / "single_agent.yaml"

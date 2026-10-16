@@ -262,8 +262,9 @@ skills:
 Remote skill archives contain trusted agent instructions and may contain executable scripts. Pin remote sources with `sha256`, or use `Skills.from_url_with_sha256(...)` (Python) / `Skills.fromUrlWithSha256(...)` (Java) in code.
 
 **Resources configured by implementation class** — `chat_model_connections`,
-`chat_model_setups`, `embedding_model_connections`, `embedding_model_setups`, `vector_stores`,
-and `mcp_servers`. Declare the implementation and its configuration using the fields below.
+`chat_model_setups`, `decision_model_connections`, `decision_model_setups`,
+`embedding_model_connections`, `embedding_model_setups`, `vector_stores`, and `mcp_servers`.
+Declare the implementation and its configuration using the fields below.
 This corresponds to a `ResourceDescriptor` in Java or Python; the framework creates the
 Resource instance at runtime.
 
@@ -297,6 +298,7 @@ shared Resources from the execution environment. In the [single-agent example](#
 | `chat_model_setups[].connection` | a `chat_model_connections[]` name | `connection: ollama_server` |
 | `chat_model_setups[].prompt` | a `prompts[]` name | `prompt: review_analysis_prompt` |
 | `chat_model_setups[].tools` | a list of `tools[]` names | `tools: [notify_shipping_manager]` |
+| `decision_model_setups[].connection` | a `decision_model_connections[]` name | `connection: decision_connection` |
 | `embedding_model_setups[].connection` | an `embedding_model_connections[]` name | `connection: my_embedding_server` |
 
 The referenced Resource must be registered on the Agent or its execution environment.
@@ -575,6 +577,8 @@ For `clazz:` on resource descriptors and for complete event-type entries in `tri
 | `output`                       | `OutputEvent`                    |
 | `chat_request`                 | `ChatRequestEvent`               |
 | `chat_response`                | `ChatResponseEvent`              |
+| `decision_request`             | `DecisionRequestEvent`           |
+| `decision_response`            | `DecisionResponseEvent`          |
 | `tool_request`                 | `ToolRequestEvent`               |
 | `tool_response`                | `ToolResponseEvent`              |
 | `context_retrieval_request`    | `ContextRetrievalRequestEvent`   |
@@ -607,6 +611,17 @@ Common chat-model aliases:
 | `dashscope`          | Alibaba Cloud Model Studio (DashScope, Python) | —                           |
 | `vllm`               | vLLM (Python)               | vLLM (Java)                 |
 | `watsonx`            | IBM watsonx.ai (Python)     | IBM watsonx.ai (Java)       |
+
+Decision-model aliases (apply to both `decision_model_connections` and `decision_model_setups`):
+
+| Alias | `type: python` | `type: java` |
+| ----- | -------------- | ------------ |
+| `typesafe` | TypeSafe Jev | — |
+| `openai` | OpenAI Decisions | — |
+
+Decision providers currently have Python implementations. Both YAML loaders can
+configure them with `type: python`. See
+[Decision Models]({{< ref "docs/development/decision_models" >}}) for request types and Action examples.
 
 Embedding-model aliases (apply to both `embedding_model_connections` and `embedding_model_setups`):
 

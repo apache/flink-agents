@@ -320,6 +320,12 @@ class AgentExecutionOptions:
         default=True,
     )
 
+    DECISION_ASYNC = ConfigOption(
+        key="decision.async",
+        config_type=bool,
+        default=True,
+    )
+
     AGENT_RUN_BEGIN_EVENT = ConfigOption(
         key="agent-run.begin-event", config_type=bool, default=False
     )

@@ -18,12 +18,15 @@
 import importlib
 import json
 import typing
+from asyncio import CancelledError as AsyncCancelledError
+from concurrent.futures import CancelledError
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, cast
 
 import cloudpickle
 
 from flink_agents.api.chat_message import ChatMessage, MessageRole
+from flink_agents.api.decision_models import DecisionRequest
 from flink_agents.api.events.event import Event, InputEvent
 from flink_agents.api.memory.long_term_memory import MemorySet, MemorySetItem
 from flink_agents.api.resource import Resource, ResourceType, get_resource_class
@@ -51,7 +54,31 @@ from flink_agents.plan.resource_provider import JAVA_RESOURCE_MAPPING
 from flink_agents.runtime.memory.event_attachment_utils import load_event_attachments
 
 if TYPE_CHECKING:
+    from flink_agents.api.decision_models import (
+        BaseDecisionModelConnection,
+        BaseDecisionModelSetup,
+    )
     from flink_agents.api.events.event import OutputEvent
+
+
+def call_decision_model(
+    resource: "BaseDecisionModelConnection | BaseDecisionModelSetup",
+    request_json: str,
+    model: str | None,
+) -> dict[str, str]:
+    """Return a tagged decision result or cancellation signal for the Java bridge."""
+    request = DecisionRequest.model_validate_json(request_json)
+    try:
+        result = (
+            resource.decide(request)
+            if model is None
+            else resource.decide(request, model=model)
+        )
+    except InterruptedError as error:
+        return {"status": "INTERRUPTED", "message": str(error)}
+    except (CancelledError, AsyncCancelledError) as error:
+        return {"status": "CANCELLED", "message": str(error)}
+    return {"status": "SUCCESS", "result": result.model_dump_json()}
 
 
 def convert_to_python_object(bytesObject: bytes) -> Any:

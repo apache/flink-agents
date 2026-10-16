@@ -31,7 +31,12 @@ PYTHON_PREFIX = "flink_agents."
 
 def _collect_python_class_paths() -> list[tuple[str, str]]:
     paths = []
-    for resource_name in ["ChatModel", "EmbeddingModel", "VectorStore"]:
+    for resource_name in [
+        "ChatModel",
+        "DecisionModel",
+        "EmbeddingModel",
+        "VectorStore",
+    ]:
         if not hasattr(ResourceName, resource_name):
             continue
         resource_cls = getattr(ResourceName, resource_name)

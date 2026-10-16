@@ -41,6 +41,7 @@ from flink_agents.plan import subagent as _subagent
 from flink_agents.plan.actions.action import Action
 from flink_agents.plan.actions.chat_model_action import CHAT_MODEL_ACTION
 from flink_agents.plan.actions.context_retrieval_action import CONTEXT_RETRIEVAL_ACTION
+from flink_agents.plan.actions.decision_model_action import DECISION_MODEL_ACTION
 from flink_agents.plan.actions.tool_call_action import TOOL_CALL_ACTION
 from flink_agents.plan.configuration import AgentConfiguration
 from flink_agents.plan.function import JavaFunction, PythonFunction
@@ -59,7 +60,12 @@ if TYPE_CHECKING:
     )
     from flink_agents.integrations.mcp.mcp import MCPServer
 
-BUILT_IN_ACTIONS = [CHAT_MODEL_ACTION, TOOL_CALL_ACTION, CONTEXT_RETRIEVAL_ACTION]
+BUILT_IN_ACTIONS = [
+    CHAT_MODEL_ACTION,
+    TOOL_CALL_ACTION,
+    CONTEXT_RETRIEVAL_ACTION,
+    DECISION_MODEL_ACTION,
+]
 
 
 class AgentPlan(BaseModel):
@@ -354,6 +360,8 @@ def _get_resource_providers(
         if (
             hasattr(value, "_is_chat_model_setup")
             or hasattr(value, "_is_chat_model_connection")
+            or hasattr(value, "_is_decision_model_setup")
+            or hasattr(value, "_is_decision_model_connection")
             or hasattr(value, "_is_embedding_model_setup")
             or hasattr(value, "_is_embedding_model_connection")
             or hasattr(value, "_is_vector_store")
@@ -368,6 +376,8 @@ def _get_resource_providers(
                     for marker, resource_type in {
                         "_is_chat_model_setup": ResourceType.CHAT_MODEL,
                         "_is_chat_model_connection": ResourceType.CHAT_MODEL_CONNECTION,
+                        "_is_decision_model_setup": ResourceType.DECISION_MODEL,
+                        "_is_decision_model_connection": ResourceType.DECISION_MODEL_CONNECTION,
                         "_is_embedding_model_setup": ResourceType.EMBEDDING_MODEL,
                         "_is_embedding_model_connection": ResourceType.EMBEDDING_MODEL_CONNECTION,
                         "_is_vector_store": ResourceType.VECTOR_STORE,
@@ -478,6 +488,8 @@ def _get_resource_providers(
     for resource_type in [
         ResourceType.CHAT_MODEL,
         ResourceType.CHAT_MODEL_CONNECTION,
+        ResourceType.DECISION_MODEL,
+        ResourceType.DECISION_MODEL_CONNECTION,
         ResourceType.EMBEDDING_MODEL,
         ResourceType.EMBEDDING_MODEL_CONNECTION,
         ResourceType.VECTOR_STORE,
