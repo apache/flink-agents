@@ -26,7 +26,7 @@ import java.security.NoSuchAlgorithmException;
  *
  * <p>Per the design in the Agent Trace discussions, the framework keeps {@code inputRunId} and
  * {@code executionId} opaque; the exporter derives valid 128-bit trace ids and 64-bit span ids by
- * hashing them. Determinism makes re-exports idempotent: exporting the same Event Log twice
+ * hashing them. Determinism makes re-exports idempotent: exporting the same Trace Log twice
  * produces byte-identical ids, so an OTLP backend deduplicates instead of double-counting.
  */
 final class OTelIds {
