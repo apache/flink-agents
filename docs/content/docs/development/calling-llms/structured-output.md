@@ -202,13 +202,13 @@ Native path:  ChatRequestEvent → model call (tool loop, no schema)
 
 | Provider | Languages | Recommended models (`AUTO` goes native) | Blocked (besides a non-typed-class schema) |
 |---|---|---|---|
-| OpenAI | Java, Python | `gpt-4o-mini`, `gpt-4o-search-preview`, `gpt-4.1`, `gpt-5` and `o3`, `o4-mini` families (names that start with these), plus `gpt-4o`, `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20`, `o1`, `o1-2024-12-17`. Audio, realtime, TTS and transcribe variants are excluded. | |
+| OpenAI | Java, Python | `gpt-4o-mini`, `gpt-4o-search-preview`, `gpt-4.1`, `gpt-5` and `o3`, `o4-mini` families (names that start with these), plus `gpt-4o`, `gpt-4o-2024-08-06`, `gpt-4o-2024-11-20`, `o1`, `o1-2024-12-17`. Audio, realtime, TTS and transcribe variants are excluded. | The schema has an open-keyed field |
 | OpenAI Responses | Java | none | Always. Use the prompt path. |
-| Azure OpenAI | Java, Python | The model named by `model_of_azure_deployment` is one of `gpt-5.1`, `gpt-5.1-chat`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `o3`, `o3-mini`, `o4-mini`, `o1`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`. | `api_version` older than `2024-08-01`, or not a date |
-| vLLM | Java, Python | Any model | Same as OpenAI |
-| Anthropic | Java, Python | `claude-opus-4-6`, `-4-7`, `-4-8`, `-5`; `claude-sonnet-4-6`, `-5`; `claude-fable-5`; `claude-mythos-5`; `claude-mythos-preview`; and the `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` aliases and their dated versions | You pass `output_config` in `additional_kwargs` |
+| Azure OpenAI | Java, Python | The model named by `model_of_azure_deployment` is one of `gpt-5.1`, `gpt-5.1-chat`, `gpt-5`, `gpt-5-mini`, `gpt-5-nano`, `o3`, `o3-mini`, `o4-mini`, `o1`, `gpt-4o-mini`, `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`. | `api_version` older than `2024-08-01`, or not a date. The schema has an open-keyed field. |
+| vLLM | Java, Python | Any model | Java only: the schema has an open-keyed field |
+| Anthropic | Java, Python | `claude-opus-4-6`, `-4-7`, `-4-8`, `-5`; `claude-sonnet-4-6`, `-5`; `claude-fable-5`; `claude-mythos-5`; `claude-mythos-preview`; and the `claude-opus-4-5`, `claude-sonnet-4-5`, `claude-haiku-4-5` aliases and their dated versions | You pass `output_config` in `additional_kwargs`. The schema has an open-keyed field. |
 | Amazon Bedrock | Java | A fixed list of Converse models (a regional or global inference-profile prefix is ignored). ARNs are never recommended. | |
-| Gemini | Java | `gemini-*` text models. Image, TTS, audio, live, transcribe, embedding and omni variants are excluded. | The request binds tools |
+| Gemini | Java | `gemini-*` text models. Image, TTS, audio, live, transcribe, embedding and omni variants are excluded. | The request binds tools. The schema has a `JsonNode` field. |
 | Ollama | Java, Python | Any model | |
 | watsonx | Java, Python | Any model | |
 | DashScope | Python | `qwen3.7-max`, `qwen3.7-max-preview`, `qwen3.7-max-2026-05-17`, `qwen3.7-max-2026-05-20` | |
@@ -219,6 +219,7 @@ Notes:
 - **Gemini** blocks native output when the request binds tools. The conversion call is tool-free, so this only affects direct connection calls. A newer model that does not support the schema field fails with `400 INVALID_ARGUMENT`. Constraints such as `pattern` and `minLength` are ignored by the server.
 - **Ollama** needs a server at v0.5.0 or later. Ollama Cloud and the MLX runner accept the schema but do not enforce it.
 - **Bedrock** rejects recursive schemas, and map values are untyped.
+- **An open-keyed field blocks native output on OpenAI, Azure OpenAI, Anthropic and Java vLLM.** That is a field whose keys are not fixed in advance, at any depth: a Java `Map` or Jackson `JsonNode` field, or a Python `dict` field or a Pydantic model with `extra="allow"`. These providers need every object in the schema to list its keys. Gemini blocks only a `JsonNode` field, because it can type a `Map`'s values. Python vLLM keeps the field native, because vLLM's guided decoding enforces it. To stay native, use a nested class with named fields.
 - **A native parameter you set yourself conflicts.** Do not put `response_format` (OpenAI-compatible providers) or `output_config` (Anthropic) in `additional_kwargs` or model parameters when you use an output schema. Azure OpenAI, watsonx and DashScope raise an error when the schema would overwrite your value. Anthropic treats the request as blocked.
 - **Cross-language setups never go native.** A chat model from the other language, reached through a [cross-language resource]({{< ref "docs/development/calling-llms/chat-models#using-cross-language-providers" >}}), cannot carry a schema across the bridge. `AUTO` and `PROMPT` use the prompt path, and `NATIVE` raises. To use a provider natively, declare the agent in that provider's language.
 
@@ -312,12 +313,12 @@ Two Java cases do not work as you might expect. They behave the same on every Ja
 ### Java POJOs
 
 - **Descriptions and required fields.** `@JsonPropertyDescription` and `@JsonClassDescription` are sent in the native schema, and every field is required (an `Optional` field is required but nullable on OpenAI, Azure OpenAI and Anthropic). The ReAct Agent's *prompt text* is rendered by a different generator, which has no descriptions, and lists a field as required only when it has `@JsonProperty(required = true)`. The prompt path therefore describes the schema less fully than the native path.
-- **`Map` fields.** On OpenAI, Azure OpenAI, Anthropic and vLLM, a `Map<String, V>` field becomes an empty object schema that allows no keys, so the model can only return `{}`. Avoid `Map` fields with these providers, or use a nested class. Gemini, Ollama and watsonx type the map values.
+- **`Map` and `JsonNode` fields.** On OpenAI, Azure OpenAI, Anthropic and vLLM, a schema with either field uses the prompt path under `AUTO` and fails under `NATIVE`. The native schema would describe the field as an empty object that allows no keys, so the model could only return `{}`. Gemini keeps a `Map` native and types its values, but blocks a `JsonNode` field the same way. Ollama and watsonx type the map values. To stay native everywhere, use a nested class.
 - **Recursive types.** The ReAct Agent rejects a self-referential POJO at construction time. Bedrock also rejects a recursive schema.
 
 ### Python Models
 
-The schema comes from Pydantic's `model_json_schema()`, so field descriptions and defaults are included. A model that Pydantic cannot express raises a `TypeError` naming the schema when it is rendered.
+The schema comes from Pydantic's `model_json_schema()`, so field descriptions and defaults are included. A model that Pydantic cannot express raises a `TypeError` naming the schema when it is rendered. A `dict` field, or a model with `extra="allow"`, blocks native output on OpenAI, Azure OpenAI and Anthropic, as a `Map` does in Java. Use a nested model to stay native there. vLLM keeps the field native.
 
 ## Next Steps
 
