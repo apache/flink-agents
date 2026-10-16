@@ -126,8 +126,10 @@ public class ReActAgent extends Agent {
         if (outputSchema != null) {
             String jsonSchema;
             if (outputSchema instanceof RowTypeInfo) {
-                jsonSchema = outputSchema.toString();
-                outputSchema = new OutputSchema((RowTypeInfo) outputSchema);
+                RowTypeInfo rowType = (RowTypeInfo) outputSchema;
+                String rowSchema = RowTypeJsonSchema.render(rowType);
+                jsonSchema = rowSchema != null ? rowSchema : rowType.toString();
+                outputSchema = new OutputSchema(rowType);
             } else if (outputSchema instanceof Class) {
                 Class<?> schemaClass = (Class<?>) outputSchema;
                 try {

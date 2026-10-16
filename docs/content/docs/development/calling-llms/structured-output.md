@@ -42,7 +42,7 @@ A schema is one of:
 | Typed class | Pydantic `BaseModel` subclass | POJO `Class` |
 | Flink row type | `RowTypeInfo` | `RowTypeInfo` |
 
-Only a typed class can be applied natively. A `RowTypeInfo` always uses the prompt path.
+Only a typed class can be applied natively. A `RowTypeInfo` always uses the prompt path. For a flat `RowTypeInfo` whose fields are all string, boolean or numeric types, the ReAct Agent describes the schema to the model as JSON Schema with every field required and `additionalProperties: false`. Other row types keep their existing behavior.
 
 Pass the schema to a [ReAct Agent]({{< ref "docs/development/react_agent" >}}) with `output_schema`, or put it on a `ChatRequestEvent` when you [send chat requests yourself]({{< ref "docs/development/calling-llms/chat" >}}).
 

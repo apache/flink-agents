@@ -28,6 +28,7 @@ from flink_agents.api.agents.react_agent import (
     _DEFAULT_SCHEMA_PROMPT,
     ReActAgent,
 )
+from flink_agents.api.agents.types import render_row_type_json_schema
 from flink_agents.api.chat_message import MessageRole
 from flink_agents.api.events.event import InputEvent
 from flink_agents.api.prompts.prompt import Prompt
@@ -234,10 +235,29 @@ def test_renderable_output_schema_keeps_the_schema_prompt() -> None:
     )
 
 
-def test_row_type_info_output_schema_keeps_the_prompt_fallback() -> None:
-    """A RowTypeInfo has no JSON Schema render and keeps its own prompt text."""
+def test_row_type_info_output_schema_renders_json_schema_in_the_prompt() -> None:
+    """A flat RowTypeInfo reaches the prompt as its JSON Schema."""
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
-    assert _schema_prompt(_agent(row_type)) == _expected_prompt(row_type)
+    assert _schema_prompt(_agent(row_type)) == _expected_prompt(
+        '{"type":"object","properties":{"name":{"type":"string"}},'
+        '"required":["name"],"additionalProperties":false}'
+    )
+
+
+def test_row_type_info_without_json_type_keeps_the_prompt_fallback() -> None:
+    """A row with a field no JSON Schema type fits keeps its own prompt text."""
+    row_type = Types.ROW_NAMED(["initial"], [Types.CHAR()])
+    agent = _agent(row_type)
+    assert _schema_prompt(agent) == _expected_prompt(row_type)
+    assert _native_schema_prompt(agent) == f"{_NATIVE_SCHEMA_INSTRUCTION}{row_type}"
+
+
+def test_row_type_info_with_duplicate_names_keeps_the_prompt_fallback() -> None:
+    """A row with duplicate field names keeps its own prompt text."""
+    row_type = Types.ROW_NAMED(["x", "x"], [Types.STRING(), Types.INT()])
+    agent = _agent(row_type)
+    assert _schema_prompt(agent) == _expected_prompt(row_type)
+    assert _native_schema_prompt(agent) == f"{_NATIVE_SCHEMA_INSTRUCTION}{row_type}"
 
 
 def test_renderable_output_schema_registers_the_native_schema_prompt() -> None:
@@ -257,11 +277,11 @@ def test_native_schema_prompt_shows_field_descriptions_and_required_fields() -> 
 
 
 def test_row_type_info_output_schema_registers_the_native_schema_prompt() -> None:
-    """A RowTypeInfo reaches the native prompt as its own text."""
+    """A flat RowTypeInfo reaches the native prompt as its JSON Schema."""
     row_type = Types.ROW_NAMED(["name"], [Types.STRING()])
     assert (
         _native_schema_prompt(_agent(row_type))
-        == f"{_NATIVE_SCHEMA_INSTRUCTION}{row_type}"
+        == f"{_NATIVE_SCHEMA_INSTRUCTION}{render_row_type_json_schema(row_type)}"
     )
 
 

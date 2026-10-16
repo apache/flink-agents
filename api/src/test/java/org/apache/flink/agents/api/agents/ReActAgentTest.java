@@ -128,10 +128,30 @@ public class ReActAgentTest {
     }
 
     @Test
-    @DisplayName("An agent built on a RowTypeInfo schema registers the native prompt with its text")
+    @DisplayName(
+            "An agent built on a RowTypeInfo schema registers the native prompt with its JSON Schema")
     public void testRowTypeSchemaRegistersNativeSchemaPrompt() {
         assertThat(nativeSchemaPromptOf(agentWithSchema(rowTypeInfo())))
-                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + rowTypeInfo());
+                .isEqualTo(NATIVE_SCHEMA_INSTRUCTION + RowTypeJsonSchema.render(rowTypeInfo()));
+    }
+
+    @Test
+    @DisplayName("An agent built on a RowTypeInfo schema asks for its JSON Schema in the prompt")
+    public void testRowTypeSchemaPromptCarriesJsonSchema() {
+        assertThat(schemaPromptOf(agentWithSchema(rowTypeInfo())))
+                .contains("{\"type\":\"object\",\"properties\":{\"count\":{\"type\":\"integer\"}}");
+    }
+
+    @Test
+    @DisplayName("A RowTypeInfo schema with a field no JSON Schema type fits keeps its string form")
+    public void testRowTypeSchemaWithoutJsonTypeKeepsItsText() {
+        RowTypeInfo row =
+                new RowTypeInfo(
+                        new TypeInformation[] {BasicTypeInfo.CHAR_TYPE_INFO},
+                        new String[] {"initial"});
+        ReActAgent agent = agentWithSchema(row);
+        assertThat(nativeSchemaPromptOf(agent)).isEqualTo(NATIVE_SCHEMA_INSTRUCTION + row);
+        assertThat(schemaPromptOf(agent)).contains(row.toString());
     }
 
     @Test

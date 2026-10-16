@@ -16,6 +16,7 @@
 # limitations under the License.
 #################################################################################
 import importlib
+import json
 from typing import Any, Callable
 
 from pydantic import BaseModel, ConfigDict, model_serializer, model_validator
@@ -179,3 +180,55 @@ def _admits_undeclared_keys(schema: Any) -> bool:
     return _admits_undeclared_keys(schema.get("items")) or _admits_undeclared_keys(
         schema.get("not")
     )
+
+
+_ROW_JSON_SCHEMA_TYPES = {
+    BasicType.STRING: "string",
+    BasicType.BOOLEAN: "boolean",
+    BasicType.BYTE: "integer",
+    BasicType.SHORT: "integer",
+    BasicType.INT: "integer",
+    BasicType.LONG: "integer",
+    BasicType.BIG_INT: "integer",
+    BasicType.FLOAT: "number",
+    BasicType.DOUBLE: "number",
+    BasicType.BIG_DEC: "number",
+}
+
+
+def render_row_type_json_schema(row_type: RowTypeInfo) -> str | None:
+    """Render a flat ``RowTypeInfo`` as a JSON Schema object.
+
+    Every field is required and no additional properties are allowed. The Java
+    ``RowTypeJsonSchema`` produces the same text for the same row, so both
+    languages describe a row to the model identically.
+
+    Returns ``None`` when a field has no supported mapping in this renderer,
+    such as a char or instant field, or when the names are duplicated or don't
+    match the types; the caller then describes the row another way.
+    """
+    json_types = [
+        _ROW_JSON_SCHEMA_TYPES.get(getattr(field_type, "_basic_type", None))
+        for field_type in row_type.get_field_types()
+    ]
+    if None in json_types:
+        return None
+    # get_field_names() starts the JVM for a row built without names; Java names
+    # those fields f0, f1, ... too.
+    names = row_type._field_names
+    if names is None:
+        names = [f"f{i}" for i in range(len(json_types))]
+    # Java rejects these rows; Python keeps describing them another way.
+    if len(names) != len(json_types) or len(set(names)) != len(names):
+        return None
+    properties = {
+        name: {"type": json_type}
+        for name, json_type in zip(names, json_types, strict=True)
+    }
+    schema = {
+        "type": "object",
+        "properties": properties,
+        "required": list(properties),
+        "additionalProperties": False,
+    }
+    return json.dumps(schema, separators=(",", ":"), ensure_ascii=False)
