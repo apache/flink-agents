@@ -32,77 +32,21 @@ ReAct Agent is a general paradigm that combines reasoning and action capabilitie
 The snippets on this page are fragments that each focus on a single concept. For an end-to-end runnable walkthrough, see the [Use the Built-in ReAct Agent]({{< ref "docs/get-started/quickstart/react_agent" >}}) and the full source: [`react_agent_example.py`](https://github.com/apache/flink-agents/blob/main/python/flink_agents/examples/quickstart/react_agent_example.py) (Python) and [`ReActAgentExample.java`](https://github.com/apache/flink-agents/blob/main/examples/src/main/java/org/apache/flink/agents/examples/ReActAgentExample.java) (Java).
 {{< /hint >}}
 
-The snippets below assume the following imports:
+## Create a ReAct Agent
 
-{{< tabs "ReAct Agent Imports" >}}
+A ReAct Agent only requires a chat model descriptor. The following sections describe the optional configuration. In Java, pass `null` for the prompt or output schema when you do not need it.
+
+{{< tabs "Create a ReAct Agent" >}}
 
 {{< tab "Python" >}}
 ```python
-from pydantic import BaseModel
-from pyflink.common.typeinfo import BasicTypeInfo, RowTypeInfo
-
-from flink_agents.api.agents.react_agent import ReActAgent
-from flink_agents.api.chat_message import ChatMessage, MessageRole
-from flink_agents.api.execution_environment import AgentsExecutionEnvironment
-from flink_agents.api.prompts.prompt import Prompt
-from flink_agents.api.resource import ResourceDescriptor, ResourceName, ResourceType
-from flink_agents.api.skills import Skills
-from flink_agents.api.tools.tool import Tool
+my_react_agent = ReActAgent(chat_model=chat_model_descriptor)
 ```
 {{< /tab >}}
 
 {{< tab "Java" >}}
 ```java
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonProperty;
-import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.annotation.JsonSerialize;
-import org.apache.flink.agents.api.AgentsExecutionEnvironment;
-import org.apache.flink.agents.api.agents.ReActAgent;
-import org.apache.flink.agents.api.chat.messages.ChatMessage;
-import org.apache.flink.agents.api.chat.messages.MessageRole;
-import org.apache.flink.agents.api.prompt.Prompt;
-import org.apache.flink.agents.api.resource.ResourceDescriptor;
-import org.apache.flink.agents.api.resource.ResourceName;
-import org.apache.flink.agents.api.resource.ResourceType;
-import org.apache.flink.agents.api.skills.Skills;
-import org.apache.flink.agents.api.tools.Tool;
-import org.apache.flink.api.common.typeinfo.BasicTypeInfo;
-import org.apache.flink.api.common.typeinfo.TypeInformation;
-import org.apache.flink.api.java.typeutils.RowTypeInfo;
-
-import java.util.Arrays;
-import java.util.List;
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
-## ReAct Agent Example
-
-The chat model descriptor is the only required configuration. The example below also supplies an optional prompt and output schema. In Python, omitted optional arguments default to `None`. In Java, pass `null` for the prompt or output schema when you do not need it.
-
-{{< tabs "ReAct Agent Example" >}}
-
-{{< tab "Python" >}}
-```python
-my_react_agent = ReActAgent(
-    chat_model=chat_model_descriptor,
-    prompt=my_prompt,
-    output_schema=MyBaseModelDataType,  # or my_row_type_info
-)
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-ReActAgent myReActAgent =
-        new ReActAgent(
-                chatModelDescriptor,
-                myPrompt,
-                MyBaseModelDataType.class
-                // or myRowTypeInfo
-        );
+ReActAgent myReActAgent = new ReActAgent(chatModelDescriptor, null, null);
 ```
 {{< /tab >}}
 
@@ -112,7 +56,32 @@ ReActAgent myReActAgent =
 ### Chat Model
 Use a `ResourceDescriptor` to select the required chat model setup and pass its arguments. See [Chat Models]({{< ref "docs/development/calling-llms/chat-models" >}}) for the provider-specific connection and model configuration.
 
-Tools are optional. To expose them to the ReAct Agent, list their registered resource names in the descriptor's `tools` argument:
+Tools are optional. To expose them to the ReAct Agent, first register each tool on the `AgentsExecutionEnvironment` under a resource name (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/calling-llms/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
+
+{{< tabs "Register Tools" >}}
+
+{{< tab "Python" >}}
+```python
+agents_env.add_resource(
+    "my_tool1", ResourceType.TOOL, Tool.from_callable(my_tool1)
+)
+# Register my_tool2 the same way.
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+agentsEnv.addResource(
+        "myTool1",
+        ResourceType.TOOL,
+        Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
+// Register myTool2 the same way.
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Then list the registered names in the chat model descriptor's `tools` argument. Each name must match a registered tool; otherwise the agent fails at runtime with a "resource not found" error.
 
 {{< tabs "ChatModel ResourceDescriptor" >}}
 
@@ -141,41 +110,12 @@ ResourceDescriptor chatModelDescriptor =
 
 {{< /tabs >}}
 
-{{< hint warning >}}
-The tools listed in `tools=[...]` must be registered on the `AgentsExecutionEnvironment` **before** the agent runs, using a name that matches the entry in the list — otherwise the agent fails at runtime with a "resource not found" error.
-{{< /hint >}}
-
-Register the referenced tools (this can also be done with a YAML file — see [Tool Use]({{< ref "docs/development/calling-llms/tool_use#register-tool-to-execution-environment" >}}) for the full guide):
-
-{{< tabs "Register Tools" >}}
-
-{{< tab "Python" >}}
-```python
-agents_env.add_resource(
-    "my_tool1", ResourceType.TOOL, Tool.from_callable(my_tool1)
-)
-# Register my_tool2 the same way.
-```
-{{< /tab >}}
-
-{{< tab "Java" >}}
-```java
-agentsEnv.addResource(
-        "myTool1",
-        ResourceType.TOOL,
-        Tool.fromMethod(MyAgentExample.class.getMethod("myTool1", String.class)));
-// Register myTool2 the same way.
-```
-{{< /tab >}}
-
-{{< /tabs >}}
-
 Registering a Vector Store resource does not make a ReAct Agent retrieve from it automatically. Implement retrieval explicitly, for example by exposing it as a tool.
 
 ### Prompt
 The prompt is optional. Without one, the agent directly converts a Java `String` or primitive wrapper, a Python `str`, `bool`, `int`, `float`, or `None`, or a Java `Map`/Python `dict` whose only key is `input` into a user message. Other structured inputs require a prompt to map their fields into one or more user messages; otherwise, the agent rejects the input at runtime.
 
-A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional. When an output schema is configured, the framework still prepends its schema instruction if the prompt has no SYSTEM message.
+A typical prompt contains two messages: a SYSTEM message that tells the agent what to do (and gives input and output examples), and a USER message that describes how to convert the input element into a text string. This is a recommended pattern, not a strict requirement — the agent uses all messages in the prompt, and the SYSTEM message is optional. When an output schema is configured, the ReAct Agent adds its own schema instruction as a SYSTEM message, right after the prompt's first SYSTEM message or at the start if there is none.
 
 {{< tabs "Prompt" >}}
 
@@ -196,8 +136,8 @@ system_prompt_str = """
 my_prompt = Prompt.from_messages(
     messages=[
         ChatMessage.system(system_prompt_str),
-        # Structured input fields are matched to the prompt placeholders.
-        # The input can be a primitive, dict, BaseModel, or Row.
+        # Structured input fields (dict, BaseModel, or Row) fill the matching
+        # placeholders. A primitive input only fills {input}.
         ChatMessage.user(
             """
             "id": {id},
@@ -206,6 +146,8 @@ my_prompt = Prompt.from_messages(
         ),
     ],
 ) 
+
+my_react_agent = ReActAgent(chat_model=chat_model_descriptor, prompt=my_prompt)
 ```
 {{< /tab >}}
 
@@ -225,6 +167,8 @@ Prompt myPrompt = Prompt.fromMessages(
                 new ChatMessage(
                         MessageRole.USER,
                         "{\"id\": \"{id}\",\n" + "\"review\": \"{review}\"}")));
+
+ReActAgent myReActAgent = new ReActAgent(chatModelDescriptor, myPrompt, null);
 ```
 {{< /tab >}}
 
@@ -260,7 +204,7 @@ new ChatMessage(MessageRole.USER, "{input}")
 See [Prompt]({{< ref "docs/development/calling-llms/prompts" >}}) for more details.
 
 ### Output Schema
-The output schema is optional. Without one, the agent does not add a schema instruction, parse or validate the final response against a schema, or perform type conversion. It emits the text of the final assistant message as a `String` (Java) or `str` (Python). This text is the concatenation of the message's top-level text blocks; media, reasoning, and tool-call blocks are not included.
+The output schema is optional. If omitted, the agent returns the text of the final assistant response as a `String` (Java) or `str` (Python).
 
 When you set an output schema, the agent emits the parsed result instead. The schema should be a `BaseModel` subclass (Python), a POJO class (Java), or a `RowTypeInfo` (both). If the final response cannot be parsed after the configured retries, the chat request fails and the ReAct Agent propagates that failure.
 
@@ -280,6 +224,11 @@ my_row_type_info = RowTypeInfo(
         [BasicTypeInfo.STRING_TYPE_INFO(), BasicTypeInfo.INT_TYPE_INFO()],
         ["id", "score"],
     )
+
+my_react_agent = ReActAgent(
+    chat_model=chat_model_descriptor,
+    output_schema=MyBaseModelDataType,  # or my_row_type_info
+)
 ```
 {{< /tab >}}
 
@@ -334,15 +283,43 @@ RowTypeInfo myRowTypeInfo =
                         BasicTypeInfo.STRING_TYPE_INFO, BasicTypeInfo.INT_TYPE_INFO
                 },
                 new String[] {"id", "score"});
+
+ReActAgent myReActAgent =
+        new ReActAgent(
+                chatModelDescriptor,
+                null,
+                MyBaseModelDataType.class // or myRowTypeInfo
+        );
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
 ### Skills
-Skills are optional. You can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor instead of adding a `skills` argument to the chat model descriptor. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
+Skills are optional. You can pass [skills]({{< ref "docs/development/calling-llms/skills" >}}) to the constructor in addition to, or instead of, a `skills` argument on the chat model descriptor; the agent uses both. Two forms are accepted: a list of skill names, or a `Skills` object declaring where the skills are loaded from.
 
-**Skill names.** Pass the names of skills that are already declared to the agent:
+**Skill names.** First register the skill sources on the `AgentsExecutionEnvironment`. The resource name identifies the collection of sources:
+
+{{< tabs "Register Skills" >}}
+
+{{< tab "Python" >}}
+```python
+agents_env.add_resource(
+    "my_skills", ResourceType.SKILLS, Skills.from_local_dir("./skills")
+)
+```
+{{< /tab >}}
+
+{{< tab "Java" >}}
+```java
+agentsEnv.addResource(
+        "mySkills", ResourceType.SKILLS, Skills.fromLocalDir("./skills"));
+```
+{{< /tab >}}
+
+{{< /tabs >}}
+
+Then pass the names declared in the sources' `SKILL.md` files to the constructor:
 
 {{< tabs "Skills" >}}
 
@@ -350,7 +327,6 @@ Skills are optional. You can pass [skills]({{< ref "docs/development/calling-llm
 ```python
 my_react_agent = ReActAgent(
     chat_model=chat_model_descriptor,
-    prompt=my_prompt,
     skills=["math-calculator"],
 )
 ```
@@ -359,21 +335,17 @@ my_react_agent = ReActAgent(
 {{< tab "Java" >}}
 ```java
 ReActAgent myReActAgent =
-        new ReActAgent(chatModelDescriptor, myPrompt, null, List.of("math-calculator"));
+        new ReActAgent(chatModelDescriptor, null, null, List.of("math-calculator"));
 ```
 {{< /tab >}}
 
 {{< /tabs >}}
 
-The constructor skills are combined with any `skills` already set on the chat model descriptor:
+Skills passed to the constructor are combined with those configured on the chat model descriptor, with duplicate names included only once. Referenced skills must be declared on the agent or its execution environment.
 
-- The descriptor's skills come first, followed by the constructor skills; a name listed more than once is kept only at its first occurrence.
-- Passing no skills, or an empty list, adds nothing: the descriptor is used exactly as given.
-- The descriptor you pass in is not modified; the agent uses a copy with the combined skills.
-- Only skill names are combined. The command policy of the built-in `bash` tool, such as `allowed_commands`, is always taken from the chat model descriptor, so set it there.
-- The sources behind those names have to be declared somewhere the agent can see them: a `@Skills`/`@skills` method, the execution environment, or the agent itself.
+Configure `allowed_commands` on the chat model descriptor to control which commands the built-in `bash` tool may execute.
 
-**Skill sources.** Pass a `Skills` object to declare the sources and let the framework resolve the skill names at runtime:
+**Skill sources.** Alternatively, pass a `Skills` object directly to the constructor. The constructor registers the sources on the agent, so no separate registration on the execution environment is required:
 
 {{< tabs "Skill Sources" >}}
 
@@ -381,7 +353,6 @@ The constructor skills are combined with any `skills` already set on the chat mo
 ```python
 my_react_agent = ReActAgent(
     chat_model=chat_model_descriptor,
-    prompt=my_prompt,
     skills=Skills.from_local_dir("./skills"),
 )
 ```
@@ -392,7 +363,7 @@ my_react_agent = ReActAgent(
 ReActAgent myReActAgent =
         new ReActAgent(
                 chatModelDescriptor,
-                myPrompt,
+                null,
                 null,
                 Skills.fromLocalDir("./skills"));
 ```
@@ -400,7 +371,7 @@ ReActAgent myReActAgent =
 
 {{< /tabs >}}
 
-The constructor registers those sources on the agent, so they do not also need `add_resource(..., ResourceType.SKILLS, ...)` on the execution environment. Every skill found in the sources becomes available, and the resolved names are appended after any explicitly named ones. A single `Skills` object may declare several sources; to combine sources held in separate objects, gather them into one `Skills`, declare further `@Skills`/`@skills` methods, or register them on the agent with `addResource(..., ResourceType.SKILLS, ...)`.
+Every skill found in the sources becomes available, and the resolved names are appended after any explicitly named ones. A single `Skills` object may declare several sources; to combine sources held in separate objects, gather them into one `Skills`, declare further `@Skills`/`@skills` methods, or register them on the agent with `addResource(..., ResourceType.SKILLS, ...)`.
 
 **Which declaration wins.** Sources reach the agent from three levels. `@Skills`/`@skills` methods are merged first, then the execution environment's `SKILLS` resources, then the agent's own. A declaration from a later level wins when two of them resolve to the same skill name.
 
